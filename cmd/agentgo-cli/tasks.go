@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -68,24 +69,8 @@ func isStdoutTTY() bool {
 
 // listTasksSimple outputs tasks in simple text or JSON format
 func listTasksSimple(textOutput, jsonOutput bool) error {
-	// Determine DB path
-	dbPath := cfg.RAG.Storage.DBPath
-	if len(dbPath) > 10 {
-		lastSlash := -1
-		for i := len(dbPath) - 1; i >= 0; i-- {
-			if dbPath[i] == '/' {
-				lastSlash = i
-				break
-			}
-		}
-		if lastSlash > 0 {
-			dbPath = dbPath[:lastSlash] + "/scheduler.db"
-		} else {
-			dbPath = "./data/scheduler.db"
-		}
-	} else {
-		dbPath = "./data/scheduler.db"
-	}
+	// Determine DB path using unified DataDir
+	dbPath := filepath.Join(Cfg.DataDir(), "scheduler.db")
 
 	store, err := scheduler.NewStorage(dbPath)
 	if err != nil {
@@ -147,11 +132,11 @@ type errMsg error
 
 func initialModel() model {
 	// Determine API URL
-	host := cfg.Server.Host
+	host := Cfg.Server.Host
 	if host == "0.0.0.0" {
 		host = "127.0.0.1"
 	}
-	port := cfg.Server.Port
+	port := Cfg.Server.Port
 	url := fmt.Sprintf("http://%s:%d/api/v1/tasks", host, port)
 
 	return model{
@@ -185,26 +170,8 @@ func fetchTasks(url string) tea.Cmd {
 			}
 		}
 
-		// 2. Fallback: Direct DB Access
-		// Use the global cfg variable from root.go
-		dbPath := cfg.RAG.Storage.DBPath
-		if len(dbPath) > 10 {
-			// Adjust path logic same as scheduler.NewScheduler
-			lastSlash := -1
-			for i := len(dbPath) - 1; i >= 0; i-- {
-				if dbPath[i] == '/' {
-					lastSlash = i
-					break
-				}
-			}
-			if lastSlash > 0 {
-				dbPath = dbPath[:lastSlash] + "/scheduler.db"
-			} else {
-				dbPath = "./data/scheduler.db"
-			}
-		} else {
-			dbPath = "./data/scheduler.db"
-		}
+		// 2. Fallback: Direct DB Access using unified DataDir
+		dbPath := filepath.Join(Cfg.DataDir(), "scheduler.db")
 
 		// Initialize storage directly
 		store, err := scheduler.NewStorage(dbPath)

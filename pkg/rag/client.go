@@ -38,7 +38,7 @@ func NewClient(cfg *config.Config, embedder domain.Embedder, llm domain.Generato
 	var err error
 
 	// Default to SQLite
-	sqliteStore, err := store.NewSQLiteStore(cfg.RAG.Storage.DBPath, cfg.RAG.Storage.IndexType)
+	sqliteStore, err := store.NewSQLiteStore(cfg.CortexDBPath(), cfg.Internal.Storage.IndexType)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create vector store: %w", err)
 	}
@@ -358,6 +358,14 @@ func (c *Client) GetVectorStore() domain.VectorStore {
 	return c.vectorStore
 }
 
+// GetSQLiteStore returns the underlying SQLite store for chat session storage
+func (c *Client) GetSQLiteStore() *store.SQLiteStore {
+	if sqliteStore, ok := c.vectorStore.(*store.SQLiteStore); ok {
+		return sqliteStore
+	}
+	return nil
+}
+
 // initMCPService initializes the MCP service if not already done
 func (c *Client) initMCPService(ctx context.Context) error {
 	if c.mcpService != nil {
@@ -614,7 +622,7 @@ func (c *Client) initAgentService(ctx context.Context) error {
 
 	// Use the same unified DB path for the agent
 	if c.agentDBPath == "" {
-		c.agentDBPath = c.config.RAG.Storage.DBPath
+		c.agentDBPath = c.config.AgentDBPath()
 	}
 
 	// Initialize MCP service for agent

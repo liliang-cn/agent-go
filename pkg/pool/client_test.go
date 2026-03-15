@@ -23,7 +23,7 @@ func TestClientGenerateWithToolsIncludesNativeWebSearch(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewClient(server.URL, "test-key", "gpt-4o-mini")
+	client, err := NewClient("test", server.URL, "test-key", "gpt-4o-mini")
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestClientGenerateWithToolsRetriesAutoWithoutNativeWebSearch(t *testing.T) 
 	}))
 	defer server.Close()
 
-	client, err := NewClient(server.URL, "test-key", "gpt-4o-mini")
+	client, err := NewClient("test", server.URL, "test-key", "gpt-4o-mini")
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}

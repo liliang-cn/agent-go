@@ -71,7 +71,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		builder := agent.New(acpAgentName).
 			WithConfig(sessionConfig).
 			WithSystemPrompt("You are AgentGo speaking ACP. Use available tools to complete tasks and stream clear progress back to the client.").
-			WithDBPath(sessionConfig.DataDir() + "/agent.db").
+			WithDBPath(sessionConfig.AgentDBPath()).
 			WithMCP().
 			WithSkills().
 			WithRouter()

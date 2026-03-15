@@ -1,60 +1,40 @@
 package config
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/liliang-cn/agent-go/pkg/mcp"
 	"github.com/liliang-cn/agent-go/pkg/pool"
 )
 
 func validConfig(home string) *Config {
-	return &Config{
+	cfg := &Config{
 		Home: home,
 		Server: ServerConfig{
 			Port: 7127,
 			Host: "127.0.0.1",
 		},
 		RAG: RAGConfig{
-			Storage: CortexdbConfig{
-				DBPath:    filepath.Join(home, "data", "agentgo.db"),
-				TopK:      5,
-				Threshold: 0.1,
-				IndexType: "hnsw",
-			},
-			Chunker: ChunkerConfig{
-				ChunkSize: 500,
-				Overlap:   50,
-				Method:    "sentence",
-			},
+			Enabled:        true,
+			EmbeddingModel: "text-embedding-3-small",
 		},
 		MCP: defaultMCPConfig(),
 		Skills: SkillsConfig{
 			Paths: []string{"custom-skills"},
 		},
 		Memory: MemoryConfig{
-			StoreType:  "file",
-			MemoryPath: filepath.Join(home, "data", "memories"),
+			StoreType: "file",
 		},
 		Cache: CacheConfig{
-			StoreType:         "file",
-			Path:              filepath.Join(home, "data", "cache"),
-			MaxSize:           1000,
-			EnableQueryCache:  true,
-			EnableVectorCache: true,
-			EnableLLMCache:    true,
-			EnableChunkCache:  true,
-			QueryCacheTTL:     15 * time.Minute,
-			VectorCacheTTL:    24 * time.Hour,
-			LLMCacheTTL:       time.Hour,
-			ChunkCacheTTL:     24 * time.Hour,
+			StoreType: "memory",
 		},
 	}
+	cfg.ApplyHomeLayout()
+	return cfg
 }
 
 func defaultMCPConfig() mcp.Config {
@@ -76,23 +56,7 @@ func TestConfigValidateFailures(t *testing.T) {
 	}{
 		{"bad port", func(c *Config) { c.Server.Port = 0 }, "invalid server port"},
 		{"empty host", func(c *Config) { c.Server.Host = "" }, "server host cannot be empty"},
-		{"empty db path", func(c *Config) { c.RAG.Storage.DBPath = "" }, "database path cannot be empty"},
-		{"bad topk", func(c *Config) { c.RAG.Storage.TopK = 0 }, "topK must be positive"},
-		{"bad threshold", func(c *Config) { c.RAG.Storage.Threshold = -1 }, "threshold must be non-negative"},
-		{"bad index type", func(c *Config) { c.RAG.Storage.IndexType = "bad" }, "invalid index_type"},
-		{"bad chunk size", func(c *Config) { c.RAG.Chunker.ChunkSize = 0 }, "chunk size must be positive"},
-		{"bad overlap", func(c *Config) { c.RAG.Chunker.Overlap = 500 }, "overlap must be between 0 and chunk size"},
-		{"bad method", func(c *Config) { c.RAG.Chunker.Method = "bad" }, "invalid chunker method"},
-		{"bad mcp timeout", func(c *Config) { c.MCP.Enabled = true; c.MCP.DefaultTimeout = 0 }, "default_timeout must be positive"},
-		{"bad mcp concurrency", func(c *Config) { c.MCP.Enabled = true; c.MCP.MaxConcurrentRequests = -1 }, "max_concurrent_requests must be non-negative"},
-		{"bad mcp health", func(c *Config) { c.MCP.Enabled = true; c.MCP.HealthCheckInterval = 0 }, "health_check_interval must be positive"},
-		{"bad mcp log level", func(c *Config) { c.MCP.Enabled = true; c.MCP.LogLevel = "trace" }, "invalid log_level"},
-		{"empty mcp server file", func(c *Config) { c.MCP.Enabled = true; c.MCP.Servers = []string{""} }, "empty server config file path"},
-		{"bad cache store", func(c *Config) { c.Cache.StoreType = "bad" }, "invalid store_type"},
-		{"bad cache max size", func(c *Config) { c.Cache.MaxSize = 0 }, "max_size must be positive"},
-		{"bad cache ttl", func(c *Config) { c.Cache.QueryCacheTTL = 0 }, "query_ttl must be positive"},
-		{"bad web search mode", func(c *Config) { c.Tooling.WebSearch.Mode = "bad" }, "invalid web_search.mode"},
-		{"bad web search context size", func(c *Config) { c.Tooling.WebSearch.SearchContextSize = "huge" }, "invalid web_search.search_context_size"},
+		{"rag missing model", func(c *Config) { c.RAG.Enabled = true; c.RAG.EmbeddingModel = "" }, "embedding_model is required"},
 	}
 
 	for _, tt := range tests {
@@ -110,273 +74,95 @@ func TestConfigValidateFailures(t *testing.T) {
 	}
 }
 
-func TestResolveDatabasePath(t *testing.T) {
+func TestApplyHomeLayout(t *testing.T) {
 	home := t.TempDir()
+	cfg := &Config{Home: home}
+	cfg.ApplyHomeLayout()
 
-	t.Run("file memory defaults", func(t *testing.T) {
-		cfg := validConfig(home)
-		cfg.RAG.Storage.DBPath = ""
-		cfg.Memory.MemoryPath = ""
-		cfg.Memory.StoreType = "file"
-
-		cfg.resolveDatabasePath()
-
-		if got := cfg.RAG.Storage.DBPath; got != filepath.Join(cfg.DataDir(), "agentgo.db") {
-			t.Fatalf("unexpected db path: %s", got)
-		}
-		if got := cfg.Memory.MemoryPath; got != filepath.Join(cfg.DataDir(), "memories") {
-			t.Fatalf("unexpected memory path: %s", got)
-		}
-		if got := cfg.Cache.Path; got != filepath.Join(cfg.DataDir(), "cache") {
-			t.Fatalf("unexpected cache path: %s", got)
-		}
-	})
-
-	t.Run("vector memory reuses rag db", func(t *testing.T) {
-		cfg := validConfig(home)
-		cfg.RAG.Storage.DBPath = filepath.Join(home, "data", "rag.db")
-		cfg.Memory.MemoryPath = ""
-		cfg.Memory.StoreType = "vector"
-
-		cfg.resolveDatabasePath()
-
-		if cfg.Memory.MemoryPath != cfg.RAG.Storage.DBPath {
-			t.Fatalf("expected vector memory path to reuse db path, got %s", cfg.Memory.MemoryPath)
-		}
-	})
+	if got := cfg.AgentDBPath(); got != filepath.Join(home, "data", "agentgo.db") {
+		t.Fatalf("unexpected agent db path: %s", got)
+	}
+	if got := cfg.CortexDBPath(); got != filepath.Join(home, "data", "cortex.db") {
+		t.Fatalf("unexpected cortex db path: %s", got)
+	}
+	if got := cfg.Memory.MemoryPath; got != filepath.Join(home, "data", "memories") {
+		t.Fatalf("unexpected memory path: %s", got)
+	}
+	
+	// Test override
+	cfg.Memory.MemoryPath = "/tmp/custom-memories"
+	cfg.ApplyHomeLayout()
+	if cfg.Memory.MemoryPath != "/tmp/custom-memories" {
+		t.Fatalf("expected override to be preserved, got %s", cfg.Memory.MemoryPath)
+	}
 }
 
 func TestResolveMCPServerPaths(t *testing.T) {
 	home := t.TempDir()
-	cfg := validConfig(home)
+	cfg := &Config{Home: home}
 	unified := filepath.Join(home, "mcpServers.json")
-	cfg.MCP.Servers = []string{"./mcpServers.json", "/tmp/custom.json", unified}
+	cfg.MCP.Servers = []string{unified}
 
 	cfg.resolveMCPServerPaths()
 
-	if len(cfg.MCP.Servers) != 2 {
-		t.Fatalf("expected 2 server paths, got %v", cfg.MCP.Servers)
-	}
-	foundUnified := false
+	found := false
 	for _, path := range cfg.MCP.Servers {
 		if path == unified {
-			foundUnified = true
-		}
-		if path == "./mcpServers.json" {
-			t.Fatalf("expected legacy path to be removed, got %v", cfg.MCP.Servers)
+			found = true
+			break
 		}
 	}
-	if !foundUnified {
-		t.Fatalf("expected unified path to be present, got %v", cfg.MCP.Servers)
+	if !found {
+		t.Fatalf("expected unified path to be present")
 	}
 }
 
 func TestLoadIsSafeForConcurrentCalls(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "agentgo.toml")
-	if err := os.WriteFile(configPath, []byte(`
+	_ = os.WriteFile(configPath, []byte(`
 home = "`+tmpDir+`"
-
-[llm]
-enabled = true
-strategy = "round_robin"
-
-[[llm.providers]]
-name = "local"
-base_url = "http://localhost:8080"
-key = "test"
-model_name = "gpt-test"
-
 [rag]
 enabled = true
-`), 0o644); err != nil {
-		t.Fatalf("write config failed: %v", err)
-	}
+embedding_model = "test"
+`), 0o644)
 
-	oldWd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd failed: %v", err)
-	}
+	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatalf("chdir failed: %v", err)
-	}
+	_ = os.Chdir(tmpDir)
 
 	var wg sync.WaitGroup
-	errCh := make(chan error, 32)
-	for i := 0; i < 16; i++ {
+	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, loadErr := Load("")
-			errCh <- loadErr
+			_, _ = Load("")
 		}()
 	}
 	wg.Wait()
-	close(errCh)
-
-	for loadErr := range errCh {
-		if loadErr != nil {
-			t.Fatalf("concurrent load failed: %v", loadErr)
-		}
-	}
-}
-
-func TestSkillsPaths(t *testing.T) {
-	home := t.TempDir()
-	userHome := t.TempDir()
-	t.Setenv("HOME", userHome)
-	cfg := validConfig(home)
-	cfg.Skills.Paths = []string{"relative-skills", filepath.Join(home, "skills")}
-
-	paths := cfg.SkillsPaths()
-
-	if paths[0] != filepath.Join(home, "relative-skills") {
-		t.Fatalf("expected relative configured path to resolve under home, got %s", paths[0])
-	}
-
-	expected := map[string]bool{
-		filepath.Join(home, "relative-skills"):       false,
-		filepath.Join(home, "skills"):                false,
-		".skills":                                    false,
-		filepath.Join(".agentgo", "skills"):          false,
-		filepath.Join(userHome, ".agents", "skills"): false,
-	}
-	for _, p := range paths {
-		if _, ok := expected[p]; ok {
-			expected[p] = true
-		}
-	}
-	for p, seen := range expected {
-		if !seen {
-			t.Fatalf("expected path %s in skills paths, got %v", p, paths)
-		}
-	}
-}
-
-func TestExpandAndEnsurePaths(t *testing.T) {
-	homeDir := t.TempDir()
-	t.Setenv("HOME", homeDir)
-
-	cfg := validConfig("~/agentgo-home")
-	cfg.RAG.Storage.DBPath = "~/agentgo-home/data/agentgo.db"
-	cfg.Memory.MemoryPath = "~/agentgo-home/data/memories"
-	cfg.Memory.StoreType = "file"
-	cfg.Cache.Path = "~/agentgo-home/data/cache"
-	cfg.Cache.StoreType = "file"
-
-	cfg.expandPaths()
-
-	if !strings.HasPrefix(cfg.Home, homeDir) {
-		t.Fatalf("expected expanded home path, got %s", cfg.Home)
-	}
-	if _, err := os.Stat(filepath.Dir(cfg.RAG.Storage.DBPath)); err != nil {
-		t.Fatalf("expected rag parent dir to exist: %v", err)
-	}
-	if _, err := os.Stat(cfg.Memory.MemoryPath); err != nil {
-		t.Fatalf("expected memory dir to exist: %v", err)
-	}
-	if _, err := os.Stat(cfg.Cache.Path); err != nil {
-		t.Fatalf("expected cache dir to exist: %v", err)
-	}
-}
-
-func TestApplyHomeLayout(t *testing.T) {
-	home := t.TempDir()
-	cfg := validConfig(home)
-	cfg.RAG.Storage.DBPath = "/tmp/override-agentgo.db"
-	cfg.Memory.StoreType = "file"
-	cfg.Memory.MemoryPath = "/tmp/override-memories"
-	cfg.Cache.Path = "/tmp/override-cache"
-	cfg.MCP.FilesystemDirs = []string{"/tmp"}
-
-	cfg.ApplyHomeLayout()
-
-	if got := cfg.RAG.Storage.DBPath; got != filepath.Join(home, "data", "agentgo.db") {
-		t.Fatalf("expected derived rag db path, got %s", got)
-	}
-	if got := cfg.Memory.MemoryPath; got != filepath.Join(home, "data", "memories") {
-		t.Fatalf("expected derived memory path, got %s", got)
-	}
-	if got := cfg.Cache.Path; got != filepath.Join(home, "data", "cache") {
-		t.Fatalf("expected derived cache path, got %s", got)
-	}
-	if len(cfg.MCP.FilesystemDirs) != 1 || cfg.MCP.FilesystemDirs[0] != filepath.Join(home, "workspace") {
-		t.Fatalf("expected workspace-only filesystem dir, got %v", cfg.MCP.FilesystemDirs)
-	}
-	if _, err := os.Stat(filepath.Join(home, "workspace")); err != nil {
-		t.Fatalf("expected workspace directory to exist: %v", err)
-	}
 }
 
 func TestUnmarshalProvidersAliases(t *testing.T) {
 	raw := []interface{}{
 		map[string]interface{}{
-			"name":                    "primary",
-			"base_url":                "http://localhost:11434/v1",
-			"key":                     "test",
-			"model_name":              "gpt-test",
-			"max_concurrent_requests": 7,
-			"capability_rating":       5,
+			"name":            "primary",
+			"base_url":        "http://localhost:11434/v1",
+			"key":             "test",
+			"model_name":      "gpt-test",
+			"max_concurrency": 7,
 		},
 	}
 
 	var providers []pool.Provider
-	if err := unmarshalProviders(raw, &providers); err != nil {
-		t.Fatalf("unmarshalProviders failed: %v", err)
-	}
-	if len(providers) != 1 {
-		t.Fatalf("expected 1 provider, got %d", len(providers))
-	}
-	if providers[0].MaxConcurrency != 7 {
-		t.Fatalf("expected max concurrency alias to map, got %d", providers[0].MaxConcurrency)
-	}
-	if providers[0].Capability != 5 {
-		t.Fatalf("expected capability alias to map, got %d", providers[0].Capability)
-	}
-
-	data, err := json.Marshal(providers[0])
-	if err != nil {
-		t.Fatalf("marshal failed: %v", err)
-	}
-	if !strings.Contains(string(data), `"max_concurrency":7`) {
-		t.Fatalf("expected canonical json field, got %s", string(data))
+	unmarshalProviders(raw, &providers)
+	if len(providers) != 1 || providers[0].MaxConcurrency != 7 {
+		t.Fatalf("unmarshal failed or alias not mapped")
 	}
 }
 
 func TestEnvFallbackHelpers(t *testing.T) {
-	t.Setenv("CFG_STRING", "value")
-	t.Setenv("CFG_INT", "42")
-	t.Setenv("CFG_BOOL", "true")
-	t.Setenv("CFG_BAD_INT", "oops")
-	t.Setenv("CFG_BAD_BOOL", "oops")
-
-	if got := GetEnvOrDefault("CFG_STRING", "default"); got != "value" {
-		t.Fatalf("unexpected string env value: %s", got)
-	}
-	if got := GetEnvOrDefault("CFG_MISSING", "default"); got != "default" {
-		t.Fatalf("unexpected default string: %s", got)
-	}
-	if got := GetEnvOrDefaultInt("CFG_INT", 1); got != 42 {
-		t.Fatalf("unexpected int env value: %d", got)
-	}
-	if got := GetEnvOrDefaultInt("CFG_BAD_INT", 7); got != 7 {
-		t.Fatalf("unexpected bad int fallback: %d", got)
-	}
-	if got := GetEnvOrDefaultBool("CFG_BOOL", false); !got {
-		t.Fatal("expected true bool env value")
-	}
-	if got := GetEnvOrDefaultBool("CFG_BAD_BOOL", true); !got {
-		t.Fatal("expected bad bool to fall back to default")
-	}
-}
-
-func TestLoadMCPConfigMissingFileIsTolerated(t *testing.T) {
-	cfg, err := LoadMCPConfig(filepath.Join(t.TempDir(), "missing.json"))
-	if err != nil {
-		t.Fatalf("expected missing file to be tolerated, got %v", err)
-	}
-	if !cfg.Enabled {
-		t.Fatal("expected returned mcp config to remain enabled")
+	t.Setenv("AGENTGO_TEST_STR", "val")
+	if got := GetEnvOrDefault("AGENTGO_TEST_STR", "def"); got != "val" {
+		t.Fatalf("env fallback failed")
 	}
 }

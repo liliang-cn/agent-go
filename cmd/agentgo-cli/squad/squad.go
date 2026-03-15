@@ -167,7 +167,7 @@ func getManager() (*agent.SquadManager, error) {
 	if err != nil {
 		return nil, err
 	}
-	agentDBPath := cfg.DataDir() + "/agent.db"
+	agentDBPath := cfg.AgentDBPath()
 	store, err := agent.NewStore(agentDBPath)
 	if err != nil {
 		return nil, err

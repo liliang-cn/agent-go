@@ -65,8 +65,8 @@ var importCmd = &cobra.Command{
 
 		// Initialize stores
 		vectorStore, err := store.NewSQLiteStore(
-			Cfg.RAG.Storage.DBPath,
-			Cfg.RAG.Storage.IndexType,
+			Cfg.CortexDBPath(),
+			"hnsw",
 		)
 		if err != nil {
 			return fmt.Errorf("failed to create vector store: %w", err)
@@ -122,7 +122,7 @@ var importCmd = &cobra.Command{
 			fmt.Printf("Importing %d chunks...\n", len(exportData.Chunks))
 
 			// Process chunks in batches
-			batchSize := Cfg.RAG.Storage.BatchSize
+			batchSize := Cfg.Internal.Storage.BatchSize
 			for i := 0; i < len(exportData.Chunks); i += batchSize {
 				end := i + batchSize
 				if end > len(exportData.Chunks) {

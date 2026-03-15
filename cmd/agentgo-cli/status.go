@@ -23,9 +23,9 @@ func runStatus(cmd *cobra.Command, args []string) error {
 
 	// Show config location
 	fmt.Printf("📁 Config: %s\n", viper.ConfigFileUsed())
-	if cfg != nil {
-		fmt.Printf("📁 Home: %s\n", cfg.Home)
-		fmt.Printf("📁 MCP Servers: %s\n", cfg.MCPServersPath())
+	if Cfg != nil {
+		fmt.Printf("📁 Home: %s\n", Cfg.Home)
+		fmt.Printf("📁 MCP Servers: %s\n", Cfg.MCPServersPath())
 	}
 	fmt.Println()
 

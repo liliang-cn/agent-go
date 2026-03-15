@@ -16,8 +16,8 @@ var collectionsCmd = &cobra.Command{
 	Long:  `Display all collections that have been automatically created by LLM-based document classification.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		vectorStore, err := store.NewSQLiteStore(
-			Cfg.RAG.Storage.DBPath,
-			Cfg.RAG.Storage.IndexType,
+			Cfg.CortexDBPath(),
+			"hnsw",
 		)
 		if err != nil {
 			return fmt.Errorf("failed to create vector store: %w", err)

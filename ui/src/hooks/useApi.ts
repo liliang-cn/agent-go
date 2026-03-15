@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, QueryRequest, ChatRequest, CreateSkillRequest, AddMCPServerRequest, CallToolRequest, AddMemoryRequest, UpdateConfigRequest, CreateAgentRequest, CreateSquadRequest, ApplySetupRequest } from '../lib/api'
+import { api, QueryRequest, ChatRequest, CreateSkillRequest, AddMCPServerRequest, CallToolRequest, AddMemoryRequest, UpdateConfigRequest, CreateAgentRequest, CreateSquadRequest, ApplySetupRequest, DispatchSquadTaskRequest } from '../lib/api'
 
 // RAG Hooks
 export function useQueryRAG() {
@@ -52,6 +52,22 @@ export function useStatus() {
 export function useChat() {
   return useMutation({
     mutationFn: (data: ChatRequest) => api.chat(data),
+  })
+}
+
+export function useChatSessions(limit?: number) {
+  return useQuery({
+    queryKey: ['chat-sessions', limit],
+    queryFn: () => api.getChatSessions(limit),
+    refetchInterval: 30000,
+  })
+}
+
+export function useChatSession(sessionId: string | undefined) {
+  return useQuery({
+    queryKey: ['chat-session', sessionId],
+    queryFn: () => api.getChatSession(sessionId!),
+    enabled: !!sessionId,
   })
 }
 
@@ -114,6 +130,17 @@ export function useDispatchAgentTask() {
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['agents'] })
       queryClient.invalidateQueries({ queryKey: ['agents', variables.name] })
+      queryClient.invalidateQueries({ queryKey: ['ops', 'logs'] })
+    },
+  })
+}
+
+export function useDispatchSquadTask() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ squadId, message }: { squadId: string; message: string }) =>
+      api.dispatchSquadTask(squadId, { message }),
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ops', 'logs'] })
     },
   })

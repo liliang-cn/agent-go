@@ -20,7 +20,7 @@ func main() {
 	// 1. 使用链式 Builder API 初始化 Agent 并开启自动记忆 Hook
 	svc, err := agent.New("AutoAgent").
 		WithDBPath(filepath.Join(testDir, "agent.db")).
-		WithMemory(agent.WithMemoryDBPath(filepath.Join(testDir, "memories"))).
+		WithMemory(agent.WithMemoryPath(filepath.Join(testDir, "memories"))).
 		Build()
 	if err != nil {
 		log.Fatalf("Failed to init: %v", err)

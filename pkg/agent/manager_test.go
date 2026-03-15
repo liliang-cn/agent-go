@@ -20,10 +20,10 @@ func TestNewStoreAppliesSQLitePragmas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
 	}
-	defer store.db.Close()
+	defer store.GetAgentGoDB().GetDB().Close()
 
 	var journalMode string
-	if err := store.db.QueryRow(`PRAGMA journal_mode;`).Scan(&journalMode); err != nil {
+	if err := store.GetAgentGoDB().GetDB().QueryRow(`PRAGMA journal_mode;`).Scan(&journalMode); err != nil {
 		t.Fatalf("query journal_mode failed: %v", err)
 	}
 	if journalMode != "wal" {
@@ -31,7 +31,7 @@ func TestNewStoreAppliesSQLitePragmas(t *testing.T) {
 	}
 
 	var busyTimeout int
-	if err := store.db.QueryRow(`PRAGMA busy_timeout;`).Scan(&busyTimeout); err != nil {
+	if err := store.GetAgentGoDB().GetDB().QueryRow(`PRAGMA busy_timeout;`).Scan(&busyTimeout); err != nil {
 		t.Fatalf("query busy_timeout failed: %v", err)
 	}
 	if busyTimeout < sqliteBusyTimeoutMillis {

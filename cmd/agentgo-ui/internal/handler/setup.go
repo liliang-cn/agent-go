@@ -35,11 +35,8 @@ type SetupState struct {
 	ServerHost       string          `json:"serverHost"`
 	ServerPort       int             `json:"serverPort"`
 	MCPEnabled       bool            `json:"mcpEnabled"`
-	MCPAllowedDirs   []string        `json:"mcpAllowedDirs"`
 	SkillsPaths      []string        `json:"skillsPaths"`
-	RAGDBPath        string          `json:"ragDbPath"`
 	MemoryStoreType  string          `json:"memoryStoreType"`
-	MemoryPath       string          `json:"memoryPath"`
 	Providers        []SetupProvider `json:"providers"`
 }
 
@@ -87,11 +84,8 @@ func (h *SetupHandler) snapshot() SetupState {
 		ServerHost:       h.cfg.Server.Host,
 		ServerPort:       h.cfg.Server.Port,
 		MCPEnabled:       h.cfg.MCP.Enabled,
-		MCPAllowedDirs:   append([]string{}, h.cfg.MCP.FilesystemDirs...),
 		SkillsPaths:      h.cfg.SkillsPaths(),
-		RAGDBPath:        h.cfg.RAG.Storage.DBPath,
 		MemoryStoreType:  h.cfg.Memory.StoreType,
-		MemoryPath:       h.cfg.Memory.MemoryPath,
 		Providers:        providers,
 	}
 }
@@ -120,24 +114,16 @@ func (h *SetupHandler) apply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Home == "" {
-		JSONError(w, "home is required", http.StatusBadRequest)
-		return
-	}
-	if req.ServerHost == "" || req.ServerPort <= 0 {
-		JSONError(w, "server host and port are required", http.StatusBadRequest)
-		return
-	}
-	if req.Provider.Name == "" || req.Provider.BaseURL == "" || req.Provider.ModelName == "" {
-		JSONError(w, "provider name, baseUrl, and modelName are required", http.StatusBadRequest)
-		return
-	}
-
 	h.cfg.Home = req.Home
 	h.cfg.Server.Host = req.ServerHost
 	h.cfg.Server.Port = req.ServerPort
 	h.cfg.MCP.Enabled = req.MCPEnabled
 	h.cfg.Memory.StoreType = req.MemoryStoreType
+	
+	// 极简 RAG 设置
+	h.cfg.RAG.Enabled = req.Provider.EmbeddingModel != ""
+	h.cfg.RAG.EmbeddingModel = req.Provider.EmbeddingModel
+
 	h.cfg.ApplyHomeLayout()
 	h.cfg.LLM.Enabled = true
 	h.cfg.LLM.Strategy = pool.StrategyRoundRobin
@@ -149,20 +135,6 @@ func (h *SetupHandler) apply(w http.ResponseWriter, r *http.Request) {
 		MaxConcurrency: req.Provider.MaxConcurrency,
 		Capability:     req.Provider.Capability,
 	}}
-	h.cfg.RAG.Embedding.Enabled = req.Provider.EmbeddingModel != ""
-	if req.Provider.EmbeddingModel != "" {
-		h.cfg.RAG.Embedding.Strategy = pool.StrategyRoundRobin
-		h.cfg.RAG.Embedding.Providers = []pool.Provider{{
-			Name:           req.Provider.Name,
-			BaseURL:        req.Provider.BaseURL,
-			Key:            req.Provider.APIKey,
-			ModelName:      req.Provider.EmbeddingModel,
-			MaxConcurrency: req.Provider.MaxConcurrency,
-			Capability:     req.Provider.Capability,
-		}}
-	} else {
-		h.cfg.RAG.Embedding.Providers = nil
-	}
 
 	if err := h.saveSetupConfig(req); err != nil {
 		JSONError(w, "Failed to save setup: "+err.Error(), http.StatusInternalServerError)
@@ -178,15 +150,11 @@ func (h *SetupHandler) apply(w http.ResponseWriter, r *http.Request) {
 
 func (h *SetupHandler) saveSetupConfig(req ApplySetupRequest) error {
 	dir := filepath.Dir(h.configPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return err
-	}
+	_ = os.MkdirAll(dir, 0755)
 
 	data := map[string]interface{}{}
 	if content, err := os.ReadFile(h.configPath); err == nil && len(content) > 0 {
-		if err := toml.Unmarshal(content, &data); err != nil {
-			return err
-		}
+		_ = toml.Unmarshal(content, &data)
 	}
 
 	data["home"] = h.cfg.Home
@@ -194,12 +162,18 @@ func (h *SetupHandler) saveSetupConfig(req ApplySetupRequest) error {
 	setNested(data, []string{"server", "port"}, h.cfg.Server.Port)
 	setNested(data, []string{"mcp", "enabled"}, h.cfg.MCP.Enabled)
 	setNested(data, []string{"memory", "store_type"}, h.cfg.Memory.StoreType)
-	deleteNested(data, []string{"mcp", "filesystem_dirs"})
-	deleteNested(data, []string{"rag", "storage", "db_path"})
+	
+	// 极简 RAG TOML
+	setNested(data, []string{"rag", "enabled"}, h.cfg.RAG.Enabled)
+	setNested(data, []string{"rag", "embedding_model"}, h.cfg.RAG.EmbeddingModel)
+
+	// 清理旧路径（由系统自动推导）
+	deleteNested(data, []string{"rag", "storage"})
+	deleteNested(data, []string{"rag", "embedding"})
 	deleteNested(data, []string{"memory", "memory_path"})
 	deleteNested(data, []string{"cache", "path"})
+
 	setNested(data, []string{"llm", "enabled"}, true)
-	setNested(data, []string{"llm", "strategy"}, string(pool.StrategyRoundRobin))
 	setNested(data, []string{"llm", "providers"}, []map[string]interface{}{{
 		"name":            req.Provider.Name,
 		"base_url":        req.Provider.BaseURL,
@@ -208,18 +182,7 @@ func (h *SetupHandler) saveSetupConfig(req ApplySetupRequest) error {
 		"max_concurrency": req.Provider.MaxConcurrency,
 		"capability":      req.Provider.Capability,
 	}})
-	setNested(data, []string{"rag", "embedding", "enabled"}, req.Provider.EmbeddingModel != "")
-	if req.Provider.EmbeddingModel != "" {
-		setNested(data, []string{"rag", "embedding", "strategy"}, string(pool.StrategyRoundRobin))
-		setNested(data, []string{"rag", "embedding", "providers"}, []map[string]interface{}{{
-			"name":            req.Provider.Name,
-			"base_url":        req.Provider.BaseURL,
-			"key":             req.Provider.APIKey,
-			"model_name":      req.Provider.EmbeddingModel,
-			"max_concurrency": req.Provider.MaxConcurrency,
-			"capability":      req.Provider.Capability,
-		}})
-	}
+	
 	setNested(data, []string{"setup", "completed"}, true)
 	setNested(data, []string{"setup", "updated_at"}, time.Now().Format(time.RFC3339))
 
@@ -229,4 +192,27 @@ func (h *SetupHandler) saveSetupConfig(req ApplySetupRequest) error {
 	}
 
 	return os.WriteFile(h.configPath, content, 0644)
+}
+
+func setNested(m map[string]interface{}, keys []string, value interface{}) {
+	for i := 0; i < len(keys)-1; i++ {
+		key := keys[i]
+		if _, ok := m[key]; !ok {
+			m[key] = make(map[string]interface{})
+		}
+		m = m[key].(map[string]interface{})
+	}
+	m[keys[len(keys)-1]] = value
+}
+
+func deleteNested(m map[string]interface{}, keys []string) {
+	for i := 0; i < len(keys)-1; i++ {
+		key := keys[i]
+		if next, ok := m[key].(map[string]interface{}); ok {
+			m = next
+		} else {
+			return
+		}
+	}
+	delete(m, keys[len(keys)-1])
 }

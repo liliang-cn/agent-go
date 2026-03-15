@@ -40,7 +40,7 @@ var resetCmd = &cobra.Command{
 		var err error
 
 		// Default to SQLite
-		vectorStore, err = store.NewSQLiteStore(Cfg.RAG.Storage.DBPath, Cfg.RAG.Storage.IndexType)
+		vectorStore, err = store.NewSQLiteStore(Cfg.CortexDBPath(), Cfg.Internal.Storage.IndexType)
 		if err != nil {
 			return fmt.Errorf("failed to create vector store: %w", err)
 		}

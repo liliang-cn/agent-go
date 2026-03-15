@@ -3,7 +3,6 @@ package skills
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"sync"
 
 	"github.com/liliang-cn/agent-go/cmd/agentgo-cli/rag"
@@ -39,7 +38,7 @@ func initializeSkills(cmd *cobra.Command) error {
 				Paths:                  ragCfg.SkillsPaths(),
 				AutoLoad:               ragCfg.Skills.AutoLoad,
 				CacheEnabled:           true,
-				DBPath:                 filepath.Join(ragCfg.DataDir(), "skills.db"),
+				DBPath:                 ragCfg.AgentDBPath(),
 				LogLevel:               "info",
 				AllowCommandInjection:  ragCfg.Skills.AllowCommandInjection,
 				RequireConfirmation:    ragCfg.Skills.RequireConfirmation,
@@ -65,7 +64,7 @@ func initializeSkills(cmd *cobra.Command) error {
 
 		if ragCfg != nil {
 			// Initialize vector store
-			vectorStore, err := ragstore.NewSQLiteStore(ragCfg.RAG.Storage.DBPath, ragCfg.RAG.Storage.IndexType)
+			vectorStore, err := ragstore.NewSQLiteStore(ragCfg.CortexDBPath(), ragCfg.Internal.Storage.IndexType)
 			if err != nil {
 				initErr = fmt.Errorf("failed to create vector store: %w", err)
 				return

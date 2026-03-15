@@ -304,7 +304,7 @@ func getManager() (*agent.SquadManager, error) {
 		}
 		cfg = loaded
 	}
-	store, err := agent.NewStore(cfg.DataDir() + "/agent.db")
+	store, err := agent.NewStore(cfg.AgentDBPath())
 	if err != nil {
 		return nil, err
 	}

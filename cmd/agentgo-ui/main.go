@@ -113,13 +113,29 @@ func runServer(cmd *cobra.Command, args []string) error {
 	if err := os.MkdirAll(cfg.WorkspaceDir(), 0755); err != nil {
 		return fmt.Errorf("failed to create workspace directory: %w", err)
 	}
+	
 	mcpConfig := &mcp.Config{
 		Enabled:           cfg.MCP.Enabled,
 		Servers:           cfg.MCP.Servers,
-		ServersConfigPath: cfg.MCP.ServersConfigPath,
+		ServersConfigPath: cfg.MCPServersPath(), // Keep for potential writing
 		FilesystemDirs:    cfg.MCP.FilesystemDirs,
 		LoadedServers:     mcp.GetBuiltInServers(cfg.MCP.FilesystemDirs),
 	}
+	
+	// Merge configurations from all paths
+	for _, path := range cfg.MCPServersPaths() {
+		if _, err := os.Stat(path); err == nil {
+			agentgolog.Infof("Loading MCP servers from %s", path)
+			tempCfg := mcp.DefaultConfig()
+			tempCfg.ServersConfigPath = path
+			if loadErr := tempCfg.LoadServersFromJSON(); loadErr == nil {
+				for name, srv := range tempCfg.LoadedServers {
+					mcpConfig.LoadedServers[name] = srv
+				}
+			}
+		}
+	}
+
 	var mcpService *mcp.Service
 	if cfg.MCP.Enabled {
 		mcpService, err = mcp.NewService(mcpConfig, llm)
@@ -155,8 +171,8 @@ func runServer(cmd *cobra.Command, args []string) error {
 		WithSkills().
 		WithConfig(cfg)
 
-	// Only enable RAG if storage is configured (has a db_path)
-	if cfg.RAG.Storage.DBPath != "" {
+	// Only enable RAG if enabled in config
+	if cfg.RAG.Enabled {
 		b = b.WithRAG()
 	}
 
@@ -167,7 +183,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 		agentgolog.Infof("Agent service created successfully")
 
 		// Initialize SquadManager
-		agentDBPath := cfg.DataDir() + "/agent.db"
+		agentDBPath := cfg.AgentDBPath()
 		agentStore, storeErr := agent.NewStore(agentDBPath)
 		if storeErr != nil {
 			agentgolog.Warn("Failed to create agent store: %v", storeErr)
@@ -194,6 +210,8 @@ func runServer(cmd *cobra.Command, args []string) error {
 	mux.HandleFunc("/api/collections", h.HandleCollections)
 	mux.HandleFunc("/api/status", h.HandleStatus)
 	mux.HandleFunc("/api/chat", h.HandleChat)
+	mux.HandleFunc("/api/chat/sessions", h.HandleChatSessions)
+	mux.HandleFunc("/api/chat/session/", h.HandleChatSessionMessages)
 	mux.HandleFunc("/api/chat/multi", h.HandleMultiAgentChat)
 	mux.HandleFunc("/api/squads/tasks", h.HandleSquadTasks)
 	mux.HandleFunc("/api/squads", h.HandleSquads)
@@ -219,6 +237,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 	// Agent endpoints
 	mux.HandleFunc("/api/agent/run", h.HandleAgentRun)
 	mux.HandleFunc("/api/agent/stream", h.HandleAgentStream)
+
 	mux.HandleFunc("/api/agents", h.HandleAgents)
 	mux.HandleFunc("/api/agents/", h.HandleAgentOperation)
 	mux.HandleFunc("/api/ops/logs", h.HandleOpsLogs)

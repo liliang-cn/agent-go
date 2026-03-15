@@ -1,498 +1,346 @@
 package agent
 
 import (
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
-	"sync"
 
-	_ "modernc.org/sqlite"
+	"github.com/liliang-cn/agent-go/pkg/domain"
+	"github.com/liliang-cn/agent-go/pkg/store"
 )
 
-// Store provides persistent storage for agent plans and sessions
+// Store provides persistent storage for agent plans and sessions by wrapping AgentGoDB
 type Store struct {
-	mu     sync.RWMutex
-	db     *sql.DB
-	dbPath string
+	agentGoDB *store.AgentGoDB
 }
 
-// NewStore creates a new storage backend for agent data
+// NewStore creates a new storage backend for agent data using the unified database
 func NewStore(dbPath string) (*Store, error) {
-	// Use modernc.org/sqlite which doesn't require CGO
-	db, err := sql.Open("sqlite", dbPath)
+	agentGoDB, err := store.NewAgentGoDB(dbPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open database: %w", err)
+		return nil, fmt.Errorf("failed to initialize unified AgentGoDB: %w", err)
 	}
-	if err := configureSQLiteDB(db); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to configure sqlite: %w", err)
-	}
-
-	store := &Store{
-		db:     db,
-		dbPath: dbPath,
-	}
-
-	if err := store.initSchema(); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to initialize schema: %w", err)
-	}
-
-	return store, nil
+	return &Store{agentGoDB: agentGoDB}, nil
 }
 
-// initSchema creates the necessary tables
-func (s *Store) initSchema() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// NewStoreWithAgentGoDB creates a store with an existing AgentGoDB instance
+func NewStoreWithAgentGoDB(agentGoDB *store.AgentGoDB) *Store {
+	return &Store{agentGoDB: agentGoDB}
+}
 
-	// Plans table (renamed to agent_plans to avoid collision)
-	_, err := s.db.Exec(`
-		CREATE TABLE IF NOT EXISTS agent_plans (
-			id TEXT PRIMARY KEY,
-			goal TEXT NOT NULL,
-			session_id TEXT NOT NULL,
-			steps TEXT NOT NULL,
-			status TEXT NOT NULL,
-			reasoning TEXT,
-			error TEXT,
-			created_at DATETIME NOT NULL,
-			updated_at DATETIME NOT NULL
-		)
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to create agent_plans table: %w", err)
-	}
-
-	_, err = s.db.Exec(`
-		CREATE TABLE IF NOT EXISTS teams (
-			id TEXT PRIMARY KEY,
-			name TEXT UNIQUE NOT NULL,
-			description TEXT NOT NULL,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-		)
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to create teams table: %w", err)
-	}
-
-	// Dynamic Agents table
-	_, err = s.db.Exec(`
-		CREATE TABLE IF NOT EXISTS agents (
-			id TEXT PRIMARY KEY,
-			team_id TEXT,
-			name TEXT UNIQUE NOT NULL,
-			kind TEXT DEFAULT 'captain',
-			description TEXT NOT NULL,
-			instructions TEXT NOT NULL,
-			model TEXT,
-			preferred_provider TEXT,
-			preferred_model TEXT,
-			required_llm_capability INTEGER DEFAULT 0,
-			mcp_tools TEXT,
-			skills TEXT,
-			enable_rag BOOLEAN DEFAULT 0,
-			enable_memory BOOLEAN DEFAULT 0,
-			enable_ptc BOOLEAN DEFAULT 0,
-			enable_mcp BOOLEAN DEFAULT 0,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-		)
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to create agents table: %w", err)
-	}
-
-	if _, err := s.db.Exec(`ALTER TABLE agents ADD COLUMN team_id TEXT`); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
-		return fmt.Errorf("failed to migrate agents.team_id: %w", err)
-	}
-	if _, err := s.db.Exec(`ALTER TABLE agents ADD COLUMN required_llm_capability INTEGER DEFAULT 0`); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
-		return fmt.Errorf("failed to migrate agents.required_llm_capability: %w", err)
-	}
-	if _, err := s.db.Exec(`ALTER TABLE agents ADD COLUMN kind TEXT DEFAULT 'captain'`); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
-		return fmt.Errorf("failed to migrate agents.kind: %w", err)
-	}
-	if _, err := s.db.Exec(`ALTER TABLE agents ADD COLUMN preferred_provider TEXT`); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
-		return fmt.Errorf("failed to migrate agents.preferred_provider: %w", err)
-	}
-	if _, err := s.db.Exec(`ALTER TABLE agents ADD COLUMN preferred_model TEXT`); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
-		return fmt.Errorf("failed to migrate agents.preferred_model: %w", err)
-	}
-	if _, err := s.db.Exec(`UPDATE agents SET kind = 'captain' WHERE kind = 'leader' OR kind = 'commander' OR kind = '' OR kind IS NULL`); err != nil {
-		return fmt.Errorf("failed to migrate agents.kind values: %w", err)
-	}
-	if err := s.initMembershipSchema(); err != nil {
-		return err
-	}
-	if err := s.initSharedTaskSchema(); err != nil {
-		return err
-	}
-
-	// Sessions table (renamed to agent_sessions to avoid collision with core library)
-	_, err = s.db.Exec(`
-		CREATE TABLE IF NOT EXISTS agent_sessions (
-			id TEXT PRIMARY KEY,
-			agent_id TEXT NOT NULL,
-			messages TEXT NOT NULL,
-			summary TEXT,
-			context TEXT,
-			metadata TEXT,
-			created_at DATETIME NOT NULL,
-			updated_at DATETIME NOT NULL
-		)
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to create agent_sessions table: %w", err)
-	}
-
-	return nil
+// GetAgentGoDB returns the underlying unified AgentGoDB
+func (s *Store) GetAgentGoDB() *store.AgentGoDB {
+	return s.agentGoDB
 }
 
 // SavePlan saves or updates an agent plan
 func (s *Store) SavePlan(plan *Plan) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	stepsJSON, _ := json.Marshal(plan.Steps)
-	_, err := s.db.Exec(`
-		INSERT INTO agent_plans (id, goal, session_id, steps, status, reasoning, error, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET
-			goal = excluded.goal,
-			steps = excluded.steps,
-			status = excluded.status,
-			reasoning = excluded.reasoning,
-			error = excluded.error,
-			updated_at = excluded.updated_at
-	`, plan.ID, plan.Goal, plan.SessionID, string(stepsJSON), plan.Status, plan.Reasoning, plan.Error, plan.CreatedAt, plan.UpdatedAt)
-	return err
+	return s.agentGoDB.SavePlan(&store.Plan{
+		ID:        plan.ID,
+		Goal:      plan.Goal,
+		SessionID: plan.SessionID,
+		Steps:     stepsJSON,
+		Status:    plan.Status,
+		Reasoning: plan.Reasoning,
+		Error:     plan.Error,
+		CreatedAt: plan.CreatedAt,
+		UpdatedAt: plan.UpdatedAt,
+	})
 }
 
 // GetPlan retrieves a plan by ID
 func (s *Store) GetPlan(id string) (*Plan, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	var plan Plan
-	var stepsJSON string
-	err := s.db.QueryRow(`
-		SELECT id, goal, session_id, steps, status, reasoning, error, created_at, updated_at
-		FROM agent_plans
-		WHERE id = ?
-	`, id).Scan(&plan.ID, &plan.Goal, &plan.SessionID, &stepsJSON,
-		&plan.Status, &plan.Reasoning, &plan.Error, &plan.CreatedAt, &plan.UpdatedAt)
-
+	p, err := s.agentGoDB.GetPlan(id)
 	if err != nil {
 		return nil, err
 	}
 
-	_ = json.Unmarshal([]byte(stepsJSON), &plan.Steps)
-	return &plan, nil
+	plan := &Plan{
+		ID:        p.ID,
+		Goal:      p.Goal,
+		SessionID: p.SessionID,
+		Status:    p.Status,
+		Reasoning: p.Reasoning,
+		Error:     p.Error,
+		CreatedAt: p.CreatedAt,
+		UpdatedAt: p.UpdatedAt,
+	}
+	_ = json.Unmarshal(p.Steps, &plan.Steps)
+	return plan, nil
 }
 
 // ListPlans retrieves plans with optional limit and session filtering
 func (s *Store) ListPlans(sessionID string, limit int) ([]*Plan, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	var query string
-	var rows *sql.Rows
-	var err error
-
-	if sessionID != "" {
-		query = `
-			SELECT id, goal, session_id, steps, status, reasoning, error, created_at, updated_at
-			FROM agent_plans WHERE session_id = ?
-			ORDER BY created_at DESC
-		`
-		if limit > 0 {
-			rows, err = s.db.Query(query, sessionID, limit)
-		} else {
-			rows, err = s.db.Query(query, sessionID)
-		}
-	} else {
-		query = `
-			SELECT id, goal, session_id, steps, status, reasoning, error, created_at, updated_at
-			FROM agent_plans
-			ORDER BY created_at DESC
-		`
-		if limit > 0 {
-			rows, err = s.db.Query(query, limit)
-		} else {
-			rows, err = s.db.Query(query)
-		}
-	}
-
+	plans, err := s.agentGoDB.ListPlans(sessionID, limit)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	var plans []*Plan
-	for rows.Next() {
-		var plan Plan
-		var stepsJSON string
-		err := rows.Scan(&plan.ID, &plan.Goal, &plan.SessionID, &stepsJSON,
-			&plan.Status, &plan.Reasoning, &plan.Error, &plan.CreatedAt, &plan.UpdatedAt)
-		if err != nil {
-			continue
+	result := make([]*Plan, len(plans))
+	for i, p := range plans {
+		plan := &Plan{
+			ID:        p.ID,
+			Goal:      p.Goal,
+			SessionID: p.SessionID,
+			Status:    p.Status,
+			Reasoning: p.Reasoning,
+			Error:     p.Error,
+			CreatedAt: p.CreatedAt,
+			UpdatedAt: p.UpdatedAt,
 		}
-		_ = json.Unmarshal([]byte(stepsJSON), &plan.Steps)
-		plans = append(plans, &plan)
+		_ = json.Unmarshal(p.Steps, &plan.Steps)
+		result[i] = plan
 	}
-
-	return plans, nil
+	return result, nil
 }
 
 // SaveSession saves or updates an agent session
 func (s *Store) SaveSession(session *Session) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	messages := make([]store.ChatMessage, len(session.Messages))
+	for i, m := range session.Messages {
+		messages[i] = store.ChatMessage{
+			Role:    m.Role,
+			Content: m.Content,
+		}
+	}
 
-	messagesJSON, _ := json.Marshal(session.Messages)
-	contextJSON, _ := json.Marshal(session.Context)
-	metadataJSON, _ := json.Marshal(session.Metadata)
-
-	_, err := s.db.Exec(`
-		INSERT INTO agent_sessions (id, agent_id, messages, summary, context, metadata, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET
-			messages = excluded.messages,
-			summary = excluded.summary,
-			context = excluded.context,
-			metadata = excluded.metadata,
-			updated_at = excluded.updated_at
-	`, session.ID, session.AgentID, string(messagesJSON), session.Summary, string(contextJSON), string(metadataJSON), session.CreatedAt, session.UpdatedAt)
-	return err
+	return s.agentGoDB.SaveSession(&store.ChatSession{
+		ID:        session.ID,
+		Type:      store.ChatTypeAgent,
+		Title:     "", // AgentGoDB handles title generation
+		Messages:  messages,
+		Summary:   session.Summary,
+		Context:   session.Context,
+		Metadata:  session.Metadata,
+		CreatedAt: session.CreatedAt,
+		UpdatedAt: session.UpdatedAt,
+	})
 }
 
 // GetSession retrieves a session by ID
 func (s *Store) GetSession(id string) (*Session, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	session := &Session{}
-	var messagesJSON, contextJSON, metadataJSON string
-	var summary sql.NullString
-
-	err := s.db.QueryRow(`
-		SELECT id, agent_id, messages, summary, context, metadata, created_at, updated_at
-		FROM agent_sessions WHERE id = ?
-	`, id).Scan(&session.ID, &session.AgentID, &messagesJSON, &summary,
-		&contextJSON, &metadataJSON, &session.CreatedAt, &session.UpdatedAt)
-
+	sess, err := s.agentGoDB.GetSession(id)
 	if err != nil {
 		return nil, err
 	}
 
-	if summary.Valid {
-		session.Summary = summary.String
+	session := &Session{
+		ID:        sess.ID,
+		AgentID:   "", // Will be populated from metadata if available
+		Summary:   sess.Summary,
+		Context:   sess.Context,
+		Metadata:  sess.Metadata,
+		CreatedAt: sess.CreatedAt,
+		UpdatedAt: sess.UpdatedAt,
 	}
 
-	_ = json.Unmarshal([]byte(messagesJSON), &session.Messages)
-	_ = json.Unmarshal([]byte(contextJSON), &session.Context)
-	_ = json.Unmarshal([]byte(metadataJSON), &session.Metadata)
+	session.Messages = make([]domain.Message, len(sess.Messages))
+	for i, m := range sess.Messages {
+		session.Messages[i] = domain.Message{
+			Role:    m.Role,
+			Content: m.Content,
+		}
+	}
 
 	return session, nil
 }
 
 // ListSessions retrieves all sessions
 func (s *Store) ListSessions(limit int) ([]*Session, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	query := `
-		SELECT id, agent_id, messages, summary, context, metadata, created_at, updated_at
-		FROM agent_sessions ORDER BY updated_at DESC
-	`
-	var rows *sql.Rows
-	var err error
-
-	if limit > 0 {
-		rows, err = s.db.Query(query+" LIMIT ?", limit)
-	} else {
-		rows, err = s.db.Query(query)
-	}
-
+	sessions, err := s.agentGoDB.ListSessions(store.ChatTypeAgent, limit)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	var sessions []*Session
-	for rows.Next() {
-		session := &Session{}
-		var messagesJSON, contextJSON, metadataJSON string
-		var summary sql.NullString
-
-		err := rows.Scan(&session.ID, &session.AgentID, &messagesJSON, &summary,
-			&contextJSON, &metadataJSON, &session.CreatedAt, &session.UpdatedAt)
-		if err != nil {
-			continue
+	result := make([]*Session, len(sessions))
+	for i, sess := range sessions {
+		session := &Session{
+			ID:        sess.ID,
+			AgentID:   "",
+			Summary:   sess.Summary,
+			Context:   sess.Context,
+			Metadata:  sess.Metadata,
+			CreatedAt: sess.CreatedAt,
+			UpdatedAt: sess.UpdatedAt,
 		}
 
-		if summary.Valid {
-			session.Summary = summary.String
+		session.Messages = make([]domain.Message, len(sess.Messages))
+		for j, m := range sess.Messages {
+			session.Messages[j] = domain.Message{
+				Role:    m.Role,
+				Content: m.Content,
+			}
 		}
-
-		_ = json.Unmarshal([]byte(messagesJSON), &session.Messages)
-		_ = json.Unmarshal([]byte(contextJSON), &session.Context)
-		_ = json.Unmarshal([]byte(metadataJSON), &session.Metadata)
-
-		sessions = append(sessions, session)
+		result[i] = session
 	}
-
-	return sessions, nil
+	return result, nil
 }
 
-// DeleteSession deletes a session and its associated plans
+// DeleteSession deletes a session
 func (s *Store) DeleteSession(id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	_, err := s.db.Exec(`DELETE FROM agent_sessions WHERE id = ?`, id)
-	if err != nil {
-		return fmt.Errorf("failed to delete session: %w", err)
-	}
-
-	return nil
+	return s.agentGoDB.DeleteSession(id)
 }
 
 // SaveAgentModel saves or updates an agent model configuration
 func (s *Store) SaveAgentModel(agent *AgentModel) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	mcpToolsJSON, _ := json.Marshal(agent.MCPTools)
-	skillsJSON, _ := json.Marshal(agent.Skills)
-	kind := normalizeAgentKind(agent)
-
-	_, err := s.db.Exec(`
-		INSERT INTO agents (id, team_id, name, kind, description, instructions, model, preferred_provider, preferred_model, required_llm_capability, mcp_tools, skills, enable_rag, enable_memory, enable_ptc, enable_mcp, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET
-			team_id = excluded.team_id,
-			name = excluded.name,
-			kind = excluded.kind,
-			description = excluded.description,
-			instructions = excluded.instructions,
-			model = excluded.model,
-			preferred_provider = excluded.preferred_provider,
-			preferred_model = excluded.preferred_model,
-			required_llm_capability = excluded.required_llm_capability,
-			mcp_tools = excluded.mcp_tools,
-			skills = excluded.skills,
-			enable_rag = excluded.enable_rag,
-			enable_memory = excluded.enable_memory,
-			enable_ptc = excluded.enable_ptc,
-			enable_mcp = excluded.enable_mcp,
-			updated_at = CURRENT_TIMESTAMP
-	`, agent.ID, agent.TeamID, agent.Name, string(kind), agent.Description, agent.Instructions, agent.Model, agent.PreferredProvider, agent.PreferredModel, agent.RequiredLLMCapability, string(mcpToolsJSON), string(skillsJSON), agent.EnableRAG, agent.EnableMemory, agent.EnablePTC, agent.EnableMCP, agent.CreatedAt, agent.UpdatedAt)
-	return err
+	return s.agentGoDB.SaveAgentModel(&store.AgentModel{
+		ID:                    agent.ID,
+		TeamID:                agent.TeamID,
+		Name:                  agent.Name,
+		Kind:                  string(agent.Kind),
+		Description:           agent.Description,
+		Instructions:          agent.Instructions,
+		Model:                 agent.Model,
+		PreferredProvider:     agent.PreferredProvider,
+		PreferredModel:        agent.PreferredModel,
+		RequiredLLMCapability: agent.RequiredLLMCapability,
+		MCPTools:              agent.MCPTools,
+		Skills:                agent.Skills,
+		EnableRAG:             agent.EnableRAG,
+		EnableMemory:          agent.EnableMemory,
+		EnablePTC:             agent.EnablePTC,
+		EnableMCP:             agent.EnableMCP,
+		CreatedAt:             agent.CreatedAt,
+		UpdatedAt:             agent.UpdatedAt,
+	})
 }
 
 // GetAgentModel retrieves an agent model by ID
 func (s *Store) GetAgentModel(id string) (*AgentModel, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	agent := &AgentModel{}
-	var mcpToolsJSON, skillsJSON string
-	var kindStr string
-
-	err := s.db.QueryRow(`
-		SELECT id, team_id, name, kind, description, instructions, model, preferred_provider, preferred_model, required_llm_capability, mcp_tools, skills, enable_rag, enable_memory, enable_ptc, enable_mcp, created_at, updated_at
-		FROM agents WHERE id = ?
-	`, id).Scan(&agent.ID, &agent.TeamID, &agent.Name, &kindStr, &agent.Description, &agent.Instructions, &agent.Model, &agent.PreferredProvider, &agent.PreferredModel, &agent.RequiredLLMCapability,
-		&mcpToolsJSON, &skillsJSON, &agent.EnableRAG, &agent.EnableMemory, &agent.EnablePTC, &agent.EnableMCP, &agent.CreatedAt, &agent.UpdatedAt)
-
+	a, err := s.agentGoDB.GetAgentModel(id)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("agent not found: %s", id)
-		}
 		return nil, err
 	}
-
-	agent.Kind = normalizeLoadedAgentKind(kindStr, agent)
-	_ = json.Unmarshal([]byte(mcpToolsJSON), &agent.MCPTools)
-	_ = json.Unmarshal([]byte(skillsJSON), &agent.Skills)
-	if err := s.hydrateAgentMemberships(agent); err != nil {
+	model := convertToAgentModel(a)
+	if err := s.hydrateAgentMemberships(model); err != nil {
 		return nil, err
 	}
-
-	return agent, nil
+	return model, nil
 }
 
 // GetAgentModelByName retrieves an agent model by Name
 func (s *Store) GetAgentModelByName(name string) (*AgentModel, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	agent := &AgentModel{}
-	var mcpToolsJSON, skillsJSON string
-	var kindStr string
-
-	err := s.db.QueryRow(`
-		SELECT id, team_id, name, kind, description, instructions, model, preferred_provider, preferred_model, required_llm_capability, mcp_tools, skills, enable_rag, enable_memory, enable_ptc, enable_mcp, created_at, updated_at
-		FROM agents WHERE name = ?
-	`, name).Scan(&agent.ID, &agent.TeamID, &agent.Name, &kindStr, &agent.Description, &agent.Instructions, &agent.Model, &agent.PreferredProvider, &agent.PreferredModel, &agent.RequiredLLMCapability,
-		&mcpToolsJSON, &skillsJSON, &agent.EnableRAG, &agent.EnableMemory, &agent.EnablePTC, &agent.EnableMCP, &agent.CreatedAt, &agent.UpdatedAt)
-
+	a, err := s.agentGoDB.GetAgentModelByName(name)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("agent not found by name: %s", name)
-		}
 		return nil, err
 	}
-
-	agent.Kind = normalizeLoadedAgentKind(kindStr, agent)
-	_ = json.Unmarshal([]byte(mcpToolsJSON), &agent.MCPTools)
-	_ = json.Unmarshal([]byte(skillsJSON), &agent.Skills)
-	if err := s.hydrateAgentMemberships(agent); err != nil {
+	model := convertToAgentModel(a)
+	if err := s.hydrateAgentMemberships(model); err != nil {
 		return nil, err
 	}
-
-	return agent, nil
+	return model, nil
 }
 
 // ListAgentModels retrieves all agent models
 func (s *Store) ListAgentModels() ([]*AgentModel, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	rows, err := s.db.Query(`
-		SELECT id, team_id, name, kind, description, instructions, model, preferred_provider, preferred_model, required_llm_capability, mcp_tools, skills, enable_rag, enable_memory, enable_ptc, enable_mcp, created_at, updated_at
-		FROM agents ORDER BY name ASC
-	`)
+	agents, err := s.agentGoDB.ListAgentModels()
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	var agents []*AgentModel
-	for rows.Next() {
-		agent := &AgentModel{}
-		var mcpToolsJSON, skillsJSON string
-		var kindStr string
-
-		err := rows.Scan(&agent.ID, &agent.TeamID, &agent.Name, &kindStr, &agent.Description, &agent.Instructions, &agent.Model, &agent.PreferredProvider, &agent.PreferredModel, &agent.RequiredLLMCapability,
-			&mcpToolsJSON, &skillsJSON, &agent.EnableRAG, &agent.EnableMemory, &agent.EnablePTC, &agent.EnableMCP, &agent.CreatedAt, &agent.UpdatedAt)
-		if err != nil {
-			continue
-		}
-
-		agent.Kind = normalizeLoadedAgentKind(kindStr, agent)
-		_ = json.Unmarshal([]byte(mcpToolsJSON), &agent.MCPTools)
-		_ = json.Unmarshal([]byte(skillsJSON), &agent.Skills)
-		if err := s.hydrateAgentMemberships(agent); err != nil {
+	result := make([]*AgentModel, len(agents))
+	for i, a := range agents {
+		model := convertToAgentModel(a)
+		if err := s.hydrateAgentMemberships(model); err != nil {
 			return nil, err
 		}
-		agents = append(agents, agent)
+		result[i] = model
+	}
+	return result, nil
+}
+
+// SaveTeam/Squad saves or updates a squad
+func (s *Store) SaveTeam(team *Squad) error {
+	return s.agentGoDB.SaveSquad(&store.Squad{
+		ID:          team.ID,
+		Name:        team.Name,
+		Description: team.Description,
+		CreatedAt:   team.CreatedAt,
+		UpdatedAt:   team.UpdatedAt,
+	})
+}
+
+// GetTeam retrieves a team by ID
+func (s *Store) GetTeam(id string) (*Squad, error) {
+	sq, err := s.agentGoDB.GetSquad(id)
+	if err != nil {
+		return nil, err
+	}
+	return convertToSquad(sq), nil
+}
+
+// GetTeamByName retrieves a team by name
+func (s *Store) GetTeamByName(name string) (*Squad, error) {
+	sq, err := s.agentGoDB.GetSquadByName(name)
+	if err != nil {
+		return nil, err
+	}
+	return convertToSquad(sq), nil
+}
+
+// ListTeams retrieves all teams
+func (s *Store) ListTeams() ([]*Squad, error) {
+	squads, err := s.agentGoDB.ListSquads()
+	if err != nil {
+		return nil, err
 	}
 
-	return agents, nil
+	result := make([]*Squad, len(squads))
+	for i, sq := range squads {
+		result[i] = convertToSquad(sq)
+	}
+	return result, nil
+}
+
+// DeleteTeam/Squad
+func (s *Store) DeleteTeam(id string) error {
+	return s.agentGoDB.DeleteSquad(id)
+}
+
+// DeleteAgentModel
+func (s *Store) DeleteAgentModel(id string) error {
+	return s.agentGoDB.DeleteAgentModel(id)
+}
+
+// Close closes the database connection
+func (s *Store) Close() error {
+	return s.agentGoDB.Close()
+}
+
+// Helper converters
+
+func convertToAgentModel(a *store.AgentModel) *AgentModel {
+	return &AgentModel{
+		ID:                    a.ID,
+		TeamID:                a.TeamID,
+		Name:                  a.Name,
+		Kind:                  AgentKind(a.Kind),
+		Description:           a.Description,
+		Instructions:          a.Instructions,
+		Model:                 a.Model,
+		PreferredProvider:     a.PreferredProvider,
+		PreferredModel:        a.PreferredModel,
+		RequiredLLMCapability: a.RequiredLLMCapability,
+		MCPTools:              a.MCPTools,
+		Skills:                a.Skills,
+		EnableRAG:             a.EnableRAG,
+		EnableMemory:          a.EnableMemory,
+		EnablePTC:             a.EnablePTC,
+		EnableMCP:             a.EnableMCP,
+		CreatedAt:             a.CreatedAt,
+		UpdatedAt:             a.UpdatedAt,
+	}
+}
+
+func convertToSquad(sq *store.Squad) *Squad {
+	return &Squad{
+		ID:          sq.ID,
+		Name:        sq.Name,
+		Description: sq.Description,
+		CreatedAt:   sq.CreatedAt,
+		UpdatedAt:   sq.UpdatedAt,
+	}
 }
 
 func normalizeAgentKind(agent *AgentModel) AgentKind {
@@ -506,124 +354,4 @@ func normalizeAgentKind(agent *AgentModel) AgentKind {
 		return AgentKindAgent
 	}
 	return AgentKindCaptain
-}
-
-func normalizeLoadedAgentKind(kind string, agent *AgentModel) AgentKind {
-	switch AgentKind(kind) {
-	case AgentKindCaptain, AgentKindSpecialist, AgentKindAgent:
-		return AgentKind(kind)
-	case "leader", "lead", "lead-agent", "commander":
-		return AgentKindCaptain
-	default:
-		return normalizeAgentKind(agent)
-	}
-}
-
-func (s *Store) SaveTeam(team *Squad) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	_, err := s.db.Exec(`
-		INSERT INTO teams (id, name, description, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET
-			name = excluded.name,
-			description = excluded.description,
-			updated_at = CURRENT_TIMESTAMP
-	`, team.ID, team.Name, team.Description, team.CreatedAt, team.UpdatedAt)
-	return err
-}
-
-func (s *Store) GetTeam(id string) (*Squad, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	team := &Squad{}
-	err := s.db.QueryRow(`
-		SELECT id, name, description, created_at, updated_at
-		FROM teams WHERE id = ?
-	`, id).Scan(&team.ID, &team.Name, &team.Description, &team.CreatedAt, &team.UpdatedAt)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("team not found: %s", id)
-		}
-		return nil, err
-	}
-	return team, nil
-}
-
-func (s *Store) GetTeamByName(name string) (*Squad, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	team := &Squad{}
-	err := s.db.QueryRow(`
-		SELECT id, name, description, created_at, updated_at
-		FROM teams WHERE lower(name) = lower(?)
-	`, name).Scan(&team.ID, &team.Name, &team.Description, &team.CreatedAt, &team.UpdatedAt)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("team not found: %s", name)
-		}
-		return nil, err
-	}
-	return team, nil
-}
-
-func (s *Store) ListTeams() ([]*Squad, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	rows, err := s.db.Query(`
-		SELECT id, name, description, created_at, updated_at
-		FROM teams ORDER BY name ASC
-	`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var teams []*Squad
-	for rows.Next() {
-		team := &Squad{}
-		if err := rows.Scan(&team.ID, &team.Name, &team.Description, &team.CreatedAt, &team.UpdatedAt); err != nil {
-			continue
-		}
-		teams = append(teams, team)
-	}
-	return teams, nil
-}
-
-func (s *Store) DeleteTeam(id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if _, err := s.db.Exec(`DELETE FROM teams WHERE id = ?`, id); err != nil {
-		return fmt.Errorf("failed to delete team: %w", err)
-	}
-	return nil
-}
-
-// DeleteAgentModel deletes an agent model
-func (s *Store) DeleteAgentModel(id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if _, err := s.db.Exec(`DELETE FROM squad_memberships WHERE agent_id = ?`, id); err != nil {
-		return fmt.Errorf("failed to delete agent memberships: %w", err)
-	}
-	_, err := s.db.Exec(`DELETE FROM agents WHERE id = ?`, id)
-	if err != nil {
-		return fmt.Errorf("failed to delete agent: %w", err)
-	}
-
-	return nil
-}
-
-// Close closes the database connection
-func (s *Store) Close() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	return s.db.Close()
 }

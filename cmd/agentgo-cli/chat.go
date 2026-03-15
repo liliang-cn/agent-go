@@ -80,7 +80,7 @@ func init() {
 func runChat(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
-	chatCfg := cfg
+	chatCfg := Cfg
 	if chatCfg == nil {
 		var err error
 		chatCfg, err = config.Load(cfgFile)
@@ -89,7 +89,7 @@ func runChat(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	agentDBPath := chatCfg.DataDir() + "/agent.db"
+	agentDBPath := chatCfg.AgentDBPath()
 
 	var agentManager *agent.SquadManager
 	agentStore, storeErr := agent.NewStore(agentDBPath)

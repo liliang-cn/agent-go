@@ -16,6 +16,7 @@ import (
 
 // Client OpenAI兼容的LLM/Embedding Client
 type Client struct {
+	providerName  string
 	baseURL       string
 	key           string
 	modelName     string
@@ -24,7 +25,7 @@ type Client struct {
 }
 
 // NewClient 创建新client
-func NewClient(baseURL, key, modelName string) (*Client, error) {
+func NewClient(providerName, baseURL, key, modelName string) (*Client, error) {
 	if baseURL == "" {
 		return nil, fmt.Errorf("base_url is required")
 	}
@@ -33,14 +34,20 @@ func NewClient(baseURL, key, modelName string) (*Client, error) {
 	}
 
 	return &Client{
-		baseURL:   baseURL,
-		key:       key,
-		modelName: modelName,
+		providerName: providerName,
+		baseURL:      baseURL,
+		key:          key,
+		modelName:    modelName,
 		http: &http.Client{
 			Timeout: 600 * time.Second,
 		},
 		promptManager: prompt.NewManager(),
 	}, nil
+}
+
+// GetProviderName returns the provider name
+func (c *Client) GetProviderName() string {
+	return c.providerName
 }
 
 func (c *Client) SetPromptManager(m *prompt.Manager) {

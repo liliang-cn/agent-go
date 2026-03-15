@@ -16,6 +16,7 @@ import (
 	"github.com/liliang-cn/agent-go/pkg/domain"
 	"github.com/liliang-cn/agent-go/pkg/prompt"
 	"github.com/liliang-cn/agent-go/pkg/rag/graphrag"
+	"github.com/liliang-cn/agent-go/pkg/store"
 )
 
 type Service struct {
@@ -29,6 +30,7 @@ type Service struct {
 	extractor     *EntityExtractor
 	graphStore    domain.GraphStore
 	chatStore     domain.ChatStore
+	agentgoDB     *store.AgentGoDB
 	memoryService domain.MemoryService
 	promptManager *prompt.Manager
 	graphRAG      *graphrag.Service
@@ -56,6 +58,13 @@ func New(
 		promptManager: prompt.NewManager(),
 	}
 
+	// Initialize unified AgentGoDB from config if available
+	if config != nil {
+		if adb, err := store.NewAgentGoDB(config.AgentDBPath()); err == nil {
+			s.agentgoDB = adb
+		}
+	}
+
 	// Initialize entity extractor (only if generator is available)
 	if generator != nil {
 		s.extractor = NewEntityExtractor(generator)
@@ -66,23 +75,6 @@ func New(
 	if vectorStore != nil {
 		s.graphStore = vectorStore.GetGraphStore()
 		s.chatStore = vectorStore.GetChatStore()
-	}
-
-	// Initialize GraphRAG service if enabled in config
-	if config.RAG.Graph.Enabled && generator != nil && embedder != nil {
-		graphragConfig := &graphrag.Config{
-			EnableGraphRAG:            config.RAG.Graph.Enabled,
-			EntityTypes:               config.RAG.Graph.EntityTypes,
-			MaxConcurrentExtractions:  config.RAG.Graph.MaxConcurrentExtractions,
-			MinEntityLength:           config.RAG.Graph.MinEntityLength,
-			CommunityDetectionEnabled: config.RAG.Graph.CommunityDetection,
-			CommunityAlgorithm:        config.RAG.Graph.CommunityAlgorithm,
-			GraphQueryTopK:            config.RAG.Graph.GraphQueryTopK,
-			VectorWeight:              config.RAG.Graph.VectorWeight,
-			GraphWeight:               config.RAG.Graph.GraphWeight,
-		}
-		s.graphRAG = graphrag.NewService(graphragConfig, generator, embedder, s.graphStore)
-		log.Println("[GraphRAG] Service initialized")
 	}
 
 	return s
@@ -156,10 +148,10 @@ func (s *Service) Ingest(ctx context.Context, req domain.IngestRequest) (domain.
 	}
 
 	if req.ChunkSize <= 0 {
-		chunkOptions.Size = s.config.RAG.Chunker.ChunkSize
+		chunkOptions.Size = 500
 	}
 	if req.Overlap < 0 {
-		chunkOptions.Overlap = s.config.RAG.Chunker.Overlap
+		chunkOptions.Overlap = 50
 	}
 
 	textChunks, err := s.chunker.Split(content, chunkOptions)
@@ -195,7 +187,7 @@ func (s *Service) Ingest(ctx context.Context, req domain.IngestRequest) (domain.
 
 	// GraphRAG Extraction using new graphRAG service
 	// This runs asynchronously to not block ingestion
-	if s.graphRAG != nil && s.config.RAG.Graph.Enabled {
+	if s.graphRAG != nil && s.config.RAG.Enabled {
 		log.Println("[GraphRAG] Starting knowledge graph extraction (async)...")
 
 		go func() {
@@ -346,6 +338,15 @@ func (s *Service) Query(ctx context.Context, req domain.QueryRequest) (domain.Qu
 		return domain.QueryResponse{}, fmt.Errorf("failed to generate answer: %w", err)
 	}
 
+	// Persist to unified agentgo.db if available
+	if s.agentgoDB != nil && req.ConversationID != "" {
+		go func() {
+			// Best effort persistence
+			_ = s.agentgoDB.AddMessage(req.ConversationID, "user", req.Query, nil)
+			_ = s.agentgoDB.AddMessage(req.ConversationID, "assistant", answer, map[string]interface{}{"type": "rag"})
+		}()
+	}
+
 	// Clean up internal thinking tags from the answer only if ShowThinking is false
 	if !req.ShowThinking {
 		answer = s.cleanThinkingTags(answer)
@@ -487,7 +488,20 @@ func (s *Service) StreamQuery(ctx context.Context, req domain.QueryRequest, call
 		genOpts.MaxTokens = 2000
 	}
 
-	return s.generator.Stream(ctx, prompt, genOpts, s.wrapCallbackForThinking(callback, req.ShowThinking))
+	var fullAnswer strings.Builder
+	wrappedCallback := func(token string) {
+		fullAnswer.WriteString(token)
+		callback(token)
+	}
+
+	err = s.generator.Stream(ctx, prompt, genOpts, s.wrapCallbackForThinking(wrappedCallback, req.ShowThinking))
+	if err == nil && s.agentgoDB != nil && req.ConversationID != "" {
+		go func() {
+			_ = s.agentgoDB.AddMessage(req.ConversationID, "user", req.Query, nil)
+			_ = s.agentgoDB.AddMessage(req.ConversationID, "assistant", fullAnswer.String(), map[string]interface{}{"type": "rag_stream"})
+		}()
+	}
+	return err
 }
 
 func (s *Service) hybridSearch(ctx context.Context, req domain.QueryRequest) ([]domain.Chunk, error) {

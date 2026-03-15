@@ -94,7 +94,7 @@ func NewPool(config PoolConfig) (*Pool, error) {
 
 	// 初始化clients
 	for _, p := range config.Providers {
-		client, err := NewClient(p.BaseURL, p.Key, p.ModelName)
+		client, err := NewClient(p.Name, p.BaseURL, p.Key, p.ModelName)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create client %s: %w", p.Name, err)
 		}

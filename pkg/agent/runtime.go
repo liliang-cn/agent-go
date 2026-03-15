@@ -215,6 +215,10 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 				Sources:   allSources,
 				Timestamp: time.Now(),
 			}
+			// Persist session history to agentgo.db
+			if err := r.svc.store.SaveSession(r.session); err != nil {
+				r.svc.logger.Warn("failed to save session history", slog.String("error", err.Error()))
+			}
 			go r.saveToMemory(context.Background(), goal, result)
 			return
 		}
@@ -483,6 +487,11 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 				Content:   fullContent.String(),
 				Sources:   allSources, // Include all collected RAG sources
 				Timestamp: time.Now(),
+			}
+
+			// Persist session history to agentgo.db
+			if err := r.svc.store.SaveSession(r.session); err != nil {
+				r.svc.logger.Warn("failed to save session history", slog.String("error", err.Error()))
 			}
 
 			// Clear service sources for next run

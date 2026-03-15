@@ -551,6 +551,11 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 		log.Printf("[Agent] Failed to save plan: %v", err)
 	}
 
+	// Persist session history
+	if err := s.store.SaveSession(session); err != nil {
+		log.Printf("[Agent] Failed to save session: %v", err)
+	}
+
 	result, err := s.finalizeExecution(runCtx, session, goal, intent, memoryMemories, memoryLogic, "", currentResult)
 	if err != nil {
 		return nil, err

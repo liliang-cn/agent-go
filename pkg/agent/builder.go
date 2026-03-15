@@ -44,11 +44,12 @@ type Config struct {
 
 // RAGConfig holds RAG configuration
 type RAGConfig struct {
-	Enabled    bool   `json:"enabled"`
-	ChunkSize  int    `json:"chunk_size,omitempty"`
-	Overlap    int    `json:"overlap,omitempty"`
-	DBPath     string `json:"db_path,omitempty"`
-	Collection string `json:"collection,omitempty"`
+	Enabled        bool   `json:"enabled"`
+	ChunkSize      int    `json:"chunk_size,omitempty"`
+	Overlap        int    `json:"overlap,omitempty"`
+	DBPath         string `json:"db_path,omitempty"`
+	Collection     string `json:"collection,omitempty"`
+	EmbeddingModel string `json:"embedding_model,omitempty"`
 }
 
 // MCPConfig holds MCP configuration
@@ -60,7 +61,7 @@ type MCPConfig struct {
 // MemoryConfig holds Memory configuration
 type MemoryConfig struct {
 	Enabled          bool     `json:"enabled"`
-	DBPath           string   `json:"db_path,omitempty"`
+	MemoryPath       string   `json:"memory_path,omitempty"`
 	StoreType        string   `json:"store_type,omitempty"`        // "file", "vector", "hybrid"
 	ReflectThreshold int      `json:"reflect_threshold,omitempty"` // auto-reflect after N new facts (0 = disabled)
 	Mission          string   `json:"mission,omitempty"`           // MemoryBank mission statement
@@ -479,7 +480,7 @@ func (b *Builder) build() (*Service, error) {
 	// DB Path
 	dbPath := b.dbPath
 	if dbPath == "" {
-		dbPath = filepath.Join(agentgoCfg.DataDir(), "agent.db")
+		dbPath = agentgoCfg.AgentDBPath()
 	}
 
 	// Create service
@@ -653,7 +654,7 @@ func (b *Builder) buildMemoryService(agentgoCfg *config.Config, embedSvc domain.
 	var shadowStore domain.MemoryStore
 	var err error
 
-	memPath := b.memoryCfg.DBPath
+	memPath := b.memoryCfg.MemoryPath
 	if memPath == "" {
 		memPath = filepath.Join(agentgoCfg.DataDir(), "memories")
 	}
@@ -676,7 +677,7 @@ func (b *Builder) buildMemoryService(agentgoCfg *config.Config, embedSvc domain.
 			return nil, fmt.Errorf("failed to create file memory store: %w", err)
 		}
 	case "vector":
-		sqlitePath := filepath.Join(agentgoCfg.DataDir(), "agentgo.db")
+		sqlitePath := agentgoCfg.AgentDBPath()
 		memStore, err = store.NewMemoryStore(sqlitePath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create vector memory store: %w", err)
@@ -694,7 +695,7 @@ func (b *Builder) buildMemoryService(agentgoCfg *config.Config, embedSvc domain.
 			fileStore.WithLLM(llmSvc)
 		}
 		memStore = fileStore
-		sqlitePath := filepath.Join(agentgoCfg.DataDir(), "agentgo.db")
+		sqlitePath := agentgoCfg.AgentDBPath()
 		if sqliteStore, serr := store.NewMemoryStore(sqlitePath); serr == nil {
 			_ = sqliteStore.InitSchema(context.Background())
 			shadowStore = sqliteStore
@@ -742,9 +743,13 @@ func (b *Builder) buildMemoryService(agentgoCfg *config.Config, embedSvc domain.
 }
 
 func (b *Builder) buildRAGProcessor(agentgoCfg *config.Config, embedSvc domain.Embedder, llmSvc domain.Generator, memSvc domain.MemoryService) (domain.Processor, error) {
+	if !agentgoCfg.RAG.Enabled {
+		return nil, nil
+	}
+
 	vectorStore, err := ragstore.NewVectorStore(ragstore.StoreConfig{
 		Type:       "sqlite",
-		Parameters: map[string]interface{}{"db_path": agentgoCfg.RAG.Storage.DBPath},
+		Parameters: map[string]interface{}{"db_path": agentgoCfg.CortexDBPath()},
 	})
 	if err != nil {
 		return nil, err
@@ -760,7 +765,7 @@ func (b *Builder) buildSkillsService(agentgoCfg *config.Config) (*skills.Service
 		paths = agentgoCfg.SkillsPaths()
 	}
 	skillsCfg.Paths = paths
-	skillsCfg.DBPath = agentgoCfg.RAG.Storage.DBPath
+	skillsCfg.DBPath = agentgoCfg.AgentDBPath()
 	svc, err := skills.NewService(skillsCfg)
 	if err != nil {
 		return nil, err
@@ -776,14 +781,15 @@ func (b *Builder) buildSkillsService(agentgoCfg *config.Config) (*skills.Service
 // AgentGoption modifies RAGConfig
 type AgentGoption func(*RAGConfig)
 
-// WithRAGChunkSize sets RAG chunk size
-func WithRAGChunkSize(size int) AgentGoption { return func(c *RAGConfig) { c.ChunkSize = size } }
+// WithRAGEnabled sets RAG enabled status
+func WithRAGEnabled(enabled bool) AgentGoption {
+	return func(c *RAGConfig) { c.Enabled = enabled }
+}
 
-// WithAgentGoverlap sets RAG overlap
-func WithAgentGoverlap(overlap int) AgentGoption { return func(c *RAGConfig) { c.Overlap = overlap } }
-
-// WithRAGDBPath sets RAG database path
-func WithRAGDBPath(path string) AgentGoption { return func(c *RAGConfig) { c.DBPath = path } }
+// WithRAGEmbeddingModel sets RAG embedding model
+func WithRAGEmbeddingModel(model string) AgentGoption {
+	return func(c *RAGConfig) { c.EmbeddingModel = model }
+}
 
 // MCPOption modifies MCPConfig
 type MCPOption func(*MCPConfig)
@@ -796,9 +802,9 @@ func WithMCPConfigPaths(paths ...string) MCPOption {
 // MemoryOption modifies MemoryConfig
 type MemoryOption func(*MemoryConfig)
 
-// WithMemoryDBPath sets memory database path
-func WithMemoryDBPath(path string) MemoryOption {
-	return func(c *MemoryConfig) { c.DBPath = path }
+// WithMemoryPath sets memory storage path
+func WithMemoryPath(path string) MemoryOption {
+	return func(c *MemoryConfig) { c.MemoryPath = path }
 }
 
 // WithMemoryStoreType sets memory store type: "file", "vector", or "hybrid"

@@ -15,13 +15,15 @@ type modelNamer interface {
 func TestGlobalPoolServiceGetLLMByProviderAndModel(t *testing.T) {
 	svc := &GlobalPoolService{}
 	cfg := &config.Config{}
+	cfg.Home = t.TempDir()
+	cfg.ApplyHomeLayout()
 	cfg.LLM.Enabled = true
 	cfg.LLM.Strategy = pool.StrategyLeastLoad
 	cfg.LLM.Providers = []pool.Provider{
 		{Name: "openai_local", BaseURL: "http://local.example/v1", Key: "x", ModelName: "gpt-oss", MaxConcurrency: 2, Capability: 5},
 		{Name: "deepseek", BaseURL: "http://deepseek.example/v1", Key: "x", ModelName: "deepseek-chat", MaxConcurrency: 2, Capability: 4},
 	}
-	cfg.RAG.Embedding.Enabled = false
+	cfg.RAG.Enabled = false
 
 	if err := svc.Initialize(context.Background(), cfg); err != nil {
 		t.Fatalf("Initialize failed: %v", err)
@@ -49,13 +51,15 @@ func TestGlobalPoolServiceGetLLMByProviderAndModel(t *testing.T) {
 func TestGlobalPoolServiceGetLLMServiceByProviderAndModel(t *testing.T) {
 	svc := &GlobalPoolService{}
 	cfg := &config.Config{}
+	cfg.Home = t.TempDir()
+	cfg.ApplyHomeLayout()
 	cfg.LLM.Enabled = true
 	cfg.LLM.Strategy = pool.StrategyLeastLoad
 	cfg.LLM.Providers = []pool.Provider{
 		{Name: "openai_local", BaseURL: "http://local.example/v1", Key: "x", ModelName: "gpt-oss", MaxConcurrency: 2, Capability: 5},
 		{Name: "deepseek", BaseURL: "http://deepseek.example/v1", Key: "x", ModelName: "deepseek-chat", MaxConcurrency: 2, Capability: 4},
 	}
-	cfg.RAG.Embedding.Enabled = false
+	cfg.RAG.Enabled = false
 
 	if err := svc.Initialize(context.Background(), cfg); err != nil {
 		t.Fatalf("Initialize failed: %v", err)

@@ -33,7 +33,7 @@ func main() {
 		WithDBPath(filepath.Join(testDir, "agent.db")).
 		WithPTC().
 		WithMemory(
-			agent.WithMemoryDBPath(filepath.Join(testDir, "memories")),
+			agent.WithMemoryPath(filepath.Join(testDir, "memories")),
 			agent.WithMemoryStoreType("file"),
 		).
 		WithTool(agent.NewTool(

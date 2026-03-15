@@ -79,11 +79,8 @@ func newStatusCommand() *cobra.Command {
 			}
 
 			if sharedVerbose {
-				fmt.Fprintf(out, "TTLs: query=%s vector=%s llm=%s chunk=%s\n",
-					sharedCfg.Cache.QueryCacheTTL,
-					sharedCfg.Cache.VectorCacheTTL,
-					sharedCfg.Cache.LLMCacheTTL,
-					sharedCfg.Cache.ChunkCacheTTL,
+				fmt.Fprintf(out, "TTLs: default=%s\n",
+					time.Hour,
 				)
 			}
 			return nil
@@ -227,20 +224,15 @@ func buildManager() (*cachepkg.CacheManager, error) {
 		return nil, fmt.Errorf("cache command is not configured")
 	}
 
+	cacheCfg := cachepkg.DefaultCacheConfig()
+	if sharedCfg.Cache.MaxSize > 0 {
+		cacheCfg.MaxSize = sharedCfg.Cache.MaxSize
+	}
+
 	return cachepkg.NewCacheManagerWithStore(
 		sharedCfg.Cache.StoreType,
 		sharedCfg.Cache.Path,
-		cachepkg.CacheConfig{
-			EnableQueryCache:  sharedCfg.Cache.EnableQueryCache,
-			EnableVectorCache: sharedCfg.Cache.EnableVectorCache,
-			EnableLLMCache:    sharedCfg.Cache.EnableLLMCache,
-			EnableChunkCache:  sharedCfg.Cache.EnableChunkCache,
-			MaxSize:           sharedCfg.Cache.MaxSize,
-			QueryCacheTTL:     sharedCfg.Cache.QueryCacheTTL,
-			VectorCacheTTL:    sharedCfg.Cache.VectorCacheTTL,
-			LLMCacheTTL:       sharedCfg.Cache.LLMCacheTTL,
-			ChunkCacheTTL:     sharedCfg.Cache.ChunkCacheTTL,
-		},
+		cacheCfg,
 	)
 }
 

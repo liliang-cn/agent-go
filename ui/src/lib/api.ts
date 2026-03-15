@@ -50,6 +50,17 @@ export interface ChatResponse {
   session_id: string
 }
 
+export interface ChatSession {
+  id: string
+  created: string
+  updated: string
+  messages: number
+}
+
+export interface ChatSessionsResponse {
+  sessions: ChatSession[]
+}
+
 export interface StatusResponse {
   status: string
   version: string
@@ -145,6 +156,18 @@ export interface SquadTask {
   created_at: string
   started_at?: string
   finished_at?: string
+}
+
+export interface DispatchSquadTaskRequest {
+  message: string
+  lead_agent_name?: string
+  agent_names?: string[]
+}
+
+export interface DispatchSquadTaskResponse {
+  success: boolean
+  task_id: string
+  ack_message: string
 }
 
 export interface DispatchAgentTaskRequest {
@@ -443,6 +466,12 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
+  getChatSessions: (limit?: number) =>
+    fetchAPI<ChatSessionsResponse>(`/chat/sessions${limit ? `?limit=${limit}` : ''}`),
+
+  getChatSession: (sessionId: string) =>
+    fetchAPI<{ id: string; created: string; updated: string; messages: Array<{ id: string; role: string; content: string }> }>(`/chat/session/${sessionId}`),
+
   // Streaming chat with callbacks
   chatStream: (
     data: ChatRequest,
@@ -542,6 +571,12 @@ export const api = {
 
   dispatchAgentTask: (name: string, data: DispatchAgentTaskRequest) =>
     fetchAPI<DispatchAgentTaskResponse>(`/agents/${encodeURIComponent(name)}/dispatch`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  dispatchSquadTask: (squadId: string, data: DispatchSquadTaskRequest) =>
+    fetchAPI<DispatchSquadTaskResponse>(`/squads/tasks?squad_id=${encodeURIComponent(squadId)}`, {
       method: 'POST',
       body: JSON.stringify(data),
     }),

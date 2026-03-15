@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/liliang-cn/agent-go/pkg/config"
 )
@@ -17,17 +16,9 @@ func testConfig(t *testing.T) *config.Config {
 	cfg := &config.Config{
 		Home: home,
 		Cache: config.CacheConfig{
-			StoreType:         "file",
-			Path:              filepath.Join(home, "data", "cache"),
-			MaxSize:           10,
-			EnableQueryCache:  true,
-			EnableVectorCache: true,
-			EnableLLMCache:    true,
-			EnableChunkCache:  true,
-			QueryCacheTTL:     time.Minute,
-			VectorCacheTTL:    time.Minute,
-			LLMCacheTTL:       time.Minute,
-			ChunkCacheTTL:     time.Minute,
+			StoreType: "file",
+			Path:      filepath.Join(home, "data", "cache"),
+			MaxSize:   10,
 		},
 	}
 	cfg.Cache.Path = filepath.Join(home, "data", "cache")

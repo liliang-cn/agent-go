@@ -28,7 +28,7 @@ func main() {
 	svc, err := agent.New("SkillMemoryBot").
 		WithDBPath(filepath.Join(testDir, "agent.db")).
 		WithMemory(
-			agent.WithMemoryDBPath(filepath.Join(testDir, "memories")),
+			agent.WithMemoryPath(filepath.Join(testDir, "memories")),
 			agent.WithMemoryStoreType("file"),
 		).
 		WithSkills(agent.WithSkillsPaths(skillsPath)).

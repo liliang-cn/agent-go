@@ -50,12 +50,12 @@ You can also use --text flag to ingest text directly.`,
 		var err error
 
 		// Default to SQLite
-		sqliteStore, err := store.NewSQLiteStore(Cfg.RAG.Storage.DBPath, Cfg.RAG.Storage.IndexType)
+		sqliteStore, err := store.NewSQLiteStore(Cfg.CortexDBPath(), "hnsw")
 		if err != nil {
 			return fmt.Errorf("failed to create vector store: %w", err)
 		}
 		vectorStore = sqliteStore
-		docStore = store.NewDocumentStore(sqliteStore.GetCortexdbStore())
+		docStore = store.NewDocumentStoreFor(vectorStore)
 		defer func() {
 			if err := sqliteStore.Close(); err != nil {
 				log.Printf("failed to close vector store: %v", err)

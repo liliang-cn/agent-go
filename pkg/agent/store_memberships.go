@@ -1,161 +1,89 @@
 package agent
 
 import (
-	"database/sql"
 	"fmt"
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/liliang-cn/agent-go/pkg/store"
 )
-
-func (s *Store) initMembershipSchema() error {
-	_, err := s.db.Exec(`
-		CREATE TABLE IF NOT EXISTS squad_memberships (
-			agent_id TEXT NOT NULL,
-			squad_id TEXT NOT NULL,
-			role TEXT NOT NULL,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			PRIMARY KEY (agent_id, squad_id)
-		)
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to create squad_memberships table: %w", err)
-	}
-
-	if _, err := s.db.Exec(`
-		INSERT OR IGNORE INTO squad_memberships (agent_id, squad_id, role, created_at, updated_at)
-		SELECT id, team_id, kind, created_at, updated_at
-		FROM agents
-		WHERE team_id IS NOT NULL AND trim(team_id) <> ''
-	`); err != nil {
-		return fmt.Errorf("failed to migrate legacy squad memberships: %w", err)
-	}
-
-	return nil
-}
 
 func (s *Store) SaveSquadMembership(membership *SquadMembership) error {
 	if membership == nil {
 		return fmt.Errorf("membership is required")
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if membership.CreatedAt.IsZero() {
 		membership.CreatedAt = time.Now()
 	}
 	membership.UpdatedAt = time.Now()
 
-	_, err := s.db.Exec(`
-		INSERT INTO squad_memberships (agent_id, squad_id, role, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?)
-		ON CONFLICT(agent_id, squad_id) DO UPDATE SET
-			role = excluded.role,
-			updated_at = excluded.updated_at
-	`, membership.AgentID, membership.SquadID, string(normalizeMembershipRole(membership.Role)), membership.CreatedAt, membership.UpdatedAt)
-	if err != nil {
-		return fmt.Errorf("failed to save squad membership: %w", err)
-	}
-	return nil
+	return s.agentGoDB.SaveSquadMembership(&store.SquadMembership{
+		AgentID:   membership.AgentID,
+		SquadID:   membership.SquadID,
+		Role:      string(normalizeMembershipRole(membership.Role)),
+		CreatedAt: membership.CreatedAt,
+		UpdatedAt: membership.UpdatedAt,
+	})
 }
 
 func (s *Store) DeleteSquadMembership(agentID, squadID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if _, err := s.db.Exec(`DELETE FROM squad_memberships WHERE agent_id = ? AND squad_id = ?`, agentID, squadID); err != nil {
-		return fmt.Errorf("failed to delete squad membership: %w", err)
-	}
-	return nil
+	return s.agentGoDB.DeleteSquadMembership(agentID, squadID)
 }
 
 func (s *Store) DeleteMembershipsBySquad(squadID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if _, err := s.db.Exec(`DELETE FROM squad_memberships WHERE squad_id = ?`, squadID); err != nil {
-		return fmt.Errorf("failed to delete squad memberships: %w", err)
-	}
-	return nil
+	return s.agentGoDB.DeleteMembershipsBySquad(squadID)
 }
 
 func (s *Store) DeleteMembershipsByAgent(agentID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if _, err := s.db.Exec(`DELETE FROM squad_memberships WHERE agent_id = ?`, agentID); err != nil {
-		return fmt.Errorf("failed to delete agent memberships: %w", err)
-	}
-	return nil
+	return s.agentGoDB.DeleteMembershipsByAgent(agentID)
 }
 
 func (s *Store) ListSquadMemberships() ([]SquadMembership, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.listSquadMembershipsNoLock("", "")
-}
-
-func (s *Store) ListSquadMembershipsByAgent(agentID string) ([]SquadMembership, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.listSquadMembershipsNoLock(agentID, "")
-}
-
-func (s *Store) ListSquadMembershipsBySquad(squadID string) ([]SquadMembership, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.listSquadMembershipsNoLock("", squadID)
-}
-
-func (s *Store) listSquadMembershipsNoLock(agentID, squadID string) ([]SquadMembership, error) {
-	query := `
-		SELECT m.agent_id, m.squad_id, t.name, m.role, m.created_at, m.updated_at
-		FROM squad_memberships m
-		LEFT JOIN teams t ON t.id = m.squad_id
-		WHERE 1 = 1
-	`
-	args := make([]any, 0, 2)
-	if strings.TrimSpace(agentID) != "" {
-		query += ` AND m.agent_id = ?`
-		args = append(args, agentID)
-	}
-	if strings.TrimSpace(squadID) != "" {
-		query += ` AND m.squad_id = ?`
-		args = append(args, squadID)
-	}
-	query += ` ORDER BY m.squad_id ASC, m.agent_id ASC`
-
-	rows, err := s.db.Query(query, args...)
+	memberships, err := s.agentGoDB.ListSquadMemberships("", "")
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	return convertToSquadMemberships(memberships), nil
+}
 
-	memberships := make([]SquadMembership, 0)
-	for rows.Next() {
-		var membership SquadMembership
-		var squadName sql.NullString
-		var role string
-		if err := rows.Scan(&membership.AgentID, &membership.SquadID, &squadName, &role, &membership.CreatedAt, &membership.UpdatedAt); err != nil {
-			return nil, err
-		}
-		if squadName.Valid {
-			membership.SquadName = squadName.String
-		}
-		membership.Role = normalizeMembershipRole(AgentKind(role))
-		memberships = append(memberships, membership)
+func (s *Store) ListSquadMembershipsByAgent(agentID string) ([]SquadMembership, error) {
+	memberships, err := s.agentGoDB.ListSquadMemberships(agentID, "")
+	if err != nil {
+		return nil, err
 	}
+	return convertToSquadMemberships(memberships), nil
+}
 
-	return memberships, nil
+func (s *Store) ListSquadMembershipsBySquad(squadID string) ([]SquadMembership, error) {
+	memberships, err := s.agentGoDB.ListSquadMemberships("", squadID)
+	if err != nil {
+		return nil, err
+	}
+	return convertToSquadMemberships(memberships), nil
+}
+
+func convertToSquadMemberships(memberships []*store.SquadMembership) []SquadMembership {
+	result := make([]SquadMembership, len(memberships))
+	for i, m := range memberships {
+		result[i] = SquadMembership{
+			AgentID:   m.AgentID,
+			SquadID:   m.SquadID,
+			SquadName: m.SquadName,
+			Role:      normalizeMembershipRole(AgentKind(m.Role)),
+			CreatedAt: m.CreatedAt,
+			UpdatedAt: m.UpdatedAt,
+		}
+	}
+	return result
 }
 
 func (s *Store) hydrateAgentMemberships(agent *AgentModel) error {
 	if agent == nil {
 		return nil
 	}
-	memberships, err := s.listSquadMembershipsNoLock(agent.ID, "")
+	memberships, err := s.ListSquadMembershipsByAgent(agent.ID)
 	if err != nil {
 		return err
 	}

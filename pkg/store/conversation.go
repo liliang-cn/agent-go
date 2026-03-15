@@ -283,10 +283,3 @@ func (s *ConversationStore) SearchConversations(query string, limit, offset int)
 
 	return conversations, total, nil
 }
-
-func truncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
-}

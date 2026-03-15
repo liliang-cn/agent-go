@@ -35,7 +35,7 @@ func DefaultConfig() *Config {
 		Paths:                  []string{".skills", localSkills, userSkills},
 		AutoLoad:               true,
 		CacheEnabled:           true,
-		DBPath:                 filepath.Join(homeDir, ".agentgo", "data", "skills.db"),
+		DBPath:                 filepath.Join(homeDir, ".agentgo", "data", "agentgo.db"),
 		LogLevel:               "info",
 		AllowCommandInjection:  false,
 		RequireConfirmation:    true,
@@ -86,7 +86,7 @@ func (c *Config) Validate() error {
 	}
 	if c.DBPath == "" {
 		homeDir, _ := os.UserHomeDir()
-		c.DBPath = filepath.Join(homeDir, ".agentgo", "data", "skills.db")
+		c.DBPath = filepath.Join(homeDir, ".agentgo", "data", "agentgo.db")
 	}
 	return nil
 }

@@ -3,11 +3,13 @@ package services
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/liliang-cn/agent-go/pkg/config"
 	"github.com/liliang-cn/agent-go/pkg/domain"
 	"github.com/liliang-cn/agent-go/pkg/pool"
+	"github.com/liliang-cn/agent-go/pkg/store"
 )
 
 var (
@@ -20,6 +22,7 @@ type GlobalPoolService struct {
 	config        *config.Config
 	llmPool       *pool.Pool
 	embeddingPool *pool.Pool
+	db            *store.AgentGoDB
 	initialized   bool
 	mu            sync.RWMutex
 }
@@ -55,6 +58,13 @@ func (s *GlobalPoolService) Initialize(ctx context.Context, cfg *config.Config) 
 
 	s.config = cfg
 
+	// 1. Initialize Unified Database
+	db, err := store.NewAgentGoDB(cfg.AgentDBPath())
+	if err != nil {
+		return fmt.Errorf("failed to initialize agentgo db: %w", err)
+	}
+	s.db = db
+
 	// 2. LLM Pool
 	llmPool, err := pool.NewPool(pool.PoolConfig{
 		Enabled:   cfg.LLM.Enabled,
@@ -67,10 +77,18 @@ func (s *GlobalPoolService) Initialize(ctx context.Context, cfg *config.Config) 
 	s.llmPool = llmPool
 
 	// 3. Embedding Pool
+	embeddingProviders := make([]pool.Provider, len(cfg.LLM.Providers))
+	for i, p := range cfg.LLM.Providers {
+		embeddingProviders[i] = p
+		if cfg.RAG.EmbeddingModel != "" {
+			embeddingProviders[i].ModelName = cfg.RAG.EmbeddingModel
+		}
+	}
+
 	embeddingPool, err := pool.NewPool(pool.PoolConfig{
-		Enabled:   cfg.RAG.Embedding.Enabled,
-		Strategy:  cfg.RAG.Embedding.Strategy,
-		Providers: cfg.RAG.Embedding.Providers,
+		Enabled:   cfg.RAG.Enabled,
+		Strategy:  cfg.LLM.Strategy,
+		Providers: embeddingProviders,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create embedding pool: %w", err)
@@ -188,6 +206,153 @@ func (s *GlobalPoolService) ReleaseEmbedding(client *pool.Client) {
 	if s.initialized {
 		s.embeddingPool.Release(client)
 	}
+}
+
+// GetAgentGoDB returns the underlying unified database
+func (s *GlobalPoolService) GetAgentGoDB() *store.AgentGoDB {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.db
+}
+
+// ChatOptions 顶级Chat API配置选项
+type ChatOptions struct {
+	SessionID         string
+	Provider          string
+	Model             string
+	MaxTokens         int
+	Temperature       float64
+	SystemPrompt      string
+	HistoryLimit      int
+	SkipPersistence   bool
+}
+
+// Chat 顶级Chat API：支持Provider指定与历史自动持久化
+func (s *GlobalPoolService) Chat(ctx context.Context, message string, opts ChatOptions) (string, error) {
+	s.mu.RLock()
+	if !s.initialized {
+		s.mu.RUnlock()
+		return "", fmt.Errorf("pool service not initialized")
+	}
+	s.mu.RUnlock()
+
+	// 1. Resolve Provider and Model
+	hint := pool.SelectionHint{
+		PreferredProvider: opts.Provider,
+		PreferredModel:    opts.Model,
+	}
+	client, err := s.llmPool.GetWithHint(hint)
+	if err != nil {
+		return "", err
+	}
+	defer s.llmPool.Release(client)
+
+	// 2. Load History from Unified DB
+	var messages []domain.Message
+	if opts.SessionID != "" && s.db != nil {
+		history, _ := s.db.GetMessages(opts.SessionID, opts.HistoryLimit)
+		for _, m := range history {
+			messages = append(messages, domain.Message{Role: m.Role, Content: m.Content})
+		}
+	}
+
+	// 3. Prepare Current Context
+	if opts.SystemPrompt != "" {
+		messages = append([]domain.Message{{Role: "system", Content: opts.SystemPrompt}}, messages...)
+	}
+	messages = append(messages, domain.Message{Role: "user", Content: message})
+
+	// 4. Generate Response
+	genOpts := &domain.GenerationOptions{
+		MaxTokens:   opts.MaxTokens,
+		Temperature: opts.Temperature,
+	}
+	// Direct LLM chat doesn't use tools here, but we use the flexible GenerateWithTools
+	res, err := client.GenerateWithTools(ctx, messages, nil, genOpts)
+	if err != nil {
+		return "", err
+	}
+	answer := res.Content
+
+	// 5. Automatic Persistence to agentgo.db
+	if !opts.SkipPersistence && opts.SessionID != "" && s.db != nil {
+		go func() {
+			_ = s.db.AddMessage(opts.SessionID, "user", message, nil)
+			_ = s.db.AddMessage(opts.SessionID, "assistant", answer, map[string]interface{}{
+				"provider": client.GetProviderName(),
+				"model":    client.GetModelName(),
+			})
+		}()
+	}
+
+	return answer, nil
+}
+
+// StreamChat 顶级流式Chat API：支持Provider指定与历史自动持久化
+func (s *GlobalPoolService) StreamChat(ctx context.Context, message string, opts ChatOptions, callback func(string)) error {
+	s.mu.RLock()
+	if !s.initialized {
+		s.mu.RUnlock()
+		return fmt.Errorf("pool service not initialized")
+	}
+	s.mu.RUnlock()
+
+	// 1. Resolve Provider and Model
+	hint := pool.SelectionHint{
+		PreferredProvider: opts.Provider,
+		PreferredModel:    opts.Model,
+	}
+	client, err := s.llmPool.GetWithHint(hint)
+	if err != nil {
+		return err
+	}
+	defer s.llmPool.Release(client)
+
+	// 2. Load History from Unified DB
+	var messages []domain.Message
+	if opts.SessionID != "" && s.db != nil {
+		history, _ := s.db.GetMessages(opts.SessionID, opts.HistoryLimit)
+		for _, m := range history {
+			messages = append(messages, domain.Message{Role: m.Role, Content: m.Content})
+		}
+	}
+
+	// 3. Prepare Current Context
+	if opts.SystemPrompt != "" {
+		messages = append([]domain.Message{{Role: "system", Content: opts.SystemPrompt}}, messages...)
+	}
+	messages = append(messages, domain.Message{Role: "user", Content: message})
+
+	// 4. Stream and Capture Answer
+	var fullAnswer strings.Builder
+	wrappedCallback := func(delta *domain.GenerationResult) error {
+		if delta.Content != "" {
+			fullAnswer.WriteString(delta.Content)
+			callback(delta.Content)
+		}
+		return nil
+	}
+
+	genOpts := &domain.GenerationOptions{
+		MaxTokens:   opts.MaxTokens,
+		Temperature: opts.Temperature,
+	}
+
+	err = client.StreamWithTools(ctx, messages, nil, genOpts, wrappedCallback)
+
+	// 5. Automatic Persistence to agentgo.db once stream ends
+	if err == nil && !opts.SkipPersistence && opts.SessionID != "" && s.db != nil {
+		go func() {
+			_ = s.db.AddMessage(opts.SessionID, "user", message, nil)
+			_ = s.db.AddMessage(opts.SessionID, "assistant", fullAnswer.String(), map[string]interface{}{
+				"provider": client.GetProviderName(),
+				"model":    client.GetModelName(),
+				"stream":   true,
+			})
+		}()
+	}
+
+	return err
 }
 
 // Generate 使用pool生成文本（自动获取和释放）

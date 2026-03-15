@@ -471,7 +471,7 @@ func initAgentServices(ctx context.Context) (*rag.Client, *agent.Service, error)
 
 	// Initialize TeamManager
 	if Cfg != nil {
-		agentDBPath := Cfg.DataDir() + "/agent.db"
+		agentDBPath := Cfg.AgentDBPath()
 		agentStore, storeErr := agent.NewStore(agentDBPath)
 		if storeErr == nil {
 			agentManager := agent.NewTeamManager(agentStore)

@@ -22,7 +22,7 @@ func NewVectorStore(config StoreConfig) (domain.VectorStore, error) {
 			indexType, _ = config.Parameters["index_type"].(string)
 		}
 		if dbPath == "" {
-			dbPath = "./.agentgo/data/rag.db"
+			dbPath = "./.agentgo/data/cortex.db"
 		}
 		return NewSQLiteStore(dbPath, indexType)
 

@@ -57,7 +57,7 @@ MCP tools provide enhanced functionality for file operations, database queries, 
 		var err error
 
 		// Default to SQLite
-		sqliteStore, err := store.NewSQLiteStore(Cfg.RAG.Storage.DBPath, Cfg.RAG.Storage.IndexType)
+		sqliteStore, err := store.NewSQLiteStore(Cfg.CortexDBPath(), Cfg.Internal.Storage.IndexType)
 		if err != nil {
 			return fmt.Errorf("failed to create vector store: %w", err)
 		}
@@ -433,7 +433,7 @@ func processMCPQuery(cmd *cobra.Command, args []string) error {
 	}
 
 	// Initialize processors for LLM functionality
-	vectorStore, err := store.NewSQLiteStore(Cfg.RAG.Storage.DBPath, Cfg.RAG.Storage.IndexType)
+	vectorStore, err := store.NewSQLiteStore(Cfg.CortexDBPath(), Cfg.Internal.Storage.IndexType)
 	if err != nil {
 		return fmt.Errorf("failed to create vector store: %w", err)
 	}

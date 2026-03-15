@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/liliang-cn/agent-go/pkg/domain"
 	"github.com/liliang-cn/agent-go/pkg/services"
 	"github.com/spf13/cobra"
 )
@@ -40,44 +39,25 @@ var llmChatCmd = &cobra.Command{
 			return fmt.Errorf("pool service not initialized")
 		}
 
-		// Create generation options
-		opts := &domain.GenerationOptions{
-			MaxTokens:   30000,
-			Temperature: 0.7,
+		// Execute generation (streaming or non-streaming) using top-level Chat APIs
+		chatOpts := services.ChatOptions{
+			Provider:  strings.TrimSpace(llmProvider),
+			MaxTokens: 30000,
+			// SessionID: "cli-session", // Optional: could add a flag for this
 		}
 
-		var (
-			err       error
-			generator domain.Generator
-		)
-		if strings.TrimSpace(llmProvider) != "" {
-			generator, err = poolService.GetLLMServiceByProvider(strings.TrimSpace(llmProvider))
-			if err != nil {
-				return fmt.Errorf("failed to get provider %s: %w", llmProvider, err)
-			}
-		} else {
-			generator, err = poolService.GetLLMService()
-			if err != nil {
-				return fmt.Errorf("failed to get default llm service: %w", err)
-			}
-		}
-
-		fmt.Println("🤖 LLM Response:")
-		fmt.Println("================")
-
-		// Execute generation (streaming or non-streaming)
 		if llmStream {
-			err := generator.Stream(ctx, message, opts, func(chunk string) {
+			err := poolService.StreamChat(ctx, message, chatOpts, func(chunk string) {
 				fmt.Print(chunk)
 			})
 			if err != nil {
-				return fmt.Errorf("streaming generation failed: %w", err)
+				return fmt.Errorf("streaming chat failed: %w", err)
 			}
 			fmt.Println()
 		} else {
-			resp, err := generator.Generate(ctx, message, opts)
+			resp, err := poolService.Chat(ctx, message, chatOpts)
 			if err != nil {
-				return fmt.Errorf("generation failed: %w", err)
+				return fmt.Errorf("chat failed: %w", err)
 			}
 			fmt.Println(resp)
 		}
@@ -91,7 +71,7 @@ var llmListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List available LLM models",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if cfg == nil {
+		if Cfg == nil {
 			return fmt.Errorf("configuration not loaded")
 		}
 
@@ -99,7 +79,7 @@ var llmListCmd = &cobra.Command{
 		fmt.Println("==========================")
 
 		// List LLM pool providers
-		for _, p := range cfg.LLM.Providers {
+		for _, p := range Cfg.LLM.Providers {
 			fmt.Printf("\n📦 %s\n", p.Name)
 			fmt.Printf("   URL: %s\n", p.BaseURL)
 			fmt.Printf("   Model: %s\n", p.ModelName)
@@ -107,7 +87,7 @@ var llmListCmd = &cobra.Command{
 			fmt.Printf("   Max Concurrency: %d\n", p.MaxConcurrency)
 		}
 
-		fmt.Printf("\n⚙️  Strategy: %s\n", cfg.LLM.Strategy)
+		fmt.Printf("\n⚙️  Strategy: %s\n", Cfg.LLM.Strategy)
 
 		return nil
 	},

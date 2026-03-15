@@ -26,7 +26,7 @@ var (
 	verbose bool
 	debug   bool
 	quiet   bool
-	cfg     *config.Config
+	Cfg     *config.Config
 	version string = "dev"
 )
 
@@ -47,7 +47,7 @@ var RootCmd = &cobra.Command{
 		}
 
 		var err error
-		cfg, err = config.Load(cfgFile)
+		Cfg, err = config.Load(cfgFile)
 		if err != nil {
 			return fmt.Errorf("failed to load configuration: %w", err)
 		}
@@ -55,7 +55,7 @@ var RootCmd = &cobra.Command{
 		switch {
 		case quiet:
 			agentgolog.SetLevel(slog.LevelError)
-		case debug || cfg.Debug:
+		case debug || Cfg.Debug:
 			agentgolog.SetLevel(slog.LevelDebug)
 		case verbose:
 			agentgolog.SetLevel(slog.LevelInfo)
@@ -66,19 +66,19 @@ var RootCmd = &cobra.Command{
 		if commandNeedsGlobalPool(cmd) {
 			globalPoolService := services.GetGlobalPoolService()
 			ctx := context.Background()
-			if err := globalPoolService.Initialize(ctx, cfg); err != nil {
+			if err := globalPoolService.Initialize(ctx, Cfg); err != nil {
 				return fmt.Errorf("failed to initialize global pool service: %w", err)
 			}
 		}
 
 		// Pass shared variables to all packages
-		rag.SetSharedVariables(cfg, verbose, quiet, version)
-		mcp.SetSharedVariables(cfg, verbose, quiet)
-		agent.SetSharedVariables(cfg, verbose)
-		memory.SetSharedVariables(cfg, verbose)
-		ptc.SetSharedVariables(cfg, verbose)
-		acp.SetSharedVariables(cfg, verbose)
-		cachecmd.SetSharedVariables(cfg, verbose)
+		rag.SetSharedVariables(Cfg, verbose, quiet, version)
+		mcp.SetSharedVariables(Cfg, verbose, quiet)
+		agent.SetSharedVariables(Cfg, verbose)
+		memory.SetSharedVariables(Cfg, verbose)
+		ptc.SetSharedVariables(Cfg, verbose)
+		acp.SetSharedVariables(Cfg, verbose)
+		cachecmd.SetSharedVariables(Cfg, verbose)
 
 		return nil
 	},

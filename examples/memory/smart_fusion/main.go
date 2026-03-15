@@ -24,7 +24,7 @@ func main() {
 	svc, err := agent.New("FileMemoryAgent").
 		WithDBPath(filepath.Join(testDataDir, "agent.db")).
 		WithMemory(
-			agent.WithMemoryDBPath(filepath.Join(testDataDir, "memories")),
+			agent.WithMemoryPath(filepath.Join(testDataDir, "memories")),
 			agent.WithMemoryStoreType("file"), // file-only storage
 		).
 		Build()

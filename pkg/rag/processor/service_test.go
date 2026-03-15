@@ -211,11 +211,7 @@ func (s *SimpleMetadataExtractor) ExtractMetadata(ctx context.Context, content, 
 func createSimpleTestService() *Service {
 	cfg := &config.Config{
 		RAG: config.RAGConfig{
-			Chunker: config.ChunkerConfig{
-				ChunkSize: 100,
-				Overlap:   20,
-				Method:    "sentence",
-			},
+			Enabled: true,
 		},
 	}
 
@@ -337,11 +333,7 @@ func TestProcessorService_QueryUsesSafeDefaultMaxTokens(t *testing.T) {
 		&SimpleDocumentStore{},
 		&config.Config{
 			RAG: config.RAGConfig{
-				Chunker: config.ChunkerConfig{
-					ChunkSize: 100,
-					Overlap:   20,
-					Method:    "sentence",
-				},
+				Enabled: true,
 			},
 		},
 		&SimpleMetadataExtractor{},
@@ -450,11 +442,7 @@ func TestProcessorService_IngestEmptyContent(t *testing.T) {
 func TestProcessorService_WithMetadataExtraction(t *testing.T) {
 	cfg := &config.Config{
 		RAG: config.RAGConfig{
-			Chunker: config.ChunkerConfig{
-				ChunkSize: 100,
-				Overlap:   20,
-				Method:    "sentence",
-			},
+			Enabled: true,
 		},
 	}
 

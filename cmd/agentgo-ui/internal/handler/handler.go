@@ -107,13 +107,13 @@ func (h *Handler) HandleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// RAG info
-	ragEnabled := h.cfg.RAG.Storage.DBPath != ""
+	ragEnabled := h.cfg.RAG.Enabled
 	var ragInfo map[string]interface{}
 	if ragEnabled && h.ragClient != nil {
 		stats, _ := h.ragClient.GetStats(r.Context())
 		ragInfo = map[string]interface{}{
 			"enabled":   true,
-			"db_path":   h.cfg.RAG.Storage.DBPath,
+			"db_path":   h.cfg.CortexDBPath(),
 			"documents": stats.TotalDocuments,
 			"chunks":    stats.TotalChunks,
 		}

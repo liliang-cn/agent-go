@@ -26,3 +26,7 @@ progress.md
 findings.md
 
 task_plan.md
+
+# Local logs
+.playwright-mcp/*.log
+tmp/air-agentgo-ui/build-errors.log

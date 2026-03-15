@@ -127,33 +127,21 @@ func schemaHasProperty(schema interface{}, key string) bool {
 }
 
 func testAgentConfig(home string) *config.Config {
-	return &config.Config{
+	cfg := &config.Config{
 		Home: home,
 		LLM: config.LLMConfig{
 			Enabled: false,
 		},
 		RAG: config.RAGConfig{
 			Enabled: false,
-			Embedding: config.EmbeddingPoolConfig{
-				Enabled: false,
-			},
-			Storage: config.CortexdbConfig{
-				DBPath:    filepath.Join(home, "data", "agentgo.db"),
-				TopK:      5,
-				Threshold: 0.0,
-				IndexType: "hnsw",
-			},
-			Chunker: config.ChunkerConfig{
-				ChunkSize: 500,
-				Overlap:   50,
-				Method:    "sentence",
-			},
 		},
 		Memory: config.MemoryConfig{
 			StoreType:  "file",
 			MemoryPath: filepath.Join(home, "data", "memories"),
 		},
 	}
+	cfg.ApplyHomeLayout()
+	return cfg
 }
 
 func TestAgentWithMemoryStoresAndRecallsFileMemory(t *testing.T) {

@@ -41,12 +41,9 @@ func (m *MockExecutor) Execute(ctx context.Context, params map[string]string) (*
 
 func TestNewScheduler(t *testing.T) {
 	cfg := &config.Config{
-		RAG: config.RAGConfig{
-			Storage: config.CortexdbConfig{
-				DBPath: "/tmp/test.db",
-			},
-		},
+		Home: "/tmp",
 	}
+	cfg.ApplyHomeLayout()
 
 	scheduler := NewScheduler(cfg)
 	require.NotNil(t, scheduler)
@@ -54,18 +51,15 @@ func TestNewScheduler(t *testing.T) {
 	assert.NotNil(t, scheduler.cronParser)
 	assert.NotNil(t, scheduler.executors)
 	assert.False(t, scheduler.running)
-	assert.Equal(t, "/tmp/test.db", scheduler.config.DatabasePath)
+	assert.Equal(t, "/tmp/data/cortex.db", scheduler.config.DatabasePath)
 }
 
 func TestSchedulerStartStop(t *testing.T) {
 	tempDir := t.TempDir()
 	cfg := &config.Config{
-		RAG: config.RAGConfig{
-			Storage: config.CortexdbConfig{
-				DBPath: tempDir + "/data/test.db",
-			},
-		},
+		Home: tempDir,
 	}
+	cfg.ApplyHomeLayout()
 
 	scheduler := NewScheduler(cfg)
 	require.NotNil(t, scheduler)
@@ -110,12 +104,9 @@ func TestRegisterExecutor(t *testing.T) {
 func TestCreateTask(t *testing.T) {
 	tempDir := t.TempDir()
 	cfg := &config.Config{
-		RAG: config.RAGConfig{
-			Storage: config.CortexdbConfig{
-				DBPath: tempDir + "/data/test.db",
-			},
-		},
+		Home: tempDir,
 	}
+	cfg.ApplyHomeLayout()
 
 	scheduler := NewScheduler(cfg)
 
@@ -210,12 +201,9 @@ func TestCreateTask(t *testing.T) {
 func TestExecuteTask(t *testing.T) {
 	tempDir := t.TempDir()
 	cfg := &config.Config{
-		RAG: config.RAGConfig{
-			Storage: config.CortexdbConfig{
-				DBPath: tempDir + "/data/test.db",
-			},
-		},
+		Home: tempDir,
 	}
+	cfg.ApplyHomeLayout()
 
 	scheduler := NewScheduler(cfg)
 
@@ -310,12 +298,9 @@ func TestSchedulerNotRunning(t *testing.T) {
 func TestTaskLifecycle(t *testing.T) {
 	tempDir := t.TempDir()
 	cfg := &config.Config{
-		RAG: config.RAGConfig{
-			Storage: config.CortexdbConfig{
-				DBPath: tempDir + "/data/test.db",
-			},
-		},
+		Home: tempDir,
 	}
+	cfg.ApplyHomeLayout()
 
 	scheduler := NewScheduler(cfg)
 	scheduler.RegisterExecutor(&MockExecutor{taskType: TaskTypeQuery})
@@ -377,12 +362,9 @@ func TestTaskLifecycle(t *testing.T) {
 func TestSchedulerLoop(t *testing.T) {
 	tempDir := t.TempDir()
 	cfg := &config.Config{
-		RAG: config.RAGConfig{
-			Storage: config.CortexdbConfig{
-				DBPath: tempDir + "/data/test.db",
-			},
-		},
+		Home: tempDir,
 	}
+	cfg.ApplyHomeLayout()
 
 	scheduler := NewScheduler(cfg)
 
