@@ -1,18 +1,50 @@
 import { useChat } from '@ai-sdk/react'
-import { DefaultChatTransport } from 'ai'
+import { DefaultChatTransport, type UIMessage } from 'ai'
 import { useTranslation } from 'react-i18next'
-import { useState, useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStatus, useChatSessions, useChatSession } from '../hooks/useApi'
+import type { ChatSessionMessage } from '../lib/api'
+
+function createDraftChatId() {
+  return `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function normalizeMessageRole(role: string): UIMessage['role'] {
+  if (role === 'user' || role === 'assistant' || role === 'system') {
+    return role
+  }
+  return 'assistant'
+}
+
+function normalizeSessionMessages(messages: ChatSessionMessage[]): UIMessage[] {
+  return messages.map((message, index) => {
+    const parts =
+      message.parts && message.parts.length > 0
+        ? message.parts
+        : typeof message.content === 'string'
+          ? [{ type: 'text' as const, text: message.content }]
+          : []
+
+    return {
+      id: message.id || `session-message-${index}`,
+      role: normalizeMessageRole(message.role),
+      parts,
+    }
+  })
+}
 
 export function Chat() {
   const { t } = useTranslation()
   const { data: status } = useStatus()
-  const { data: sessionsData } = useChatSessions(20)
+  const { data: sessionsData } = useChatSessions(20, 'llm')
   const [selectedProvider, setSelectedProvider] = useState('')
   const [selectedSessionId, setSelectedSessionId] = useState<string | undefined>(undefined)
+  const [draftChatId, setDraftChatId] = useState(createDraftChatId)
   const [input, setInput] = useState('')
 
-  const { data: sessionDetail } = useChatSession(selectedSessionId)
+  const { data: sessionDetail, isLoading: isSessionLoading } = useChatSession(selectedSessionId)
+  const activeChatId = selectedSessionId ?? draftChatId
+  const providerRef = useRef(selectedProvider)
 
   // Get available providers from status
   const providers = status?.providers?.filter(p => p.status === 'enabled' && p.type === 'llm') || []
@@ -24,55 +56,51 @@ export function Chat() {
     }
   }, [providers, selectedProvider])
 
-  // Load session messages when session is selected
   useEffect(() => {
-    if (sessionDetail?.messages && sessionDetail.messages.length > 0) {
-      // Convert session messages to UI format and set them
-      const loadedMessages = sessionDetail.messages.map((msg, idx) => ({
-        id: msg.id || `msg-${idx}`,
-        role: msg.role as 'user' | 'assistant',
-        parts: [{ type: 'text' as const, text: msg.content }],
-      }))
-      setChatMessages(loadedMessages)
-    }
-  }, [sessionDetail])
+    providerRef.current = selectedProvider
+  }, [selectedProvider])
 
-  // Create transport with current provider and session
   const transport = useMemo(() => new DefaultChatTransport({
     api: '/api/chat',
-    body: {
+    body: () => ({
       mode: 'llm',
-      provider: selectedProvider,
-      id: selectedSessionId,
-    },
-  }), [selectedProvider, selectedSessionId])
+      provider: providerRef.current,
+    }),
+  }), [])
 
-  const [chatMessages, setChatMessages] = useState<Array<{ id: string; role: 'user' | 'assistant' | 'system'; parts: Array<{ type: 'text'; text: string }> }>>([])
-
-  const { sendMessage, status: chatStatus, messages: aiMessages, setMessages: setAiMessages } = useChat({
+  const { sendMessage, status: chatStatus, messages, setMessages } = useChat<UIMessage>({
+    id: activeChatId,
     transport,
   })
 
-  // Use loaded session messages or AI SDK messages
-  const messages = chatMessages.length > 0 ? chatMessages : aiMessages as typeof chatMessages
+  useEffect(() => {
+    if (!selectedSessionId) {
+      return
+    }
+    if (!sessionDetail || sessionDetail.id !== selectedSessionId) {
+      return
+    }
+    setMessages(normalizeSessionMessages(sessionDetail.messages ?? []))
+  }, [selectedSessionId, sessionDetail, setMessages])
 
   // Handle session selection
   const handleSelectSession = (sessionId: string) => {
     setSelectedSessionId(sessionId)
-    setChatMessages([])
+    setInput('')
   }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (input.trim() && chatStatus === 'ready') {
-      sendMessage({ text: input })
-      setInput('')
+    if (!input.trim() || chatStatus !== 'ready' || isSessionLoading) {
+      return
     }
+    sendMessage({ text: input })
+    setInput('')
   }
 
   const handleNewChat = () => {
     setSelectedSessionId(undefined)
-    setChatMessages([])
+    setDraftChatId(createDraftChatId())
     setInput('')
   }
 
@@ -81,9 +109,14 @@ export function Chat() {
     return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   }
 
+  const inputDisabled = chatStatus !== 'ready' || isSessionLoading
+  const activeStreamingAssistantId =
+    chatStatus === 'streaming'
+      ? [...messages].reverse().find((message) => message.role === 'assistant')?.id
+      : undefined
+
   return (
     <div className="flex h-[calc(100vh-200px)] flex-col" data-testid="page-chat">
-      {/* Header */}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-semibold text-slate-900">{t('llmChat')}</h2>
@@ -119,7 +152,6 @@ export function Chat() {
       </div>
 
       <div className="flex flex-1 gap-4 overflow-hidden">
-        {/* Sessions Sidebar */}
         <div className="w-64 flex-shrink-0 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-3">
           <div className="mb-2 px-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
             {t('sessions')}
@@ -136,7 +168,7 @@ export function Chat() {
                       : 'text-slate-600 hover:bg-slate-50'
                   }`}
                 >
-                  <div className="truncate font-medium">{session.id.slice(0, 8)}...</div>
+                  <div className="truncate font-medium">{session.title || `${session.id.slice(0, 8)}...`}</div>
                   <div className="text-xs text-slate-400">
                     {formatDate(session.created)} · {session.messages} {t('messages')}
                   </div>
@@ -150,17 +182,20 @@ export function Chat() {
           )}
         </div>
 
-        {/* Chat Area */}
         <div className="flex flex-1 flex-col">
-          {/* Messages */}
           <div className="glass-panel flex-1 overflow-hidden rounded-3xl">
             <div className="max-h-[calc(100vh-420px)] space-y-4 overflow-y-auto p-6">
-              {messages.length === 0 && (
+              {isSessionLoading && (
+                <div className="flex h-32 items-center justify-center">
+                  <p className="text-sm text-slate-400">{t('loading')}</p>
+                </div>
+              )}
+              {!isSessionLoading && messages.length === 0 && (
                 <div className="flex h-32 items-center justify-center">
                   <p className="text-sm text-slate-400">{t('startConversation')}</p>
                 </div>
               )}
-              {messages.map((message) => (
+              {!isSessionLoading && messages.map((message) => (
                 <div
                   key={message.id}
                   className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
@@ -177,7 +212,7 @@ export function Chat() {
                         part.type === 'text' ? <span key={index}>{part.text}</span> : null,
                       )}
                     </div>
-                    {message.role === 'assistant' && chatStatus === 'streaming' && (
+                    {message.id === activeStreamingAssistantId && (
                       <span className="ml-1 inline-block h-3 w-2 animate-pulse rounded-full bg-slate-400" />
                     )}
                   </div>
@@ -186,7 +221,6 @@ export function Chat() {
             </div>
           </div>
 
-          {/* Input */}
           <form onSubmit={handleSubmit} className="mt-4 flex gap-3">
             <input
               type="text"
@@ -194,11 +228,11 @@ export function Chat() {
               onChange={(e) => setInput(e.target.value)}
               placeholder={t('typeMessage')}
               className="dashboard-input flex-1"
-              disabled={chatStatus !== 'ready'}
+              disabled={inputDisabled}
             />
             <button
               type="submit"
-              disabled={chatStatus !== 'ready' || !input.trim()}
+              disabled={inputDisabled || !input.trim()}
               className="dashboard-button px-8"
             >
               {chatStatus === 'streaming' ? t('sending') : t('sendMessage')}

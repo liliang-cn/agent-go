@@ -55,10 +55,10 @@ export function useChat() {
   })
 }
 
-export function useChatSessions(limit?: number) {
+export function useChatSessions(limit?: number, type?: string) {
   return useQuery({
-    queryKey: ['chat-sessions', limit],
-    queryFn: () => api.getChatSessions(limit),
+    queryKey: ['chat-sessions', limit, type],
+    queryFn: () => api.getChatSessions(limit, type),
     refetchInterval: 30000,
   })
 }

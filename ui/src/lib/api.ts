@@ -52,9 +52,32 @@ export interface ChatResponse {
 
 export interface ChatSession {
   id: string
+  type?: string
+  title?: string
   created: string
   updated: string
   messages: number
+}
+
+export interface ChatSessionMessagePart {
+  type: 'text'
+  text: string
+}
+
+export interface ChatSessionMessage {
+  id: string
+  role: string
+  content?: string
+  parts?: ChatSessionMessagePart[]
+}
+
+export interface ChatSessionDetail {
+  id: string
+  title?: string
+  created?: string
+  updated?: string
+  metadata?: Record<string, unknown>
+  messages: ChatSessionMessage[]
 }
 
 export interface ChatSessionsResponse {
@@ -466,11 +489,20 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
-  getChatSessions: (limit?: number) =>
-    fetchAPI<ChatSessionsResponse>(`/chat/sessions${limit ? `?limit=${limit}` : ''}`),
+  getChatSessions: (limit?: number, type?: string) => {
+    const params = new URLSearchParams()
+    if (limit) {
+      params.set('limit', String(limit))
+    }
+    if (type) {
+      params.set('type', type)
+    }
+    const query = params.toString()
+    return fetchAPI<ChatSessionsResponse>(`/chat/sessions${query ? `?${query}` : ''}`)
+  },
 
   getChatSession: (sessionId: string) =>
-    fetchAPI<{ id: string; created: string; updated: string; messages: Array<{ id: string; role: string; content: string }> }>(`/chat/session/${sessionId}`),
+    fetchAPI<ChatSessionDetail>(`/chat/session/${sessionId}`),
 
   // Streaming chat with callbacks
   chatStream: (

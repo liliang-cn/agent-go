@@ -2,12 +2,15 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/liliang-cn/agent-go/pkg/services"
+	"github.com/liliang-cn/agent-go/pkg/store"
 )
 
 // HandleChat is the unified entry point for chat, but dispatches to specific handlers
@@ -160,18 +163,24 @@ func (h *Handler) HandleChatSessions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	JSONResponse(w, map[string]interface{}{
-		"sessions": sessionsToUI(sessions),
+		"sessions": sessionsToUI(db, sessions),
 	})
 }
 
-func sessionsToUI(sessions []*store.ChatSession) []map[string]interface{} {
+func sessionsToUI(db *store.AgentGoDB, sessions []*store.ChatSession) []map[string]interface{} {
 	uiSessions := make([]map[string]interface{}, 0, len(sessions))
 	for _, s := range sessions {
+		messageCount := len(s.Messages)
+		if db != nil {
+			if count, err := db.CountMessages(s.ID); err == nil && count > 0 {
+				messageCount = count
+			}
+		}
 		uiSessions = append(uiSessions, map[string]interface{}{
 			"id":       s.ID,
 			"type":     s.Type,
 			"title":    s.Title,
-			"messages": len(s.Messages), // UI expects a count here
+			"messages": messageCount,
 			"created":  s.CreatedAt.Format(time.RFC3339),
 			"updated":  s.UpdatedAt.Format(time.RFC3339),
 		})
@@ -189,7 +198,7 @@ func (h *Handler) HandleChatSessionMessages(w http.ResponseWriter, r *http.Reque
 	// Support both /api/chat/sessions/{id} and /api/chat/session/{id}
 	sessionID := strings.TrimPrefix(r.URL.Path, "/api/chat/sessions/")
 	sessionID = strings.TrimPrefix(sessionID, "/api/chat/session/")
-	
+
 	if sessionID == "" || sessionID == "sessions" || sessionID == "session" {
 		JSONError(w, "Session ID required", http.StatusBadRequest)
 		return
@@ -234,6 +243,8 @@ func (h *Handler) HandleChatSessionMessages(w http.ResponseWriter, r *http.Reque
 	JSONResponse(w, map[string]interface{}{
 		"id":       session.ID,
 		"title":    session.Title,
+		"created":  session.CreatedAt.Format(time.RFC3339),
+		"updated":  session.UpdatedAt.Format(time.RFC3339),
 		"messages": aiSDKMessages,
 		"metadata": session.Metadata,
 	})

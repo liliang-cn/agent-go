@@ -452,6 +452,12 @@ func (s *AgentGoDB) GetSession(id string) (*ChatSession, error) {
 	if err := json.Unmarshal(messagesJSON, &session.Messages); err != nil {
 		return nil, err
 	}
+	if len(session.Messages) == 0 {
+		messages, err := s.getMessages(id, 0)
+		if err == nil {
+			session.Messages = messages
+		}
+	}
 
 	if len(contextJSON) > 0 {
 		if err := json.Unmarshal(contextJSON, &session.Context); err != nil {
@@ -466,6 +472,37 @@ func (s *AgentGoDB) GetSession(id string) (*ChatSession, error) {
 	}
 
 	return &session, nil
+}
+
+func normalizeMessageLimit(limit int) int {
+	if limit <= 0 {
+		return 50
+	}
+	return limit
+}
+
+func (s *AgentGoDB) getMessages(sessionID string, limit int) ([]ChatMessage, error) {
+	query := `
+		SELECT role, content FROM chat_messages
+		WHERE session_id = ?
+		ORDER BY created_at ASC
+		LIMIT ?
+	`
+	rows, err := s.db.Query(query, sessionID, normalizeMessageLimit(limit))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var messages []ChatMessage
+	for rows.Next() {
+		var msg ChatMessage
+		if err := rows.Scan(&msg.Role, &msg.Content); err != nil {
+			continue
+		}
+		messages = append(messages, msg)
+	}
+	return messages, nil
 }
 
 // ListSessions retrieves chat sessions with optional type filtering
@@ -546,6 +583,19 @@ func (s *AgentGoDB) ListSessions(sessionType string, limit int) ([]*ChatSession,
 	}
 
 	return sessions, nil
+}
+
+// CountMessages returns the number of persisted messages for a session.
+func (s *AgentGoDB) CountMessages(sessionID string) (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var count int
+	err := s.db.QueryRow(`
+		SELECT COUNT(*) FROM chat_messages
+		WHERE session_id = ?
+	`, sessionID).Scan(&count)
+	return count, err
 }
 
 // ListPlans retrieves plans with optional limit and session filtering
@@ -752,24 +802,24 @@ func (s *AgentGoDB) DeleteSquad(id string) error {
 
 // AgentModel represents an agent model configuration
 type AgentModel struct {
-	ID                    string                 `json:"id"`
-	TeamID                string                 `json:"team_id"`
-	Name                  string                 `json:"name"`
-	Kind                  string                 `json:"kind"`
-	Description           string                 `json:"description"`
-	Instructions          string                 `json:"instructions"`
-	Model                 string                 `json:"model"`
-	PreferredProvider     string                 `json:"preferred_provider"`
-	PreferredModel        string                 `json:"preferred_model"`
-	RequiredLLMCapability int                    `json:"required_llm_capability"`
-	MCPTools              []string               `json:"mcp_tools"`
-	Skills                []string               `json:"skills"`
-	EnableRAG             bool                   `json:"enable_rag"`
-	EnableMemory          bool                   `json:"enable_memory"`
-	EnablePTC             bool                   `json:"enable_ptc"`
-	EnableMCP             bool                   `json:"enable_mcp"`
-	CreatedAt             time.Time             `json:"created_at"`
-	UpdatedAt             time.Time             `json:"updated_at"`
+	ID                    string    `json:"id"`
+	TeamID                string    `json:"team_id"`
+	Name                  string    `json:"name"`
+	Kind                  string    `json:"kind"`
+	Description           string    `json:"description"`
+	Instructions          string    `json:"instructions"`
+	Model                 string    `json:"model"`
+	PreferredProvider     string    `json:"preferred_provider"`
+	PreferredModel        string    `json:"preferred_model"`
+	RequiredLLMCapability int       `json:"required_llm_capability"`
+	MCPTools              []string  `json:"mcp_tools"`
+	Skills                []string  `json:"skills"`
+	EnableRAG             bool      `json:"enable_rag"`
+	EnableMemory          bool      `json:"enable_memory"`
+	EnablePTC             bool      `json:"enable_ptc"`
+	EnableMCP             bool      `json:"enable_mcp"`
+	CreatedAt             time.Time `json:"created_at"`
+	UpdatedAt             time.Time `json:"updated_at"`
 }
 
 // SaveAgentModel saves or updates an agent model
@@ -1236,30 +1286,5 @@ func (s *AgentGoDB) AddMessage(sessionID string, role, content string, metadata 
 func (s *AgentGoDB) GetMessages(sessionID string, limit int) ([]ChatMessage, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-
-	if limit <= 0 {
-		limit = 50
-	}
-
-	query := `
-		SELECT role, content FROM chat_messages
-		WHERE session_id = ?
-		ORDER BY created_at ASC
-		LIMIT ?
-	`
-	rows, err := s.db.Query(query, sessionID, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var messages []ChatMessage
-	for rows.Next() {
-		var msg ChatMessage
-		if err := rows.Scan(&msg.Role, &msg.Content); err != nil {
-			continue
-		}
-		messages = append(messages, msg)
-	}
-	return messages, nil
+	return s.getMessages(sessionID, limit)
 }
