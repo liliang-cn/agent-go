@@ -70,14 +70,10 @@ type Pool struct {
 	mu sync.RWMutex
 }
 
-// NewPool 创建pool
+// NewPool 创建pool. 允许空 providers（可后续通过 AddProvider 动态添加）.
 func NewPool(config PoolConfig) (*Pool, error) {
 	if !config.Enabled {
 		return &Pool{config: config, clients: make(map[string]*clientWrapper)}, nil
-	}
-
-	if len(config.Providers) == 0 {
-		return nil, fmt.Errorf("at least one provider is required")
 	}
 
 	pool := &Pool{
@@ -568,6 +564,91 @@ func (p *Pool) ExtractMetadata(ctx context.Context, content string, model string
 
 func (p *Pool) ExtractMetadataWithHint(ctx context.Context, hint SelectionHint, content string, model string) (*domain.ExtractedMetadata, error) {
 	return p.extractMetadataWithClient(ctx, hint, content, model)
+}
+
+// AddProvider adds a new provider to the pool at runtime.
+// Returns an error if a provider with the same name already exists.
+func (p *Pool) AddProvider(prov Provider) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if _, exists := p.clients[prov.Name]; exists {
+		return fmt.Errorf("provider %q already exists; use UpdateProvider to modify it", prov.Name)
+	}
+
+	if prov.MaxConcurrency <= 0 {
+		prov.MaxConcurrency = 5
+	}
+
+	client, err := NewClient(prov.Name, prov.BaseURL, prov.Key, prov.ModelName)
+	if err != nil {
+		return fmt.Errorf("failed to create client for %s: %w", prov.Name, err)
+	}
+
+	p.clients[prov.Name] = &clientWrapper{
+		client:          client,
+		provider:        prov,
+		healthy:         true,
+		lastHealthCheck: time.Now(),
+	}
+	return nil
+}
+
+// RemoveProvider removes a provider from the pool at runtime, closing its client.
+func (p *Pool) RemoveProvider(name string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	w, ok := p.clients[name]
+	if !ok {
+		return fmt.Errorf("provider %q not found", name)
+	}
+
+	w.client.Close()
+	delete(p.clients, name)
+	return nil
+}
+
+// UpdateProvider replaces an existing provider's configuration at runtime.
+// Returns an error if the provider does not exist.
+func (p *Pool) UpdateProvider(prov Provider) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	old, ok := p.clients[prov.Name]
+	if !ok {
+		return fmt.Errorf("provider %q not found; use AddProvider to create it", prov.Name)
+	}
+
+	if prov.MaxConcurrency <= 0 {
+		prov.MaxConcurrency = 5
+	}
+
+	client, err := NewClient(prov.Name, prov.BaseURL, prov.Key, prov.ModelName)
+	if err != nil {
+		return fmt.Errorf("failed to create client for %s: %w", prov.Name, err)
+	}
+
+	old.client.Close()
+	p.clients[prov.Name] = &clientWrapper{
+		client:          client,
+		provider:        prov,
+		healthy:         true,
+		lastHealthCheck: time.Now(),
+	}
+	return nil
+}
+
+// ListProviders returns a snapshot of all providers currently in the pool.
+func (p *Pool) ListProviders() []Provider {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	providers := make([]Provider, 0, len(p.clients))
+	for _, w := range p.clients {
+		providers = append(providers, w.provider)
+	}
+	return providers
 }
 
 func (p *Pool) extractMetadataWithClient(ctx context.Context, hint SelectionHint, content string, model string) (*domain.ExtractedMetadata, error) {

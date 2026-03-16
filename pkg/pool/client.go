@@ -108,7 +108,9 @@ func (c *Client) Generate(ctx context.Context, prompt string, opts *domain.Gener
 		return "", fmt.Errorf("no choices in response")
 	}
 
-	return result.Choices[0].Message.Content, nil
+	msg := result.Choices[0].Message
+	content, _ := parseThinkContent(msg.Content, msg.ReasoningContent)
+	return content, nil
 }
 
 // Stream 流式生成
@@ -322,9 +324,10 @@ func (c *Client) GenerateWithTools(ctx context.Context, messages []domain.Messag
 	}
 
 	choice := result.Choices[0]
+	cleanContent, reasoning := parseThinkContent(choice.Message.Content, choice.Message.ReasoningContent)
 	response := &domain.GenerationResult{
-		Content:          choice.Message.Content,
-		ReasoningContent: choice.Message.ReasoningContent,
+		Content:          cleanContent,
+		ReasoningContent: reasoning,
 	}
 
 	// 解析tool calls
@@ -502,6 +505,57 @@ func (c *Client) generateStructuredFallback(ctx context.Context, prompt string, 
 }
 
 // extractPoolJSON strips markdown code fences and finds the first JSON object/array.
+// parseThinkContent extracts <think>...</think> blocks from content and moves
+// them into reasoningContent. Some reasoning models (DeepSeek-R1, QwQ, etc.)
+// embed chain-of-thought in content tags instead of using a separate API field.
+// Returns (cleanContent, updatedReasoningContent).
+func parseThinkContent(content, reasoningContent string) (string, string) {
+	if !strings.Contains(content, "<think>") {
+		return content, reasoningContent
+	}
+
+	var thinkParts []string
+	remaining := content
+	for {
+		start := strings.Index(remaining, "<think>")
+		if start == -1 {
+			break
+		}
+		end := strings.Index(remaining, "</think>")
+		if end == -1 {
+			// Unclosed tag — treat rest as think content and stop.
+			thinkParts = append(thinkParts, strings.TrimSpace(remaining[start+len("<think>"):]))
+			remaining = remaining[:start]
+			break
+		}
+		thinkParts = append(thinkParts, strings.TrimSpace(remaining[start+len("<think>"):end]))
+		remaining = remaining[:start] + remaining[end+len("</think>"):]
+	}
+
+	newContent := strings.TrimSpace(remaining)
+	if len(thinkParts) == 0 {
+		return newContent, reasoningContent
+	}
+	think := strings.Join(thinkParts, "\n")
+	newReasoning := think
+	if reasoningContent != "" {
+		newReasoning = reasoningContent + "\n" + think
+	}
+	// Some models place the actual answer as the final line of the think block
+	// with nothing outside it (e.g. when MaxTokens cuts the response mid-chain).
+	// If the content is empty, use the last non-empty paragraph as a best-effort answer.
+	if newContent == "" && think != "" {
+		paragraphs := strings.Split(think, "\n\n")
+		for i := len(paragraphs) - 1; i >= 0; i-- {
+			if p := strings.TrimSpace(paragraphs[i]); p != "" {
+				newContent = p
+				break
+			}
+		}
+	}
+	return newContent, newReasoning
+}
+
 func extractPoolJSON(s string) string {
 	for _, fence := range []string{"```json", "```"} {
 		if idx := strings.Index(s, fence); idx != -1 {

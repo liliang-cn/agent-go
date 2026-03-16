@@ -65,20 +65,70 @@ func (s *GlobalPoolService) Initialize(ctx context.Context, cfg *config.Config) 
 	}
 	s.db = db
 
-	// 2. LLM Pool
+	// 2. Seed DB from config — only insert providers that don't exist yet.
+	//    DB is the source of truth after first run; config seeds it on fresh installs.
+	existing, err := db.ListProviders()
+	if err != nil {
+		return fmt.Errorf("failed to list providers from db: %w", err)
+	}
+	existingNames := make(map[string]bool, len(existing))
+	for _, p := range existing {
+		existingNames[p.Name] = true
+	}
+	for _, p := range cfg.LLM.Providers {
+		if existingNames[p.Name] {
+			continue
+		}
+		_ = db.SaveProvider(&store.LLMProvider{
+			Name:           p.Name,
+			BaseURL:        p.BaseURL,
+			Key:            p.Key,
+			ModelName:      p.ModelName,
+			MaxConcurrency: p.MaxConcurrency,
+			Capability:     p.Capability,
+			Enabled:        true,
+		})
+	}
+
+	// 3. Load all enabled providers from DB into LLM pool.
+	allProviders, err := db.ListProviders()
+	if err != nil {
+		return fmt.Errorf("failed to load providers from db: %w", err)
+	}
+	llmProviders := make([]pool.Provider, 0, len(allProviders))
+	for _, p := range allProviders {
+		if p.Enabled {
+			llmProviders = append(llmProviders, store.ToPoolProvider(p))
+		}
+	}
+
+	// 4. Seed llm.strategy and llm.enabled to DB if not present, then load from DB.
+	if _, err := db.GetConfig("llm.strategy"); err != nil {
+		_ = db.SaveConfig("llm.strategy", string(cfg.LLM.Strategy))
+	}
+	if _, err := db.GetConfig("llm.enabled"); err != nil {
+		enabled := "false"
+		if cfg.LLM.Enabled {
+			enabled = "true"
+		}
+		_ = db.SaveConfig("llm.enabled", enabled)
+	}
+	llmStrategy := pool.SelectionStrategy(mustGetConfig(db, "llm.strategy", string(cfg.LLM.Strategy)))
+	llmEnabled := mustGetConfig(db, "llm.enabled", "true") == "true"
+
 	llmPool, err := pool.NewPool(pool.PoolConfig{
-		Enabled:   cfg.LLM.Enabled,
-		Strategy:  cfg.LLM.Strategy,
-		Providers: cfg.LLM.Providers,
+		Enabled:   llmEnabled,
+		Strategy:  llmStrategy,
+		Providers: llmProviders,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create LLM pool: %w", err)
 	}
 	s.llmPool = llmPool
 
-	// 3. Embedding Pool
-	embeddingProviders := make([]pool.Provider, len(cfg.LLM.Providers))
-	for i, p := range cfg.LLM.Providers {
+	// 5. Embedding Pool — derived from LLM providers, overriding model name when configured.
+	embeddingProviders := make([]pool.Provider, len(llmProviders))
+	for i, p := range llmProviders {
 		embeddingProviders[i] = p
 		if cfg.RAG.EmbeddingModel != "" {
 			embeddingProviders[i].ModelName = cfg.RAG.EmbeddingModel
@@ -87,7 +137,7 @@ func (s *GlobalPoolService) Initialize(ctx context.Context, cfg *config.Config) 
 
 	embeddingPool, err := pool.NewPool(pool.PoolConfig{
 		Enabled:   cfg.RAG.Enabled,
-		Strategy:  cfg.LLM.Strategy,
+		Strategy:  llmStrategy,
 		Providers: embeddingProviders,
 	})
 	if err != nil {
@@ -517,6 +567,131 @@ func (s *GlobalPoolService) Shutdown() error {
 	}
 
 	globalPoolService = nil
+	return nil
+}
+
+// mustGetConfig reads a config key from the DB, returning fallback on any error.
+func mustGetConfig(db *store.AgentGoDB, key, fallback string) string {
+	v, err := db.GetConfig(key)
+	if err != nil || v == "" {
+		return fallback
+	}
+	return v
+}
+
+// ===== LLM Pool Config =====
+
+// LLMPoolConfig holds the pool-level settings stored in the database.
+type LLMPoolConfig struct {
+	Strategy pool.SelectionStrategy `json:"strategy"`
+	Enabled  bool                   `json:"enabled"`
+}
+
+// GetLLMPoolConfig returns the current pool-level settings from the database.
+func (s *GlobalPoolService) GetLLMPoolConfig() (*LLMPoolConfig, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if !s.initialized {
+		return nil, fmt.Errorf("pool service not initialized")
+	}
+	strategy := mustGetConfig(s.db, "llm.strategy", "round_robin")
+	enabled := mustGetConfig(s.db, "llm.enabled", "true") == "true"
+	return &LLMPoolConfig{
+		Strategy: pool.SelectionStrategy(strategy),
+		Enabled:  enabled,
+	}, nil
+}
+
+// SaveLLMPoolConfig persists pool-level settings to the database.
+// Changes take effect on next restart (pool strategy/enabled cannot be
+// hot-swapped without rebuilding the pool).
+func (s *GlobalPoolService) SaveLLMPoolConfig(cfg LLMPoolConfig) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.initialized {
+		return fmt.Errorf("pool service not initialized")
+	}
+	enabled := "false"
+	if cfg.Enabled {
+		enabled = "true"
+	}
+	if err := s.db.SaveConfig("llm.strategy", string(cfg.Strategy)); err != nil {
+		return fmt.Errorf("save llm.strategy: %w", err)
+	}
+	if err := s.db.SaveConfig("llm.enabled", enabled); err != nil {
+		return fmt.Errorf("save llm.enabled: %w", err)
+	}
+	return nil
+}
+
+// ===== Provider CRUD =====
+
+// ListProviders returns all persisted providers from the database.
+func (s *GlobalPoolService) ListProviders() ([]*store.LLMProvider, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if !s.initialized {
+		return nil, fmt.Errorf("pool service not initialized")
+	}
+	return s.db.ListProviders()
+}
+
+// SaveProvider persists a provider to the database and syncs the live pool.
+// Creates a new provider if it doesn't exist; updates it otherwise.
+func (s *GlobalPoolService) SaveProvider(p *store.LLMProvider) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.initialized {
+		return fmt.Errorf("pool service not initialized")
+	}
+	if err := s.db.SaveProvider(p); err != nil {
+		return err
+	}
+	return s.syncProviderToPool(p)
+}
+
+// DeleteProvider removes a provider from the database and the live pool.
+func (s *GlobalPoolService) DeleteProvider(name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.initialized {
+		return fmt.Errorf("pool service not initialized")
+	}
+	if err := s.db.DeleteProvider(name); err != nil {
+		return err
+	}
+	_ = s.llmPool.RemoveProvider(name) // ignore "not found" — already gone
+	return nil
+}
+
+// GetProvider returns a single provider by name from the database.
+func (s *GlobalPoolService) GetProvider(name string) (*store.LLMProvider, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if !s.initialized {
+		return nil, fmt.Errorf("pool service not initialized")
+	}
+	return s.db.GetProvider(name)
+}
+
+// syncProviderToPool updates (or adds/removes) a provider in the live pool
+// based on its Enabled flag. Must be called with s.mu held for writing.
+func (s *GlobalPoolService) syncProviderToPool(p *store.LLMProvider) error {
+	prov := store.ToPoolProvider(p)
+	if !p.Enabled {
+		_ = s.llmPool.RemoveProvider(p.Name)
+		return nil
+	}
+	if err := s.llmPool.UpdateProvider(prov); err != nil {
+		// Provider not in pool yet — add it.
+		return s.llmPool.AddProvider(prov)
+	}
 	return nil
 }
 
