@@ -41,17 +41,23 @@ type MemoryIndex struct {
 type MemoryIndexEntry struct {
 	ID         string
 	Type       domain.MemoryType
+	ScopeType  domain.MemoryScopeType
+	ScopeID    string
 	Importance float64
 	Summary    string // first 60 chars of content
 	IsStale    bool
+	Archived   bool
 }
 
 // MemoryFrontmatter represents the YAML header in the markdown file
 type MemoryFrontmatter struct {
 	ID           string                 `yaml:"id"`
 	Type         string                 `yaml:"type"`
+	ScopeType    domain.MemoryScopeType `yaml:"scope_type,omitempty"`
+	ScopeID      string                 `yaml:"scope_id,omitempty"`
 	Importance   float64                `yaml:"importance"`
 	SessionID    string                 `yaml:"session_id,omitempty"`
+	Keywords     []string               `yaml:"keywords,omitempty"`
 	Tags         []string               `yaml:"tags,omitempty"`
 	AccessCount  int                    `yaml:"access_count,omitempty"`
 	LastAccessed time.Time              `yaml:"last_accessed,omitempty"`
@@ -68,6 +74,9 @@ type MemoryFrontmatter struct {
 	SourceType      domain.MemorySourceType `yaml:"source_type,omitempty"`
 	Conflicting     bool                    `yaml:"conflicting,omitempty"`
 	RevisionHistory []domain.MemoryRevision `yaml:"revision_history,omitempty"`
+	Archived        bool                    `yaml:"archived,omitempty"`
+	ArchivedAt      *time.Time              `yaml:"archived_at,omitempty"`
+	ArchiveReason   string                  `yaml:"archive_reason,omitempty"`
 }
 
 // NewFileMemoryStore creates a new markdown-based memory store
@@ -91,6 +100,8 @@ func (s *FileMemoryStore) Store(ctx context.Context, memory *domain.Memory) erro
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	normalizeMemoryForStore(memory)
+
 	// Determine category (stream or entity)
 	category := "entities"
 	if memory.Type == domain.MemoryTypeContext {
@@ -104,8 +115,12 @@ func (s *FileMemoryStore) Store(ctx context.Context, memory *domain.Memory) erro
 	fm := MemoryFrontmatter{
 		ID:              memory.ID,
 		Type:            string(memory.Type),
+		ScopeType:       memory.ScopeType,
+		ScopeID:         memory.ScopeID,
 		Importance:      memory.Importance,
 		SessionID:       memory.SessionID,
+		Keywords:        append([]string(nil), memory.Keywords...),
+		Tags:            append([]string(nil), memory.Tags...),
 		AccessCount:     memory.AccessCount,
 		LastAccessed:    memory.LastAccessed,
 		CreatedAt:       memory.CreatedAt,
@@ -119,13 +134,17 @@ func (s *FileMemoryStore) Store(ctx context.Context, memory *domain.Memory) erro
 		SourceType:      memory.SourceType,
 		Conflicting:     memory.Conflicting,
 		RevisionHistory: memory.RevisionHistory,
+		Archived:        memory.Archived,
+		ArchivedAt:      memory.ArchivedAt,
+		ArchiveReason:   memory.ArchiveReason,
 	}
 
-	// Extract tags from metadata if they exist
-	if memory.Metadata != nil {
-		if t, ok := memory.Metadata["tags"].([]string); ok {
-			fm.Tags = t
-		}
+	// Keep tags and keywords compatible with older metadata-only callers.
+	if len(fm.Tags) == 0 && memory.Metadata != nil {
+		fm.Tags = stringSliceFromAny(memory.Metadata["tags"])
+	}
+	if len(fm.Keywords) == 0 && memory.Metadata != nil {
+		fm.Keywords = stringSliceFromAny(memory.Metadata["keywords"])
 	}
 
 	frontmatter, err := yaml.Marshal(fm)
@@ -154,6 +173,9 @@ func (s *FileMemoryStore) Search(ctx context.Context, vector []float64, topK int
 
 	var results []*domain.MemoryWithScore
 	for _, m := range all {
+		if m.Archived {
+			continue
+		}
 		results = append(results, &domain.MemoryWithScore{
 			Memory: m,
 			Score:  1.0,
@@ -174,7 +196,11 @@ func (s *FileMemoryStore) SearchBySession(ctx context.Context, sessionID string,
 
 	var results []*domain.MemoryWithScore
 	for _, m := range all {
-		if m.SessionID == sessionID {
+		scope := inferMemoryScope(m.ScopeType, m.ScopeID, m.SessionID)
+		if m.Archived {
+			continue
+		}
+		if (scope.Type == domain.MemoryScopeSession && scope.ID == sessionID) || m.SessionID == sessionID {
 			results = append(results, &domain.MemoryWithScore{
 				Memory: m,
 				Score:  1.0,
@@ -192,24 +218,26 @@ func (s *FileMemoryStore) SearchByScope(ctx context.Context, vector []float64, s
 	}
 
 	// Build a map of scope bank IDs for quick lookup
-	scopeMap := make(map[string]bool)
+	scopeMap := make(map[string]domain.MemoryScope)
 	for _, scope := range scopes {
-		bankID := scopeToBankIDFile(scope)
-		scopeMap[bankID] = true
+		scopeMap[scopeToBankIDFile(scope)] = normalizeScope(scope)
 	}
 
 	var results []*domain.MemoryWithScore
 	for _, m := range all {
-		// Check if memory's session/bank matches any scope
-		bankID := m.SessionID
-		if bankID == "" {
-			bankID = "global"
+		if m.Archived {
+			continue
 		}
-		if scopeMap[bankID] {
-			results = append(results, &domain.MemoryWithScore{
-				Memory: m,
-				Score:  1.0,
-			})
+
+		memScope := inferMemoryScope(m.ScopeType, m.ScopeID, m.SessionID)
+		for _, searchScope := range scopeMap {
+			if sameScope(memScope, searchScope) {
+				results = append(results, &domain.MemoryWithScore{
+					Memory: m,
+					Score:  1.0,
+				})
+				break
+			}
 		}
 	}
 
@@ -221,8 +249,10 @@ func (s *FileMemoryStore) SearchByScope(ctx context.Context, vector []float64, s
 
 // StoreWithScope stores a memory with a specific scope
 func (s *FileMemoryStore) StoreWithScope(ctx context.Context, memory *domain.Memory, scope domain.MemoryScope) error {
-	// Set the session ID based on scope
-	memory.SessionID = scopeToBankIDFile(scope)
+	scope = normalizeScope(scope)
+	memory.ScopeType = scope.Type
+	memory.ScopeID = scope.ID
+	memory.SessionID = compatibilitySessionIDForScope(scope)
 	return s.Store(ctx, memory)
 }
 
@@ -237,6 +267,9 @@ func (s *FileMemoryStore) SearchByText(ctx context.Context, query string, topK i
 	var results []*domain.MemoryWithScore
 
 	for _, m := range all {
+		if m.Archived {
+			continue
+		}
 		contentLower := strings.ToLower(m.Content)
 		if strings.Contains(contentLower, queryLower) {
 			// Simple scoring based on substring match
@@ -259,13 +292,117 @@ func (s *FileMemoryStore) SearchByText(ctx context.Context, query string, topK i
 
 // scopeToBankIDFile converts MemoryScope to bank ID for file store
 func scopeToBankIDFile(scope domain.MemoryScope) string {
+	scope = normalizeScope(scope)
 	if scope.Type == domain.MemoryScopeGlobal {
 		return "global"
+	}
+	if scope.Type == domain.MemoryScopeSession {
+		if scope.ID == "" {
+			return "global"
+		}
+		return scope.ID
 	}
 	if scope.ID == "" {
 		return string(scope.Type)
 	}
 	return fmt.Sprintf("%s:%s", scope.Type, scope.ID)
+}
+
+func normalizeScope(scope domain.MemoryScope) domain.MemoryScope {
+	scope.Type = normalizeScopeType(scope.Type)
+	if scope.Type == "" {
+		scope.Type = domain.MemoryScopeGlobal
+	}
+	return scope
+}
+
+func normalizeScopeType(scopeType domain.MemoryScopeType) domain.MemoryScopeType {
+	switch scopeType {
+	case "":
+		return domain.MemoryScopeGlobal
+	case domain.MemoryScopeProject:
+		return domain.MemoryScopeSquad
+	default:
+		return scopeType
+	}
+}
+
+func inferMemoryScope(scopeType domain.MemoryScopeType, scopeID, sessionID string) domain.MemoryScope {
+	if normalized := normalizeScopeType(scopeType); normalized != domain.MemoryScopeGlobal || scopeID != "" {
+		return normalizeScope(domain.MemoryScope{Type: normalized, ID: scopeID})
+	}
+
+	switch {
+	case sessionID == "", sessionID == "global", sessionID == "default":
+		return domain.MemoryScope{Type: domain.MemoryScopeGlobal}
+	case strings.HasPrefix(sessionID, "session:"):
+		return domain.MemoryScope{Type: domain.MemoryScopeSession, ID: strings.TrimPrefix(sessionID, "session:")}
+	case strings.HasPrefix(sessionID, "agent:"):
+		return domain.MemoryScope{Type: domain.MemoryScopeAgent, ID: strings.TrimPrefix(sessionID, "agent:")}
+	case strings.HasPrefix(sessionID, "squad:"):
+		return domain.MemoryScope{Type: domain.MemoryScopeSquad, ID: strings.TrimPrefix(sessionID, "squad:")}
+	case strings.HasPrefix(sessionID, "project:"):
+		return domain.MemoryScope{Type: domain.MemoryScopeSquad, ID: strings.TrimPrefix(sessionID, "project:")}
+	case strings.HasPrefix(sessionID, "user:"):
+		return domain.MemoryScope{Type: domain.MemoryScopeUser, ID: strings.TrimPrefix(sessionID, "user:")}
+	default:
+		// Legacy file memories often store plain session IDs without a "session:" prefix.
+		return domain.MemoryScope{Type: domain.MemoryScopeSession, ID: sessionID}
+	}
+}
+
+func normalizeMemoryForStore(memory *domain.Memory) {
+	scope := inferMemoryScope(memory.ScopeType, memory.ScopeID, memory.SessionID)
+	memory.ScopeType = scope.Type
+	memory.ScopeID = scope.ID
+	if memory.SessionID == "" {
+		memory.SessionID = compatibilitySessionIDForScope(scope)
+	}
+	if len(memory.Tags) == 0 && memory.Metadata != nil {
+		memory.Tags = stringSliceFromAny(memory.Metadata["tags"])
+	}
+	if len(memory.Keywords) == 0 && memory.Metadata != nil {
+		memory.Keywords = stringSliceFromAny(memory.Metadata["keywords"])
+	}
+}
+
+func compatibilitySessionIDForScope(scope domain.MemoryScope) string {
+	scope = normalizeScope(scope)
+	switch scope.Type {
+	case domain.MemoryScopeGlobal:
+		return "global"
+	case domain.MemoryScopeSession:
+		return scope.ID
+	default:
+		return scopeToBankIDFile(scope)
+	}
+}
+
+func sameScope(a, b domain.MemoryScope) bool {
+	a = normalizeScope(a)
+	b = normalizeScope(b)
+	return a.Type == b.Type && a.ID == b.ID
+}
+
+func stringSliceFromAny(value interface{}) []string {
+	switch v := value.(type) {
+	case nil:
+		return nil
+	case []string:
+		return append([]string(nil), v...)
+	case domain.FlexibleStringArray:
+		return append([]string(nil), v.Strings()...)
+	case []interface{}:
+		result := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok && s != "" {
+				result = append(result, s)
+			}
+		}
+		return result
+	default:
+		return nil
+	}
 }
 
 func (s *FileMemoryStore) Get(ctx context.Context, id string) (*domain.Memory, error) {
@@ -345,7 +482,8 @@ func (s *FileMemoryStore) Delete(ctx context.Context, id string) error {
 func (s *FileMemoryStore) DeleteBySession(ctx context.Context, sessionID string) error {
 	all, _, _ := s.List(ctx, 1000, 0)
 	for _, m := range all {
-		if m.SessionID == sessionID {
+		scope := inferMemoryScope(m.ScopeType, m.ScopeID, m.SessionID)
+		if m.SessionID == sessionID || (scope.Type == domain.MemoryScopeSession && scope.ID == sessionID) {
 			_ = s.Delete(ctx, m.ID)
 		}
 	}
@@ -559,11 +697,15 @@ func (s *FileMemoryStore) readFile(path string) (*domain.Memory, error) {
 		fm.Confidence = 1.0 // facts/preferences with no recorded confidence are assumed authoritative
 	}
 
-	return &domain.Memory{
+	memory := &domain.Memory{
 		ID:              fm.ID,
 		SessionID:       fm.SessionID,
+		ScopeType:       fm.ScopeType,
+		ScopeID:         fm.ScopeID,
 		Type:            domain.MemoryType(fm.Type),
 		Content:         strings.TrimSpace(parts[2]),
+		Keywords:        append([]string(nil), fm.Keywords...),
+		Tags:            append([]string(nil), fm.Tags...),
 		Importance:      fm.Importance,
 		AccessCount:     fm.AccessCount,
 		LastAccessed:    fm.LastAccessed,
@@ -578,7 +720,12 @@ func (s *FileMemoryStore) readFile(path string) (*domain.Memory, error) {
 		SourceType:      fm.SourceType,
 		Conflicting:     fm.Conflicting,
 		RevisionHistory: fm.RevisionHistory,
-	}, nil
+		Archived:        fm.Archived,
+		ArchivedAt:      fm.ArchivedAt,
+		ArchiveReason:   fm.ArchiveReason,
+	}
+	normalizeMemoryForStore(memory)
+	return memory, nil
 }
 
 // MarkStale marks a memory as stale (superseded by a newer memory).
@@ -610,9 +757,62 @@ func (s *FileMemoryStore) indexDir() string {
 	return filepath.Join(s.baseDir, "_index")
 }
 
-// indexFilePath returns the per-type index file path, e.g. _index/observations.md
+func (s *FileMemoryStore) typeIndexDir() string {
+	return filepath.Join(s.indexDir(), "types")
+}
+
+func (s *FileMemoryStore) scopeIndexDir() string {
+	return filepath.Join(s.indexDir(), "scopes")
+}
+
+func (s *FileMemoryStore) viewsDir() string {
+	return filepath.Join(s.baseDir, "_views")
+}
+
+func (s *FileMemoryStore) archiveManifestDir() string {
+	return filepath.Join(s.baseDir, "_archive", "manifests")
+}
+
+// indexFilePath returns the per-type index file path, e.g. _index/types/observations.md.
 func (s *FileMemoryStore) indexFilePath(t domain.MemoryType) string {
-	return filepath.Join(s.indexDir(), string(t)+"s.md")
+	return filepath.Join(s.typeIndexDir(), string(t)+"s.md")
+}
+
+func (s *FileMemoryStore) scopeIndexFilePath(scope domain.MemoryScope) string {
+	scope = normalizeScope(scope)
+	name := string(scope.Type)
+	if scope.ID != "" {
+		name = fmt.Sprintf("%s__%s", name, sanitizeScopeID(scope.ID))
+	}
+	return filepath.Join(s.scopeIndexDir(), name+".md")
+}
+
+func (s *FileMemoryStore) scopeViewPath(scope domain.MemoryScope) string {
+	scope = normalizeScope(scope)
+
+	switch scope.Type {
+	case domain.MemoryScopeGlobal:
+		return filepath.Join(s.viewsDir(), "global", "global_memory.md")
+	case domain.MemoryScopeSquad:
+		return filepath.Join(s.viewsDir(), "squads", sanitizeScopeID(scope.ID), "process_memory.md")
+	case domain.MemoryScopeAgent:
+		return filepath.Join(s.viewsDir(), "agents", sanitizeScopeID(scope.ID), "thread_memory.md")
+	case domain.MemoryScopeSession:
+		return filepath.Join(s.viewsDir(), "sessions", sanitizeScopeID(scope.ID), "session_memory.md")
+	case domain.MemoryScopeUser:
+		return filepath.Join(s.viewsDir(), "users", sanitizeScopeID(scope.ID), "user_memory.md")
+	default:
+		return filepath.Join(s.viewsDir(), "misc", sanitizeScopeID(scope.ID), "memory.md")
+	}
+}
+
+func (s *FileMemoryStore) archiveManifestPath(scope domain.MemoryScope, at time.Time) string {
+	scope = normalizeScope(scope)
+	name := string(scope.Type)
+	if scope.ID != "" {
+		name = fmt.Sprintf("%s__%s", name, sanitizeScopeID(scope.ID))
+	}
+	return filepath.Join(s.archiveManifestDir(), fmt.Sprintf("%s__%s.md", name, at.UTC().Format("20060102T150405Z")))
 }
 
 // RebuildIndex forces a full rebuild of all per-type index files.
@@ -641,6 +841,145 @@ func (s *FileMemoryStore) ReadIndex(ctx context.Context) (*MemoryIndex, error) {
 	}
 
 	return s.readIndexFiles()
+}
+
+// ReadScopeIndex returns the merged index entries for one scope.
+func (s *FileMemoryStore) ReadScopeIndex(ctx context.Context, scope domain.MemoryScope) (*MemoryIndex, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.indexDirty {
+		if err := s.rebuildIndex(ctx); err != nil {
+			return nil, err
+		}
+		s.indexDirty = false
+	}
+
+	data, err := os.ReadFile(s.scopeIndexFilePath(scope))
+	if err != nil {
+		return &MemoryIndex{}, nil
+	}
+	idx, err := parseMemoryIndex(data, "")
+	if err != nil {
+		return nil, err
+	}
+	scope = normalizeScope(scope)
+	for i := range idx.Entries {
+		idx.Entries[i].ScopeType = scope.Type
+		idx.Entries[i].ScopeID = scope.ID
+	}
+	return idx, nil
+}
+
+// BuildScopeView materializes a human-readable summary file for one scope.
+func (s *FileMemoryStore) BuildScopeView(ctx context.Context, scope domain.MemoryScope) error {
+	scope = normalizeScope(scope)
+
+	all, _, err := s.List(ctx, 1000, 0)
+	if err != nil {
+		return err
+	}
+
+	var memories []*domain.Memory
+	for _, m := range all {
+		if m.Archived {
+			continue
+		}
+		if sameScope(inferMemoryScope(m.ScopeType, m.ScopeID, m.SessionID), scope) {
+			memories = append(memories, m)
+		}
+	}
+
+	sort.Slice(memories, func(i, j int) bool {
+		iOrder := memoryTypeRank(memories[i].Type)
+		jOrder := memoryTypeRank(memories[j].Type)
+		if iOrder != jOrder {
+			return iOrder < jOrder
+		}
+		if memories[i].Importance != memories[j].Importance {
+			return memories[i].Importance > memories[j].Importance
+		}
+		return memories[i].CreatedAt.After(memories[j].CreatedAt)
+	})
+
+	type viewFM struct {
+		ScopeType   domain.MemoryScopeType `yaml:"scope_type"`
+		ScopeID     string                 `yaml:"scope_id,omitempty"`
+		GeneratedAt time.Time              `yaml:"generated_at"`
+		ActiveCount int                    `yaml:"active_count"`
+	}
+	fm, _ := yaml.Marshal(viewFM{
+		ScopeType:   scope.Type,
+		ScopeID:     scope.ID,
+		GeneratedAt: time.Now().UTC(),
+		ActiveCount: len(memories),
+	})
+
+	var sb strings.Builder
+	sb.WriteString("---\n")
+	sb.WriteString(string(fm))
+	sb.WriteString("---\n\n")
+	sb.WriteString("# ")
+	sb.WriteString(scopeViewTitle(scope))
+	sb.WriteString("\n\n")
+
+	currentType := domain.MemoryType("")
+	for _, memory := range memories {
+		if memory.Type != currentType {
+			currentType = memory.Type
+			sb.WriteString("## ")
+			sb.WriteString(scopeViewSectionTitle(currentType))
+			sb.WriteString("\n")
+		}
+		sb.WriteString(fmt.Sprintf("- [%s] %s\n", memory.ID, truncate(memory.Content, 160)))
+	}
+	if len(memories) == 0 {
+		sb.WriteString("_No active memories in this scope._\n")
+	}
+
+	path := s.scopeViewPath(scope)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(sb.String()), 0644)
+}
+
+// ArchiveScope marks all memories in one scope as archived and writes an archive manifest.
+func (s *FileMemoryStore) ArchiveScope(ctx context.Context, scope domain.MemoryScope, reason string) error {
+	scope = normalizeScope(scope)
+
+	all, _, err := s.List(ctx, 1000, 0)
+	if err != nil {
+		return err
+	}
+
+	now := time.Now().UTC()
+	var archivedIDs []string
+	for _, memory := range all {
+		if memory.Archived {
+			continue
+		}
+		if !sameScope(inferMemoryScope(memory.ScopeType, memory.ScopeID, memory.SessionID), scope) {
+			continue
+		}
+
+		memory.Archived = true
+		memory.ArchivedAt = &now
+		memory.ArchiveReason = reason
+		memory.UpdatedAt = now
+		if err := s.Store(ctx, memory); err != nil {
+			return err
+		}
+		archivedIDs = append(archivedIDs, memory.ID)
+	}
+
+	if err := s.RebuildIndex(ctx); err != nil {
+		return err
+	}
+	if err := s.BuildScopeView(ctx, scope); err != nil {
+		return err
+	}
+	return s.writeArchiveManifest(scope, reason, now, archivedIDs)
 }
 
 // readIndexFiles reads all per-type index files and merges them.
@@ -676,12 +1015,23 @@ func (s *FileMemoryStore) readIndexFiles() (*MemoryIndex, error) {
 // rebuildIndex scans all memory files and rewrites the per-type index files.
 // Caller must hold s.mu.Lock().
 func (s *FileMemoryStore) rebuildIndex(ctx context.Context) error {
-	if err := os.MkdirAll(s.indexDir(), 0755); err != nil {
+	if err := os.MkdirAll(s.typeIndexDir(), 0755); err != nil {
 		return err
 	}
+	if err := os.MkdirAll(s.scopeIndexDir(), 0755); err != nil {
+		return err
+	}
+	if existingScopeIndexes, err := filepath.Glob(filepath.Join(s.scopeIndexDir(), "*.md")); err == nil {
+		for _, path := range existingScopeIndexes {
+			if removeErr := os.Remove(path); removeErr != nil && !os.IsNotExist(removeErr) {
+				return removeErr
+			}
+		}
+	}
 
-	// Collect all entries grouped by type
-	groups := map[domain.MemoryType][]MemoryIndexEntry{}
+	// Collect all active entries grouped by type and scope.
+	typeGroups := map[domain.MemoryType][]MemoryIndexEntry{}
+	scopeGroups := map[string]scopeIndexGroup{}
 	for _, cat := range []string{"streams", "entities"} {
 		files, _ := filepath.Glob(filepath.Join(s.baseDir, cat, "*.md"))
 		for _, f := range files {
@@ -689,13 +1039,25 @@ func (s *FileMemoryStore) rebuildIndex(ctx context.Context) error {
 			if err != nil {
 				continue
 			}
-			groups[m.Type] = append(groups[m.Type], MemoryIndexEntry{
+			entry := MemoryIndexEntry{
 				ID:         m.ID,
 				Type:       m.Type,
+				ScopeType:  m.ScopeType,
+				ScopeID:    m.ScopeID,
 				Importance: m.Importance,
 				Summary:    truncate(m.Content, 60),
 				IsStale:    IsStale(m),
-			})
+				Archived:   m.Archived,
+			}
+			if !m.Archived {
+				typeGroups[m.Type] = append(typeGroups[m.Type], entry)
+				scope := normalizeScope(domain.MemoryScope{Type: m.ScopeType, ID: m.ScopeID})
+				key := scopeIndexKey(scope)
+				group := scopeGroups[key]
+				group.Scope = scope
+				group.Entries = append(group.Entries, entry)
+				scopeGroups[key] = group
+			}
 		}
 	}
 
@@ -709,7 +1071,7 @@ func (s *FileMemoryStore) rebuildIndex(ctx context.Context) error {
 	}
 
 	for _, t := range typeOrder {
-		entries := groups[t]
+		entries := typeGroups[t]
 		// Sort: non-stale first, then by importance desc
 		sort.Slice(entries, func(i, j int) bool {
 			if entries[i].IsStale != entries[j].IsStale {
@@ -719,6 +1081,23 @@ func (s *FileMemoryStore) rebuildIndex(ctx context.Context) error {
 		})
 
 		if err := writeIndexFile(s.indexFilePath(t), t, entries); err != nil {
+			return err
+		}
+	}
+
+	for _, group := range scopeGroups {
+		entries := group.Entries
+		sort.Slice(entries, func(i, j int) bool {
+			if entries[i].IsStale != entries[j].IsStale {
+				return !entries[i].IsStale
+			}
+			if entries[i].Type != entries[j].Type {
+				return entries[i].Type < entries[j].Type
+			}
+			return entries[i].Importance > entries[j].Importance
+		})
+
+		if err := writeScopeIndexFile(s.scopeIndexFilePath(group.Scope), group.Scope, entries); err != nil {
 			return err
 		}
 	}
@@ -771,6 +1150,52 @@ func writeIndexFile(path string, t domain.MemoryType, entries []MemoryIndexEntry
 	return os.Rename(tmpPath, path)
 }
 
+func writeScopeIndexFile(path string, scope domain.MemoryScope, entries []MemoryIndexEntry) error {
+	type indexFM struct {
+		ScopeType domain.MemoryScopeType `yaml:"scope_type"`
+		ScopeID   string                 `yaml:"scope_id,omitempty"`
+		Total     int                    `yaml:"total"`
+		UpdatedAt time.Time              `yaml:"updated_at"`
+	}
+	fm, _ := yaml.Marshal(indexFM{
+		ScopeType: scope.Type,
+		ScopeID:   scope.ID,
+		Total:     len(entries),
+		UpdatedAt: time.Now(),
+	})
+
+	var sb strings.Builder
+	sb.WriteString("---\n")
+	sb.WriteString(string(fm))
+	sb.WriteString("---\n\n")
+	sb.WriteString(fmt.Sprintf("# Scope %s (%d)\n\n", scopeIndexKey(scope), len(entries)))
+
+	for _, e := range entries {
+		staleTag := ""
+		if e.IsStale {
+			staleTag = " ~~[stale]~~"
+		}
+		sb.WriteString(fmt.Sprintf("- [%s][%s] %.2f | %s%s\n", e.ID, e.Type, e.Importance, e.Summary, staleTag))
+	}
+
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".scope-index-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	if _, err := tmp.WriteString(sb.String()); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}
+
 // parseMemoryIndex parses a per-type index file.
 func parseMemoryIndex(data []byte, t domain.MemoryType) (*MemoryIndex, error) {
 	content := string(data)
@@ -805,6 +1230,15 @@ func parseMemoryIndex(data []byte, t domain.MemoryType) (*MemoryIndex, error) {
 		}
 		id := line[3:idEnd]
 		rest := strings.TrimSpace(line[idEnd+1:])
+		entryType := t
+
+		if strings.HasPrefix(rest, "[") {
+			typeEnd := strings.Index(rest, "]")
+			if typeEnd > 0 {
+				entryType = domain.MemoryType(rest[1:typeEnd])
+				rest = strings.TrimSpace(rest[typeEnd+1:])
+			}
+		}
 
 		var importance float64
 		var summary string
@@ -816,7 +1250,7 @@ func parseMemoryIndex(data []byte, t domain.MemoryType) (*MemoryIndex, error) {
 
 		idx.Entries = append(idx.Entries, MemoryIndexEntry{
 			ID:         id,
-			Type:       t,
+			Type:       entryType,
 			Importance: importance,
 			Summary:    summary,
 			IsStale:    strings.Contains(line, "~~[stale]~~"),
@@ -824,6 +1258,119 @@ func parseMemoryIndex(data []byte, t domain.MemoryType) (*MemoryIndex, error) {
 	}
 
 	return idx, nil
+}
+
+type scopeIndexGroup struct {
+	Scope   domain.MemoryScope
+	Entries []MemoryIndexEntry
+}
+
+func scopeIndexKey(scope domain.MemoryScope) string {
+	scope = normalizeScope(scope)
+	if scope.ID == "" {
+		return string(scope.Type)
+	}
+	return fmt.Sprintf("%s:%s", scope.Type, scope.ID)
+}
+
+func sanitizeScopeID(id string) string {
+	replacer := strings.NewReplacer("/", "_", "\\", "_", ":", "_", " ", "_")
+	return replacer.Replace(id)
+}
+
+func scopeViewTitle(scope domain.MemoryScope) string {
+	switch scope.Type {
+	case domain.MemoryScopeGlobal:
+		return "Global Memory"
+	case domain.MemoryScopeSquad:
+		return fmt.Sprintf("Squad %s Process Memory", scope.ID)
+	case domain.MemoryScopeAgent:
+		return fmt.Sprintf("Agent %s Thread Memory", scope.ID)
+	case domain.MemoryScopeSession:
+		return fmt.Sprintf("Session %s Memory", scope.ID)
+	case domain.MemoryScopeUser:
+		return fmt.Sprintf("User %s Memory", scope.ID)
+	default:
+		return "Memory View"
+	}
+}
+
+func scopeViewSectionTitle(t domain.MemoryType) string {
+	switch t {
+	case domain.MemoryTypeObservation:
+		return "Observations"
+	case domain.MemoryTypeFact:
+		return "Facts"
+	case domain.MemoryTypePreference:
+		return "Preferences"
+	case domain.MemoryTypeSkill:
+		return "Skills"
+	case domain.MemoryTypePattern:
+		return "Patterns"
+	case domain.MemoryTypeContext:
+		return "Context"
+	default:
+		return "Other"
+	}
+}
+
+func memoryTypeRank(t domain.MemoryType) int {
+	switch t {
+	case domain.MemoryTypeObservation:
+		return 0
+	case domain.MemoryTypeFact:
+		return 1
+	case domain.MemoryTypePreference:
+		return 2
+	case domain.MemoryTypeSkill:
+		return 3
+	case domain.MemoryTypePattern:
+		return 4
+	case domain.MemoryTypeContext:
+		return 5
+	default:
+		return 6
+	}
+}
+
+func (s *FileMemoryStore) writeArchiveManifest(scope domain.MemoryScope, reason string, archivedAt time.Time, ids []string) error {
+	if err := os.MkdirAll(s.archiveManifestDir(), 0755); err != nil {
+		return err
+	}
+
+	type manifestFM struct {
+		ScopeType     domain.MemoryScopeType `yaml:"scope_type"`
+		ScopeID       string                 `yaml:"scope_id,omitempty"`
+		ArchivedAt    time.Time              `yaml:"archived_at"`
+		ArchiveReason string                 `yaml:"archive_reason,omitempty"`
+		Count         int                    `yaml:"count"`
+	}
+	fm, _ := yaml.Marshal(manifestFM{
+		ScopeType:     scope.Type,
+		ScopeID:       scope.ID,
+		ArchivedAt:    archivedAt,
+		ArchiveReason: reason,
+		Count:         len(ids),
+	})
+
+	var sb strings.Builder
+	sb.WriteString("---\n")
+	sb.WriteString(string(fm))
+	sb.WriteString("---\n\n")
+	sb.WriteString("# Archive Manifest\n\n")
+	if reason != "" {
+		sb.WriteString("Reason: ")
+		sb.WriteString(reason)
+		sb.WriteString("\n\n")
+	}
+	sb.WriteString("## Memory IDs\n")
+	for _, id := range ids {
+		sb.WriteString("- ")
+		sb.WriteString(id)
+		sb.WriteString("\n")
+	}
+
+	return os.WriteFile(s.archiveManifestPath(scope, archivedAt), []byte(sb.String()), 0644)
 }
 
 // truncate shortens s to at most n runes, appending "…" if truncated.

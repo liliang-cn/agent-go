@@ -134,13 +134,25 @@ func (s *Service) SetShadowIndex(idx domain.MemoryStore) {
 //
 // Returns: formatted context string, scored memories, navigator reasoning (MemoryLogic), error
 func (s *Service) RetrieveAndInject(ctx context.Context, query string, sessionID string) (string, []*domain.MemoryWithScore, error) {
-	_, mems, _, err := s.RetrieveAndInjectWithLogic(ctx, query, sessionID)
+	_, mems, _, err := s.RetrieveAndInjectWithContextAndLogic(ctx, query, domain.MemoryQueryContext{SessionID: sessionID})
 	return s.formatMemories(mems), mems, err
 }
 
 // RetrieveAndInjectWithLogic is the full retrieval pipeline returning the navigator's
 // reasoning string alongside the context and memories.
 func (s *Service) RetrieveAndInjectWithLogic(ctx context.Context, query string, sessionID string) (string, []*domain.MemoryWithScore, string, error) {
+	return s.RetrieveAndInjectWithContextAndLogic(ctx, query, domain.MemoryQueryContext{SessionID: sessionID})
+}
+
+// RetrieveAndInjectWithContext searches relevant memories using an explicit scope chain.
+func (s *Service) RetrieveAndInjectWithContext(ctx context.Context, query string, queryContext domain.MemoryQueryContext) (string, []*domain.MemoryWithScore, error) {
+	_, mems, _, err := s.RetrieveAndInjectWithContextAndLogic(ctx, query, queryContext)
+	return s.formatMemories(mems), mems, err
+}
+
+// RetrieveAndInjectWithContextAndLogic is the full retrieval pipeline returning the navigator's
+// reasoning string alongside the context and memories.
+func (s *Service) RetrieveAndInjectWithContextAndLogic(ctx context.Context, query string, queryContext domain.MemoryQueryContext) (string, []*domain.MemoryWithScore, string, error) {
 	// 0. Adaptive retrieval - skip if query doesn't need memory
 	if s.classifier != nil && !s.classifier.NeedsMemory(query) {
 		return "", nil, "", nil
@@ -169,15 +181,16 @@ func (s *Service) RetrieveAndInjectWithLogic(ctx context.Context, query string, 
 	}
 
 	// 2. Vector Search (if embedder available)
+	scopes := DefaultScopeChain(queryContext.SessionID, queryContext.AgentID, queryContext.SquadID, queryContext.UserID)
 	var vectorResults []*domain.MemoryWithScore
 	if s.embedder != nil {
 		vector, err := s.embedder.Embed(ctx, query)
 		if err == nil {
-			scopes := DefaultScopeChain(sessionID, "", "", "")
 			vectorResults, _ = s.store.SearchByScope(ctx, vector, scopes.ToSlice(), s.maxMemories*2)
 
 			if s.enableHybrid {
 				textMems, _ := s.store.SearchByText(ctx, query, s.maxMemories)
+				textMems = filterMemoriesByScopes(textMems, scopes.ToSlice())
 				vectorResults = s.rrfFusion(vectorResults, textMems)
 			}
 		}
@@ -186,7 +199,7 @@ func (s *Service) RetrieveAndInjectWithLogic(ctx context.Context, query string, 
 	// 3. Navigator Search (PageIndex-style, for file stores) — captures reasoning
 	var navResults []*domain.MemoryWithScore
 	if s.navigator != nil {
-		navResult, err := s.navigator.NavigateWithReason(ctx, query, s.maxMemories)
+		navResult, err := s.navigator.NavigateWithScopesAndReason(ctx, query, scopes.ToSlice(), s.maxMemories)
 		if err == nil && navResult != nil {
 			memoryLogic = navResult.Reasoning
 			for i, m := range navResult.Memories {
@@ -210,11 +223,13 @@ func (s *Service) RetrieveAndInjectWithLogic(ctx context.Context, query string, 
 		if query != "" {
 			textMems, err := s.store.SearchByText(ctx, query, s.maxMemories)
 			if err == nil && len(textMems) > 0 {
+				textMems = filterMemoriesByScopes(textMems, scopes.ToSlice())
 				allMemories = append(allMemories, textMems...)
 				break
 			}
 		}
 		mems, _, _ := s.store.List(ctx, s.maxMemories, 0)
+		mems = filterPlainMemoriesByScopes(mems, scopes.ToSlice())
 		for _, m := range mems {
 			allMemories = append(allMemories, &domain.MemoryWithScore{Memory: m, Score: 0.5})
 		}
@@ -274,9 +289,13 @@ func (s *Service) StoreIfWorthwhile(ctx context.Context, req *domain.MemoryStore
 				"items": map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
-						"type":       map[string]interface{}{"type": "string", "enum": []string{"fact", "skill", "pattern", "context", "preference"}},
-						"content":    map[string]interface{}{"type": "string"},
-						"importance": map[string]interface{}{"type": "number"},
+						"type":             map[string]interface{}{"type": "string", "enum": []string{"fact", "skill", "pattern", "context", "preference"}},
+						"scope":            map[string]interface{}{"type": "string", "enum": []string{"session", "agent", "squad", "global"}},
+						"promote_to":       map[string]interface{}{"type": "string", "enum": []string{"session", "agent", "squad", "global"}},
+						"content":          map[string]interface{}{"type": "string"},
+						"importance":       map[string]interface{}{"type": "number"},
+						"scope_reason":     map[string]interface{}{"type": "string"},
+						"promotion_reason": map[string]interface{}{"type": "string"},
 					},
 					"required": []string{"type", "content", "importance"},
 				},
@@ -305,20 +324,34 @@ func (s *Service) StoreIfWorthwhile(ctx context.Context, req *domain.MemoryStore
 		return nil
 	}
 
-	newFactCount := 0
+	factScopeCounts := make(map[string]int)
 	for _, item := range summary.Memories {
+		baseScope, initialScope, finalScope, placementMeta := resolveMemoryPlacement(req, item)
+		_ = baseScope
+		_ = initialScope
 		mem := &domain.Memory{
 			ID:         uuid.New().String(),
-			SessionID:  req.SessionID,
+			SessionID:  ToBankID(finalScope),
+			ScopeType:  finalScope.Type,
+			ScopeID:    finalScope.ID,
 			Type:       item.Type,
 			Content:    item.Content,
+			Keywords:   mergeUniqueStrings(item.Tags.Strings(), item.Entities.Strings()),
+			Tags:       item.Tags.Strings(),
 			Importance: item.Importance,
 			SourceType: domain.MemorySourceInferred, // stored by agent inference
 			CreatedAt:  time.Now(),
+			Metadata: mergeMetadataMaps(
+				map[string]interface{}{
+					"entities": item.Entities.Strings(),
+					"source":   "store_if_worthwhile",
+				},
+				placementMeta,
+			),
 		}
 		_ = s.Add(ctx, mem)
 		if item.Type == domain.MemoryTypeFact {
-			newFactCount++
+			factScopeCounts[mem.SessionID]++
 		}
 	}
 
@@ -328,8 +361,12 @@ func (s *Service) StoreIfWorthwhile(ctx context.Context, req *domain.MemoryStore
 	}
 
 	// T6b: Async Reflect trigger — count facts for this session, fire if threshold reached
-	if newFactCount > 0 && s.reflectThreshold > 0 {
-		go s.maybeReflect(req.SessionID)
+	if s.reflectThreshold > 0 {
+		for bankID, count := range factScopeCounts {
+			if count > 0 {
+				go s.maybeReflect(bankID)
+			}
+		}
 	}
 
 	return nil
@@ -593,8 +630,255 @@ func (s *Service) formatMemories(memories []*domain.MemoryWithScore) string {
 	return sb.String()
 }
 
+func filterMemoriesByScopes(memories []*domain.MemoryWithScore, scopes []domain.MemoryScope) []*domain.MemoryWithScore {
+	if len(scopes) == 0 || len(memories) == 0 {
+		return memories
+	}
+
+	filtered := make([]*domain.MemoryWithScore, 0, len(memories))
+	for _, memory := range memories {
+		if memory == nil || memory.Memory == nil {
+			continue
+		}
+		if memoryMatchesAnyScope(memory.Memory, scopes) {
+			filtered = append(filtered, memory)
+		}
+	}
+	return filtered
+}
+
+func filterPlainMemoriesByScopes(memories []*domain.Memory, scopes []domain.MemoryScope) []*domain.Memory {
+	if len(scopes) == 0 || len(memories) == 0 {
+		return memories
+	}
+
+	filtered := make([]*domain.Memory, 0, len(memories))
+	for _, memory := range memories {
+		if memory == nil {
+			continue
+		}
+		if memoryMatchesAnyScope(memory, scopes) {
+			filtered = append(filtered, memory)
+		}
+	}
+	return filtered
+}
+
+func memoryMatchesAnyScope(memory *domain.Memory, scopes []domain.MemoryScope) bool {
+	if memory == nil {
+		return false
+	}
+
+	memScope := ParseBankID(memory.SessionID)
+	if normalized := normalizeScopeType(memory.ScopeType); normalized != domain.MemoryScopeGlobal || strings.TrimSpace(memory.ScopeID) != "" {
+		memScope = domain.MemoryScope{Type: normalized, ID: strings.TrimSpace(memory.ScopeID)}
+	}
+
+	for _, scope := range scopes {
+		normalized := domain.MemoryScope{Type: normalizeScopeType(scope.Type), ID: strings.TrimSpace(scope.ID)}
+		if normalized.Type == memScope.Type && normalized.ID == memScope.ID {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Service) buildSummaryPrompt(req *domain.MemoryStoreRequest) string {
-	return fmt.Sprintf("SYSTEM: You are a background background memory process. ANALYZE the following interaction and EXTRACT new facts or user preferences. RETURN VALID JSON ONLY.\n\nInteraction:\nGoal: %s\nResult: %s\n\nTask: Extract potential memories according to the schema.", req.TaskGoal, req.TaskResult)
+	return fmt.Sprintf(`SYSTEM: You are a background background memory process. ANALYZE the following interaction and EXTRACT new facts or user preferences. RETURN VALID JSON ONLY.
+
+Runtime scope context:
+- session_id: %s
+- agent_id: %s
+- squad_id: %s
+- user_id: %s
+
+Scope rules:
+- Use "session" for transient context tied to the current conversation only.
+- Use "agent" for reusable preferences, skills, and patterns this agent should remember across sessions.
+- Use "squad" only when the memory is clearly shared task context, cross-agent coordination data, or squad-wide facts.
+- Use "global" only for stable cross-squad/system knowledge.
+- The "scope" field should describe the natural owning scope for the memory item.
+- The optional "promote_to" field should only be used when the memory should be promoted to a higher shared scope than its natural owner.
+- Only promote to "squad" when the content is explicitly shared, cross-agent, process-level, or coordination-critical.
+- Only promote to "global" when the content is clearly stable and useful across squads or the whole system.
+- Include "scope_reason" when scope selection is non-obvious.
+- Include "promotion_reason" when you set "promote_to".
+
+Interaction:
+Goal: %s
+Result: %s
+
+Task: Extract potential memories according to the schema.`, req.SessionID, req.AgentID, req.SquadID, req.UserID, req.TaskGoal, req.TaskResult)
+}
+
+func defaultMemoryScope(req *domain.MemoryStoreRequest, item domain.MemoryItem) domain.MemoryScope {
+	switch item.Type {
+	case domain.MemoryTypeContext:
+		if req.SessionID != "" {
+			return SessionScope(req.SessionID)
+		}
+	case domain.MemoryTypePreference, domain.MemoryTypeSkill, domain.MemoryTypePattern:
+		if req.AgentID != "" {
+			return AgentScope(req.AgentID)
+		}
+		if req.SessionID != "" {
+			return SessionScope(req.SessionID)
+		}
+	case domain.MemoryTypeFact:
+		if isSharedSquadMemory(req, item) && req.SquadID != "" {
+			return SquadScope(req.SquadID)
+		}
+		if req.SessionID != "" {
+			return SessionScope(req.SessionID)
+		}
+	}
+
+	if req.AgentID != "" {
+		return AgentScope(req.AgentID)
+	}
+	if req.SquadID != "" {
+		return SquadScope(req.SquadID)
+	}
+	if req.UserID != "" {
+		return UserScope(req.UserID)
+	}
+	if req.SessionID != "" {
+		return SessionScope(req.SessionID)
+	}
+	return GlobalScope()
+}
+
+func resolveMemoryPlacement(req *domain.MemoryStoreRequest, item domain.MemoryItem) (domain.MemoryScope, domain.MemoryScope, domain.MemoryScope, map[string]interface{}) {
+	baseScope := defaultMemoryScope(req, item)
+	initialScope := baseScope
+	if scope := resolveExplicitScopeHint(req, item.Scope); scope.Type != "" {
+		initialScope = scope
+	}
+
+	finalScope := initialScope
+	if promoteScope := resolveExplicitScopeHint(req, item.PromoteTo); promoteScope.Type != "" {
+		if scopeHierarchyLevel(promoteScope.Type) > scopeHierarchyLevel(initialScope.Type) {
+			finalScope = promoteScope
+		}
+	}
+
+	meta := map[string]interface{}{
+		"default_scope":  ScopeString(baseScope),
+		"resolved_scope": ScopeString(finalScope),
+	}
+	if strings.TrimSpace(item.ScopeReason) != "" {
+		meta["scope_reason"] = strings.TrimSpace(item.ScopeReason)
+	}
+	if strings.TrimSpace(item.PromotionReason) != "" {
+		meta["promotion_reason"] = strings.TrimSpace(item.PromotionReason)
+	}
+	if scopeHierarchyLevel(finalScope.Type) > scopeHierarchyLevel(initialScope.Type) {
+		meta["promoted"] = true
+		meta["promoted_from_scope"] = ScopeString(initialScope)
+		meta["promoted_to_scope"] = ScopeString(finalScope)
+	}
+	return baseScope, initialScope, finalScope, meta
+}
+
+func resolveExplicitScopeHint(req *domain.MemoryStoreRequest, hint domain.MemoryScopeType) domain.MemoryScope {
+	if strings.TrimSpace(string(hint)) == "" {
+		return domain.MemoryScope{}
+	}
+
+	switch normalizeScopeType(hint) {
+	case domain.MemoryScopeSession:
+		if req.SessionID != "" {
+			return SessionScope(req.SessionID)
+		}
+	case domain.MemoryScopeAgent:
+		if req.AgentID != "" {
+			return AgentScope(req.AgentID)
+		}
+	case domain.MemoryScopeSquad:
+		if req.SquadID != "" {
+			return SquadScope(req.SquadID)
+		}
+	case domain.MemoryScopeUser:
+		if req.UserID != "" {
+			return UserScope(req.UserID)
+		}
+	case domain.MemoryScopeGlobal:
+		return GlobalScope()
+	}
+	return domain.MemoryScope{}
+}
+
+func isSharedSquadMemory(req *domain.MemoryStoreRequest, item domain.MemoryItem) bool {
+	if req == nil || strings.TrimSpace(req.SquadID) == "" {
+		return false
+	}
+	if req.Metadata != nil {
+		if shared, ok := req.Metadata["shared"].(bool); ok && shared {
+			return true
+		}
+		if scope, ok := req.Metadata["memory_scope"].(string); ok && strings.EqualFold(strings.TrimSpace(scope), "squad") {
+			return true
+		}
+	}
+
+	text := strings.ToLower(strings.Join(append([]string{item.Content}, append(item.Tags.Strings(), item.Entities.Strings()...)...), " "))
+	keywords := []string{
+		"shared", "cross-agent", "cross agent", "team", "squad", "captain", "specialist", "handoff", "roster",
+		"shared context", "coordination", "workspace", "repository", "api contract", "deployment", "schema",
+		"共享", "跨agent", "跨 agent", "团队", "小队", "协作", "交接",
+	}
+	for _, keyword := range keywords {
+		if strings.Contains(text, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+func mergeUniqueStrings(parts ...[]string) []string {
+	seen := make(map[string]struct{})
+	result := make([]string, 0)
+	for _, group := range parts {
+		for _, item := range group {
+			item = strings.TrimSpace(item)
+			if item == "" {
+				continue
+			}
+			if _, ok := seen[item]; ok {
+				continue
+			}
+			seen[item] = struct{}{}
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
+func scopeHierarchyLevel(scopeType domain.MemoryScopeType) int {
+	switch normalizeScopeType(scopeType) {
+	case domain.MemoryScopeSession:
+		return 1
+	case domain.MemoryScopeAgent:
+		return 2
+	case domain.MemoryScopeSquad:
+		return 3
+	case domain.MemoryScopeUser:
+		return 4
+	case domain.MemoryScopeGlobal:
+		return 5
+	default:
+		return 0
+	}
+}
+
+func mergeMetadataMaps(parts ...map[string]interface{}) map[string]interface{} {
+	result := make(map[string]interface{})
+	for _, part := range parts {
+		for key, value := range part {
+			result[key] = value
+		}
+	}
+	return result
 }
 
 // MemoryEvolutionNode represents one step in a memory's evolution path.

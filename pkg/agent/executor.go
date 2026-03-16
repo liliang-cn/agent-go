@@ -139,12 +139,16 @@ func (e *Executor) ExecutePlan(ctx context.Context, plan *Plan, session *Session
 	// Store memories after successful task completion
 	if e.memoryService != nil {
 		log.Println("[Agent] Analyzing task for long-term memory storage...")
-		err := e.memoryService.StoreIfWorthwhile(context.Background(), &domain.MemoryStoreRequest{
+		req := &domain.MemoryStoreRequest{
 			SessionID:    plan.SessionID,
 			TaskGoal:     plan.Goal,
 			TaskResult:   formatResultForContent(finalResult),
 			ExecutionLog: e.buildExecutionLog(plan),
-		})
+		}
+		if session != nil {
+			req.AgentID = session.AgentID
+		}
+		err := e.memoryService.StoreIfWorthwhile(context.Background(), req)
 		if err != nil {
 			log.Printf("[Agent] Warning: memory storage failed: %v", err)
 		} else {

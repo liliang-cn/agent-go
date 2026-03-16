@@ -163,31 +163,31 @@ func (s *MemoryStore) SearchByScope(ctx context.Context, vector []float64, scope
 
 	// Search each scope in order
 	for _, scope := range scopes {
-		bankID := scopeToBankID(scope)
-
-		req := &hindsight.RecallRequest{
-			BankID:      bankID,
-			QueryVector: toFloat32(vector),
-			TopK:        topK,
-			Strategy:    hindsight.DefaultStrategy(),
-		}
-
-		results, err := s.sys.Recall(ctx, req)
-		if err != nil {
-			continue // Skip failed scope searches
-		}
-
-		for _, res := range results {
-			// Deduplicate
-			if seen[res.Memory.ID] {
-				continue
+		for _, bankID := range scopeToBankIDs(scope) {
+			req := &hindsight.RecallRequest{
+				BankID:      bankID,
+				QueryVector: toFloat32(vector),
+				TopK:        topK,
+				Strategy:    hindsight.DefaultStrategy(),
 			}
-			seen[res.Memory.ID] = true
 
-			allMemories = append(allMemories, &domain.MemoryWithScore{
-				Memory: toDomainMemory(toInternalMemory(res.Memory)),
-				Score:  float64(res.Score),
-			})
+			results, err := s.sys.Recall(ctx, req)
+			if err != nil {
+				continue // Skip failed scope searches
+			}
+
+			for _, res := range results {
+				// Deduplicate
+				if seen[res.Memory.ID] {
+					continue
+				}
+				seen[res.Memory.ID] = true
+
+				allMemories = append(allMemories, &domain.MemoryWithScore{
+					Memory: toDomainMemory(toInternalMemory(res.Memory)),
+					Score:  float64(res.Score),
+				})
+			}
 		}
 	}
 
@@ -278,18 +278,55 @@ func (s *MemoryStore) SearchByText(ctx context.Context, query string, topK int) 
 // scopeToBankID converts MemoryScope to bank ID
 func scopeToBankID(scope domain.MemoryScope) string {
 	if scope.Type == domain.MemoryScopeGlobal {
-		return "default"
+		return "global"
 	}
 	if scope.Type == domain.MemoryScopeSession {
 		if scope.ID == "" {
-			return "default"
+			return "global"
 		}
 		return scope.ID
+	}
+	if scope.Type == domain.MemoryScopeProject {
+		scope.Type = domain.MemoryScopeSquad
 	}
 	if scope.ID == "" {
 		return string(scope.Type)
 	}
 	return fmt.Sprintf("%s:%s", scope.Type, scope.ID)
+}
+
+func scopeToBankIDs(scope domain.MemoryScope) []string {
+	scope = normalizeVectorScope(scope)
+
+	switch scope.Type {
+	case domain.MemoryScopeGlobal:
+		return []string{"global", "default"}
+	case domain.MemoryScopeSession:
+		if scope.ID == "" {
+			return []string{"global", "default"}
+		}
+		return []string{scope.ID, "session:" + scope.ID}
+	case domain.MemoryScopeSquad:
+		if scope.ID == "" {
+			return []string{"squad"}
+		}
+		return []string{"squad:" + scope.ID, "project:" + scope.ID}
+	default:
+		if scope.ID == "" {
+			return []string{string(scope.Type)}
+		}
+		return []string{fmt.Sprintf("%s:%s", scope.Type, scope.ID)}
+	}
+}
+
+func normalizeVectorScope(scope domain.MemoryScope) domain.MemoryScope {
+	if scope.Type == domain.MemoryScopeProject {
+		scope.Type = domain.MemoryScopeSquad
+	}
+	if scope.Type == "" {
+		scope.Type = domain.MemoryScopeGlobal
+	}
+	return scope
 }
 
 // calculateTextScore calculates a simple text relevance score
@@ -542,9 +579,12 @@ func toDomainMemory(im *Memory) *domain.Memory {
 	if im == nil {
 		return nil
 	}
+	scopeType, scopeID := inferVectorScope(im.SessionID)
 	return &domain.Memory{
 		ID:           im.ID,
 		SessionID:    im.SessionID,
+		ScopeType:    scopeType,
+		ScopeID:      scopeID,
 		Type:         domain.MemoryType(im.Type),
 		Content:      im.Content,
 		Vector:       im.Vector,
@@ -554,5 +594,24 @@ func toDomainMemory(im *Memory) *domain.Memory {
 		Metadata:     im.Metadata,
 		CreatedAt:    im.CreatedAt,
 		UpdatedAt:    im.UpdatedAt,
+	}
+}
+
+func inferVectorScope(bankID string) (domain.MemoryScopeType, string) {
+	switch {
+	case bankID == "", bankID == "global", bankID == "default":
+		return domain.MemoryScopeGlobal, ""
+	case strings.HasPrefix(bankID, "agent:"):
+		return domain.MemoryScopeAgent, strings.TrimPrefix(bankID, "agent:")
+	case strings.HasPrefix(bankID, "squad:"):
+		return domain.MemoryScopeSquad, strings.TrimPrefix(bankID, "squad:")
+	case strings.HasPrefix(bankID, "project:"):
+		return domain.MemoryScopeSquad, strings.TrimPrefix(bankID, "project:")
+	case strings.HasPrefix(bankID, "user:"):
+		return domain.MemoryScopeUser, strings.TrimPrefix(bankID, "user:")
+	case strings.HasPrefix(bankID, "session:"):
+		return domain.MemoryScopeSession, strings.TrimPrefix(bankID, "session:")
+	default:
+		return domain.MemoryScopeSession, bankID
 	}
 }

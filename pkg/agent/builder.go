@@ -435,8 +435,9 @@ func (b *Builder) build() (*Service, error) {
 
 	// Build Memory
 	var memSvc domain.MemoryService
+	var memoryStoreType string
 	if b.enableMemory {
-		memSvc, err = b.buildMemoryService(agentgoCfg, embedSvc, llmSvc)
+		memSvc, memoryStoreType, err = b.buildMemoryService(agentgoCfg, embedSvc, llmSvc)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create memory service: %w", err)
 		}
@@ -489,6 +490,7 @@ func (b *Builder) build() (*Service, error) {
 		return nil, fmt.Errorf("failed to create service: %w", err)
 	}
 	svc.cfg = agentgoCfg
+	svc.memoryStoreType = memoryStoreType
 
 	// Apply debug config: either from WithDebug() builder call or global agentgoCfg.Debug (e.g. from DEBUG=1 env var)
 	if agentgoCfg.Debug {
@@ -506,8 +508,8 @@ func (b *Builder) build() (*Service, error) {
 			return nil, fmt.Errorf("rag module registration failed: %w", err)
 		}
 	}
-	if memSvc != nil {
-		memMod := NewMemoryModule(memSvc, svc.markRunMemorySaved)
+	if memSvc != nil && svc.shouldExposeMemoryTools() {
+		memMod := NewMemoryModule(memSvc, svc.markRunMemorySaved, svc.resolveMemoryQueryContextFromContext)
 		if err := memMod.RegisterTools(svc.toolRegistry); err != nil {
 			return nil, fmt.Errorf("memory module registration failed: %w", err)
 		}
@@ -632,6 +634,7 @@ func (b *Builder) build() (*Service, error) {
 	if mcpSvc != nil {
 		svc.SetMCPService(mcpSvc)
 	}
+	svc.SetMemoryScope(b.name, "", "")
 
 	return svc, nil
 }
@@ -649,7 +652,7 @@ func resolveServiceModelInfo(llmSvc domain.Generator, cfg *config.Config) (strin
 	return "", ""
 }
 
-func (b *Builder) buildMemoryService(agentgoCfg *config.Config, embedSvc domain.Embedder, llmSvc domain.Generator) (domain.MemoryService, error) {
+func (b *Builder) buildMemoryService(agentgoCfg *config.Config, embedSvc domain.Embedder, llmSvc domain.Generator) (domain.MemoryService, string, error) {
 	var memStore domain.MemoryStore
 	var shadowStore domain.MemoryStore
 	var err error
@@ -674,21 +677,21 @@ func (b *Builder) buildMemoryService(agentgoCfg *config.Config, embedSvc domain.
 	case "file":
 		memStore, err = store.NewFileMemoryStore(memPath)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create file memory store: %w", err)
+			return nil, "", fmt.Errorf("failed to create file memory store: %w", err)
 		}
 	case "vector":
 		sqlitePath := agentgoCfg.AgentDBPath()
 		memStore, err = store.NewMemoryStore(sqlitePath)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create vector memory store: %w", err)
+			return nil, "", fmt.Errorf("failed to create vector memory store: %w", err)
 		}
 		if err := memStore.InitSchema(context.Background()); err != nil {
-			return nil, fmt.Errorf("failed to init memory schema: %w", err)
+			return nil, "", fmt.Errorf("failed to init memory schema: %w", err)
 		}
 	case "hybrid":
 		fileStore, ferr := store.NewFileMemoryStore(memPath)
 		if ferr != nil {
-			return nil, fmt.Errorf("failed to create file memory store: %w", ferr)
+			return nil, "", fmt.Errorf("failed to create file memory store: %w", ferr)
 		}
 		// Wire LLM for Reflect() and IndexNavigator on the truth layer
 		if llmSvc != nil {
@@ -701,7 +704,7 @@ func (b *Builder) buildMemoryService(agentgoCfg *config.Config, embedSvc domain.
 			shadowStore = sqliteStore
 		}
 	default:
-		return nil, fmt.Errorf("unsupported memory store type: %s", storeType)
+		return nil, "", fmt.Errorf("unsupported memory store type: %s", storeType)
 	}
 
 	memCfg := memory.DefaultConfig()
@@ -739,7 +742,7 @@ func (b *Builder) buildMemoryService(agentgoCfg *config.Config, embedSvc domain.
 		}()
 	}
 
-	return memSvc, nil
+	return memSvc, storeType, nil
 }
 
 func (b *Builder) buildRAGProcessor(agentgoCfg *config.Config, embedSvc domain.Embedder, llmSvc domain.Generator, memSvc domain.MemoryService) (domain.Processor, error) {

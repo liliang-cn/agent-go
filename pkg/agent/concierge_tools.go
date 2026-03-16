@@ -277,13 +277,9 @@ func (m *SquadManager) RegisterConciergeTools(concierge *Service) {
 	})
 }
 
-var conciergeAllowedToolNames = map[string]struct{}{
+var conciergeBaseAllowedToolNames = map[string]struct{}{
 	"task_complete":      {},
 	"llm":                {},
-	"memory_save":        {},
-	"memory_recall":      {},
-	"memory_update":      {},
-	"memory_delete":      {},
 	"list_squads":        {},
 	"get_squad_status":   {},
 	"list_agents":        {},
@@ -299,6 +295,7 @@ func configureConciergeService(concierge *Service) {
 	if concierge == nil {
 		return
 	}
+	allowedToolNames := conciergeAllowedToolNames(concierge)
 
 	if concierge.toolRegistry != nil {
 		for _, name := range []string{
@@ -306,26 +303,46 @@ func configureConciergeService(concierge *Service) {
 			"search_available_tools",
 			"tool_search_tool_regex",
 			"tool_search_tool_bm25",
+			"memory_save",
+			"memory_recall",
+			"memory_update",
+			"memory_delete",
 		} {
-			concierge.toolRegistry.Unregister(name)
+			if _, ok := allowedToolNames[name]; !ok {
+				concierge.toolRegistry.Unregister(name)
+			}
 		}
 	}
 
 	if concierge.agent != nil {
 		filteredTools := make([]domain.ToolDefinition, 0, len(concierge.agent.tools))
 		for _, tool := range concierge.agent.tools {
-			if _, ok := conciergeAllowedToolNames[tool.Function.Name]; ok {
+			if _, ok := allowedToolNames[tool.Function.Name]; ok {
 				filteredTools = append(filteredTools, tool)
 			}
 		}
 		concierge.agent.SetTools(filteredTools)
 
 		for name := range concierge.agent.handlers {
-			if _, ok := conciergeAllowedToolNames[name]; !ok {
+			if _, ok := allowedToolNames[name]; !ok {
 				delete(concierge.agent.handlers, name)
 			}
 		}
 	}
+}
+
+func conciergeAllowedToolNames(concierge *Service) map[string]struct{} {
+	allowed := make(map[string]struct{}, len(conciergeBaseAllowedToolNames)+4)
+	for name := range conciergeBaseAllowedToolNames {
+		allowed[name] = struct{}{}
+	}
+	if concierge != nil && concierge.shouldExposeMemoryTools() {
+		allowed["memory_save"] = struct{}{}
+		allowed["memory_recall"] = struct{}{}
+		allowed["memory_update"] = struct{}{}
+		allowed["memory_delete"] = struct{}{}
+	}
+	return allowed
 }
 
 func configureCaptainService(captain *Service) {

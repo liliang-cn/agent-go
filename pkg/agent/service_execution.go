@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/liliang-cn/agent-go/pkg/domain"
+	memorypkg "github.com/liliang-cn/agent-go/pkg/memory"
 	"github.com/liliang-cn/agent-go/pkg/prompt"
 	"golang.org/x/sync/errgroup"
 )
@@ -20,6 +21,11 @@ type executionMetrics struct {
 	toolsUsed       []string
 	estimatedTokens int
 }
+
+const (
+	recentConversationWindow = 6
+	olderConversationLimit   = 12
+)
 
 // executeWithLLM lets LLM decide which tool to use and executes with multi-round support
 func (s *Service) executeWithLLM(ctx context.Context, goal string, intent *IntentRecognitionResult, session *Session, memoryContext string, ragContext string, cfg *RunConfig) (interface{}, *executionMetrics, error) {
@@ -132,23 +138,67 @@ func (s *Service) executeWithLLM(ctx context.Context, goal string, intent *Inten
 
 // buildConversationMessages constructs the next-turn user message and prepends prior session history when available.
 func (s *Service) buildConversationMessages(session *Session, goal, ragContext, memoryContext, summary string) []domain.Message {
-	content := goal
 	history := make([]domain.Message, 0)
 	if session != nil {
 		history = session.GetMessages()
 	}
-	if summary != "" && len(history) == 0 {
-		content = "--- Conversation Summary ---\n" + summary + "\n--- End Summary ---\n\n" + content
+
+	olderMessages, recentMessages := splitConversationHistory(history, recentConversationWindow, olderConversationLimit)
+	messages := make([]domain.Message, 0, len(olderMessages)+len(recentMessages)+2)
+	if contextMsg := buildConversationContextMessage(summary, memoryContext, ragContext); contextMsg != nil {
+		messages = append(messages, *contextMsg)
 	}
-	if ragContext != "" {
-		content += "\n\n--- Relevant documents from knowledge base ---\n" + ragContext + "\n--- End of documents ---"
-	}
-	if memoryContext != "" {
-		content += "\n\nRelevant context from memory:\n" + memoryContext
-	}
-	messages := append([]domain.Message{}, history...)
-	messages = append(messages, domain.Message{Role: "user", Content: content})
+	messages = append(messages, olderMessages...)
+	messages = append(messages, recentMessages...)
+	messages = append(messages, domain.Message{Role: "user", Content: goal})
 	return messages
+}
+
+func splitConversationHistory(history []domain.Message, recentWindow, olderLimit int) ([]domain.Message, []domain.Message) {
+	if len(history) == 0 {
+		return nil, nil
+	}
+	if recentWindow <= 0 {
+		recentWindow = recentConversationWindow
+	}
+	if olderLimit < 0 {
+		olderLimit = 0
+	}
+
+	if len(history) <= recentWindow {
+		return nil, append([]domain.Message(nil), history...)
+	}
+
+	recentStart := len(history) - recentWindow
+	recent := append([]domain.Message(nil), history[recentStart:]...)
+	older := history[:recentStart]
+	if olderLimit > 0 && len(older) > olderLimit {
+		older = older[len(older)-olderLimit:]
+	}
+	return append([]domain.Message(nil), older...), recent
+}
+
+func buildConversationContextMessage(summary, memoryContext, ragContext string) *domain.Message {
+	var sections []string
+
+	if trimmed := strings.TrimSpace(summary); trimmed != "" {
+		sections = append(sections, "--- Latest Summary / Key Info ---\n"+trimmed)
+	}
+	if trimmed := strings.TrimSpace(memoryContext); trimmed != "" {
+		sections = append(sections, "--- Relevant Context From Memory ---\n"+trimmed)
+	}
+	if trimmed := strings.TrimSpace(ragContext); trimmed != "" {
+		sections = append(sections, "--- Relevant Documents From Knowledge Base ---\n"+trimmed)
+	}
+	if len(sections) == 0 {
+		return nil
+	}
+
+	content := strings.Join(sections, "\n\n") + "\n\nUse the context above when responding to the next user message."
+	return &domain.Message{
+		Role:    "user",
+		Content: content,
+	}
 }
 
 // runOneLLMTurn builds the prompt for this round and calls the LLM once.
@@ -708,6 +758,8 @@ func (s *Service) executeLLMToolCalls(ctx context.Context, toolCalls []domain.To
 
 // finalizeExecution finalizes the execution result
 func (s *Service) finalizeExecution(ctx context.Context, session *Session, goal string, intent *IntentRecognitionResult, memoryMemories []*domain.MemoryWithScore, memoryLogic string, ragResult string, finalResult interface{}) (*ExecutionResult, error) {
+	queryContext := s.resolveMemoryQueryContext(session)
+
 	// Store to memory after completion
 	if s.memoryService != nil {
 		// Auto-store for explicit memory request patterns
@@ -727,8 +779,16 @@ func (s *Service) finalizeExecution(ctx context.Context, session *Session, goal 
 					content = strings.TrimSpace(goal[len("save to memory"):])
 				}
 
+				scope := memorypkg.AgentScope(queryContext.AgentID)
+				if scope.ID == "" && queryContext.SessionID != "" {
+					scope = memorypkg.SessionScope(queryContext.SessionID)
+				}
+
 				if err := s.memoryService.Add(ctx, &domain.Memory{
 					Type:       domain.MemoryTypePreference,
+					SessionID:  memorypkg.ToBankID(scope),
+					ScopeType:  scope.Type,
+					ScopeID:    scope.ID,
 					Content:    content,
 					Importance: 0.8,
 					Metadata: map[string]interface{}{
@@ -745,6 +805,9 @@ func (s *Service) finalizeExecution(ctx context.Context, session *Session, goal 
 		// LLM-based extraction for complex memories
 		if err := s.memoryService.StoreIfWorthwhile(ctx, &domain.MemoryStoreRequest{
 			SessionID:  session.GetID(),
+			AgentID:    queryContext.AgentID,
+			SquadID:    queryContext.SquadID,
+			UserID:     queryContext.UserID,
 			TaskGoal:   goal,
 			TaskResult: formatResultForContent(finalResult),
 			ExecutionLog: fmt.Sprintf("Intent: %s\nMemory: %d items\nRAG: %d chars",
@@ -770,6 +833,21 @@ func (s *Service) finalizeExecution(ctx context.Context, session *Session, goal 
 		Memories:    memoryMemories,
 		MemoryLogic: memoryLogic,
 		Duration:    "completed",
+		Metadata: map[string]interface{}{
+			"memory_scope_chain": []string{
+				fmt.Sprintf("session:%s", strings.TrimSpace(queryContext.SessionID)),
+				fmt.Sprintf("agent:%s", strings.TrimSpace(queryContext.AgentID)),
+				fmt.Sprintf("squad:%s", strings.TrimSpace(queryContext.SquadID)),
+				fmt.Sprintf("user:%s", strings.TrimSpace(queryContext.UserID)),
+				"global",
+			},
+			"memory_scope_context": map[string]interface{}{
+				"session_id": queryContext.SessionID,
+				"agent_id":   queryContext.AgentID,
+				"squad_id":   queryContext.SquadID,
+				"user_id":    queryContext.UserID,
+			},
+		},
 	}
 
 	// Collect RAG sources

@@ -14,6 +14,8 @@ func ScopePriority(t domain.MemoryScopeType) int {
 		return 100
 	case domain.MemoryScopeAgent:
 		return 80
+	case domain.MemoryScopeSquad:
+		return 60
 	case domain.MemoryScopeProject:
 		return 60
 	case domain.MemoryScopeUser:
@@ -25,9 +27,10 @@ func ScopePriority(t domain.MemoryScopeType) int {
 	}
 }
 
-// ToBankID converts scope to bank ID format
-// Format: "global" or "agent:main" or "project:xyz" or "session:uuid"
+// ToBankID converts scope to bank ID format.
+// Format: "global" or "agent:main" or "squad:alpha" or "session:uuid".
 func ToBankID(s domain.MemoryScope) string {
+	s = normalizeScope(s)
 	if s.Type == domain.MemoryScopeGlobal {
 		return "global"
 	}
@@ -39,23 +42,30 @@ func ToBankID(s domain.MemoryScope) string {
 
 // ParseBankID parses a bank ID back to MemoryScope
 func ParseBankID(bankID string) domain.MemoryScope {
-	if bankID == "" || bankID == "global" {
+	if bankID == "" || bankID == "global" || bankID == "default" {
 		return domain.MemoryScope{Type: domain.MemoryScopeGlobal}
 	}
 
 	parts := strings.SplitN(bankID, ":", 2)
 	if len(parts) == 1 {
-		return domain.MemoryScope{Type: domain.MemoryScopeType(parts[0])}
+		scopeType := normalizeScopeType(domain.MemoryScopeType(parts[0]))
+		switch scopeType {
+		case domain.MemoryScopeGlobal, domain.MemoryScopeAgent, domain.MemoryScopeSquad, domain.MemoryScopeProject, domain.MemoryScopeUser, domain.MemoryScopeSession:
+			return domain.MemoryScope{Type: scopeType}
+		default:
+			return domain.MemoryScope{Type: domain.MemoryScopeSession, ID: strings.TrimSpace(bankID)}
+		}
 	}
 
 	return domain.MemoryScope{
-		Type: domain.MemoryScopeType(parts[0]),
+		Type: normalizeScopeType(domain.MemoryScopeType(parts[0])),
 		ID:   parts[1],
 	}
 }
 
 // ScopeString returns string representation
 func ScopeString(s domain.MemoryScope) string {
+	s = normalizeScope(s)
 	if s.ID == "" {
 		return string(s.Type)
 	}
@@ -77,9 +87,15 @@ func AgentScope(agentID string) domain.MemoryScope {
 	return domain.MemoryScope{Type: domain.MemoryScopeAgent, ID: agentID}
 }
 
+// SquadScope returns a squad scope.
+func SquadScope(squadID string) domain.MemoryScope {
+	return domain.MemoryScope{Type: domain.MemoryScopeSquad, ID: squadID}
+}
+
 // ProjectScope returns a project scope
 func ProjectScope(projectID string) domain.MemoryScope {
-	return domain.MemoryScope{Type: domain.MemoryScopeProject, ID: projectID}
+	// Keep the legacy helper but normalize project-scoped memory to squad scope.
+	return SquadScope(projectID)
 }
 
 // UserScope returns a user scope
@@ -96,9 +112,9 @@ func SessionScope(sessionID string) domain.MemoryScope {
 // Higher priority scopes are searched first
 type ScopeChain []domain.MemoryScope
 
-// DefaultScopeChain returns the default scope chain for searching
-// Order: Session > Agent > Project > User > Global
-func DefaultScopeChain(sessionID, agentID, projectID, userID string) ScopeChain {
+// DefaultScopeChain returns the default scope chain for searching.
+// Order: Session > Agent > Squad/Project > User > Global.
+func DefaultScopeChain(sessionID, agentID, squadOrProjectID, userID string) ScopeChain {
 	var chain ScopeChain
 
 	if sessionID != "" {
@@ -107,8 +123,8 @@ func DefaultScopeChain(sessionID, agentID, projectID, userID string) ScopeChain 
 	if agentID != "" {
 		chain = append(chain, AgentScope(agentID))
 	}
-	if projectID != "" {
-		chain = append(chain, ProjectScope(projectID))
+	if squadOrProjectID != "" {
+		chain = append(chain, SquadScope(squadOrProjectID))
 	}
 	if userID != "" {
 		chain = append(chain, UserScope(userID))
@@ -144,6 +160,7 @@ func (c ScopeChain) ToSlice() []domain.MemoryScope {
 type ScopeWeightConfig struct {
 	SessionWeight float64
 	AgentWeight   float64
+	SquadWeight   float64
 	ProjectWeight float64
 	UserWeight    float64
 	GlobalWeight  float64
@@ -154,6 +171,7 @@ func DefaultScopeWeightConfig() *ScopeWeightConfig {
 	return &ScopeWeightConfig{
 		SessionWeight: 1.0,
 		AgentWeight:   0.9,
+		SquadWeight:   0.8,
 		ProjectWeight: 0.8,
 		UserWeight:    0.7,
 		GlobalWeight:  0.6,
@@ -167,6 +185,8 @@ func (c *ScopeWeightConfig) GetWeight(scopeType domain.MemoryScopeType) float64 
 		return c.SessionWeight
 	case domain.MemoryScopeAgent:
 		return c.AgentWeight
+	case domain.MemoryScopeSquad:
+		return c.SquadWeight
 	case domain.MemoryScopeProject:
 		return c.ProjectWeight
 	case domain.MemoryScopeUser:
@@ -175,5 +195,24 @@ func (c *ScopeWeightConfig) GetWeight(scopeType domain.MemoryScopeType) float64 
 		return c.GlobalWeight
 	default:
 		return 0.5
+	}
+}
+
+func normalizeScope(scope domain.MemoryScope) domain.MemoryScope {
+	scope.Type = normalizeScopeType(scope.Type)
+	if scope.Type == "" {
+		scope.Type = domain.MemoryScopeGlobal
+	}
+	return scope
+}
+
+func normalizeScopeType(scopeType domain.MemoryScopeType) domain.MemoryScopeType {
+	switch scopeType {
+	case "":
+		return domain.MemoryScopeGlobal
+	case domain.MemoryScopeProject:
+		return domain.MemoryScopeSquad
+	default:
+		return scopeType
 	}
 }

@@ -34,13 +34,14 @@ func (f *fileMemoryTestLLM) GenerateWithTools(ctx context.Context, messages []do
 	if len(messages) > 0 {
 		userContent = messages[len(messages)-1].Content
 	}
+	allContent := collectMessageContent(messages)
 
-	if strings.Contains(userContent, "Relevant context from memory:") && strings.Contains(userContent, "Alice likes tea") {
+	if strings.Contains(allContent, "Relevant Context From Memory") && strings.Contains(allContent, "Alice likes tea") {
 		f.sawMemoryContext = true
 		return &domain.GenerationResult{Content: "You like tea."}, nil
 	}
 
-	if f.expectedRecallText != "" && strings.Contains(userContent, "Relevant context from memory:") && strings.Contains(userContent, f.expectedRecallText) {
+	if f.expectedRecallText != "" && strings.Contains(allContent, "Relevant Context From Memory") && strings.Contains(allContent, f.expectedRecallText) {
 		f.sawMemoryContext = true
 		return &domain.GenerationResult{Content: "I remember that detail."}, nil
 	}
@@ -126,6 +127,18 @@ func schemaHasProperty(schema interface{}, key string) bool {
 	return exists
 }
 
+func collectMessageContent(messages []domain.Message) string {
+	var sb strings.Builder
+	for _, message := range messages {
+		if strings.TrimSpace(message.Content) == "" {
+			continue
+		}
+		sb.WriteString(message.Content)
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
 func testAgentConfig(home string) *config.Config {
 	cfg := &config.Config{
 		Home: home,
@@ -176,6 +189,9 @@ func TestAgentWithMemoryStoresAndRecallsFileMemory(t *testing.T) {
 	}
 	if !strings.Contains(mems[0].Content, "Alice likes tea") {
 		t.Fatalf("unexpected stored memory: %+v", mems[0])
+	}
+	if mems[0].ScopeType != domain.MemoryScopeAgent || mems[0].ScopeID != "memory-agent" {
+		t.Fatalf("expected remembered preference to be stored in agent scope, got %+v", mems[0])
 	}
 
 	entityFiles, err := filepath.Glob(filepath.Join(home, "data", "memories", "entities", "*.md"))
@@ -290,6 +306,9 @@ func TestAgentWithMemoryStoresOrdinaryDialogueViaStoreIfWorthwhile(t *testing.T)
 	found := false
 	for _, mem := range mems {
 		if strings.Contains(mem.Content, "Alice prefers coffee over tea.") {
+			if mem.ScopeType != domain.MemoryScopeAgent || mem.ScopeID != "memory-agent" {
+				t.Fatalf("expected extracted preference to be stored in agent scope, got %+v", mem)
+			}
 			found = true
 			break
 		}
@@ -307,5 +326,36 @@ func TestAgentWithMemoryStoresOrdinaryDialogueViaStoreIfWorthwhile(t *testing.T)
 	}
 	if !llm.sawMemoryContext {
 		t.Fatal("expected recalled ordinary-dialogue memory to be injected")
+	}
+}
+
+func TestMemoryToolsAreHiddenInFileOnlyMode(t *testing.T) {
+	ctx := context.Background()
+	home := t.TempDir()
+
+	svc, err := New("memory-agent").
+		WithConfig(testAgentConfig(home)).
+		WithLLM(&fileMemoryTestLLM{}).
+		WithMemory().
+		Build()
+	if err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+	defer svc.Close()
+
+	if svc.toolRegistry.Has("memory_recall") || svc.toolRegistry.Has("memory_save") || svc.toolRegistry.Has("memory_update") || svc.toolRegistry.Has("memory_delete") {
+		t.Fatal("expected memory CRUD tools to be hidden in file-only mode")
+	}
+
+	if _, err := svc.Chat(ctx, "remember: Alice likes tea"); err != nil {
+		t.Fatalf("writer chat failed: %v", err)
+	}
+
+	result, err := svc.Chat(ctx, "what do I like to drink?")
+	if err != nil {
+		t.Fatalf("recall chat failed: %v", err)
+	}
+	if got := result.Text(); got != "You like tea." {
+		t.Fatalf("expected file-only mode to still recall memory via pre-injected context, got %q", got)
 	}
 }

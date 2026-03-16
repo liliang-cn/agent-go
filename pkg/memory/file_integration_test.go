@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/liliang-cn/agent-go/pkg/domain"
@@ -67,4 +68,98 @@ func TestFileMemoryIntegration(t *testing.T) {
 	if total != 0 || len(mems) != 0 {
 		t.Fatalf("expected empty list after delete, got total=%d len=%d", total, len(mems))
 	}
+}
+
+type scopedNavigatorTestLLM struct {
+	lastNavigatorPrompt string
+}
+
+func (s *scopedNavigatorTestLLM) Generate(ctx context.Context, prompt string, opts *domain.GenerationOptions) (string, error) {
+	return "", nil
+}
+
+func (s *scopedNavigatorTestLLM) Stream(ctx context.Context, prompt string, opts *domain.GenerationOptions, callback func(string)) error {
+	return nil
+}
+
+func (s *scopedNavigatorTestLLM) GenerateWithTools(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions) (*domain.GenerationResult, error) {
+	return &domain.GenerationResult{Content: "OK"}, nil
+}
+
+func (s *scopedNavigatorTestLLM) StreamWithTools(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions, callback domain.ToolCallCallback) error {
+	return nil
+}
+
+func (s *scopedNavigatorTestLLM) GenerateStructured(ctx context.Context, prompt string, schema interface{}, opts *domain.GenerationOptions) (*domain.StructuredResult, error) {
+	s.lastNavigatorPrompt = prompt
+	return &domain.StructuredResult{
+		Raw:   `{"ids":["squad-alpha-memory"],"reasoning":"Selected the squad-scoped memory from the higher-priority scope."}`,
+		Valid: true,
+	}, nil
+}
+
+func (s *scopedNavigatorTestLLM) RecognizeIntent(ctx context.Context, request string) (*domain.IntentResult, error) {
+	return nil, nil
+}
+
+func TestFileMemoryIntegrationScopedNavigatorRetrieval(t *testing.T) {
+	ctx := context.Background()
+
+	memStore, err := store.NewFileMemoryStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new file memory store failed: %v", err)
+	}
+
+	llm := &scopedNavigatorTestLLM{}
+	service := NewService(memStore, llm, nil, nil)
+
+	globalMem := &domain.Memory{
+		ID:         "global-memory",
+		Type:       domain.MemoryTypeFact,
+		Content:    "Global fallback memory",
+		Importance: 0.3,
+	}
+	squadMem := &domain.Memory{
+		ID:         "squad-alpha-memory",
+		Type:       domain.MemoryTypeObservation,
+		Content:    "Squad alpha has already approved the deployment checklist.",
+		Importance: 0.9,
+	}
+	if err := memStore.Store(ctx, globalMem); err != nil {
+		t.Fatalf("store global memory failed: %v", err)
+	}
+	if err := memStore.StoreWithScope(ctx, squadMem, domain.MemoryScope{Type: domain.MemoryScopeSquad, ID: "alpha"}); err != nil {
+		t.Fatalf("store squad memory failed: %v", err)
+	}
+	if err := memStore.RebuildIndex(ctx); err != nil {
+		t.Fatalf("rebuild index failed: %v", err)
+	}
+
+	formatted, recalled, reasoning, err := service.RetrieveAndInjectWithContextAndLogic(ctx, "what is the deployment status for squad alpha?", domain.MemoryQueryContext{
+		SquadID: "alpha",
+	})
+	if err != nil {
+		t.Fatalf("scoped retrieve and inject failed: %v", err)
+	}
+	if len(recalled) != 1 || recalled[0].ID != "squad-alpha-memory" {
+		t.Fatalf("expected squad-scoped memory, got %+v", recalled)
+	}
+	if reasoning == "" {
+		t.Fatal("expected navigator reasoning to be returned")
+	}
+	if formatted == "" {
+		t.Fatal("expected formatted memory context")
+	}
+	if llm.lastNavigatorPrompt == "" || !containsAll(llm.lastNavigatorPrompt, "## Scope: squad:alpha", "## Scope: global", "squad-alpha-memory") {
+		t.Fatalf("expected navigator prompt to include scoped indexes, got:\n%s", llm.lastNavigatorPrompt)
+	}
+}
+
+func containsAll(text string, parts ...string) bool {
+	for _, part := range parts {
+		if !strings.Contains(text, part) {
+			return false
+		}
+	}
+	return true
 }

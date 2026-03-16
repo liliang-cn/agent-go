@@ -128,7 +128,8 @@ func (c *SystemContext) FormatForPrompt() string {
 
 	// Memory availability hint only — actual recalled memories come via user message (prepareContext)
 	if c.HasMemory {
-		sb.WriteString("Memory: memory_save/recall/update/delete available\n")
+		sb.WriteString("Memory: long-term memory is enabled")
+		sb.WriteString("\n")
 	}
 
 	if len(c.MCPServers) > 0 {

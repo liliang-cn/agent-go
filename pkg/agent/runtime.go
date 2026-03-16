@@ -79,19 +79,12 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 	defer prepCancel()
 	memoryContext, ragContext := r.prepareContext(prepCtx, goal)
 
-	// 2. Build initial messages
-	messages := []domain.Message{
-		{Role: "user", Content: goal},
+	// 2. Build initial messages using the same layered assembly strategy as the non-streaming path.
+	summary := ""
+	if r.session != nil {
+		summary = r.session.Summary
 	}
-	if r.session != nil && r.session.Summary != "" {
-		messages[0].Content = "--- Conversation Summary ---\n" + r.session.Summary + "\n--- End Summary ---\n\n" + messages[0].Content
-	}
-	if ragContext != "" {
-		messages[len(messages)-1].Content += "\n\n--- Knowledge Base ---\n" + ragContext
-	}
-	if memoryContext != "" {
-		messages[len(messages)-1].Content += "\n\n--- Memory ---\n" + memoryContext
-	}
+	messages := r.svc.buildConversationMessages(r.session, goal, ragContext, memoryContext, summary)
 
 	const maxRounds = 20
 	for round := 0; round < maxRounds; round++ {
@@ -512,6 +505,7 @@ func (r *Runtime) executeToolOrHandoff(ctx context.Context, tc domain.ToolCall) 
 	resolvedToolName := r.resolveExecutableToolName(toolName)
 	ctx = withEventSink(ctx, r.forwardSubAgentEvent)
 	ctx = withRunDebug(ctx, r.debugEnabled())
+	ctx = withCurrentSession(ctx, r.session)
 
 	// === PRE-TOOL HOOK ===
 	hookData := HookData{
@@ -688,9 +682,11 @@ func (r *Runtime) prepareContext(ctx context.Context, goal string) (string, stri
 
 	// Memory Retrieval
 	if r.svc.memoryService != nil {
+		queryContext := r.svc.resolveMemoryQueryContext(r.session)
+		r.svc.rememberMemoryQueryContext(r.session, queryContext)
 		g.Go(func() error {
 			var err error
-			memCtx, _, err = r.svc.memoryService.RetrieveAndInject(groupCtx, goal, r.session.GetID())
+			memCtx, _, err = r.svc.memoryService.RetrieveAndInjectWithContext(groupCtx, goal, queryContext)
 			if err != nil {
 				r.svc.logger.Warn("memory retrieval failed", slog.String("error", err.Error()))
 			}
@@ -704,8 +700,12 @@ func (r *Runtime) prepareContext(ctx context.Context, goal string) (string, stri
 
 func (r *Runtime) saveToMemory(ctx context.Context, goal, result string) {
 	if r.svc.memoryService != nil {
+		queryContext := r.svc.resolveMemoryQueryContext(r.session)
 		if err := r.svc.memoryService.StoreIfWorthwhile(ctx, &domain.MemoryStoreRequest{
 			SessionID:  r.session.GetID(),
+			AgentID:    queryContext.AgentID,
+			SquadID:    queryContext.SquadID,
+			UserID:     queryContext.UserID,
 			TaskGoal:   goal,
 			TaskResult: result,
 		}); err != nil {

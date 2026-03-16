@@ -264,6 +264,47 @@ func TestService_RetrieveAndInject(t *testing.T) {
 	})
 }
 
+func TestService_RetrieveAndInjectWithContextUsesScopeChain(t *testing.T) {
+	ctx := context.Background()
+	store := new(MockMemoryStore)
+	llm := new(MockGenerator)
+	embedder := new(MockEmbedder)
+
+	service := NewService(store, llm, embedder, DefaultConfig())
+	query := "what is the shared squad status?"
+	vector := []float64{0.1, 0.2, 0.3}
+	queryContext := domain.MemoryQueryContext{
+		SessionID: "session-1",
+		AgentID:   "Assistant",
+		SquadID:   "squad-alpha",
+		UserID:    "user-1",
+	}
+	expectedScopes := DefaultScopeChain(queryContext.SessionID, queryContext.AgentID, queryContext.SquadID, queryContext.UserID).ToSlice()
+
+	embedder.On("Embed", ctx, query).Return(vector, nil)
+	store.On("Search", ctx, vector, 3, 0.5).Return([]*domain.MemoryWithScore{}, nil)
+	store.On("SearchByScope", ctx, vector, expectedScopes, service.maxMemories*2).Return([]*domain.MemoryWithScore{
+		{
+			Memory: &domain.Memory{
+				ID:        "mem-squad-1",
+				Type:      domain.MemoryTypeObservation,
+				Content:   "Squad alpha is blocked on deployment approval.",
+				CreatedAt: time.Now(),
+			},
+			Score: 0.92,
+		},
+	}, nil)
+	store.On("IncrementAccess", ctx, "mem-squad-1").Return(nil)
+
+	formatted, memories, err := service.RetrieveAndInjectWithContext(ctx, query, queryContext)
+
+	assert.NoError(t, err)
+	assert.Len(t, memories, 1)
+	assert.Contains(t, formatted, "Squad alpha is blocked on deployment approval.")
+	store.AssertExpectations(t)
+	embedder.AssertExpectations(t)
+}
+
 func TestService_Add(t *testing.T) {
 	ctx := context.Background()
 	store := new(MockMemoryStore)
@@ -373,5 +414,89 @@ func TestService_StoreIfWorthwhile(t *testing.T) {
 		assert.NoError(t, err)
 		llm.AssertExpectations(t)
 		store.AssertNotCalled(t, "Store")
+	})
+
+	t.Run("Preference memories default to agent scope when agent context exists", func(t *testing.T) {
+		isolatedStore := new(MockMemoryStore)
+		isolatedLLM := new(MockGenerator)
+		isolatedEmbedder := new(MockEmbedder)
+		isolatedService := NewService(isolatedStore, isolatedLLM, isolatedEmbedder, nil)
+
+		req := &domain.MemoryStoreRequest{
+			SessionID:  "session-2",
+			AgentID:    "Assistant",
+			SquadID:    "squad-alpha",
+			TaskGoal:   "Remember the user's drink preference",
+			TaskResult: "Alice prefers coffee over tea.",
+		}
+
+		structuredResult := &domain.StructuredResult{
+			Raw:   `{"should_store": true, "memories": [{"type": "preference", "content": "Alice prefers coffee over tea.", "importance": 0.9}]}`,
+			Valid: true,
+		}
+
+		isolatedLLM.On("GenerateStructured", ctx, mock.Anything, mock.Anything, mock.Anything).Return(structuredResult, nil)
+		isolatedEmbedder.On("Embed", ctx, "Alice prefers coffee over tea.").Return([]float64{0.3, 0.2, 0.1}, nil)
+		isolatedStore.On("Store", ctx, mock.MatchedBy(func(m *domain.Memory) bool {
+			return m.Content == "Alice prefers coffee over tea." &&
+				m.ScopeType == domain.MemoryScopeAgent &&
+				m.ScopeID == "Assistant" &&
+				m.SessionID == "agent:Assistant"
+		})).Return(nil)
+
+		err := isolatedService.StoreIfWorthwhile(ctx, req)
+
+		assert.NoError(t, err)
+		isolatedLLM.AssertExpectations(t)
+		isolatedEmbedder.AssertExpectations(t)
+		isolatedStore.AssertExpectations(t)
+	})
+
+	t.Run("LLM can promote shared facts from session to squad scope", func(t *testing.T) {
+		isolatedStore := new(MockMemoryStore)
+		isolatedLLM := new(MockGenerator)
+		isolatedEmbedder := new(MockEmbedder)
+		isolatedService := NewService(isolatedStore, isolatedLLM, isolatedEmbedder, nil)
+
+		req := &domain.MemoryStoreRequest{
+			SessionID:  "session-3",
+			AgentID:    "Assistant",
+			SquadID:    "squad-alpha",
+			TaskGoal:   "Summarize the shared deployment coordination status",
+			TaskResult: "The team agreed the deployment checklist is approved and shared with all squad members.",
+		}
+
+		structuredResult := &domain.StructuredResult{
+			Raw:   `{"should_store": true, "memories": [{"type": "fact", "scope": "session", "promote_to": "squad", "content": "Deployment checklist approved for squad alpha.", "importance": 0.88, "scope_reason": "Observed in this session.", "promotion_reason": "Shared coordination state for the whole squad."}]}`,
+			Valid: true,
+		}
+
+		isolatedLLM.On("GenerateStructured", ctx, mock.Anything, mock.Anything, mock.Anything).Return(structuredResult, nil)
+		isolatedEmbedder.On("Embed", ctx, "Deployment checklist approved for squad alpha.").Return([]float64{0.4, 0.2, 0.6}, nil)
+		isolatedStore.On("Store", ctx, mock.MatchedBy(func(m *domain.Memory) bool {
+			if m.Content != "Deployment checklist approved for squad alpha." {
+				return false
+			}
+			if m.ScopeType != domain.MemoryScopeSquad || m.ScopeID != "squad-alpha" || m.SessionID != "squad:squad-alpha" {
+				return false
+			}
+			if promoted, ok := m.Metadata["promoted"].(bool); !ok || !promoted {
+				return false
+			}
+			if from, ok := m.Metadata["promoted_from_scope"].(string); !ok || from != "session:session-3" {
+				return false
+			}
+			if to, ok := m.Metadata["promoted_to_scope"].(string); !ok || to != "squad:squad-alpha" {
+				return false
+			}
+			return true
+		})).Return(nil)
+
+		err := isolatedService.StoreIfWorthwhile(ctx, req)
+
+		assert.NoError(t, err)
+		isolatedLLM.AssertExpectations(t)
+		isolatedEmbedder.AssertExpectations(t)
+		isolatedStore.AssertExpectations(t)
 	})
 }

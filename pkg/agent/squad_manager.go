@@ -721,10 +721,26 @@ func (m *SquadManager) getOrBuildService(name string) (*Service, error) {
 	if label := configuredModelLabel(model); label != "" {
 		newSvc.agent.SetModel(label)
 	}
+	newSvc.SetMemoryScope(model.Name, primaryMemorySquadID(model), "")
 
 	m.services[name] = newSvc
 
 	return newSvc, nil
+}
+
+func primaryMemorySquadID(model *AgentModel) string {
+	if model == nil {
+		return ""
+	}
+	if teamID := strings.TrimSpace(model.TeamID); teamID != "" {
+		return teamID
+	}
+	for _, membership := range model.Squads {
+		if squadID := strings.TrimSpace(membership.SquadID); squadID != "" {
+			return squadID
+		}
+	}
+	return ""
 }
 
 func (m *SquadManager) buildTeamSystemPromptForModel(cfg *config.Config, model *AgentModel) string {

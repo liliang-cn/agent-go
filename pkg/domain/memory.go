@@ -67,6 +67,7 @@ type MemoryScopeType string
 const (
 	MemoryScopeGlobal  MemoryScopeType = "global"
 	MemoryScopeAgent   MemoryScopeType = "agent"
+	MemoryScopeSquad   MemoryScopeType = "squad"
 	MemoryScopeProject MemoryScopeType = "project"
 	MemoryScopeUser    MemoryScopeType = "user"
 	MemoryScopeSession MemoryScopeType = "session"
@@ -136,9 +137,13 @@ type MemoryRevision struct {
 type Memory struct {
 	ID           string                 `json:"id"`
 	SessionID    string                 `json:"session_id,omitempty"` // Associated session, empty means global memory
+	ScopeType    MemoryScopeType        `json:"scope_type,omitempty"` // Explicit scope type; supersedes raw SessionID parsing when set
+	ScopeID      string                 `json:"scope_id,omitempty"`   // Scope identifier for non-global memories
 	Type         MemoryType             `json:"type"`
 	Content      string                 `json:"content"`
 	Vector       []float64              `json:"vector,omitempty"`
+	Keywords     []string               `json:"keywords,omitempty"`
+	Tags         []string               `json:"tags,omitempty"`
 	Importance   float64                `json:"importance"` // 0-1, used for sorting/priority
 	AccessCount  int                    `json:"access_count"`
 	LastAccessed time.Time              `json:"last_accessed"`
@@ -155,6 +160,9 @@ type Memory struct {
 	SourceType      MemorySourceType `json:"source_type,omitempty"`      // how this memory was created
 	Conflicting     bool             `json:"conflicting,omitempty"`      // true if this observation has conflicting evidence
 	RevisionHistory []MemoryRevision `json:"revision_history,omitempty"` // ordered list of changes to this memory
+	Archived        bool             `json:"archived,omitempty"`         // true if the memory has been archived from active retrieval
+	ArchivedAt      *time.Time       `json:"archived_at,omitempty"`      // when the memory was archived
+	ArchiveReason   string           `json:"archive_reason,omitempty"`   // human-readable archive reason
 }
 
 // MemoryWithScore represents a memory with its similarity score
@@ -171,9 +179,21 @@ type MemoryRetrieveResult struct {
 	HasRelevant bool               `json:"has_relevant"` // Whether relevant memories were found
 }
 
+// MemoryQueryContext describes the runtime scope chain available to one memory lookup.
+// Session is the most local scope, followed by agent/thread, squad/process, user, and global.
+type MemoryQueryContext struct {
+	SessionID string `json:"session_id,omitempty"`
+	AgentID   string `json:"agent_id,omitempty"`
+	SquadID   string `json:"squad_id,omitempty"`
+	UserID    string `json:"user_id,omitempty"`
+}
+
 // MemoryStoreRequest is a request to store memories after task completion
 type MemoryStoreRequest struct {
 	SessionID    string                 `json:"session_id"`
+	AgentID      string                 `json:"agent_id,omitempty"`
+	SquadID      string                 `json:"squad_id,omitempty"`
+	UserID       string                 `json:"user_id,omitempty"`
 	TaskGoal     string                 `json:"task_goal"`
 	TaskResult   string                 `json:"task_result"`
 	ExecutionLog string                 `json:"execution_log,omitempty"`
@@ -189,11 +209,15 @@ type MemorySummaryResult struct {
 
 // MemoryItem represents a single memory item extracted by LLM
 type MemoryItem struct {
-	Type       MemoryType          `json:"type"`
-	Content    string              `json:"content"`
-	Importance float64             `json:"importance"`
-	Tags       FlexibleStringArray `json:"tags,omitempty"`
-	Entities   FlexibleStringArray `json:"entities,omitempty"`
+	Type            MemoryType          `json:"type"`
+	Scope           MemoryScopeType     `json:"scope,omitempty"`
+	PromoteTo       MemoryScopeType     `json:"promote_to,omitempty"`
+	Content         string              `json:"content"`
+	Importance      float64             `json:"importance"`
+	ScopeReason     string              `json:"scope_reason,omitempty"`
+	PromotionReason string              `json:"promotion_reason,omitempty"`
+	Tags            FlexibleStringArray `json:"tags,omitempty"`
+	Entities        FlexibleStringArray `json:"entities,omitempty"`
 }
 
 // MemoryStore defines the interface for memory persistence
@@ -261,6 +285,12 @@ type MemoryService interface {
 	// IndexNavigator's reasoning string (MemoryLogic) explaining which memories
 	// were selected and why. Returns: formatted context, scored memories, reasoning, error.
 	RetrieveAndInjectWithLogic(ctx context.Context, query string, sessionID string) (string, []*MemoryWithScore, string, error)
+
+	// RetrieveAndInjectWithContext searches relevant memories using an explicit scope chain.
+	RetrieveAndInjectWithContext(ctx context.Context, query string, queryContext MemoryQueryContext) (string, []*MemoryWithScore, error)
+
+	// RetrieveAndInjectWithContextAndLogic is the context-aware form of RetrieveAndInjectWithLogic.
+	RetrieveAndInjectWithContextAndLogic(ctx context.Context, query string, queryContext MemoryQueryContext) (string, []*MemoryWithScore, string, error)
 
 	// StoreIfWorthwhile analyzes task completion and decides what to store
 	StoreIfWorthwhile(ctx context.Context, req *MemoryStoreRequest) error

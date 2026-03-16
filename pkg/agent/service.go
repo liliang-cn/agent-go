@@ -38,34 +38,38 @@ type ProgressCallback func(ProgressEvent)
 // Service is the main agent service that handles planning and execution
 // This matches the interface expected by the CLI in cmd/agentgo-cli/agent/agent.go
 type Service struct {
-	debug             bool
-	llmService        domain.Generator
-	mcpService        MCPToolExecutor
-	ragProcessor      domain.Processor
-	memoryService     domain.MemoryService
-	skillsService     *skills.Service
-	routerService     *router.Service // Semantic Router for fast intent recognition
-	promptManager     *prompt.Manager // Central prompt management
-	planner           *Planner
-	executor          *Executor
-	store             *Store
-	agent             *Agent
-	registry          *Registry
-	logger            *slog.Logger
-	cancelMu          sync.RWMutex
-	cancelFunc        context.CancelFunc
-	progressCb        ProgressCallback
-	currentSessionID  string // Auto-generated UUID for Chat() method
-	sessionMu         sync.RWMutex
-	memorySaveMu      sync.RWMutex
-	memorySavedInRun  bool
-	ragSourcesMu      sync.RWMutex
-	ragSources        []domain.Chunk // Collect RAG sources during execution
-	isRunning         bool
-	statusMu          sync.RWMutex
-	permissionMu      sync.RWMutex
-	permissionHandler PermissionHandler
-	permissionPolicy  PermissionPolicy
+	debug              bool
+	llmService         domain.Generator
+	mcpService         MCPToolExecutor
+	ragProcessor       domain.Processor
+	memoryService      domain.MemoryService
+	skillsService      *skills.Service
+	routerService      *router.Service // Semantic Router for fast intent recognition
+	promptManager      *prompt.Manager // Central prompt management
+	planner            *Planner
+	executor           *Executor
+	store              *Store
+	agent              *Agent
+	registry           *Registry
+	logger             *slog.Logger
+	cancelMu           sync.RWMutex
+	cancelFunc         context.CancelFunc
+	progressCb         ProgressCallback
+	currentSessionID   string // Auto-generated UUID for Chat() method
+	sessionMu          sync.RWMutex
+	memoryStoreType    string
+	memoryScopeAgentID string
+	memoryScopeSquadID string
+	memoryScopeUserID  string
+	memorySaveMu       sync.RWMutex
+	memorySavedInRun   bool
+	ragSourcesMu       sync.RWMutex
+	ragSources         []domain.Chunk // Collect RAG sources during execution
+	isRunning          bool
+	statusMu           sync.RWMutex
+	permissionMu       sync.RWMutex
+	permissionHandler  PermissionHandler
+	permissionPolicy   PermissionPolicy
 
 	// Model metadata for Info()
 	modelName string
@@ -145,18 +149,19 @@ func NewService(
 
 	// Create service first (so we can pass it to planner/executor)
 	s := &Service{
-		llmService:    llmService,
-		mcpService:    mcpService,
-		ragProcessor:  ragProcessor,
-		memoryService: memoryService,
-		promptManager: promptMgr,
-		store:         store,
-		agent:         agent,
-		registry:      registry,
-		logger:        logger,
-		hooks:         NewHookRegistry(),
-		toolRegistry:  NewToolRegistry(),
-		tokenCounter:  usage.NewTokenCounter(),
+		llmService:         llmService,
+		mcpService:         mcpService,
+		ragProcessor:       ragProcessor,
+		memoryService:      memoryService,
+		promptManager:      promptMgr,
+		store:              store,
+		agent:              agent,
+		registry:           registry,
+		logger:             logger,
+		memoryScopeAgentID: strings.TrimSpace(agent.Name()),
+		hooks:              NewHookRegistry(),
+		toolRegistry:       NewToolRegistry(),
+		tokenCounter:       usage.NewTokenCounter(),
 		// Public fields
 		LLM:     llmService,
 		RAG:     ragProcessor,
@@ -443,6 +448,8 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 	} else {
 		session = NewSession(s.agent.ID())
 	}
+	memoryQueryContext := s.resolveMemoryQueryContext(session)
+	s.rememberMemoryQueryContext(session, memoryQueryContext)
 
 	// Parallel Context Collection
 	var (
@@ -480,7 +487,7 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 	if s.memoryService != nil {
 		g.Go(func() error {
 			var err error
-			memoryContext, memoryMemories, memoryLogic, err = s.memoryService.RetrieveAndInjectWithLogic(groupCtx, goal, session.GetID())
+			memoryContext, memoryMemories, memoryLogic, err = s.memoryService.RetrieveAndInjectWithContextAndLogic(groupCtx, goal, memoryQueryContext)
 			return err
 		})
 	}

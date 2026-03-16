@@ -143,8 +143,17 @@ func TestRegisterConciergeToolsExposesStatusAndSubmission(t *testing.T) {
 			Parameters:  map[string]interface{}{"type": "object"},
 		},
 	}, nil, CategoryCustom)
+	svc.toolRegistry.Register(domain.ToolDefinition{
+		Type: "function",
+		Function: domain.ToolFunction{
+			Name:        "memory_recall",
+			Description: "memory helper",
+			Parameters:  map[string]interface{}{"type": "object"},
+		},
+	}, nil, CategoryMemory)
 	svc.agent.AddTool("delegate_to_subagent", "delegation helper", map[string]interface{}{"type": "object"}, nil)
 	svc.agent.AddTool("search_available_tools", "search helper", map[string]interface{}{"type": "object"}, nil)
+	svc.agent.AddTool("memory_recall", "memory helper", map[string]interface{}{"type": "object"}, nil)
 	manager.RegisterConciergeTools(svc)
 
 	if svc.toolRegistry.Has("delegate_to_subagent") {
@@ -153,11 +162,17 @@ func TestRegisterConciergeToolsExposesStatusAndSubmission(t *testing.T) {
 	if svc.toolRegistry.Has("search_available_tools") {
 		t.Fatal("expected search_available_tools to be removed from Concierge tool registry")
 	}
+	if svc.toolRegistry.Has("memory_recall") {
+		t.Fatal("expected memory_recall to be removed from Concierge tool registry in file-only mode")
+	}
 	if svc.agent.HasTool("delegate_to_subagent") {
 		t.Fatal("expected delegate_to_subagent to be removed from Concierge agent tools")
 	}
 	if svc.agent.HasTool("search_available_tools") {
 		t.Fatal("expected search_available_tools to be removed from Concierge agent tools")
+	}
+	if svc.agent.HasTool("memory_recall") {
+		t.Fatal("expected memory_recall to be removed from Concierge agent tools in file-only mode")
 	}
 	if !svc.agent.HasTool("submit_agent_task") {
 		t.Fatal("expected submit_agent_task to be available on Concierge")

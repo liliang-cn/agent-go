@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/liliang-cn/agent-go/pkg/domain"
+	memorypkg "github.com/liliang-cn/agent-go/pkg/memory"
 )
 
 // Module is implemented by any component that can self-register tools into
@@ -23,6 +24,21 @@ type Module interface {
 	ID() string
 	// RegisterTools registers all tools this module provides into registry.
 	RegisterTools(registry *ToolRegistry) error
+}
+
+func memoryBankIDFromScope(scope domain.MemoryScope) string {
+	scope = normalizeModuleScope(scope)
+	return memorypkg.ToBankID(scope)
+}
+
+func normalizeModuleScope(scope domain.MemoryScope) domain.MemoryScope {
+	if scope.Type == "" {
+		scope.Type = domain.MemoryScopeGlobal
+	}
+	if scope.Type == domain.MemoryScopeProject {
+		scope.Type = domain.MemoryScopeSquad
+	}
+	return scope
 }
 
 // ── RAG Module ────────────────────────────────────────────────────────────────
@@ -109,15 +125,16 @@ func (m *ragModule) RegisterTools(registry *ToolRegistry) error {
 // ── Memory Module ─────────────────────────────────────────────────────────────
 
 type memoryModule struct {
-	svc     domain.MemoryService
-	onSaved func() // called after memory_save so the run loop can note it
+	svc          domain.MemoryService
+	onSaved      func() // called after memory_save so the run loop can note it
+	queryContext func(context.Context) domain.MemoryQueryContext
 }
 
 // NewMemoryModule creates a Module that registers memory_save, memory_recall,
 // memory_update, and memory_delete tools.
 // onSaved is invoked after each save (may be nil).
-func NewMemoryModule(svc domain.MemoryService, onSaved func()) Module {
-	return &memoryModule{svc: svc, onSaved: onSaved}
+func NewMemoryModule(svc domain.MemoryService, onSaved func(), queryContext func(context.Context) domain.MemoryQueryContext) Module {
+	return &memoryModule{svc: svc, onSaved: onSaved, queryContext: queryContext}
 }
 
 func (m *memoryModule) ID() string { return "memory" }
@@ -146,11 +163,25 @@ func (m *memoryModule) RegisterTools(registry *ToolRegistry) error {
 		if t, ok := args["type"].(string); ok && t != "" {
 			memType = t
 		}
+		queryCtx := domain.MemoryQueryContext{}
+		if m.queryContext != nil {
+			queryCtx = m.queryContext(ctx)
+		}
+		scope := domain.MemoryScope{Type: domain.MemoryScopeAgent, ID: strings.TrimSpace(queryCtx.AgentID)}
+		if scope.ID == "" && strings.TrimSpace(queryCtx.SessionID) != "" {
+			scope = domain.MemoryScope{Type: domain.MemoryScopeSession, ID: strings.TrimSpace(queryCtx.SessionID)}
+		}
+		if scope.Type == "" || (scope.Type != domain.MemoryScopeGlobal && scope.ID == "") {
+			scope = domain.MemoryScope{Type: domain.MemoryScopeGlobal}
+		}
 		if m.onSaved != nil {
 			m.onSaved()
 		}
 		err := m.svc.Add(ctx, &domain.Memory{
 			Type:       domain.MemoryType(memType),
+			SessionID:  memoryBankIDFromScope(scope),
+			ScopeType:  scope.Type,
+			ScopeID:    scope.ID,
 			Content:    content,
 			Importance: 0.8,
 			Metadata:   map[string]interface{}{"source": "tool_call"},
@@ -179,7 +210,12 @@ func (m *memoryModule) RegisterTools(registry *ToolRegistry) error {
 		if query == "" {
 			return nil, fmt.Errorf("memory_recall: 'query' argument is required")
 		}
-		memories, err := m.svc.Search(ctx, query, 5)
+		queryCtx := domain.MemoryQueryContext{}
+		if m.queryContext != nil {
+			queryCtx = m.queryContext(ctx)
+		}
+
+		formatted, memories, err := m.svc.RetrieveAndInjectWithContext(ctx, query, queryCtx)
 		if err != nil {
 			return nil, err
 		}
@@ -198,7 +234,11 @@ func (m *memoryModule) RegisterTools(registry *ToolRegistry) error {
 		for _, mem := range memories {
 			out = append(out, fmt.Sprintf("- [%s: %.2f] %s", mem.Type, mem.Score, mem.Content))
 		}
-		return map[string]interface{}{"memories": strings.Join(out, "\n"), "count": len(memories)}, nil
+		result := map[string]interface{}{"memories": strings.Join(out, "\n"), "count": len(memories)}
+		if strings.TrimSpace(formatted) != "" {
+			result["formatted"] = formatted
+		}
+		return result, nil
 	}, CategoryMemory)
 
 	registry.Register(domain.ToolDefinition{

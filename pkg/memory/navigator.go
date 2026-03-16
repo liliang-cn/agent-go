@@ -58,7 +58,7 @@ func (n *IndexNavigator) InvalidateCache() {
 // Results are cached by query string for navigatorCacheTTL.
 // Deprecated: use NavigateWithReason to also capture the LLM's selection logic.
 func (n *IndexNavigator) Navigate(ctx context.Context, query string, topK int) ([]*domain.Memory, error) {
-	r, err := n.NavigateWithReason(ctx, query, topK)
+	r, err := n.NavigateWithScopesAndReason(ctx, query, nil, topK)
 	if err != nil || r == nil {
 		return nil, err
 	}
@@ -68,35 +68,30 @@ func (n *IndexNavigator) Navigate(ctx context.Context, query string, topK int) (
 // NavigateWithReason returns both selected memories and the LLM's reasoning string.
 // The reasoning can be surfaced as MemoryLogic in ExecutionResult for transparency.
 func (n *IndexNavigator) NavigateWithReason(ctx context.Context, query string, topK int) (*NavigateResult, error) {
+	return n.NavigateWithScopesAndReason(ctx, query, nil, topK)
+}
+
+// NavigateWithScopesAndReason returns both selected memories and the LLM's reasoning string
+// using an explicit scope chain. Earlier scopes have higher priority.
+func (n *IndexNavigator) NavigateWithScopesAndReason(ctx context.Context, query string, scopes []domain.MemoryScope, topK int) (*NavigateResult, error) {
 	if n.llm == nil || n.fileStore == nil {
 		return nil, nil
 	}
 
 	// 1. Check cache
-	ids, reasoning, cached := n.cachedEntry(query)
+	cacheKey := navigatorCacheKey(query, scopes)
+	ids, reasoning, cached := n.cachedEntry(cacheKey)
 	if !cached {
-		// 2. Read the memory index (TOC) — observations first (higher-level)
-		idx, err := n.fileStore.ReadIndex(ctx)
-		if err != nil || idx == nil || len(idx.Entries) == 0 {
+		// 2. Read the memory indexes (TOC) according to the scope chain.
+		promptIndex, err := n.buildPromptIndex(ctx, scopes)
+		if err != nil {
 			return nil, err
 		}
-
-		// 3. Build a compact listing: observations first, then other types
-		var sb strings.Builder
-		sb.WriteString("Memory Index (observations first, then facts; format: [id] importance | summary):\n\n")
-		for _, e := range idx.Entries {
-			if e.IsStale || e.Type != domain.MemoryTypeObservation {
-				continue
-			}
-			sb.WriteString(fmt.Sprintf("- [%s][obs] %.2f | %s\n", e.ID, e.Importance, e.Summary))
-		}
-		for _, e := range idx.Entries {
-			if e.IsStale || e.Type == domain.MemoryTypeObservation {
-				continue
-			}
-			sb.WriteString(fmt.Sprintf("- [%s][%s] %.2f | %s\n", e.ID, e.Type, e.Importance, e.Summary))
+		if strings.TrimSpace(promptIndex) == "" {
+			return nil, nil
 		}
 
+		// 3. Ask the LLM to select relevant IDs.
 		promptText := fmt.Sprintf(`You are a memory retrieval assistant. Given a user query and a memory index, select the IDs of the most relevant memories.
 
 User query: %s
@@ -105,12 +100,13 @@ User query: %s
 Instructions:
 - Select at most %d memory IDs that are most relevant to the query.
 - Prefer observations over raw facts when observations cover the topic.
+- Prefer earlier scopes in the scope chain when relevance is similar.
 - Use logical reasoning, not just keyword matching.
 - If no memories are relevant, return an empty list.
 - Provide a brief "reasoning" string explaining your selection.
 
 Output valid JSON only:
-{"ids": ["id1", "id2"], "reasoning": "Selected because..."}`, query, sb.String(), topK)
+{"ids": ["id1", "id2"], "reasoning": "Selected because..."}`, query, promptIndex, topK)
 
 		schema := map[string]interface{}{
 			"type": "object",
@@ -148,7 +144,7 @@ Output valid JSON only:
 		}
 		ids = selected.IDs
 		reasoning = selected.Reasoning
-		n.setCachedEntry(query, ids, reasoning)
+		n.setCachedEntry(cacheKey, ids, reasoning)
 	}
 
 	// 5. Fetch full memory content for each selected ID
@@ -162,6 +158,76 @@ Output valid JSON only:
 	}
 
 	return &NavigateResult{Memories: memories, Reasoning: reasoning}, nil
+}
+
+func (n *IndexNavigator) buildPromptIndex(ctx context.Context, scopes []domain.MemoryScope) (string, error) {
+	if len(scopes) == 0 {
+		return n.buildMergedPromptIndex(ctx)
+	}
+
+	var sb strings.Builder
+	sb.WriteString("Memory Scope Chain (highest priority first):\n\n")
+	sectionCount := 0
+	for _, scope := range scopes {
+		idx, err := n.fileStore.ReadScopeIndex(ctx, scope)
+		if err != nil || idx == nil || len(idx.Entries) == 0 {
+			continue
+		}
+
+		scopeLabel := ScopeString(scope)
+		sb.WriteString("## Scope: ")
+		sb.WriteString(scopeLabel)
+		sb.WriteString("\n")
+		appendIndexEntries(&sb, idx.Entries)
+		sb.WriteString("\n")
+		sectionCount++
+	}
+	if sectionCount == 0 {
+		return n.buildMergedPromptIndex(ctx)
+	}
+	return sb.String(), nil
+}
+
+func (n *IndexNavigator) buildMergedPromptIndex(ctx context.Context) (string, error) {
+	idx, err := n.fileStore.ReadIndex(ctx)
+	if err != nil || idx == nil || len(idx.Entries) == 0 {
+		return "", err
+	}
+
+	var sb strings.Builder
+	sb.WriteString("Memory Index (observations first, then facts; format: [id] importance | summary):\n\n")
+	appendIndexEntries(&sb, idx.Entries)
+	return sb.String(), nil
+}
+
+func appendIndexEntries(sb *strings.Builder, entries []store.MemoryIndexEntry) {
+	for _, e := range entries {
+		if e.IsStale || e.Archived || e.Type != domain.MemoryTypeObservation {
+			continue
+		}
+		sb.WriteString(fmt.Sprintf("- [%s][obs] %.2f | %s\n", e.ID, e.Importance, e.Summary))
+	}
+	for _, e := range entries {
+		if e.IsStale || e.Archived || e.Type == domain.MemoryTypeObservation {
+			continue
+		}
+		sb.WriteString(fmt.Sprintf("- [%s][%s] %.2f | %s\n", e.ID, e.Type, e.Importance, e.Summary))
+	}
+}
+
+func navigatorCacheKey(query string, scopes []domain.MemoryScope) string {
+	if len(scopes) == 0 {
+		return query
+	}
+
+	var sb strings.Builder
+	sb.WriteString(query)
+	sb.WriteString("||")
+	for _, scope := range scopes {
+		sb.WriteString(ScopeString(scope))
+		sb.WriteString("|")
+	}
+	return sb.String()
 }
 
 func (n *IndexNavigator) cachedEntry(query string) (ids []string, reasoning string, ok bool) {

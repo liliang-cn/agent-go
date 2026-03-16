@@ -15,6 +15,7 @@ import (
 	"github.com/liliang-cn/agent-go/cmd/agentgo-cli/internal/lineinput"
 	"github.com/liliang-cn/agent-go/pkg/agent"
 	"github.com/liliang-cn/agent-go/pkg/config"
+	"github.com/liliang-cn/agent-go/pkg/domain"
 	"github.com/spf13/cobra"
 )
 
@@ -213,9 +214,28 @@ func displayResult(result *agent.ExecutionResult) {
 			if len(mem.EvidenceIDs) > 0 {
 				evTag = fmt.Sprintf(" evidence:%d", len(mem.EvidenceIDs))
 			}
-			fmt.Printf("  %d. [%s%s%s%s] %s (score: %.2f)\n",
+			scopeTag := ""
+			if scope := formatMemoryScope(mem.ScopeType, mem.ScopeID, mem.SessionID); scope != "" {
+				scopeTag = fmt.Sprintf(" scope:%s", scope)
+			}
+			fmt.Printf("  %d. [%s%s%s%s%s] %s (score: %.2f)\n",
 				i+1, mem.Type, sourceTag, confTag, evTag,
+				scopeTag,
 				truncateString(mem.Content, 100), mem.Score)
+			if chatShowMemory || debug {
+				if promotion := formatMemoryPromotion(mem.Metadata); promotion != "" {
+					fmt.Printf("     promotion: %s\n", promotion)
+				}
+				if reason := formatMemoryReason(mem.Metadata, "scope_reason"); reason != "" {
+					fmt.Printf("     scope_reason: %s\n", truncateString(reason, 120))
+				}
+				if reason := formatMemoryReason(mem.Metadata, "promotion_reason"); reason != "" {
+					fmt.Printf("     promotion_reason: %s\n", truncateString(reason, 120))
+				}
+			}
+		}
+		if chain := formatScopeChain(result.Metadata); chain != "" {
+			fmt.Printf("  %s Scope chain: %s\n", cliui.Tip, chain)
 		}
 		if result.MemoryLogic != "" {
 			fmt.Printf("  %s Navigator reasoning: %s\n", cliui.Tip, truncateString(result.MemoryLogic, 200))
@@ -257,6 +277,106 @@ func truncateString(s string, maxLen int) string {
 func sanitizeChatDisplayText(text string) string {
 	text = chatThinkBlockRe.ReplaceAllString(text, "")
 	return strings.TrimSpace(text)
+}
+
+func formatMemoryScope(scopeType domain.MemoryScopeType, scopeID, sessionID string) string {
+	scopeTypeStr := strings.TrimSpace(string(scopeType))
+	scopeID = strings.TrimSpace(scopeID)
+	sessionID = strings.TrimSpace(sessionID)
+	if scopeTypeStr == "" {
+		switch {
+		case sessionID == "", sessionID == "global", sessionID == "default":
+			scopeTypeStr = "global"
+		case strings.Contains(sessionID, ":"):
+			parts := strings.SplitN(sessionID, ":", 2)
+			scopeTypeStr = strings.TrimSpace(parts[0])
+			if scopeID == "" && len(parts) == 2 {
+				scopeID = strings.TrimSpace(parts[1])
+			}
+		default:
+			scopeTypeStr = "session"
+			if scopeID == "" {
+				scopeID = sessionID
+			}
+		}
+	}
+	if scopeTypeStr == "" {
+		return ""
+	}
+	if scopeTypeStr == "global" || scopeID == "" {
+		return scopeTypeStr
+	}
+	return scopeTypeStr + ":" + scopeID
+}
+
+func formatMemoryPromotion(metadata map[string]interface{}) string {
+	if len(metadata) == 0 {
+		return ""
+	}
+	promoted, _ := metadata["promoted"].(bool)
+	if !promoted {
+		return ""
+	}
+	from, _ := metadata["promoted_from_scope"].(string)
+	to, _ := metadata["promoted_to_scope"].(string)
+	switch {
+	case strings.TrimSpace(from) != "" && strings.TrimSpace(to) != "":
+		return from + " -> " + to
+	case strings.TrimSpace(to) != "":
+		return "-> " + to
+	default:
+		return "true"
+	}
+}
+
+func formatMemoryReason(metadata map[string]interface{}, key string) string {
+	if len(metadata) == 0 {
+		return ""
+	}
+	value, _ := metadata[key].(string)
+	return strings.TrimSpace(value)
+}
+
+func formatScopeChain(metadata map[string]interface{}) string {
+	if len(metadata) == 0 {
+		return ""
+	}
+	raw, ok := metadata["memory_scope_chain"]
+	items := make([]string, 0)
+	if ok {
+		if typed, ok := raw.([]string); ok {
+			items = append(items, typed...)
+		} else if ifaceItems, ok := raw.([]interface{}); ok {
+			for _, item := range ifaceItems {
+				if s, ok := item.(string); ok {
+					items = append(items, s)
+				}
+			}
+		}
+	}
+	if len(items) == 0 {
+		if rawCtx, ok := metadata["memory_scope_context"].(map[string]interface{}); ok {
+			appendIf := func(prefix string, key string) {
+				if value, ok := rawCtx[key].(string); ok && strings.TrimSpace(value) != "" {
+					items = append(items, prefix+":"+strings.TrimSpace(value))
+				}
+			}
+			appendIf("session", "session_id")
+			appendIf("agent", "agent_id")
+			appendIf("squad", "squad_id")
+			appendIf("user", "user_id")
+			items = append(items, "global")
+		}
+	}
+	filtered := make([]string, 0, len(items))
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if item == "" || strings.HasSuffix(item, ":") {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	return strings.Join(filtered, " > ")
 }
 
 // progressCallback displays agent progress
