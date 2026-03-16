@@ -1,9 +1,84 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useSquads, useAgents, useDispatchAgentTask, useDispatchSquadTask } from '../hooks/useApi'
-import type { AgentModel, Squad } from '../lib/api'
+import { useAgents, useDispatchSquadTask, useSquads } from '../hooks/useApi'
+import type { AgentModel, DispatchSquadTaskResponse, Squad, SquadTask } from '../lib/api'
 
-// Agent Chat Component
+type AgentRunStatus = 'idle' | 'streaming'
+
+function sleep(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms))
+}
+
+async function streamAgentDispatch(
+  agentName: string,
+  instruction: string,
+  onEvent: (event: Record<string, unknown>) => void,
+) {
+  const response = await fetch(`/api/agents/${encodeURIComponent(agentName)}/dispatch/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ instruction }),
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: `HTTP ${response.status}` }))
+    throw new Error(error.error || `HTTP ${response.status}`)
+  }
+
+  if (!response.body) {
+    return
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) {
+      break
+    }
+
+    buffer += decoder.decode(value, { stream: true })
+    const chunks = buffer.split('\n\n')
+    buffer = chunks.pop() || ''
+
+    for (const chunk of chunks) {
+      const dataLines = chunk
+        .split('\n')
+        .filter((line) => line.startsWith('data: '))
+        .map((line) => line.slice(6))
+
+      for (const data of dataLines) {
+        if (data === '[DONE]') {
+          return
+        }
+        const parsed = JSON.parse(data) as Record<string, unknown>
+        onEvent(parsed)
+      }
+    }
+  }
+}
+
+async function pollSquadTask(squadId: string, taskId: string): Promise<SquadTask> {
+  for (let attempt = 0; attempt < 90; attempt++) {
+    const response = await fetch(`/api/squads/tasks?squad_id=${encodeURIComponent(squadId)}&limit=50`)
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`)
+    }
+
+    const payload = (await response.json()) as { tasks?: SquadTask[] }
+    const task = (payload.tasks ?? []).find((item) => item.id === taskId)
+    if (task && (task.status === 'completed' || task.status === 'failed')) {
+      return task
+    }
+
+    await sleep(1200)
+  }
+
+  throw new Error('Timed out waiting for squad task result')
+}
+
 function AgentChat({
   agents,
   onSelect,
@@ -15,8 +90,8 @@ function AgentChat({
   const [selectedAgent, setSelectedAgent] = useState<AgentModel | null>(null)
   const [input, setInput] = useState('')
   const [response, setResponse] = useState('')
-  const [isLoading, setIsLoading] = useState(false)
-  const dispatchAgent = useDispatchAgentTask()
+  const [status, setStatus] = useState<AgentRunStatus>('idle')
+  const streamRunId = useRef(0)
 
   useEffect(() => {
     if (agents.length > 0 && !selectedAgent) {
@@ -31,18 +106,44 @@ function AgentChat({
   const handleRun = async () => {
     if (!selectedAgent || !input.trim()) return
 
-    setIsLoading(true)
+    const runId = Date.now()
+    streamRunId.current = runId
+    setStatus('streaming')
     setResponse('')
+
     try {
-      const result = await dispatchAgent.mutateAsync({
-        name: selectedAgent.name,
-        instruction: input.trim(),
+      let aggregated = ''
+      await streamAgentDispatch(selectedAgent.name, input.trim(), (event) => {
+        if (streamRunId.current !== runId) {
+          return
+        }
+
+        const type = String(event.type || '')
+        const content = typeof event.content === 'string' ? event.content : ''
+
+        if (type === 'partial') {
+          aggregated += content
+          setResponse(aggregated)
+          return
+        }
+
+        if (type === 'workflow_complete') {
+          setResponse(content || aggregated)
+          return
+        }
+
+        if (type === 'workflow_error') {
+          setResponse(content || 'Error')
+        }
       })
-      setResponse(result.response)
     } catch (err) {
-      setResponse(err instanceof Error ? err.message : 'Error')
+      if (streamRunId.current === runId) {
+        setResponse(err instanceof Error ? err.message : 'Error')
+      }
     } finally {
-      setIsLoading(false)
+      if (streamRunId.current === runId) {
+        setStatus('idle')
+      }
     }
   }
 
@@ -79,16 +180,23 @@ function AgentChat({
           onChange={(e) => setInput(e.target.value)}
           placeholder={t('instructionPlaceholder')}
           className="dashboard-input flex-1"
-          disabled={isLoading}
+          disabled={status === 'streaming'}
         />
         <button
+          type="button"
           onClick={handleRun}
-          disabled={isLoading || !input.trim() || !selectedAgent}
+          disabled={status === 'streaming' || !input.trim() || !selectedAgent}
           className="dashboard-button px-6"
         >
-          {isLoading ? t('running') : t('run')}
+          {status === 'streaming' ? t('running') : t('run')}
         </button>
       </div>
+
+      {status === 'streaming' && !response && (
+        <div className="rounded-xl border border-sky-100 bg-sky-50/50 px-4 py-3 text-sm text-sky-700">
+          {t('runAgentStreaming')}
+        </div>
+      )}
 
       {response && (
         <div className="glass-panel rounded-xl border border-slate-100 p-4 text-sm text-slate-700 whitespace-pre-wrap">
@@ -99,7 +207,6 @@ function AgentChat({
   )
 }
 
-// Squad Chat Component
 function SquadChat({
   squads,
   onSelect,
@@ -110,9 +217,10 @@ function SquadChat({
   const { t } = useTranslation()
   const [selectedSquad, setSelectedSquad] = useState<Squad | null>(null)
   const [message, setMessage] = useState('')
-  const [ackMessage, setAckMessage] = useState('')
+  const [output, setOutput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const dispatchSquad = useDispatchSquadTask()
+  const activeTaskIdRef = useRef<string | null>(null)
 
   useEffect(() => {
     if (squads.length > 0 && !selectedSquad) {
@@ -128,15 +236,25 @@ function SquadChat({
     if (!selectedSquad || !message.trim()) return
 
     setIsLoading(true)
-    setAckMessage('')
+    setOutput('')
     try {
       const result = await dispatchSquad.mutateAsync({
         squadId: selectedSquad.id,
         message: message.trim(),
       })
-      setAckMessage(result.ack_message)
+
+      const payload = result as DispatchSquadTaskResponse & { task?: SquadTask }
+      setOutput(payload.ack_message || t('runSquadQueued'))
+
+      if (payload.task?.id) {
+        activeTaskIdRef.current = payload.task.id
+        const completedTask = await pollSquadTask(selectedSquad.id, payload.task.id)
+        if (activeTaskIdRef.current === payload.task.id) {
+          setOutput(completedTask.result_text || payload.ack_message || t('runSquadQueued'))
+        }
+      }
     } catch (err) {
-      setAckMessage(err instanceof Error ? err.message : 'Error')
+      setOutput(err instanceof Error ? err.message : 'Error')
     } finally {
       setIsLoading(false)
     }
@@ -150,7 +268,7 @@ function SquadChat({
           onChange={(e) => {
             const squad = squads.find((s) => s.id === e.target.value)
             setSelectedSquad(squad || null)
-            setAckMessage('')
+            setOutput('')
           }}
           className="flex-1 rounded-xl border border-sky-100 bg-white px-4 py-2.5 text-sm text-slate-700 shadow-sm focus:border-sky-300 focus:outline-none focus:ring-2 focus:ring-sky-100"
         >
@@ -184,6 +302,7 @@ function SquadChat({
           disabled={isLoading}
         />
         <button
+          type="button"
           onClick={handleRun}
           disabled={isLoading || !message.trim() || !selectedSquad}
           className="dashboard-button px-6"
@@ -192,9 +311,15 @@ function SquadChat({
         </button>
       </div>
 
-      {ackMessage && (
+      {isLoading && !output && (
+        <div className="rounded-xl border border-emerald-100 bg-emerald-50/50 px-4 py-3 text-sm text-emerald-700">
+          {t('runSquadQueued')}
+        </div>
+      )}
+
+      {output && (
         <div className="glass-panel rounded-xl border border-slate-100 p-4 text-sm text-slate-700 whitespace-pre-wrap">
-          {ackMessage}
+          {output}
         </div>
       )}
     </div>
@@ -207,7 +332,6 @@ export function Run() {
   const { data: agents = [] } = useAgents()
   const [debugEnabled, setDebugEnabled] = useState(false)
 
-  // Separate built-in and custom agents
   const { builtinAgents, customAgents } = useMemo(() => {
     const builtin: AgentModel[] = []
     const custom: AgentModel[] = []
@@ -276,7 +400,6 @@ export function Run() {
         </div>
       )}
 
-      {/* Section 1: Squad */}
       <section className="glass-panel rounded-[24px] border border-emerald-100/50 p-6">
         <div className="mb-4 flex items-center gap-3">
           <span className="rounded-xl bg-gradient-to-br from-emerald-400 to-emerald-500 px-3 py-1.5 text-xs font-semibold text-white shadow-md shadow-emerald-500/20">
@@ -291,7 +414,6 @@ export function Run() {
         )}
       </section>
 
-      {/* Section 2: Agent */}
       <section className="glass-panel rounded-[24px] border border-sky-100/50 p-6">
         <div className="mb-4 flex items-center gap-3">
           <span className="rounded-xl bg-gradient-to-br from-sky-400 to-sky-500 px-3 py-1.5 text-xs font-semibold text-white shadow-md shadow-sky-500/20">

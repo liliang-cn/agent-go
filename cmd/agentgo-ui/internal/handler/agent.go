@@ -252,6 +252,73 @@ func (h *Handler) HandleAgentOperation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch {
+	case len(parts) == 3 && parts[1] == "dispatch" && parts[2] == "stream" && r.Method == http.MethodPost:
+		var req struct {
+			Instruction string `json:"instruction"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			JSONError(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		if strings.TrimSpace(req.Instruction) == "" {
+			JSONError(w, "Instruction required", http.StatusBadRequest)
+			return
+		}
+
+		events, err := h.squadManager.DispatchTaskStream(r.Context(), name, req.Instruction)
+		if err != nil {
+			JSONError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			JSONError(w, "Streaming not supported", http.StatusInternalServerError)
+			return
+		}
+
+		for evt := range events {
+			select {
+			case <-r.Context().Done():
+				return
+			default:
+			}
+
+			payload := map[string]interface{}{
+				"type":       string(evt.Type),
+				"content":    evt.Content,
+				"agent_name": evt.AgentName,
+			}
+			if evt.ToolName != "" {
+				payload["tool_name"] = evt.ToolName
+			}
+			if evt.ToolArgs != nil {
+				payload["tool_args"] = evt.ToolArgs
+			}
+			if evt.ToolResult != nil {
+				payload["tool_result"] = evt.ToolResult
+			}
+			if len(evt.Sources) > 0 {
+				payload["sources"] = evt.Sources
+			}
+			if evt.Round > 0 {
+				payload["round"] = evt.Round
+				payload["debug_type"] = evt.DebugType
+			}
+
+			data, _ := json.Marshal(payload)
+			if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+
+		fmt.Fprintf(w, "data: [DONE]\n\n")
+		flusher.Flush()
 	case len(parts) == 2 && parts[1] == "dispatch" && r.Method == http.MethodPost:
 		var req struct {
 			Instruction string `json:"instruction"`

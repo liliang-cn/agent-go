@@ -43,6 +43,11 @@ export interface ChatRequest {
   message: string
   session_id?: string
   stream?: boolean
+  mode?: 'llm' | 'agent' | 'rag'
+  provider?: string
+  model?: string
+  tool_names?: string[]
+  max_tool_calls?: number
 }
 
 export interface ChatResponse {
