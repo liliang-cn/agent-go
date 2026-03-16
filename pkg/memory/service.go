@@ -306,17 +306,15 @@ func (s *Service) StoreIfWorthwhile(ctx context.Context, req *domain.MemoryStore
 
 	result, err := s.llm.GenerateStructured(ctx, prompt, schema, &domain.GenerationOptions{Temperature: 0.1})
 	if err != nil {
-		return nil // Silent ignore for extraction errors to keep the chat clean
+		return nil
 	}
 
 	if result.Raw == "" || !result.Valid {
-		return nil // No valid JSON found or schema mismatch - nothing worth storing
+		return nil
 	}
 
-	var summary domain.MemorySummaryResult
-	if err := json.Unmarshal([]byte(result.Raw), &summary); err != nil {
-		// Only log if there's actual content that failed to parse,
-		// but since we checked result.Valid, this is unlikely.
+	summary, err := normalizeMemorySummary(result.Raw)
+	if err != nil {
 		return nil
 	}
 
@@ -869,6 +867,147 @@ func scopeHierarchyLevel(scopeType domain.MemoryScopeType) int {
 	default:
 		return 0
 	}
+}
+
+// normalizeMemorySummary parses the LLM response into MemorySummaryResult,
+// handling common field-name variations (kind→type, summary→content, confidence→importance).
+// If "should_store" is absent but memories are present, it infers should_store=true.
+func normalizeMemorySummary(raw string) (*domain.MemorySummaryResult, error) {
+	// First try direct unmarshal (strict schema match)
+	var summary domain.MemorySummaryResult
+	if err := json.Unmarshal([]byte(raw), &summary); err == nil {
+		if len(summary.Memories) > 0 && !summary.ShouldStore {
+			summary.ShouldStore = true
+		}
+		// Verify items actually have content (LLM may use non-standard field names)
+		hasContent := false
+		for _, m := range summary.Memories {
+			if strings.TrimSpace(m.Content) != "" {
+				hasContent = true
+				break
+			}
+		}
+		if summary.ShouldStore && hasContent {
+			return &summary, nil
+		}
+	}
+
+	// Fallback: parse as generic JSON and normalize field names
+	var generic map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &generic); err != nil {
+		return nil, fmt.Errorf("not a JSON object: %w", err)
+	}
+
+	// Extract should_store
+	shouldStore := false
+	if v, ok := generic["should_store"]; ok {
+		_ = json.Unmarshal(v, &shouldStore)
+	}
+
+	// Extract memories array from "memories" or root-level array
+	var rawItems []json.RawMessage
+	if v, ok := generic["memories"]; ok {
+		_ = json.Unmarshal(v, &rawItems)
+	}
+	if len(rawItems) == 0 {
+		// Try parsing the entire raw as an array
+		_ = json.Unmarshal([]byte(raw), &rawItems)
+	}
+
+	var memories []domain.MemoryItem
+	validTypes := map[string]domain.MemoryType{
+		"fact": domain.MemoryTypeFact, "skill": domain.MemoryTypeSkill,
+		"pattern": domain.MemoryTypePattern, "context": domain.MemoryTypeContext,
+		"preference": domain.MemoryTypePreference, "observation": domain.MemoryTypeObservation,
+		"profile": domain.MemoryTypeFact,
+	}
+
+	for _, itemRaw := range rawItems {
+		var loose map[string]interface{}
+		if err := json.Unmarshal(itemRaw, &loose); err != nil {
+			continue
+		}
+
+		item := domain.MemoryItem{
+			Type:       domain.MemoryType(looseString(loose, "type", "kind", "memory_type")),
+			Content:    looseString(loose, "content", "summary", "text", "value"),
+			Scope:      domain.MemoryScopeType(looseString(loose, "scope")),
+			PromoteTo:  domain.MemoryScopeType(looseString(loose, "promote_to")),
+			Importance: looseFloat(loose, "importance", "confidence", "score"),
+		}
+
+		// Handle LLM variant: {"fact": "content...", "scope": "agent"}
+		// where the memory type is used as the key holding the content string.
+		if item.Content == "" {
+			for key, val := range loose {
+				if _, isType := validTypes[key]; isType {
+					if s, ok := val.(string); ok && s != "" {
+						item.Content = s
+						item.Type = validTypes[key]
+						break
+					}
+				}
+			}
+		}
+
+		// Skip items with no content
+		if strings.TrimSpace(item.Content) == "" {
+			continue
+		}
+		// Default importance
+		if item.Importance <= 0 {
+			item.Importance = 0.7
+		}
+		// Normalize type: map non-standard types to closest match
+		if _, ok := validTypes[string(item.Type)]; !ok {
+			item.Type = domain.MemoryTypeFact
+		}
+
+		memories = append(memories, item)
+	}
+
+	if len(memories) > 0 {
+		shouldStore = true
+	}
+
+	return &domain.MemorySummaryResult{
+		ShouldStore: shouldStore,
+		Memories:    memories,
+	}, nil
+}
+
+// looseString extracts a string value from a map, trying multiple key names.
+func looseString(m map[string]interface{}, keys ...string) string {
+	for _, k := range keys {
+		if v, ok := m[k]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
+// looseFloat extracts a float value from a map, trying multiple key names.
+func looseFloat(m map[string]interface{}, keys ...string) float64 {
+	for _, k := range keys {
+		if v, ok := m[k]; ok {
+			switch n := v.(type) {
+			case float64:
+				return n
+			case int:
+				return float64(n)
+			}
+		}
+	}
+	return 0
+}
+
+func truncateForLog(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }
 
 func mergeMetadataMaps(parts ...map[string]interface{}) map[string]interface{} {

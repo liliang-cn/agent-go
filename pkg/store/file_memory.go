@@ -158,7 +158,23 @@ func (s *FileMemoryStore) Store(ctx context.Context, memory *domain.Memory) erro
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		return err
 	}
-	s.indexDirty = true
+
+	// Incremental index update: upsert this single entry into type and scope index files.
+	// This avoids a full rebuild on every Store() call.
+	if !memory.Archived {
+		entry := MemoryIndexEntry{
+			ID:         memory.ID,
+			Type:       memory.Type,
+			ScopeType:  memory.ScopeType,
+			ScopeID:    memory.ScopeID,
+			Importance: memory.Importance,
+			Summary:    truncate(memory.Content, 60),
+			IsStale:    memory.ValidTo != nil || memory.SupersededBy != "",
+		}
+		s.upsertIndexEntry(entry)
+	}
+
+	s.indexDirty = false
 	return nil
 }
 
@@ -266,22 +282,34 @@ func (s *FileMemoryStore) SearchByText(ctx context.Context, query string, topK i
 	queryLower := strings.ToLower(query)
 	var results []*domain.MemoryWithScore
 
+	queryTerms := strings.Fields(queryLower)
 	for _, m := range all {
 		if m.Archived {
 			continue
 		}
 		contentLower := strings.ToLower(m.Content)
-		if strings.Contains(contentLower, queryLower) {
-			// Simple scoring based on substring match
-			score := 0.5
-			if strings.Contains(contentLower, queryLower) {
-				score = 0.8
+
+		// Score based on term coverage: how many query terms appear in content
+		matchedTerms := 0
+		for _, term := range queryTerms {
+			if strings.Contains(contentLower, term) {
+				matchedTerms++
 			}
-			results = append(results, &domain.MemoryWithScore{
-				Memory: m,
-				Score:  score,
-			})
 		}
+		if matchedTerms == 0 {
+			continue
+		}
+
+		score := float64(matchedTerms) / float64(len(queryTerms))
+		// Boost for exact phrase match
+		if strings.Contains(contentLower, queryLower) {
+			score = score*0.5 + 0.5 // at least 0.5, up to 1.0
+		}
+
+		results = append(results, &domain.MemoryWithScore{
+			Memory: m,
+			Score:  score,
+		})
 	}
 
 	if len(results) > topK {
@@ -745,6 +773,65 @@ func (s *FileMemoryStore) MarkStale(ctx context.Context, id string, supersededBy
 		Summary: fmt.Sprintf("superseded by %s", supersededByID),
 	})
 	return s.Store(ctx, m)
+}
+
+// upsertIndexEntry adds or updates a single entry in both the type index and scope index files.
+// Caller must hold s.mu. Creates the index directories if they don't exist.
+func (s *FileMemoryStore) upsertIndexEntry(entry MemoryIndexEntry) {
+	_ = os.MkdirAll(s.typeIndexDir(), 0755)
+	_ = os.MkdirAll(s.scopeIndexDir(), 0755)
+
+	// Update type index
+	typePath := s.indexFilePath(entry.Type)
+	upsertEntryInFile(typePath, entry, func(e MemoryIndexEntry) string {
+		staleTag := ""
+		if e.IsStale {
+			staleTag = " ~~[stale]~~"
+		}
+		return fmt.Sprintf("- [%s] %.2f | %s%s\n", e.ID, e.Importance, e.Summary, staleTag)
+	})
+
+	// Update scope index
+	scope := normalizeScope(domain.MemoryScope{Type: entry.ScopeType, ID: entry.ScopeID})
+	scopePath := s.scopeIndexFilePath(scope)
+	upsertEntryInFile(scopePath, entry, func(e MemoryIndexEntry) string {
+		staleTag := ""
+		if e.IsStale {
+			staleTag = " ~~[stale]~~"
+		}
+		return fmt.Sprintf("- [%s][%s] %.2f | %s%s\n", e.ID, e.Type, e.Importance, e.Summary, staleTag)
+	})
+}
+
+// upsertEntryInFile reads an index file, replaces or appends the entry line, and writes it back.
+func upsertEntryInFile(path string, entry MemoryIndexEntry, formatLine func(MemoryIndexEntry) string) {
+	newLine := formatLine(entry)
+	prefix := fmt.Sprintf("- [%s]", entry.ID)
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		// File doesn't exist yet — create with minimal header
+		content := fmt.Sprintf("---\ntotal: 1\nupdated_at: %s\n---\n\n%s",
+			time.Now().Format(time.RFC3339), newLine)
+		_ = os.WriteFile(path, []byte(content), 0644)
+		return
+	}
+
+	lines := strings.Split(string(data), "\n")
+	found := false
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), prefix) {
+			lines[i] = strings.TrimSuffix(newLine, "\n")
+			found = true
+			break
+		}
+	}
+	if !found {
+		// Append before the last empty line (or at end)
+		lines = append(lines, strings.TrimSuffix(newLine, "\n"))
+	}
+
+	_ = os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0644)
 }
 
 // IsStale returns true if the memory has been superseded.
