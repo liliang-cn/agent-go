@@ -113,7 +113,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 	if err := os.MkdirAll(cfg.WorkspaceDir(), 0755); err != nil {
 		return fmt.Errorf("failed to create workspace directory: %w", err)
 	}
-	
+
 	mcpConfig := &mcp.Config{
 		Enabled:           cfg.MCP.Enabled,
 		Servers:           cfg.MCP.Servers,
@@ -121,7 +121,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 		FilesystemDirs:    cfg.MCP.FilesystemDirs,
 		LoadedServers:     mcp.GetBuiltInServers(cfg.MCP.FilesystemDirs),
 	}
-	
+
 	// Merge configurations from all paths
 	for _, path := range cfg.MCPServersPaths() {
 		if _, err := os.Stat(path); err == nil {
@@ -189,6 +189,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 			agentgolog.Warn("Failed to create agent store: %v", storeErr)
 		} else {
 			squadManager = agent.NewSquadManager(agentStore)
+			squadManager.SetConfig(cfg)
 			if err := squadManager.SeedDefaultMembers(); err != nil {
 				agentgolog.Warn("Failed to seed default squad members: %v", err)
 			}

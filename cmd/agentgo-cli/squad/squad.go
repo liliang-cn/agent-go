@@ -173,6 +173,7 @@ func getManager() (*agent.SquadManager, error) {
 		return nil, err
 	}
 	manager := agent.NewSquadManager(store)
+	manager.SetConfig(cfg)
 	_ = manager.SeedDefaultMembers()
 	return manager, nil
 }

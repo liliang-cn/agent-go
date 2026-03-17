@@ -309,6 +309,7 @@ func getManager() (*agent.SquadManager, error) {
 		return nil, err
 	}
 	manager := agent.NewSquadManager(store)
+	manager.SetConfig(cfg)
 	if err := manager.SeedDefaultMembers(); err != nil {
 		return nil, err
 	}

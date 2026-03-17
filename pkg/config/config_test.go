@@ -171,6 +171,36 @@ embedding_model = "test"
 	wg.Wait()
 }
 
+func TestLoadExplicitConfigPathHonorsHome(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "agentgo.toml")
+	customHome := filepath.Join(tmpDir, "custom-home")
+
+	err := os.WriteFile(configPath, []byte(`
+home = "`+customHome+`"
+[rag]
+enabled = true
+embedding_model = "test"
+[memory]
+store_type = "vector"
+`), 0o644)
+	if err != nil {
+		t.Fatalf("write config failed: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("load failed: %v", err)
+	}
+
+	if cfg.Home != customHome {
+		t.Fatalf("expected explicit config home %s, got %s", customHome, cfg.Home)
+	}
+	if got := cfg.MemoryPrimaryPath(); got != filepath.Join(customHome, "data", "cortex.db") {
+		t.Fatalf("expected vector memory path under explicit home, got %s", got)
+	}
+}
+
 func TestUnmarshalProvidersAliases(t *testing.T) {
 	raw := []interface{}{
 		map[string]interface{}{

@@ -475,6 +475,7 @@ func initAgentServices(ctx context.Context) (*rag.Client, *agent.Service, error)
 		agentStore, storeErr := agent.NewStore(agentDBPath)
 		if storeErr == nil {
 			agentManager := agent.NewTeamManager(agentStore)
+			agentManager.SetConfig(Cfg)
 			_ = agentManager.SeedDefaultMembers()
 			agentManager.RegisterCommanderTools(agentService)
 		}

@@ -22,6 +22,7 @@ import (
 // SquadManager handles the lifecycle, discovery, and execution routing for squad agents.
 type SquadManager struct {
 	store          *Store
+	cfg            *config.Config
 	runningAgents  map[string]context.CancelFunc // Tracks running agents if they are background loopers
 	services       map[string]*Service           // Cached instantiated agent services
 	mu             sync.RWMutex
@@ -190,6 +191,26 @@ func NewSquadManager(s *Store) *SquadManager {
 // NewTeamManager is kept as a compatibility alias for older call sites.
 func NewTeamManager(s *Store) *TeamManager {
 	return NewSquadManager(s)
+}
+
+func (m *SquadManager) SetConfig(cfg *config.Config) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cfg = cfg
+}
+
+func (m *SquadManager) configuredAgentGoConfig() *config.Config {
+	m.mu.RLock()
+	cfg := m.cfg
+	m.mu.RUnlock()
+	if cfg != nil {
+		return cfg
+	}
+	loaded, err := config.Load("")
+	if err != nil {
+		return nil
+	}
+	return loaded
 }
 
 // EnqueueSharedTask queues a squad task under one squad lead agent and returns an immediate acknowledgement.
@@ -641,7 +662,7 @@ func (m *SquadManager) getOrBuildService(name string) (*Service, error) {
 	builder := New(model.Name)
 	systemPrompt := strings.TrimSpace(model.Instructions)
 
-	if cfg, cfgErr := config.Load(""); cfgErr == nil {
+	if cfg := m.configuredAgentGoConfig(); cfg != nil {
 		agentgoCfg = cfg
 		if len(model.Squads) > 0 {
 			systemPrompt = m.buildTeamSystemPromptForModel(cfg, model) + "\n\n" + buildTeamMemberPrompt(model)
@@ -1140,7 +1161,7 @@ func (m *SquadManager) dispatchTask(ctx context.Context, agentName string, instr
 	}
 
 	wrappedInstruction := instruction
-	if cfg, cfgErr := config.Load(""); cfgErr == nil {
+	if cfg := m.configuredAgentGoConfig(); cfg != nil {
 		wrappedInstruction = buildTeamTaskEnvelope(cfg, agentName, instruction)
 	}
 
@@ -1216,7 +1237,7 @@ func (m *SquadManager) dispatchTaskStream(ctx context.Context, agentName string,
 	}
 
 	wrappedInstruction := instruction
-	if cfg, cfgErr := config.Load(""); cfgErr == nil {
+	if cfg := m.configuredAgentGoConfig(); cfg != nil {
 		wrappedInstruction = buildTeamTaskEnvelope(cfg, agentName, instruction)
 	}
 

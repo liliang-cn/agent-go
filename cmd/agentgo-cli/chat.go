@@ -96,6 +96,7 @@ func runChat(cmd *cobra.Command, args []string) error {
 	agentStore, storeErr := agent.NewStore(agentDBPath)
 	if storeErr == nil {
 		agentManager = agent.NewTeamManager(agentStore)
+		agentManager.SetConfig(chatCfg)
 		if err := agentManager.SeedDefaultMembers(); err != nil {
 			agentManager = nil
 		}

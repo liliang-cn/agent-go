@@ -155,6 +155,8 @@ func Load(configPath string) (*Config, error) {
 	configLoadMu.Lock()
 	defer configLoadMu.Unlock()
 
+	vp := viper.New()
+
 	// 1. 确定 AGENTGO_HOME
 	home := os.Getenv("AGENTGO_HOME")
 	if home == "" {
@@ -164,21 +166,23 @@ func Load(configPath string) (*Config, error) {
 
 	// 2. 配置文件查找
 	if configPath != "" {
-		viper.SetConfigFile(configPath)
+		vp.SetConfigFile(configPath)
 	} else {
-		viper.SetConfigName("agentgo")
-		viper.SetConfigType("toml")
-		viper.AddConfigPath(".")
-		viper.AddConfigPath(home)
-		viper.AddConfigPath(filepath.Join(home, "config"))
+		vp.SetConfigName("agentgo")
+		vp.SetConfigType("toml")
+		vp.AddConfigPath(".")
+		vp.AddConfigPath(home)
+		vp.AddConfigPath(filepath.Join(home, "config"))
 	}
 
-	setDefaults()
-	bindEnvVars()
+	setDefaults(vp)
+	bindEnvVars(vp)
 
-	_ = viper.ReadInConfig()
+	if err := vp.ReadInConfig(); err != nil && configPath != "" {
+		return nil, err
+	}
 	config := &Config{}
-	if err := viper.Unmarshal(config); err != nil {
+	if err := vp.Unmarshal(config); err != nil {
 		return nil, err
 	}
 
@@ -188,38 +192,38 @@ func Load(configPath string) (*Config, error) {
 	config.ApplyHomeLayout()
 
 	// 处理 Provider 特殊解析
-	if viper.IsSet("llm.providers") {
+	if vp.IsSet("llm.providers") {
 		var llm struct{ Providers []interface{} }
-		viper.UnmarshalKey("llm", &llm)
+		vp.UnmarshalKey("llm", &llm)
 		unmarshalProviders(llm.Providers, &config.LLM.Providers)
 	}
-	if viper.IsSet("rag.embedding.providers") {
+	if vp.IsSet("rag.embedding.providers") {
 		var emb struct{ Providers []interface{} }
-		viper.UnmarshalKey("rag.embedding", &emb)
+		vp.UnmarshalKey("rag.embedding", &emb)
 		unmarshalProviders(emb.Providers, &config.RAG.Embedding.Providers)
 	}
 
 	return config, nil
 }
 
-func setDefaults() {
-	viper.SetDefault("server.port", 7127)
-	viper.SetDefault("server.host", "0.0.0.0")
-	viper.SetDefault("llm.enabled", true)
-	viper.SetDefault("llm.strategy", "round_robin")
-	viper.SetDefault("rag.enabled", false)
-	viper.SetDefault("skills.enabled", true)
-	viper.SetDefault("memory.store_type", string(MemoryStoreTypeFile))
-	viper.SetDefault("cache.store_type", "memory")
-	viper.SetDefault("tooling.enable_search_tools", true)
-	viper.SetDefault("tooling.web_search.mode", "mcp")
+func setDefaults(vp *viper.Viper) {
+	vp.SetDefault("server.port", 7127)
+	vp.SetDefault("server.host", "0.0.0.0")
+	vp.SetDefault("llm.enabled", true)
+	vp.SetDefault("llm.strategy", "round_robin")
+	vp.SetDefault("rag.enabled", false)
+	vp.SetDefault("skills.enabled", true)
+	vp.SetDefault("memory.store_type", string(MemoryStoreTypeFile))
+	vp.SetDefault("cache.store_type", "memory")
+	vp.SetDefault("tooling.enable_search_tools", true)
+	vp.SetDefault("tooling.web_search.mode", "mcp")
 }
 
-func bindEnvVars() {
-	viper.SetEnvPrefix("AGENTGO")
-	viper.AutomaticEnv()
-	viper.BindEnv("home", "AGENTGO_HOME")
-	viper.BindEnv("debug", "DEBUG")
+func bindEnvVars(vp *viper.Viper) {
+	vp.SetEnvPrefix("AGENTGO")
+	vp.AutomaticEnv()
+	vp.BindEnv("home", "AGENTGO_HOME")
+	vp.BindEnv("debug", "DEBUG")
 }
 
 // --- 工具函数 ---
