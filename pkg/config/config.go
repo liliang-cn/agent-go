@@ -81,9 +81,9 @@ type SkillsConfig struct {
 }
 
 type MemoryConfig struct {
-	StoreType   string `mapstructure:"store_type"`
-	MemoryPath  string `mapstructure:"memory_path"`
-	MaxMemories int    `mapstructure:"max_memories"`
+	StoreType   MemoryStoreType `mapstructure:"store_type"`
+	MemoryPath  string          `mapstructure:"memory_path"`
+	MaxMemories int             `mapstructure:"max_memories"`
 }
 
 type CacheConfig struct {
@@ -125,11 +125,7 @@ func (c *Config) ApplyHomeLayout() {
 	c.Internal.Storage.IndexType = "hnsw"
 
 	// 2. 自动对齐 Memory 路径
-	if strings.EqualFold(c.Memory.StoreType, "vector") {
-		c.Memory.MemoryPath = c.Internal.Storage.DBPath
-	} else if c.Memory.MemoryPath == "" || !filepath.IsAbs(c.Memory.MemoryPath) {
-		c.Memory.MemoryPath = filepath.Join(c.DataDir(), "memories")
-	}
+	c.applyMemoryLayout()
 
 	// 3. 自动对齐 Cache 路径
 	if c.Cache.Path == "" || !filepath.IsAbs(c.Cache.Path) {
@@ -213,7 +209,7 @@ func setDefaults() {
 	viper.SetDefault("llm.strategy", "round_robin")
 	viper.SetDefault("rag.enabled", false)
 	viper.SetDefault("skills.enabled", true)
-	viper.SetDefault("memory.store_type", "file")
+	viper.SetDefault("memory.store_type", string(MemoryStoreTypeFile))
 	viper.SetDefault("cache.store_type", "memory")
 	viper.SetDefault("tooling.enable_search_tools", true)
 	viper.SetDefault("tooling.web_search.mode", "mcp")
@@ -231,7 +227,9 @@ func bindEnvVars() {
 func (c *Config) resolveMCPServerPaths() {
 	unifiedPath := filepath.Join(c.Home, "mcpServers.json")
 	for _, s := range c.MCP.Servers {
-		if s == unifiedPath { return }
+		if s == unifiedPath {
+			return
+		}
 	}
 	c.MCP.Servers = append([]string{unifiedPath}, c.MCP.Servers...)
 }
@@ -268,13 +266,13 @@ func (c *Config) Validate() error {
 
 func (c *Config) SkillsPaths() []string {
 	paths := []string{".skills", filepath.Join(c.Home, "skills")}
-	
+
 	// Add ~/.agents/skills if exists
 	if home, err := os.UserHomeDir(); err == nil {
 		agentsSkills := filepath.Join(home, ".agents", "skills")
 		if _, err := os.Stat(agentsSkills); err == nil {
 			paths = append(paths, agentsSkills)
-			
+
 			// Also add subdirectories of ~/.agents/skills as they might contain individual skills
 			if entries, err := os.ReadDir(agentsSkills); err == nil {
 				for _, entry := range entries {
@@ -285,34 +283,34 @@ func (c *Config) SkillsPaths() []string {
 			}
 		}
 	}
-	
+
 	// Add user-defined paths from config
 	for _, p := range c.Skills.Paths {
 		expanded := expandHomePath(p)
 		paths = append(paths, expanded)
 	}
-	
+
 	return paths
 }
 
 // MCPServersPaths returns all paths to look for mcpServers.json files
 func (c *Config) MCPServersPaths() []string {
 	paths := []string{filepath.Join(c.Home, "mcpServers.json")}
-	
+
 	if home, err := os.UserHomeDir(); err == nil {
 		// ~/.agents/mcpServers.json
 		agentsMcp := filepath.Join(home, ".agents", "mcpServers.json")
 		if _, err := os.Stat(agentsMcp); err == nil {
 			paths = append(paths, agentsMcp)
 		}
-		
+
 		// ~/.agentgo/mcpServers.json (legacy)
 		oldHomeMcp := filepath.Join(home, ".agentgo", "mcpServers.json")
 		if _, err := os.Stat(oldHomeMcp); err == nil {
 			paths = append(paths, oldHomeMcp)
 		}
 	}
-	
+
 	return paths
 }
 

@@ -23,17 +23,17 @@ func NewConfigHandler(cfg *config.Config, configPath string) *ConfigHandler {
 
 // ConfigSnapshot 提供给 UI 的精简配置视图
 type ConfigSnapshot struct {
-	Home               string   `json:"home"`
-	Debug              bool     `json:"debug"`
-	ServerHost         string   `json:"serverHost"`
-	ServerPort         int      `json:"serverPort"`
-	RAGEnabled         bool     `json:"ragEnabled"`
-	RAGEmbeddingModel  string   `json:"ragEmbeddingModel"`
-	MemoryStoreType    string   `json:"memoryStoreType"`
-	CacheStoreType     string   `json:"cacheStoreType"`
-	DataDir            string   `json:"dataDir"`
-	WorkspaceDir       string   `json:"workspaceDir"`
-	MCPServersPath     string   `json:"mcpServersPath"`
+	Home              string `json:"home"`
+	Debug             bool   `json:"debug"`
+	ServerHost        string `json:"serverHost"`
+	ServerPort        int    `json:"serverPort"`
+	RAGEnabled        bool   `json:"ragEnabled"`
+	RAGEmbeddingModel string `json:"ragEmbeddingModel"`
+	MemoryStoreType   string `json:"memoryStoreType"`
+	CacheStoreType    string `json:"cacheStoreType"`
+	DataDir           string `json:"dataDir"`
+	WorkspaceDir      string `json:"workspaceDir"`
+	MCPServersPath    string `json:"mcpServersPath"`
 }
 
 type UpdateConfigRequest struct {
@@ -67,13 +67,30 @@ func (h *ConfigHandler) updateConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Home != nil { h.cfg.Home = *req.Home }
-	if req.Debug != nil { h.cfg.Debug = *req.Debug }
-	if req.ServerHost != nil { h.cfg.Server.Host = *req.ServerHost }
-	if req.ServerPort != nil { h.cfg.Server.Port = *req.ServerPort }
-	if req.RAGEnabled != nil { h.cfg.RAG.Enabled = *req.RAGEnabled }
-	if req.RAGEmbeddingModel != nil { h.cfg.RAG.EmbeddingModel = *req.RAGEmbeddingModel }
-	if req.MemoryStoreType != nil { h.cfg.Memory.StoreType = *req.MemoryStoreType }
+	if req.Home != nil {
+		h.cfg.Home = *req.Home
+	}
+	if req.Debug != nil {
+		h.cfg.Debug = *req.Debug
+	}
+	if req.ServerHost != nil {
+		h.cfg.Server.Host = *req.ServerHost
+	}
+	if req.ServerPort != nil {
+		h.cfg.Server.Port = *req.ServerPort
+	}
+	if req.RAGEnabled != nil {
+		h.cfg.RAG.Enabled = *req.RAGEnabled
+	}
+	if req.RAGEmbeddingModel != nil {
+		h.cfg.RAG.EmbeddingModel = *req.RAGEmbeddingModel
+	}
+	if req.MemoryStoreType != nil {
+		if err := h.cfg.SetMemoryStoreTypeString(*req.MemoryStoreType); err != nil {
+			JSONError(w, "Invalid memory store type: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
 
 	// 核心：重新推导所有路径
 	h.cfg.ApplyHomeLayout()
@@ -111,7 +128,7 @@ func (h *ConfigHandler) saveConfig() error {
 			"embedding_model": h.cfg.RAG.EmbeddingModel,
 		},
 		"memory": map[string]interface{}{
-			"store_type": h.cfg.Memory.StoreType,
+			"store_type": h.cfg.GetMemoryStoreType().String(),
 		},
 		"cache": map[string]interface{}{
 			"store_type": h.cfg.Cache.StoreType,
@@ -134,7 +151,7 @@ func (h *ConfigHandler) snapshot() ConfigSnapshot {
 		ServerPort:        h.cfg.Server.Port,
 		RAGEnabled:        h.cfg.RAG.Enabled,
 		RAGEmbeddingModel: h.cfg.RAG.EmbeddingModel,
-		MemoryStoreType:   h.cfg.Memory.StoreType,
+		MemoryStoreType:   h.cfg.GetMemoryStoreType().String(),
 		CacheStoreType:    h.cfg.Cache.StoreType,
 		DataDir:           h.cfg.DataDir(),
 		WorkspaceDir:      h.cfg.WorkspaceDir(),

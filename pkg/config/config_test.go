@@ -56,7 +56,7 @@ func TestConfigValidateFailures(t *testing.T) {
 	}{
 		{"bad port", func(c *Config) { c.Server.Port = 0 }, "invalid server port"},
 		{"empty host", func(c *Config) { c.Server.Host = "" }, "server host cannot be empty"},
-		{"rag missing model", func(c *Config) { c.RAG.Enabled = true; c.RAG.EmbeddingModel = "" }, "embedding_model is required"},
+		{"rag missing model", func(c *Config) { c.RAG.Enabled = true; c.RAG.EmbeddingModel = "" }, "embedding_model or rag.embedding.providers is required"},
 	}
 
 	for _, tt := range tests {
@@ -88,12 +88,41 @@ func TestApplyHomeLayout(t *testing.T) {
 	if got := cfg.Memory.MemoryPath; got != filepath.Join(home, "data", "memories") {
 		t.Fatalf("unexpected memory path: %s", got)
 	}
-	
+
 	// Test override
 	cfg.Memory.MemoryPath = "/tmp/custom-memories"
 	cfg.ApplyHomeLayout()
 	if cfg.Memory.MemoryPath != "/tmp/custom-memories" {
 		t.Fatalf("expected override to be preserved, got %s", cfg.Memory.MemoryPath)
+	}
+}
+
+func TestMemoryStoreTypeHelpers(t *testing.T) {
+	cfg := validConfig(t.TempDir())
+
+	if got := cfg.GetMemoryStoreType(); got != MemoryStoreTypeFile {
+		t.Fatalf("expected default file memory store type, got %s", got)
+	}
+	if got := NormalizeMemoryStoreType("rag"); got != MemoryStoreTypeVector {
+		t.Fatalf("expected rag alias to normalize to vector, got %s", got)
+	}
+	if err := cfg.SetMemoryStoreTypeString("vector"); err != nil {
+		t.Fatalf("set vector memory store type failed: %v", err)
+	}
+	if got := cfg.GetMemoryStoreType(); got != MemoryStoreTypeVector {
+		t.Fatalf("expected vector memory store type, got %s", got)
+	}
+	if got := cfg.MemoryPrimaryPath(); got != filepath.Join(cfg.Home, "data", "cortex.db") {
+		t.Fatalf("expected vector memory path to use cortex db, got %s", got)
+	}
+	if err := cfg.SetMemoryStoreType(MemoryStoreTypeFile); err != nil {
+		t.Fatalf("set file memory store type failed: %v", err)
+	}
+	if got := cfg.MemoryPrimaryPath(); got != filepath.Join(cfg.Home, "data", "memories") {
+		t.Fatalf("expected file memory path after switching back, got %s", got)
+	}
+	if err := cfg.SetMemoryStoreTypeString("invalid"); err == nil {
+		t.Fatal("expected invalid memory store type to fail")
 	}
 }
 

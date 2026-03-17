@@ -416,6 +416,64 @@ func TestService_StoreIfWorthwhile(t *testing.T) {
 		store.AssertNotCalled(t, "Store")
 	})
 
+	t.Run("Heuristic fallback stores direct declarative preference", func(t *testing.T) {
+		isolatedStore := new(MockMemoryStore)
+		isolatedLLM := new(MockGenerator)
+		isolatedEmbedder := new(MockEmbedder)
+		isolatedService := NewService(isolatedStore, isolatedLLM, isolatedEmbedder, nil)
+
+		req := &domain.MemoryStoreRequest{
+			SessionID:  "session-heuristic",
+			AgentID:    "Assistant",
+			TaskGoal:   "Alice prefers coffee over tea.",
+			TaskResult: "Understood.",
+		}
+
+		isolatedLLM.On("GenerateStructured", ctx, mock.Anything, mock.Anything, mock.Anything).Return(&domain.StructuredResult{
+			Raw:   `{"should_store": false, "memories": []}`,
+			Valid: true,
+		}, nil)
+		isolatedEmbedder.On("Embed", ctx, "Alice prefers coffee over tea.").Return([]float64{0.9, 0.1, 0.2}, nil)
+		isolatedStore.On("Store", ctx, mock.MatchedBy(func(m *domain.Memory) bool {
+			return m.Content == "Alice prefers coffee over tea." &&
+				m.Type == domain.MemoryTypePreference &&
+				m.ScopeType == domain.MemoryScopeAgent &&
+				m.ScopeID == "Assistant"
+		})).Return(nil)
+
+		err := isolatedService.StoreIfWorthwhile(ctx, req)
+
+		assert.NoError(t, err)
+		isolatedLLM.AssertExpectations(t)
+		isolatedEmbedder.AssertExpectations(t)
+		isolatedStore.AssertExpectations(t)
+	})
+
+	t.Run("Heuristic fallback does not store questions", func(t *testing.T) {
+		isolatedStore := new(MockMemoryStore)
+		isolatedLLM := new(MockGenerator)
+		isolatedEmbedder := new(MockEmbedder)
+		isolatedService := NewService(isolatedStore, isolatedLLM, isolatedEmbedder, nil)
+
+		req := &domain.MemoryStoreRequest{
+			SessionID:  "session-question",
+			TaskGoal:   "What drink does Alice prefer?",
+			TaskResult: "I don't know yet.",
+		}
+
+		isolatedLLM.On("GenerateStructured", ctx, mock.Anything, mock.Anything, mock.Anything).Return(&domain.StructuredResult{
+			Raw:   `{"should_store": false, "memories": []}`,
+			Valid: true,
+		}, nil)
+
+		err := isolatedService.StoreIfWorthwhile(ctx, req)
+
+		assert.NoError(t, err)
+		isolatedLLM.AssertExpectations(t)
+		isolatedStore.AssertNotCalled(t, "Store")
+		isolatedEmbedder.AssertNotCalled(t, "Embed")
+	})
+
 	t.Run("Preference memories default to agent scope when agent context exists", func(t *testing.T) {
 		isolatedStore := new(MockMemoryStore)
 		isolatedLLM := new(MockGenerator)

@@ -85,7 +85,7 @@ func (h *SetupHandler) snapshot() SetupState {
 		ServerPort:       h.cfg.Server.Port,
 		MCPEnabled:       h.cfg.MCP.Enabled,
 		SkillsPaths:      h.cfg.SkillsPaths(),
-		MemoryStoreType:  h.cfg.Memory.StoreType,
+		MemoryStoreType:  h.cfg.GetMemoryStoreType().String(),
 		Providers:        providers,
 	}
 }
@@ -118,8 +118,11 @@ func (h *SetupHandler) apply(w http.ResponseWriter, r *http.Request) {
 	h.cfg.Server.Host = req.ServerHost
 	h.cfg.Server.Port = req.ServerPort
 	h.cfg.MCP.Enabled = req.MCPEnabled
-	h.cfg.Memory.StoreType = req.MemoryStoreType
-	
+	if err := h.cfg.SetMemoryStoreTypeString(req.MemoryStoreType); err != nil {
+		JSONError(w, "Invalid memory store type: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	// 极简 RAG 设置
 	h.cfg.RAG.Enabled = req.Provider.EmbeddingModel != ""
 	h.cfg.RAG.EmbeddingModel = req.Provider.EmbeddingModel
@@ -161,8 +164,8 @@ func (h *SetupHandler) saveSetupConfig(req ApplySetupRequest) error {
 	setNested(data, []string{"server", "host"}, h.cfg.Server.Host)
 	setNested(data, []string{"server", "port"}, h.cfg.Server.Port)
 	setNested(data, []string{"mcp", "enabled"}, h.cfg.MCP.Enabled)
-	setNested(data, []string{"memory", "store_type"}, h.cfg.Memory.StoreType)
-	
+	setNested(data, []string{"memory", "store_type"}, h.cfg.GetMemoryStoreType().String())
+
 	// 极简 RAG TOML
 	setNested(data, []string{"rag", "enabled"}, h.cfg.RAG.Enabled)
 	setNested(data, []string{"rag", "embedding_model"}, h.cfg.RAG.EmbeddingModel)
@@ -182,7 +185,7 @@ func (h *SetupHandler) saveSetupConfig(req ApplySetupRequest) error {
 		"max_concurrency": req.Provider.MaxConcurrency,
 		"capability":      req.Provider.Capability,
 	}})
-	
+
 	setNested(data, []string{"setup", "completed"}, true)
 	setNested(data, []string{"setup", "updated_at"}, time.Now().Format(time.RFC3339))
 

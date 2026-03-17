@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/liliang-cn/agent-go/pkg/config"
 	"github.com/liliang-cn/agent-go/pkg/domain"
 	"github.com/liliang-cn/agent-go/pkg/memory"
 	"github.com/liliang-cn/agent-go/pkg/providers"
@@ -284,55 +285,55 @@ func createMemoryService(opts *CommandOptions) (*memory.Service, error) {
 	var err error
 
 	path := opts.DBPath
-	storeType := "file" // Default
+	storeType := config.MemoryStoreTypeFile
 
 	if path != "" && (strings.HasSuffix(path, ".db") || strings.HasSuffix(path, ".sqlite")) {
-		storeType = "vector"
+		storeType = config.MemoryStoreTypeVector
 	} else if Cfg != nil {
 		if path == "" {
-			path = Cfg.Memory.MemoryPath
+			path = Cfg.MemoryPrimaryPath()
 		}
-		storeType = Cfg.Memory.StoreType
+		storeType = Cfg.GetMemoryStoreType()
 	}
 
 	if path == "" {
 		path = "./.agentgo/data/memories"
 	}
 
-	switch storeType {
-	case "vector":
-		memStore, err = store.NewMemoryStore(path)
-	case "file", "hybrid":
-		memStore, err = store.NewFileMemoryStore(path)
-	default:
-		memStore, err = store.NewFileMemoryStore(path)
-	}
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to create memory store: %w", err)
-	}
-
-	// Try to get embedder from config for vector search
+	// Try to get embedder and LLM from config before creating stores
 	var embedder domain.Embedder
 	var llm domain.Generator
-	if Cfg != nil && Cfg.RAG.Enabled && len(Cfg.LLM.Providers) > 0 {
-		// Create embedder from first provider
-		prov := Cfg.LLM.Providers[0]
-		embeddingModel := Cfg.RAG.EmbeddingModel
-		if embeddingModel == "" {
-			embeddingModel = prov.ModelName
-		}
-		provConfig := &domain.OpenAIProviderConfig{
-			BaseProviderConfig: domain.BaseProviderConfig{Timeout: 30},
-			BaseURL:            prov.BaseURL,
-			APIKey:             prov.Key,
-			EmbeddingModel:     embeddingModel,
-		}
+	if Cfg != nil {
 		factory := providers.NewFactory()
-		embedder, _ = factory.CreateEmbedderProvider(context.Background(), provConfig)
 
-		// Also try to get LLM for indexing
-		if Cfg.LLM.Enabled {
+		if Cfg.RAG.Enabled {
+			switch {
+			case len(Cfg.RAG.Embedding.Providers) > 0:
+				prov := Cfg.RAG.Embedding.Providers[0]
+				provConfig := &domain.OpenAIProviderConfig{
+					BaseProviderConfig: domain.BaseProviderConfig{Timeout: 30},
+					BaseURL:            prov.BaseURL,
+					APIKey:             prov.Key,
+					EmbeddingModel:     prov.ModelName,
+				}
+				embedder, _ = factory.CreateEmbedderProvider(context.Background(), provConfig)
+			case len(Cfg.LLM.Providers) > 0:
+				prov := Cfg.LLM.Providers[0]
+				embeddingModel := Cfg.RAG.EmbeddingModel
+				if embeddingModel == "" {
+					embeddingModel = prov.ModelName
+				}
+				provConfig := &domain.OpenAIProviderConfig{
+					BaseProviderConfig: domain.BaseProviderConfig{Timeout: 30},
+					BaseURL:            prov.BaseURL,
+					APIKey:             prov.Key,
+					EmbeddingModel:     embeddingModel,
+				}
+				embedder, _ = factory.CreateEmbedderProvider(context.Background(), provConfig)
+			}
+		}
+
+		if Cfg.LLM.Enabled && len(Cfg.LLM.Providers) > 0 {
 			llmProv := Cfg.LLM.Providers[0]
 			llmConfig := &domain.OpenAIProviderConfig{
 				BaseProviderConfig: domain.BaseProviderConfig{Timeout: 60},
@@ -344,14 +345,50 @@ func createMemoryService(opts *CommandOptions) (*memory.Service, error) {
 		}
 	}
 
-	// Create service with LLM/embedder if available
+	// Downgrade hybrid to file if no embedder available
+	if storeType == config.MemoryStoreTypeHybrid && embedder == nil {
+		storeType = config.MemoryStoreTypeFile
+	}
+
+	var shadowStore domain.MemoryStore
+	switch storeType {
+	case config.MemoryStoreTypeVector:
+		vectorPath := path
+		if Cfg != nil && opts.DBPath == "" {
+			vectorPath = Cfg.MemoryVectorDBPath()
+		}
+		memStore, err = store.NewMemoryStore(vectorPath)
+		if err == nil {
+			_ = memStore.InitSchema(context.Background())
+		}
+	case config.MemoryStoreTypeHybrid:
+		fileStore, ferr := store.NewFileMemoryStore(path)
+		if ferr != nil {
+			return nil, fmt.Errorf("failed to create file memory store: %w", ferr)
+		}
+		if llm != nil {
+			fileStore.WithLLM(llm)
+		}
+		memStore = fileStore
+		if Cfg != nil {
+			if sqliteStore, serr := store.NewMemoryStore(Cfg.MemoryVectorDBPath()); serr == nil {
+				_ = sqliteStore.InitSchema(context.Background())
+				shadowStore = sqliteStore
+			}
+		}
+	default:
+		memStore, err = store.NewFileMemoryStore(path)
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to create memory store: %w", err)
+	}
+
 	memCfg := memory.DefaultConfig()
 	memSvc = memory.NewService(memStore, llm, embedder, memCfg)
 
-	// If vector store and embedder available, set shadow index for hybrid search
-	if storeType == "vector" && embedder != nil && memStore != nil {
-		// The vector store itself can be used as shadow index
-		memSvc.SetShadowIndex(memStore)
+	if shadowStore != nil {
+		memSvc.SetShadowIndex(shadowStore)
 	}
 
 	return memSvc, nil

@@ -329,6 +329,65 @@ func TestAgentWithMemoryStoresOrdinaryDialogueViaStoreIfWorthwhile(t *testing.T)
 	}
 }
 
+func TestAgentWithMemoryStoresOrdinaryDialogueViaHeuristicFallback(t *testing.T) {
+	ctx := context.Background()
+	home := t.TempDir()
+	llm := &fileMemoryTestLLM{
+		expectedRecallText: "Alice prefers coffee over tea.",
+	}
+
+	svc, err := New("memory-agent").
+		WithConfig(testAgentConfig(home)).
+		WithLLM(llm).
+		WithMemory().
+		Build()
+	if err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+	defer svc.Close()
+
+	first, err := svc.Chat(ctx, "Alice prefers coffee over tea.")
+	if err != nil {
+		t.Fatalf("ordinary dialogue chat failed: %v", err)
+	}
+	if got := first.Text(); got != "Understood." {
+		t.Fatalf("unexpected first response: %q", got)
+	}
+
+	mems, total, err := svc.MemoryService().List(ctx, 10, 0)
+	if err != nil {
+		t.Fatalf("list memories failed: %v", err)
+	}
+	if total == 0 || len(mems) == 0 {
+		t.Fatal("expected heuristic fallback to persist extracted memory")
+	}
+
+	found := false
+	for _, mem := range mems {
+		if strings.Contains(mem.Content, "Alice prefers coffee over tea.") {
+			if mem.ScopeType != domain.MemoryScopeAgent || mem.ScopeID != "memory-agent" {
+				t.Fatalf("expected heuristic preference to be stored in agent scope, got %+v", mem)
+			}
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected heuristic memory in store, got %+v", mems)
+	}
+
+	second, err := svc.Chat(ctx, "what drink does Alice prefer?")
+	if err != nil {
+		t.Fatalf("recall chat failed: %v", err)
+	}
+	if got := second.Text(); got != "I remember that detail." {
+		t.Fatalf("unexpected recall response: %q", got)
+	}
+	if !llm.sawMemoryContext {
+		t.Fatal("expected heuristic fallback memory to be injected")
+	}
+}
+
 func TestMemoryToolsAreHiddenInFileOnlyMode(t *testing.T) {
 	ctx := context.Background()
 	home := t.TempDir()

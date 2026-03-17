@@ -657,38 +657,40 @@ func (b *Builder) buildMemoryService(agentgoCfg *config.Config, embedSvc domain.
 	var shadowStore domain.MemoryStore
 	var err error
 
-	memPath := b.memoryCfg.MemoryPath
-	if memPath == "" {
-		memPath = filepath.Join(agentgoCfg.DataDir(), "memories")
+	storeType := config.NormalizeMemoryStoreType(b.memoryCfg.StoreType)
+	if b.memoryCfg.StoreType == "" {
+		storeType = agentgoCfg.GetMemoryStoreType()
 	}
 
-	storeType := b.memoryCfg.StoreType
-	if storeType == "" {
-		storeType = "file"
+	memPath := b.memoryCfg.MemoryPath
+	if memPath == "" {
+		memPath = agentgoCfg.MemoryPrimaryPath()
 	}
 
 	// Warn if vector/hybrid requested but no embedding model available
-	if (storeType == "vector" || storeType == "hybrid") && embedSvc == nil {
+	if storeType.UsesVector() && embedSvc == nil {
 		log.Printf("[WARN] Memory store type '%s' requires embedding model, but none available. Falling back to 'file'.", storeType)
-		storeType = "file"
+		storeType = config.MemoryStoreTypeFile
+		if memPath == agentgoCfg.MemoryVectorDBPath() {
+			memPath = filepath.Join(agentgoCfg.DataDir(), "memories")
+		}
 	}
 
 	switch storeType {
-	case "file":
+	case config.MemoryStoreTypeFile:
 		memStore, err = store.NewFileMemoryStore(memPath)
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to create file memory store: %w", err)
 		}
-	case "vector":
-		sqlitePath := agentgoCfg.AgentDBPath()
-		memStore, err = store.NewMemoryStore(sqlitePath)
+	case config.MemoryStoreTypeVector:
+		memStore, err = store.NewMemoryStore(agentgoCfg.MemoryVectorDBPath())
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to create vector memory store: %w", err)
 		}
 		if err := memStore.InitSchema(context.Background()); err != nil {
 			return nil, "", fmt.Errorf("failed to init memory schema: %w", err)
 		}
-	case "hybrid":
+	case config.MemoryStoreTypeHybrid:
 		fileStore, ferr := store.NewFileMemoryStore(memPath)
 		if ferr != nil {
 			return nil, "", fmt.Errorf("failed to create file memory store: %w", ferr)
@@ -698,8 +700,7 @@ func (b *Builder) buildMemoryService(agentgoCfg *config.Config, embedSvc domain.
 			fileStore.WithLLM(llmSvc)
 		}
 		memStore = fileStore
-		sqlitePath := agentgoCfg.AgentDBPath()
-		if sqliteStore, serr := store.NewMemoryStore(sqlitePath); serr == nil {
+		if sqliteStore, serr := store.NewMemoryStore(agentgoCfg.MemoryVectorDBPath()); serr == nil {
 			_ = sqliteStore.InitSchema(context.Background())
 			shadowStore = sqliteStore
 		}
@@ -742,7 +743,7 @@ func (b *Builder) buildMemoryService(agentgoCfg *config.Config, embedSvc domain.
 		}()
 	}
 
-	return memSvc, storeType, nil
+	return memSvc, storeType.String(), nil
 }
 
 func (b *Builder) buildRAGProcessor(agentgoCfg *config.Config, embedSvc domain.Embedder, llmSvc domain.Generator, memSvc domain.MemoryService) (domain.Processor, error) {

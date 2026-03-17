@@ -1,21 +1,30 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/liliang-cn/agent-go/pkg/domain"
-	"github.com/liliang-cn/cortexdb/v2/pkg/hindsight"
-	_ "modernc.org/sqlite"
+	"github.com/liliang-cn/cortexdb/v2/pkg/core"
+	"github.com/liliang-cn/cortexdb/v2/pkg/cortexdb"
 )
 
 var (
 	ErrMemoryNotFound = errors.New("memory not found")
+)
+
+const (
+	memoryBucketPrefix    = "memory:"
+	memoryBucketNamespace = "agentgo"
 )
 
 // Memory is a local internal structure, but we prefer using domain.Memory for interface methods.
@@ -33,207 +42,114 @@ type Memory struct {
 	UpdatedAt    time.Time              `json:"updated_at"`
 }
 
-// MemoryStore handles memory persistence using Hindsight
+// MemoryStore handles memory persistence using cortexdb memory buckets.
 type MemoryStore struct {
-	sys    *hindsight.System
-	dbPath string
+	db    *cortexdb.DB
+	store *core.SQLiteStore
 }
 
-// NewMemoryStore creates a new memory store backed by Hindsight/cortexdb
+type memoryBucket struct {
+	BucketID      string
+	UserID        string
+	LogicalBankID string
+	Scope         domain.MemoryScope
+}
+
+type storedMemoryRow struct {
+	ID              string
+	BucketID        string
+	UserID          string
+	Role            string
+	Content         string
+	Vector          []float32
+	Metadata        map[string]interface{}
+	CreatedAt       time.Time
+	SessionMetadata map[string]interface{}
+}
+
+// NewMemoryStore creates a new memory store backed by cortexdb's dedicated memory bucket schema.
 func NewMemoryStore(dbPath string) (*MemoryStore, error) {
 	if dbPath == "" {
 		return nil, errors.New("dbPath is required")
 	}
 
-	cfg := hindsight.DefaultConfig(dbPath)
-	sys, err := hindsight.New(cfg)
+	db, err := cortexdb.Open(cortexdb.DefaultConfig(dbPath))
 	if err != nil {
-		return nil, fmt.Errorf("failed to initialize hindsight system: %w", err)
+		return nil, fmt.Errorf("failed to initialize cortexdb memory store: %w", err)
 	}
 
-	return &MemoryStore{sys: sys, dbPath: dbPath}, nil
+	sqliteStore, ok := db.Vector().(*core.SQLiteStore)
+	if !ok {
+		_ = db.Close()
+		return nil, fmt.Errorf("failed to get SQLiteStore from cortexdb")
+	}
+
+	return &MemoryStore{db: db, store: sqliteStore}, nil
 }
 
-// Store saves a new memory using Hindsight
+// Store saves a new memory using cortexdb memory buckets.
 func (s *MemoryStore) Store(ctx context.Context, memory *domain.Memory) error {
-	bankID := memory.SessionID
-	if bankID == "" {
-		bankID = "default"
-	}
-
-	if memory.Metadata == nil {
-		memory.Metadata = make(map[string]interface{})
-	}
-	memory.Metadata["memory_type"] = string(memory.Type)
-
-	hMem := &hindsight.Memory{
-		ID:         memory.ID,
-		BankID:     bankID,
-		Type:       hindsight.MemoryType(memory.Type),
-		Content:    memory.Content,
-		Vector:     toFloat32(memory.Vector),
-		Confidence: memory.Importance,
-		Metadata:   memory.Metadata,
-		CreatedAt:  memory.CreatedAt,
-	}
-
-	return s.sys.Retain(ctx, hMem)
+	scope := resolveMemoryScope(memory)
+	return s.storeMemory(ctx, memory, scope)
 }
 
-// Search performs vector search across all banks
+// Search performs vector search across all memory buckets.
 func (s *MemoryStore) Search(ctx context.Context, vector []float64, topK int, minScore float64) ([]*domain.MemoryWithScore, error) {
-	banks := s.sys.ListBanks()
-	if len(banks) == 0 {
-		bankIDs, _ := s.getBankIDsFromDB()
-		for _, id := range bankIDs {
-			banks = append(banks, &hindsight.Bank{ID: id, Name: id})
-		}
+	buckets, err := s.listMemoryBucketIDs(ctx)
+	if err != nil {
+		return nil, err
 	}
-
-	var allMemories []*domain.MemoryWithScore
-	for _, bank := range banks {
-		req := &hindsight.RecallRequest{
-			BankID:      bank.ID,
-			QueryVector: toFloat32(vector),
-			TopK:        topK,
-			Strategy:    hindsight.DefaultStrategy(),
-		}
-
-		results, err := s.sys.Recall(ctx, req)
-		if err != nil {
-			continue
-		}
-
-		for _, res := range results {
-			if float64(res.Score) < minScore {
-				continue
-			}
-
-			allMemories = append(allMemories, &domain.MemoryWithScore{
-				Memory: toDomainMemory(toInternalMemory(res.Memory)),
-				Score:  float64(res.Score),
-			})
-		}
-	}
-
-	// Simple sort
-	for i := 0; i < len(allMemories)-1; i++ {
-		for j := i + 1; j < len(allMemories); j++ {
-			if allMemories[i].Score < allMemories[j].Score {
-				allMemories[i], allMemories[j] = allMemories[j], allMemories[i]
-			}
-		}
-	}
-
-	if len(allMemories) > topK {
-		allMemories = allMemories[:topK]
-	}
-
-	return allMemories, nil
+	return s.searchBuckets(ctx, buckets, vector, topK, minScore)
 }
 
 func (s *MemoryStore) SearchBySession(ctx context.Context, sessionID string, vector []float64, topK int) ([]*domain.MemoryWithScore, error) {
-	req := &hindsight.RecallRequest{
-		BankID:      sessionID,
-		QueryVector: toFloat32(vector),
-		TopK:        topK,
-		Strategy:    hindsight.DefaultStrategy(),
-	}
-
-	results, err := s.sys.Recall(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-
-	var memories []*domain.MemoryWithScore
-	for _, res := range results {
-		memories = append(memories, &domain.MemoryWithScore{
-			Memory: toDomainMemory(toInternalMemory(res.Memory)),
-			Score:  float64(res.Score),
-		})
-	}
-
-	return memories, nil
+	bucket := memoryBucketForScope(domain.MemoryScope{Type: domain.MemoryScopeSession, ID: strings.TrimSpace(sessionID)})
+	return s.searchBuckets(ctx, []string{bucket.BucketID}, vector, topK, 0)
 }
 
-// SearchByScope searches memories within specific scopes
+// SearchByScope searches memories within specific scopes.
 func (s *MemoryStore) SearchByScope(ctx context.Context, vector []float64, scopes []domain.MemoryScope, topK int) ([]*domain.MemoryWithScore, error) {
-	var allMemories []*domain.MemoryWithScore
-	seen := make(map[string]bool)
+	if topK <= 0 {
+		topK = 10
+	}
 
-	// Search each scope in order
+	var bucketIDs []string
+	seenBuckets := make(map[string]struct{}, len(scopes))
 	for _, scope := range scopes {
-		for _, bankID := range scopeToBankIDs(scope) {
-			req := &hindsight.RecallRequest{
-				BankID:      bankID,
-				QueryVector: toFloat32(vector),
-				TopK:        topK,
-				Strategy:    hindsight.DefaultStrategy(),
-			}
-
-			results, err := s.sys.Recall(ctx, req)
-			if err != nil {
-				continue // Skip failed scope searches
-			}
-
-			for _, res := range results {
-				// Deduplicate
-				if seen[res.Memory.ID] {
-					continue
-				}
-				seen[res.Memory.ID] = true
-
-				allMemories = append(allMemories, &domain.MemoryWithScore{
-					Memory: toDomainMemory(toInternalMemory(res.Memory)),
-					Score:  float64(res.Score),
-				})
-			}
+		bucket := memoryBucketForScope(scope)
+		if bucket.BucketID == "" {
+			continue
 		}
+		if _, exists := seenBuckets[bucket.BucketID]; exists {
+			continue
+		}
+		seenBuckets[bucket.BucketID] = struct{}{}
+		bucketIDs = append(bucketIDs, bucket.BucketID)
 	}
 
-	return allMemories, nil
+	return s.searchBuckets(ctx, bucketIDs, vector, topK, 0)
 }
 
-// StoreWithScope stores a memory with a specific scope
+// StoreWithScope stores a memory with a specific scope.
 func (s *MemoryStore) StoreWithScope(ctx context.Context, memory *domain.Memory, scope domain.MemoryScope) error {
-	bankID := scopeToBankID(scope)
-
-	if memory.Metadata == nil {
-		memory.Metadata = make(map[string]interface{})
-	}
-	memory.Metadata["memory_type"] = string(memory.Type)
-
-	hMem := &hindsight.Memory{
-		ID:         memory.ID,
-		BankID:     bankID,
-		Type:       hindsight.MemoryType(memory.Type),
-		Content:    memory.Content,
-		Vector:     toFloat32(memory.Vector),
-		Confidence: memory.Importance,
-		Metadata:   memory.Metadata,
-		CreatedAt:  memory.CreatedAt,
-	}
-
-	return s.sys.Retain(ctx, hMem)
+	return s.storeMemory(ctx, memory, scope)
 }
 
-// SearchByText performs full-text search using LIKE (fallback from BM25)
+// SearchByText performs simple lexical search across cortexdb memory buckets.
 func (s *MemoryStore) SearchByText(ctx context.Context, query string, topK int) ([]*domain.MemoryWithScore, error) {
-	db, err := sql.Open("sqlite", s.dbPath)
-	if err != nil {
-		return nil, err
+	if topK <= 0 {
+		topK = 10
 	}
-	defer db.Close()
 
-	// Simple LIKE-based search (fallback if FTS5 not available)
-	searchPattern := "%" + strings.ToLower(query) + "%"
-
-	rows, err := db.Query(`
-		SELECT id, content, metadata, created_at
-		FROM embeddings
-		WHERE LOWER(content) LIKE ?
-		ORDER BY created_at DESC
-		LIMIT ?`, searchPattern, topK)
+	searchPattern := "%" + strings.ToLower(strings.TrimSpace(query)) + "%"
+	rows, err := s.store.GetDB().QueryContext(ctx, `
+		SELECT m.id, m.session_id, s.user_id, m.role, m.content, m.vector, m.metadata, m.created_at, s.metadata
+		FROM messages m
+		JOIN sessions s ON s.id = m.session_id
+		WHERE s.id LIKE ? AND LOWER(m.content) LIKE ?
+		ORDER BY m.created_at DESC
+		LIMIT ?
+	`, memoryBucketPrefix+"%", searchPattern, topK*4)
 	if err != nil {
 		return nil, err
 	}
@@ -241,233 +157,197 @@ func (s *MemoryStore) SearchByText(ctx context.Context, query string, topK int) 
 
 	var results []*domain.MemoryWithScore
 	for rows.Next() {
-		var id, content, metadataJSON string
-		var createdAt time.Time
-		if err := rows.Scan(&id, &content, &metadataJSON, &createdAt); err != nil {
+		row, err := scanStoredMemoryRow(rows)
+		if err != nil {
 			continue
 		}
 
-		var metadata map[string]interface{}
-		_ = json.Unmarshal([]byte(metadataJSON), &metadata)
-
-		bankID, _ := metadata["bank_id"].(string)
-		memType, _ := metadata["type"].(string)
-		if mt, ok := metadata["memory_type"].(string); ok {
-			memType = mt
-		}
-
-		// Calculate simple relevance score based on term frequency
-		score := calculateTextScore(query, content)
-
+		score := calculateTextScore(query, row.Content)
 		results = append(results, &domain.MemoryWithScore{
-			Memory: &domain.Memory{
-				ID:        id,
-				Content:   content,
-				Metadata:  metadata,
-				SessionID: bankID,
-				Type:      domain.MemoryType(memType),
-				CreatedAt: createdAt,
-			},
-			Score: score,
+			Memory: row.toDomainMemory(),
+			Score:  score,
 		})
 	}
 
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].Score == results[j].Score {
+			return results[i].CreatedAt.After(results[j].CreatedAt)
+		}
+		return results[i].Score > results[j].Score
+	})
+	if len(results) > topK {
+		results = results[:topK]
+	}
 	return results, nil
 }
 
-// scopeToBankID converts MemoryScope to bank ID
-func scopeToBankID(scope domain.MemoryScope) string {
-	if scope.Type == domain.MemoryScopeGlobal {
-		return "global"
-	}
-	if scope.Type == domain.MemoryScopeSession {
-		if scope.ID == "" {
-			return "global"
-		}
-		return scope.ID
-	}
-	if scope.Type == domain.MemoryScopeProject {
-		scope.Type = domain.MemoryScopeSquad
-	}
-	if scope.ID == "" {
-		return string(scope.Type)
-	}
-	return fmt.Sprintf("%s:%s", scope.Type, scope.ID)
-}
-
-func scopeToBankIDs(scope domain.MemoryScope) []string {
-	scope = normalizeVectorScope(scope)
-
-	switch scope.Type {
-	case domain.MemoryScopeGlobal:
-		return []string{"global", "default"}
-	case domain.MemoryScopeSession:
-		if scope.ID == "" {
-			return []string{"global", "default"}
-		}
-		return []string{scope.ID, "session:" + scope.ID}
-	case domain.MemoryScopeSquad:
-		if scope.ID == "" {
-			return []string{"squad"}
-		}
-		return []string{"squad:" + scope.ID, "project:" + scope.ID}
-	default:
-		if scope.ID == "" {
-			return []string{string(scope.Type)}
-		}
-		return []string{fmt.Sprintf("%s:%s", scope.Type, scope.ID)}
-	}
-}
-
-func normalizeVectorScope(scope domain.MemoryScope) domain.MemoryScope {
-	if scope.Type == domain.MemoryScopeProject {
-		scope.Type = domain.MemoryScopeSquad
-	}
-	if scope.Type == "" {
-		scope.Type = domain.MemoryScopeGlobal
-	}
-	return scope
-}
-
-// calculateTextScore calculates a simple text relevance score
-func calculateTextScore(query, content string) float64 {
-	queryLower := strings.ToLower(query)
-	contentLower := strings.ToLower(content)
-
-	// Count query terms in content
-	queryTerms := strings.Fields(queryLower)
-	contentTerms := strings.Fields(contentLower)
-
-	if len(queryTerms) == 0 {
-		return 0
-	}
-
-	matches := 0
-	for _, qt := range queryTerms {
-		for _, ct := range contentTerms {
-			if strings.Contains(ct, qt) {
-				matches++
-				break
-			}
-		}
-	}
-
-	// Normalize score
-	score := float64(matches) / float64(len(queryTerms))
-
-	// Boost for exact phrase match
-	if strings.Contains(contentLower, queryLower) {
-		score = score * 1.5
-		if score > 1.0 {
-			score = 1.0
-		}
-	}
-
-	return score
-}
-
 func (s *MemoryStore) Get(ctx context.Context, id string) (*domain.Memory, error) {
-	// Fallback scan
-	mems, _, err := s.List(ctx, 1000, 0)
+	row, err := s.loadStoredMemoryRow(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	for _, m := range mems {
-		if m.ID == id {
-			return m, nil
-		}
-	}
-	return nil, ErrMemoryNotFound
+	return row.toDomainMemory(), nil
 }
 
 func (s *MemoryStore) Update(ctx context.Context, memory *domain.Memory) error {
-	return s.Store(ctx, memory)
-}
+	if memory == nil || strings.TrimSpace(memory.ID) == "" {
+		return fmt.Errorf("memory id is required")
+	}
 
-func (s *MemoryStore) IncrementAccess(ctx context.Context, id string) error {
-	m, err := s.Get(ctx, id)
+	existing, err := s.loadStoredMemoryRow(ctx, memory.ID)
 	if err != nil {
 		return err
 	}
-	m.AccessCount++
-	m.LastAccessed = time.Now()
-	return s.Update(ctx, m)
+
+	merged := existing.toDomainMemory()
+	if strings.TrimSpace(memory.Content) != "" {
+		merged.Content = memory.Content
+	}
+	if memory.Type != "" {
+		merged.Type = memory.Type
+	}
+	if len(memory.Vector) > 0 {
+		merged.Vector = append([]float64(nil), memory.Vector...)
+	}
+	if memory.Importance != 0 {
+		merged.Importance = memory.Importance
+	}
+	if !memory.LastAccessed.IsZero() {
+		merged.LastAccessed = memory.LastAccessed
+	}
+	if memory.AccessCount != 0 {
+		merged.AccessCount = memory.AccessCount
+	}
+	if memory.Metadata != nil {
+		merged.Metadata = cloneMetadata(memory.Metadata)
+	}
+	if !memory.CreatedAt.IsZero() {
+		merged.CreatedAt = memory.CreatedAt
+	}
+	if memory.ScopeType != "" || memory.ScopeID != "" || memory.SessionID != "" {
+		merged.ScopeType = memory.ScopeType
+		merged.ScopeID = memory.ScopeID
+		merged.SessionID = memory.SessionID
+	}
+	if len(memory.Keywords) > 0 {
+		merged.Keywords = append([]string(nil), memory.Keywords...)
+	}
+	if len(memory.Tags) > 0 {
+		merged.Tags = append([]string(nil), memory.Tags...)
+	}
+
+	scope := resolveMemoryScope(merged)
+	return s.storeMemory(ctx, merged, scope)
+}
+
+func (s *MemoryStore) IncrementAccess(ctx context.Context, id string) error {
+	row, err := s.loadStoredMemoryRow(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	metadata := cloneMetadata(row.Metadata)
+	accessCount, _ := intFromAny(metadata["access_count"])
+	accessCount++
+	metadata["access_count"] = accessCount
+	metadata["last_accessed"] = time.Now().UTC().Format(time.RFC3339Nano)
+
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.store.GetDB().ExecContext(ctx, `UPDATE messages SET metadata = ? WHERE id = ?`, metadataJSON, id)
+	return err
 }
 
 func (s *MemoryStore) GetByType(ctx context.Context, memoryType domain.MemoryType, limit int) ([]*domain.Memory, error) {
-	all, _, _ := s.List(ctx, 1000, 0)
+	all, _, err := s.List(ctx, max(limit, 1000), 0)
+	if err != nil {
+		return nil, err
+	}
+
 	var filtered []*domain.Memory
-	for _, m := range all {
-		if m.Type == memoryType {
-			filtered = append(filtered, m)
+	for _, memory := range all {
+		if memory.Type == memoryType {
+			filtered = append(filtered, memory)
 		}
-		if len(filtered) >= limit {
+		if limit > 0 && len(filtered) >= limit {
 			break
 		}
 	}
+
 	return filtered, nil
 }
 
-// List lists all memories across all banks by querying the database directly
+// List lists all memories across all buckets by querying cortexdb's message store directly.
 func (s *MemoryStore) List(ctx context.Context, limit, offset int) ([]*domain.Memory, int, error) {
-	db, err := sql.Open("sqlite", s.dbPath)
-	if err != nil {
-		return nil, 0, err
+	if limit <= 0 {
+		limit = 100
 	}
-	defer db.Close()
 
-	// Query total count
 	var total int
-	err = db.QueryRow("SELECT COUNT(*) FROM embeddings").Scan(&total)
-	if err != nil {
+	if err := s.store.GetDB().QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM messages m
+		JOIN sessions s ON s.id = m.session_id
+		WHERE s.id LIKE ?
+	`, memoryBucketPrefix+"%").Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
-	// Query items with pagination
-	rows, err := db.Query(`
-		SELECT id, content, metadata, created_at 
-		FROM embeddings 
-		ORDER BY created_at DESC 
-		LIMIT ? OFFSET ?`, limit, offset)
+	rows, err := s.store.GetDB().QueryContext(ctx, `
+		SELECT m.id, m.session_id, s.user_id, m.role, m.content, m.vector, m.metadata, m.created_at, s.metadata
+		FROM messages m
+		JOIN sessions s ON s.id = m.session_id
+		WHERE s.id LIKE ?
+		ORDER BY m.created_at DESC
+		LIMIT ? OFFSET ?
+	`, memoryBucketPrefix+"%", limit, offset)
 	if err != nil {
 		return nil, total, err
 	}
 	defer rows.Close()
 
-	var allMems []*domain.Memory
+	var memories []*domain.Memory
 	for rows.Next() {
-		var id, content, metadataJSON string
-		var createdAt time.Time
-		if err := rows.Scan(&id, &content, &metadataJSON, &createdAt); err == nil {
-			var metadata map[string]interface{}
-			_ = json.Unmarshal([]byte(metadataJSON), &metadata)
-
-			bankID, _ := metadata["bank_id"].(string)
-			memType, _ := metadata["type"].(string)
-			if mt, ok := metadata["memory_type"].(string); ok {
-				memType = mt
-			}
-
-			allMems = append(allMems, &domain.Memory{
-				ID:        id,
-				Content:   content,
-				Metadata:  metadata,
-				SessionID: bankID,
-				Type:      domain.MemoryType(memType),
-				CreatedAt: createdAt,
-			})
+		row, err := scanStoredMemoryRow(rows)
+		if err != nil {
+			continue
 		}
+		memories = append(memories, row.toDomainMemory())
 	}
 
-	return allMems, total, nil
+	return memories, total, nil
 }
 
 func (s *MemoryStore) Delete(ctx context.Context, id string) error {
-	return s.sys.Store().Delete(ctx, id)
+	row, err := s.loadStoredMemoryRow(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	if _, err := s.store.GetDB().ExecContext(ctx, `DELETE FROM messages WHERE id = ?`, id); err != nil {
+		return err
+	}
+
+	return s.cleanupEmptyBucket(ctx, row.BucketID)
 }
 
 func (s *MemoryStore) DeleteBySession(ctx context.Context, sessionID string) error {
-	return s.sys.DeleteBank(sessionID)
+	scope := parseLogicalBankID(sessionID)
+	scope.Type = normalizeVectorScope(scope).Type
+	if scope.Type == domain.MemoryScopeGlobal && strings.TrimSpace(scope.ID) == "" && strings.TrimSpace(sessionID) != "" {
+		scope = domain.MemoryScope{Type: domain.MemoryScopeSession, ID: strings.TrimSpace(sessionID)}
+	}
+
+	bucket := memoryBucketForScope(scope)
+	if _, err := s.store.GetDB().ExecContext(ctx, `DELETE FROM messages WHERE session_id = ?`, bucket.BucketID); err != nil {
+		return err
+	}
+
+	_, err := s.store.GetDB().ExecContext(ctx, `DELETE FROM sessions WHERE id = ?`, bucket.BucketID)
+	return err
 }
 
 func (s *MemoryStore) InitSchema(ctx context.Context) error {
@@ -475,71 +355,722 @@ func (s *MemoryStore) InitSchema(ctx context.Context) error {
 }
 
 func (s *MemoryStore) ConfigureBank(ctx context.Context, bankID string, config *domain.MemoryBankConfig) error {
-	bank := hindsight.NewBank(bankID, bankID)
-	bank.Description = config.Mission
-	bank.Disposition.Skepticism = config.Skepticism
-	bank.Disposition.Literalism = config.Literalism
-	bank.Disposition.Empathy = config.Empathy
-	return s.sys.CreateBank(ctx, bank)
+	scope := parseLogicalBankID(bankID)
+	if scope.Type == domain.MemoryScopeGlobal && scope.ID == "" && strings.TrimSpace(bankID) != "" && bankID != "global" {
+		scope = domain.MemoryScope{Type: domain.MemoryScopeSession, ID: strings.TrimSpace(bankID)}
+	}
+
+	bucket := memoryBucketForScope(scope)
+	if err := s.ensureMemoryBucket(ctx, bucket); err != nil {
+		return err
+	}
+
+	metadata, err := s.loadSessionMetadata(ctx, bucket.BucketID)
+	if err != nil {
+		return err
+	}
+	metadata["mission"] = config.Mission
+	metadata["directives"] = config.Directives
+	metadata["skepticism"] = config.Skepticism
+	metadata["literalism"] = config.Literalism
+	metadata["empathy"] = config.Empathy
+
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.store.GetDB().ExecContext(ctx, `
+		UPDATE sessions
+		SET metadata = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, metadataJSON, bucket.BucketID)
+	return err
 }
 
+// Reflect is only implemented for the file-backed truth store.
 func (s *MemoryStore) Reflect(ctx context.Context, bankID string) (string, error) {
-	req := &hindsight.ContextRequest{
-		BankID:   bankID,
-		Strategy: hindsight.DefaultStrategy(),
-		TopK:     10,
-	}
-	resp, err := s.sys.Reflect(ctx, req)
-	if err != nil {
-		return "", err
-	}
-	return resp.Context, nil
+	return "", nil
 }
 
 func (s *MemoryStore) AddMentalModel(ctx context.Context, model *domain.MentalModel) error {
-	hMem := &hindsight.Memory{
+	if model == nil {
+		return nil
+	}
+
+	memory := &domain.Memory{
 		ID:         model.ID,
-		BankID:     "global",
-		Type:       hindsight.ObservationMemory,
+		Type:       domain.MemoryTypeObservation,
 		Content:    fmt.Sprintf("Mental Model: %s\n%s", model.Name, model.Content),
-		Confidence: 1.0,
-		Metadata: map[string]any{
+		Importance: 1.0,
+		Metadata: map[string]interface{}{
 			"name":        model.Name,
 			"description": model.Description,
 			"tags":        model.Tags,
 		},
+		CreatedAt: time.Now().UTC(),
 	}
-	return s.sys.Retain(ctx, hMem)
+
+	return s.StoreWithScope(ctx, memory, domain.MemoryScope{Type: domain.MemoryScopeGlobal})
 }
 
 func (s *MemoryStore) Close() error {
-	return s.sys.Close()
+	if s.db == nil {
+		return nil
+	}
+	return s.db.Close()
 }
 
-// Helpers
-
-func (s *MemoryStore) getBankIDsFromDB() ([]string, error) {
-	db, err := sql.Open("sqlite", s.dbPath)
-	if err != nil {
-		return nil, err
+func (s *MemoryStore) storeMemory(ctx context.Context, memory *domain.Memory, scope domain.MemoryScope) error {
+	if memory == nil {
+		return fmt.Errorf("memory is required")
 	}
-	defer db.Close()
-	rows, err := db.Query(`SELECT DISTINCT json_extract(metadata, '$.bank_id') FROM embeddings`)
+	if strings.TrimSpace(memory.ID) == "" {
+		return fmt.Errorf("memory id is required")
+	}
+	if strings.TrimSpace(memory.Content) == "" {
+		return fmt.Errorf("memory content is required")
+	}
+
+	scope = normalizeVectorScope(scope)
+	bucket := memoryBucketForScope(scope)
+	if err := s.ensureMemoryBucket(ctx, bucket); err != nil {
+		return err
+	}
+
+	createdAt := memory.CreatedAt.UTC()
+	if createdAt.IsZero() {
+		createdAt = time.Now().UTC()
+	}
+
+	metadata := buildStoredMemoryMetadata(memory, scope, bucket.LogicalBankID)
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		return fmt.Errorf("marshal memory metadata: %w", err)
+	}
+
+	vectorBytes, err := encodeFloat32Vector(toFloat32(memory.Vector))
+	if err != nil {
+		return fmt.Errorf("encode memory vector: %w", err)
+	}
+
+	role := "memory"
+	if roleValue, ok := stringFromAny(memory.Metadata["role"]); ok && strings.TrimSpace(roleValue) != "" {
+		role = roleValue
+	}
+
+	_, err = s.store.GetDB().ExecContext(ctx, `
+		INSERT INTO messages (id, session_id, role, content, vector, metadata, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			session_id = excluded.session_id,
+			role = excluded.role,
+			content = excluded.content,
+			vector = CASE
+				WHEN excluded.vector IS NOT NULL THEN excluded.vector
+				ELSE messages.vector
+			END,
+			metadata = excluded.metadata
+	`, memory.ID, bucket.BucketID, role, memory.Content, vectorBytes, metadataJSON, createdAt)
+	if err != nil {
+		return fmt.Errorf("store memory: %w", err)
+	}
+
+	return nil
+}
+
+func (s *MemoryStore) searchBuckets(ctx context.Context, bucketIDs []string, vector []float64, topK int, minScore float64) ([]*domain.MemoryWithScore, error) {
+	if topK <= 0 {
+		topK = 10
+	}
+	if len(vector) == 0 || len(bucketIDs) == 0 {
+		return nil, nil
+	}
+
+	queryVec := toFloat32(vector)
+	seen := make(map[string]*domain.MemoryWithScore)
+	for _, bucketID := range bucketIDs {
+		rows, err := s.store.GetDB().QueryContext(ctx, `
+			SELECT m.id, m.session_id, s.user_id, m.role, m.content, m.vector, m.metadata, m.created_at, s.metadata
+			FROM messages m
+			JOIN sessions s ON s.id = m.session_id
+			WHERE m.session_id = ? AND m.vector IS NOT NULL
+		`, bucketID)
+		if err != nil {
+			return nil, err
+		}
+
+		for rows.Next() {
+			row, err := scanStoredMemoryRow(rows)
+			if err != nil || len(row.Vector) == 0 {
+				continue
+			}
+
+			score := cosineSimilarity(queryVec, row.Vector)
+			if score < minScore {
+				continue
+			}
+
+			candidate := &domain.MemoryWithScore{
+				Memory: row.toDomainMemory(),
+				Score:  score,
+			}
+			if existing, exists := seen[candidate.ID]; !exists || existing.Score < candidate.Score {
+				seen[candidate.ID] = candidate
+			}
+		}
+		_ = rows.Close()
+	}
+
+	results := make([]*domain.MemoryWithScore, 0, len(seen))
+	for _, result := range seen {
+		results = append(results, result)
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].Score == results[j].Score {
+			return results[i].CreatedAt.After(results[j].CreatedAt)
+		}
+		return results[i].Score > results[j].Score
+	})
+
+	if len(results) > topK {
+		results = results[:topK]
+	}
+	return results, nil
+}
+
+func (s *MemoryStore) ensureMemoryBucket(ctx context.Context, bucket memoryBucket) error {
+	if bucket.BucketID == "" {
+		return fmt.Errorf("memory bucket id is required")
+	}
+
+	_, err := s.store.GetSession(ctx, bucket.BucketID)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, core.ErrNotFound) {
+		return err
+	}
+
+	return s.store.CreateSession(ctx, &core.Session{
+		ID:     bucket.BucketID,
+		UserID: bucket.UserID,
+		Metadata: map[string]interface{}{
+			"kind":               "memory_bucket",
+			"namespace":          memoryBucketNamespace,
+			"scope":              encodedScopeForBucket(bucket.Scope),
+			"agentgo_scope_type": string(bucket.Scope.Type),
+			"agentgo_scope_id":   bucket.Scope.ID,
+			"logical_bank_id":    bucket.LogicalBankID,
+		},
+	})
+}
+
+func (s *MemoryStore) cleanupEmptyBucket(ctx context.Context, bucketID string) error {
+	var remaining int
+	if err := s.store.GetDB().QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM messages
+		WHERE session_id = ?
+	`, bucketID).Scan(&remaining); err != nil {
+		return err
+	}
+	if remaining > 0 {
+		return nil
+	}
+
+	_, err := s.store.GetDB().ExecContext(ctx, `DELETE FROM sessions WHERE id = ?`, bucketID)
+	return err
+}
+
+func (s *MemoryStore) listMemoryBucketIDs(ctx context.Context) ([]string, error) {
+	rows, err := s.store.GetDB().QueryContext(ctx, `
+		SELECT id
+		FROM sessions
+		WHERE id LIKE ?
+		ORDER BY created_at DESC
+	`, memoryBucketPrefix+"%")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var ids []string
+
+	var bucketIDs []string
 	for rows.Next() {
-		var id sql.NullString
-		if err := rows.Scan(&id); err == nil && id.Valid {
-			ids = append(ids, id.String)
+		var bucketID string
+		if err := rows.Scan(&bucketID); err == nil {
+			bucketIDs = append(bucketIDs, bucketID)
 		}
 	}
-	return ids, nil
+	return bucketIDs, nil
+}
+
+func (s *MemoryStore) loadStoredMemoryRow(ctx context.Context, id string) (*storedMemoryRow, error) {
+	rows, err := s.store.GetDB().QueryContext(ctx, `
+		SELECT m.id, m.session_id, s.user_id, m.role, m.content, m.vector, m.metadata, m.created_at, s.metadata
+		FROM messages m
+		JOIN sessions s ON s.id = m.session_id
+		WHERE m.id = ? AND s.id LIKE ?
+	`, id, memoryBucketPrefix+"%")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	if !rows.Next() {
+		return nil, ErrMemoryNotFound
+	}
+
+	row, err := scanStoredMemoryRow(rows)
+	if err != nil {
+		return nil, err
+	}
+	return row, nil
+}
+
+func (s *MemoryStore) loadSessionMetadata(ctx context.Context, bucketID string) (map[string]interface{}, error) {
+	var metadataJSON []byte
+	err := s.store.GetDB().QueryRowContext(ctx, `
+		SELECT metadata
+		FROM sessions
+		WHERE id = ?
+	`, bucketID).Scan(&metadataJSON)
+	if errors.Is(err, sql.ErrNoRows) {
+		return map[string]interface{}{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	metadata := map[string]interface{}{}
+	if len(metadataJSON) > 0 {
+		_ = json.Unmarshal(metadataJSON, &metadata)
+	}
+	return metadata, nil
+}
+
+func scanStoredMemoryRow(rows *sql.Rows) (*storedMemoryRow, error) {
+	var (
+		row             storedMemoryRow
+		vectorBytes     []byte
+		metadataJSON    []byte
+		sessionMetaJSON []byte
+	)
+
+	if err := rows.Scan(
+		&row.ID,
+		&row.BucketID,
+		&row.UserID,
+		&row.Role,
+		&row.Content,
+		&vectorBytes,
+		&metadataJSON,
+		&row.CreatedAt,
+		&sessionMetaJSON,
+	); err != nil {
+		return nil, err
+	}
+
+	if len(vectorBytes) > 0 {
+		vector, err := decodeFloat32Vector(vectorBytes)
+		if err != nil {
+			return nil, err
+		}
+		row.Vector = vector
+	}
+
+	row.Metadata = map[string]interface{}{}
+	if len(metadataJSON) > 0 {
+		_ = json.Unmarshal(metadataJSON, &row.Metadata)
+	}
+
+	row.SessionMetadata = map[string]interface{}{}
+	if len(sessionMetaJSON) > 0 {
+		_ = json.Unmarshal(sessionMetaJSON, &row.SessionMetadata)
+	}
+
+	return &row, nil
+}
+
+func (r *storedMemoryRow) toDomainMemory() *domain.Memory {
+	metadata := cloneMetadata(r.Metadata)
+	scope := storedScope(metadata, r.BucketID, r.UserID, r.SessionMetadata)
+	logicalBankID, _ := stringFromAny(metadata["bank_id"])
+	if strings.TrimSpace(logicalBankID) == "" {
+		logicalBankID = logicalBankIDFromScope(scope)
+	}
+
+	memoryType := string(domain.MemoryTypeFact)
+	if value, ok := stringFromAny(metadata["memory_type"]); ok && strings.TrimSpace(value) != "" {
+		memoryType = value
+	}
+
+	importance, _ := floatFromAny(metadata["importance"])
+	accessCount, _ := intFromAny(metadata["access_count"])
+	lastAccessed := timeFromAny(metadata["last_accessed"])
+
+	return &domain.Memory{
+		ID:           r.ID,
+		SessionID:    logicalBankID,
+		ScopeType:    scope.Type,
+		ScopeID:      scope.ID,
+		Type:         domain.MemoryType(memoryType),
+		Content:      r.Content,
+		Vector:       toFloat64(r.Vector),
+		Keywords:     stringSliceFromAny(metadata["keywords"]),
+		Tags:         stringSliceFromAny(metadata["tags"]),
+		Importance:   importance,
+		AccessCount:  accessCount,
+		LastAccessed: lastAccessed,
+		Metadata:     metadata,
+		CreatedAt:    r.CreatedAt,
+		UpdatedAt:    r.CreatedAt,
+	}
+}
+
+func resolveMemoryScope(memory *domain.Memory) domain.MemoryScope {
+	if memory == nil {
+		return domain.MemoryScope{Type: domain.MemoryScopeGlobal}
+	}
+
+	if normalizeScopeType(memory.ScopeType) != domain.MemoryScopeGlobal || strings.TrimSpace(memory.ScopeID) != "" {
+		return normalizeVectorScope(domain.MemoryScope{Type: memory.ScopeType, ID: strings.TrimSpace(memory.ScopeID)})
+	}
+
+	if strings.TrimSpace(memory.SessionID) == "" {
+		return domain.MemoryScope{Type: domain.MemoryScopeGlobal}
+	}
+
+	return normalizeVectorScope(parseLogicalBankID(memory.SessionID))
+}
+
+func memoryBucketForScope(scope domain.MemoryScope) memoryBucket {
+	scope = normalizeVectorScope(scope)
+	logicalBankID := logicalBankIDFromScope(scope)
+
+	switch scope.Type {
+	case domain.MemoryScopeGlobal:
+		return memoryBucket{
+			BucketID:      fmt.Sprintf("%s%s:%s", memoryBucketPrefix, cortexdb.MemoryScopeGlobal, memoryBucketNamespace),
+			LogicalBankID: logicalBankID,
+			Scope:         scope,
+		}
+	case domain.MemoryScopeSession:
+		sessionID := strings.TrimSpace(scope.ID)
+		return memoryBucket{
+			BucketID:      fmt.Sprintf("%s%s:%s:%s", memoryBucketPrefix, cortexdb.MemoryScopeSession, sessionID, memoryBucketNamespace),
+			LogicalBankID: logicalBankID,
+			Scope:         scope,
+		}
+	default:
+		userID := encodedUserIDForScope(scope)
+		return memoryBucket{
+			BucketID:      fmt.Sprintf("%s%s:%s:%s", memoryBucketPrefix, cortexdb.MemoryScopeUser, userID, memoryBucketNamespace),
+			UserID:        userID,
+			LogicalBankID: logicalBankID,
+			Scope:         scope,
+		}
+	}
+}
+
+func logicalBankIDFromScope(scope domain.MemoryScope) string {
+	scope = normalizeVectorScope(scope)
+	switch scope.Type {
+	case domain.MemoryScopeGlobal:
+		return "global"
+	case domain.MemoryScopeSession:
+		return strings.TrimSpace(scope.ID)
+	default:
+		if strings.TrimSpace(scope.ID) == "" {
+			return string(scope.Type)
+		}
+		return fmt.Sprintf("%s:%s", scope.Type, strings.TrimSpace(scope.ID))
+	}
+}
+
+func parseLogicalBankID(bankID string) domain.MemoryScope {
+	bankID = strings.TrimSpace(bankID)
+	if bankID == "" || bankID == "global" || bankID == "default" {
+		return domain.MemoryScope{Type: domain.MemoryScopeGlobal}
+	}
+
+	parts := strings.SplitN(bankID, ":", 2)
+	if len(parts) == 1 {
+		switch normalizeScopeType(domain.MemoryScopeType(parts[0])) {
+		case domain.MemoryScopeGlobal, domain.MemoryScopeAgent, domain.MemoryScopeSquad, domain.MemoryScopeUser:
+			return domain.MemoryScope{Type: normalizeScopeType(domain.MemoryScopeType(parts[0]))}
+		default:
+			return domain.MemoryScope{Type: domain.MemoryScopeSession, ID: bankID}
+		}
+	}
+
+	return domain.MemoryScope{
+		Type: normalizeScopeType(domain.MemoryScopeType(parts[0])),
+		ID:   strings.TrimSpace(parts[1]),
+	}
+}
+
+func normalizeVectorScope(scope domain.MemoryScope) domain.MemoryScope {
+	scope.Type = normalizeScopeType(scope.Type)
+	if scope.Type == "" {
+		scope.Type = domain.MemoryScopeGlobal
+	}
+	return scope
+}
+
+func encodedScopeForBucket(scope domain.MemoryScope) string {
+	scope = normalizeVectorScope(scope)
+	switch scope.Type {
+	case domain.MemoryScopeGlobal:
+		return cortexdb.MemoryScopeGlobal
+	case domain.MemoryScopeSession:
+		return cortexdb.MemoryScopeSession
+	default:
+		return cortexdb.MemoryScopeUser
+	}
+}
+
+func encodedUserIDForScope(scope domain.MemoryScope) string {
+	scope = normalizeVectorScope(scope)
+	switch scope.Type {
+	case domain.MemoryScopeUser:
+		return "user:" + strings.TrimSpace(scope.ID)
+	case domain.MemoryScopeAgent:
+		return "agent:" + strings.TrimSpace(scope.ID)
+	case domain.MemoryScopeSquad:
+		return "squad:" + strings.TrimSpace(scope.ID)
+	default:
+		return "scope:" + strings.TrimSpace(scope.ID)
+	}
+}
+
+func storedScope(metadata map[string]interface{}, bucketID, userID string, sessionMeta map[string]interface{}) domain.MemoryScope {
+	if scopeType, ok := stringFromAny(metadata["agentgo_scope_type"]); ok && strings.TrimSpace(scopeType) != "" {
+		scopeID, _ := stringFromAny(metadata["agentgo_scope_id"])
+		return normalizeVectorScope(domain.MemoryScope{Type: domain.MemoryScopeType(scopeType), ID: scopeID})
+	}
+
+	if scopeType, ok := stringFromAny(sessionMeta["agentgo_scope_type"]); ok && strings.TrimSpace(scopeType) != "" {
+		scopeID, _ := stringFromAny(sessionMeta["agentgo_scope_id"])
+		return normalizeVectorScope(domain.MemoryScope{Type: domain.MemoryScopeType(scopeType), ID: scopeID})
+	}
+
+	if bankID, ok := stringFromAny(metadata["bank_id"]); ok && strings.TrimSpace(bankID) != "" {
+		return normalizeVectorScope(parseLogicalBankID(bankID))
+	}
+
+	switch {
+	case strings.HasPrefix(bucketID, memoryBucketPrefix+cortexdb.MemoryScopeSession+":"):
+		trimmed := strings.TrimPrefix(bucketID, memoryBucketPrefix+cortexdb.MemoryScopeSession+":")
+		if idx := strings.LastIndex(trimmed, ":"+memoryBucketNamespace); idx >= 0 {
+			trimmed = trimmed[:idx]
+		}
+		return domain.MemoryScope{Type: domain.MemoryScopeSession, ID: trimmed}
+	case strings.HasPrefix(bucketID, memoryBucketPrefix+cortexdb.MemoryScopeGlobal+":"):
+		return domain.MemoryScope{Type: domain.MemoryScopeGlobal}
+	case strings.HasPrefix(userID, "agent:"):
+		return domain.MemoryScope{Type: domain.MemoryScopeAgent, ID: strings.TrimPrefix(userID, "agent:")}
+	case strings.HasPrefix(userID, "squad:"):
+		return domain.MemoryScope{Type: domain.MemoryScopeSquad, ID: strings.TrimPrefix(userID, "squad:")}
+	case strings.HasPrefix(userID, "user:"):
+		return domain.MemoryScope{Type: domain.MemoryScopeUser, ID: strings.TrimPrefix(userID, "user:")}
+	default:
+		return domain.MemoryScope{Type: domain.MemoryScopeGlobal}
+	}
+}
+
+func buildStoredMemoryMetadata(memory *domain.Memory, scope domain.MemoryScope, logicalBankID string) map[string]interface{} {
+	metadata := cloneMetadata(memory.Metadata)
+	if metadata == nil {
+		metadata = make(map[string]interface{})
+	}
+
+	metadata["kind"] = "memory"
+	metadata["memory_type"] = string(memory.Type)
+	metadata["importance"] = memory.Importance
+	metadata["bank_id"] = logicalBankID
+	metadata["agentgo_scope_type"] = string(scope.Type)
+	metadata["agentgo_scope_id"] = scope.ID
+
+	if memory.AccessCount > 0 {
+		metadata["access_count"] = memory.AccessCount
+	}
+	if !memory.LastAccessed.IsZero() {
+		metadata["last_accessed"] = memory.LastAccessed.UTC().Format(time.RFC3339Nano)
+	}
+	if len(memory.Tags) > 0 {
+		metadata["tags"] = append([]string(nil), memory.Tags...)
+	}
+	if len(memory.Keywords) > 0 {
+		metadata["keywords"] = append([]string(nil), memory.Keywords...)
+	}
+
+	return metadata
+}
+
+func cloneMetadata(values map[string]interface{}) map[string]interface{} {
+	if values == nil {
+		return nil
+	}
+	cloned := make(map[string]interface{}, len(values))
+	for key, value := range values {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func stringFromAny(value interface{}) (string, bool) {
+	switch typed := value.(type) {
+	case string:
+		return typed, true
+	default:
+		return "", false
+	}
+}
+
+func floatFromAny(value interface{}) (float64, bool) {
+	switch typed := value.(type) {
+	case float64:
+		return typed, true
+	case float32:
+		return float64(typed), true
+	case int:
+		return float64(typed), true
+	case int64:
+		return float64(typed), true
+	case json.Number:
+		number, err := typed.Float64()
+		return number, err == nil
+	default:
+		return 0, false
+	}
+}
+
+func intFromAny(value interface{}) (int, bool) {
+	switch typed := value.(type) {
+	case int:
+		return typed, true
+	case int64:
+		return int(typed), true
+	case float64:
+		return int(typed), true
+	case json.Number:
+		number, err := typed.Int64()
+		return int(number), err == nil
+	default:
+		return 0, false
+	}
+}
+
+func timeFromAny(value interface{}) time.Time {
+	switch typed := value.(type) {
+	case string:
+		parsed, err := time.Parse(time.RFC3339Nano, typed)
+		if err == nil {
+			return parsed
+		}
+	case time.Time:
+		return typed
+	}
+	return time.Time{}
+}
+
+func encodeFloat32Vector(vector []float32) ([]byte, error) {
+	if vector == nil || len(vector) == 0 {
+		return nil, nil
+	}
+
+	buf := new(bytes.Buffer)
+	if err := binary.Write(buf, binary.LittleEndian, int32(len(vector))); err != nil {
+		return nil, err
+	}
+	for _, value := range vector {
+		if err := binary.Write(buf, binary.LittleEndian, value); err != nil {
+			return nil, err
+		}
+	}
+	return buf.Bytes(), nil
+}
+
+func decodeFloat32Vector(data []byte) ([]float32, error) {
+	if len(data) == 0 {
+		return nil, nil
+	}
+	if len(data) < 4 {
+		return nil, fmt.Errorf("invalid vector encoding")
+	}
+
+	reader := bytes.NewReader(data)
+	var length int32
+	if err := binary.Read(reader, binary.LittleEndian, &length); err != nil {
+		return nil, err
+	}
+	if length < 0 {
+		return nil, fmt.Errorf("invalid vector length")
+	}
+	vector := make([]float32, length)
+	for i := int32(0); i < length; i++ {
+		if err := binary.Read(reader, binary.LittleEndian, &vector[i]); err != nil {
+			return nil, err
+		}
+	}
+	return vector, nil
+}
+
+func cosineSimilarity(a, b []float32) float64 {
+	if len(a) == 0 || len(a) != len(b) {
+		return 0
+	}
+
+	var dot, normA, normB float64
+	for i := range a {
+		av := float64(a[i])
+		bv := float64(b[i])
+		dot += av * bv
+		normA += av * av
+		normB += bv * bv
+	}
+	if normA == 0 || normB == 0 {
+		return 0
+	}
+	return dot / (math.Sqrt(normA) * math.Sqrt(normB))
+}
+
+func calculateTextScore(query, content string) float64 {
+	queryLower := strings.ToLower(query)
+	contentLower := strings.ToLower(content)
+
+	queryTerms := strings.Fields(queryLower)
+	contentTerms := strings.Fields(contentLower)
+	if len(queryTerms) == 0 {
+		return 0
+	}
+
+	matches := 0
+	for _, queryTerm := range queryTerms {
+		for _, contentTerm := range contentTerms {
+			if strings.Contains(contentTerm, queryTerm) {
+				matches++
+				break
+			}
+		}
+	}
+
+	score := float64(matches) / float64(len(queryTerms))
+	if strings.Contains(contentLower, queryLower) {
+		score *= 1.5
+		if score > 1.0 {
+			score = 1.0
+		}
+	}
+	return score
 }
 
 func toFloat32(v []float64) []float32 {
+	if len(v) == 0 {
+		return nil
+	}
 	res := make([]float32, len(v))
 	for i, f := range v {
 		res[i] = float32(f)
@@ -547,71 +1078,20 @@ func toFloat32(v []float64) []float32 {
 	return res
 }
 
-func toInternalMemory(hm *hindsight.Memory) *Memory {
-	if hm == nil {
+func toFloat64(v []float32) []float64 {
+	if len(v) == 0 {
 		return nil
 	}
-	vec := make([]float64, len(hm.Vector))
-	for i, v := range hm.Vector {
-		vec[i] = float64(v)
+	res := make([]float64, len(v))
+	for i, f := range v {
+		res[i] = float64(f)
 	}
-
-	memType := string(hm.Type)
-	if hm.Metadata != nil {
-		if mt, ok := hm.Metadata["memory_type"].(string); ok {
-			memType = mt
-		}
-	}
-
-	return &Memory{
-		ID:         hm.ID,
-		SessionID:  hm.BankID,
-		Type:       memType,
-		Content:    hm.Content,
-		Vector:     vec,
-		Importance: hm.Confidence,
-		Metadata:   hm.Metadata,
-		CreatedAt:  hm.CreatedAt,
-	}
+	return res
 }
 
-func toDomainMemory(im *Memory) *domain.Memory {
-	if im == nil {
-		return nil
+func max(a, b int) int {
+	if a > b {
+		return a
 	}
-	scopeType, scopeID := inferVectorScope(im.SessionID)
-	return &domain.Memory{
-		ID:           im.ID,
-		SessionID:    im.SessionID,
-		ScopeType:    scopeType,
-		ScopeID:      scopeID,
-		Type:         domain.MemoryType(im.Type),
-		Content:      im.Content,
-		Vector:       im.Vector,
-		Importance:   im.Importance,
-		AccessCount:  im.AccessCount,
-		LastAccessed: im.LastAccessed,
-		Metadata:     im.Metadata,
-		CreatedAt:    im.CreatedAt,
-		UpdatedAt:    im.UpdatedAt,
-	}
-}
-
-func inferVectorScope(bankID string) (domain.MemoryScopeType, string) {
-	switch {
-	case bankID == "", bankID == "global", bankID == "default":
-		return domain.MemoryScopeGlobal, ""
-	case strings.HasPrefix(bankID, "agent:"):
-		return domain.MemoryScopeAgent, strings.TrimPrefix(bankID, "agent:")
-	case strings.HasPrefix(bankID, "squad:"):
-		return domain.MemoryScopeSquad, strings.TrimPrefix(bankID, "squad:")
-	case strings.HasPrefix(bankID, "project:"):
-		return domain.MemoryScopeSquad, strings.TrimPrefix(bankID, "project:")
-	case strings.HasPrefix(bankID, "user:"):
-		return domain.MemoryScopeUser, strings.TrimPrefix(bankID, "user:")
-	case strings.HasPrefix(bankID, "session:"):
-		return domain.MemoryScopeSession, strings.TrimPrefix(bankID, "session:")
-	default:
-		return domain.MemoryScopeSession, bankID
-	}
+	return b
 }

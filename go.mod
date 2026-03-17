@@ -10,12 +10,13 @@ require (
 	github.com/chromedp/cdproto v0.0.0-20250724212937-08a3db8b4327
 	github.com/chromedp/chromedp v0.14.1
 	github.com/coder/acp-go-sdk v0.6.3
+	github.com/creack/pty v1.1.21
 	github.com/dop251/goja v0.0.0-20260226184354-913bd86fb70c
 	github.com/dslipak/pdf v0.0.2
 	github.com/go-shiori/go-readability v0.0.0-20251205110129-5db1dc9836f0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
-	github.com/liliang-cn/cortexdb/v2 v2.9.1
+	github.com/liliang-cn/cortexdb/v2 v2.12.0
 	github.com/liliang-cn/mcp-swagger-server v0.4.0
 	github.com/liliang-cn/skills-go v1.3.0
 	github.com/mark3labs/mcp-filesystem-server v0.11.1
@@ -55,7 +56,6 @@ require (
 	github.com/charmbracelet/x/cellbuf v0.0.13-0.20250311204145-2c3ea96c31dd // indirect
 	github.com/charmbracelet/x/term v0.2.1 // indirect
 	github.com/chromedp/sysutil v1.1.0 // indirect
-	github.com/creack/pty v1.1.21 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/djherbis/times v1.6.0 // indirect
 	github.com/dlclark/regexp2 v1.11.5 // indirect

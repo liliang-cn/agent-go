@@ -305,20 +305,19 @@ func (s *Service) StoreIfWorthwhile(ctx context.Context, req *domain.MemoryStore
 	}
 
 	result, err := s.llm.GenerateStructured(ctx, prompt, schema, &domain.GenerationOptions{Temperature: 0.1})
-	if err != nil {
-		return nil
+	var summary *domain.MemorySummaryResult
+	if err == nil && result.Raw != "" && result.Valid {
+		summary, err = normalizeMemorySummary(result.Raw)
+		if err != nil {
+			summary = nil
+		}
 	}
 
-	if result.Raw == "" || !result.Valid {
-		return nil
+	if summary == nil || !summary.ShouldStore || len(summary.Memories) == 0 {
+		summary = heuristicMemorySummary(req)
 	}
 
-	summary, err := normalizeMemorySummary(result.Raw)
-	if err != nil {
-		return nil
-	}
-
-	if !summary.ShouldStore {
+	if summary == nil || !summary.ShouldStore || len(summary.Memories) == 0 {
 		return nil
 	}
 
@@ -850,6 +849,131 @@ func mergeUniqueStrings(parts ...[]string) []string {
 		}
 	}
 	return result
+}
+
+func heuristicMemorySummary(req *domain.MemoryStoreRequest) *domain.MemorySummaryResult {
+	if req == nil {
+		return nil
+	}
+
+	content := strings.TrimSpace(req.TaskGoal)
+	if !looksLikeHeuristicMemoryStatement(content) {
+		return nil
+	}
+
+	item := domain.MemoryItem{
+		Type:        heuristicMemoryType(content),
+		Content:     content,
+		Importance:  heuristicMemoryImportance(content),
+		ScopeReason: "Heuristic extraction from a direct declarative dialogue turn.",
+	}
+
+	return &domain.MemorySummaryResult{
+		ShouldStore: true,
+		Memories:    []domain.MemoryItem{item},
+		Reasoning:   "Stored via deterministic dialogue heuristic fallback.",
+	}
+}
+
+func looksLikeHeuristicMemoryStatement(text string) bool {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false
+	}
+
+	lower := strings.ToLower(text)
+	if len([]rune(text)) < 8 || len([]rune(text)) > 240 {
+		return false
+	}
+	if strings.ContainsAny(text, "?\n\r\t") || strings.ContainsAny(text, "？") {
+		return false
+	}
+
+	commandPrefixes := []string{
+		"remember:", "save to memory", "what ", "why ", "how ", "who ", "when ", "where ",
+		"can you", "could you", "please ", "list ", "show ", "find ", "search ", "explain ",
+		"tell me", "help ", "summarize ", "compare ", "write ", "generate ",
+		"请", "帮我", "告诉我", "解释", "总结", "比较", "搜索", "查一下", "找一下", "列出",
+	}
+	for _, prefix := range commandPrefixes {
+		if strings.HasPrefix(lower, prefix) {
+			return false
+		}
+	}
+
+	acknowledgements := []string{
+		"ok", "okay", "thanks", "thank you", "got it", "understood",
+		"好的", "谢谢", "收到", "明白了",
+	}
+	for _, token := range acknowledgements {
+		if lower == token {
+			return false
+		}
+	}
+
+	return true
+}
+
+func heuristicMemoryType(text string) domain.MemoryType {
+	lower := strings.ToLower(text)
+
+	preferenceKeywords := []string{
+		"prefer", "prefers", "like", "likes", "love", "loves", "favorite", "enjoy", "enjoys",
+		"dislike", "dislikes", "hate", "hates",
+		"喜欢", "偏好", "更喜欢", "最喜欢", "不喜欢", "讨厌",
+	}
+	for _, keyword := range preferenceKeywords {
+		if strings.Contains(lower, keyword) {
+			return domain.MemoryTypePreference
+		}
+	}
+
+	patternKeywords := []string{
+		"always", "usually", "typically", "tends to", "often", "generally",
+		"总是", "通常", "经常", "往往",
+	}
+	for _, keyword := range patternKeywords {
+		if strings.Contains(lower, keyword) {
+			return domain.MemoryTypePattern
+		}
+	}
+
+	skillKeywords := []string{
+		"skilled at", "good at", "experienced in", "can build", "can write", "can implement",
+		"擅长", "会", "能够", "熟悉",
+	}
+	for _, keyword := range skillKeywords {
+		if strings.Contains(lower, keyword) {
+			return domain.MemoryTypeSkill
+		}
+	}
+
+	contextKeywords := []string{
+		"currently", "right now", "at the moment", "working on", "in this session",
+		"目前", "现在", "正在", "这次对话", "当前",
+	}
+	for _, keyword := range contextKeywords {
+		if strings.Contains(lower, keyword) {
+			return domain.MemoryTypeContext
+		}
+	}
+
+	return domain.MemoryTypeFact
+}
+
+func heuristicMemoryImportance(text string) float64 {
+	switch heuristicMemoryType(text) {
+	case domain.MemoryTypePreference:
+		return 0.9
+	case domain.MemoryTypeSkill:
+		return 0.85
+	case domain.MemoryTypePattern:
+		return 0.8
+	case domain.MemoryTypeContext:
+		return 0.7
+	default:
+		return 0.75
+	}
 }
 
 func scopeHierarchyLevel(scopeType domain.MemoryScopeType) int {
