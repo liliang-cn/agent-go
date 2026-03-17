@@ -48,10 +48,18 @@ type LLMConfig struct {
 	Providers []pool.Provider        `mapstructure:"providers"`
 }
 
-// RAGConfig 极致简化：只有启用状态和模型
+// EmbeddingConfig holds dedicated embedding provider settings.
+type EmbeddingConfig struct {
+	Enabled   bool                   `mapstructure:"enabled"`
+	Strategy  pool.SelectionStrategy `mapstructure:"strategy"`
+	Providers []pool.Provider        `mapstructure:"providers"`
+}
+
+// RAGConfig holds RAG settings including optional dedicated embedding providers.
 type RAGConfig struct {
-	Enabled        bool   `mapstructure:"enabled"`
-	EmbeddingModel string `mapstructure:"embedding_model"`
+	Enabled        bool            `mapstructure:"enabled"`
+	EmbeddingModel string          `mapstructure:"embedding_model"`
+	Embedding      EmbeddingConfig `mapstructure:"embedding"`
 }
 
 // CortexdbConfig 内部存储配置
@@ -189,6 +197,11 @@ func Load(configPath string) (*Config, error) {
 		viper.UnmarshalKey("llm", &llm)
 		unmarshalProviders(llm.Providers, &config.LLM.Providers)
 	}
+	if viper.IsSet("rag.embedding.providers") {
+		var emb struct{ Providers []interface{} }
+		viper.UnmarshalKey("rag.embedding", &emb)
+		unmarshalProviders(emb.Providers, &config.RAG.Embedding.Providers)
+	}
 
 	return config, nil
 }
@@ -247,8 +260,8 @@ func (c *Config) Validate() error {
 	if c.Server.Host == "" {
 		return fmt.Errorf("server host cannot be empty")
 	}
-	if c.RAG.Enabled && c.RAG.EmbeddingModel == "" {
-		return fmt.Errorf("embedding_model is required when RAG is enabled")
+	if c.RAG.Enabled && c.RAG.EmbeddingModel == "" && len(c.RAG.Embedding.Providers) == 0 {
+		return fmt.Errorf("embedding_model or rag.embedding.providers is required when RAG is enabled")
 	}
 	return nil
 }

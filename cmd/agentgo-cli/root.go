@@ -145,6 +145,7 @@ func init() {
 	RootCmd.AddCommand(cachecmd.Cmd)
 
 	RootCmd.AddCommand(llmCmd)
+	RootCmd.AddCommand(embeddingCmd)
 	RootCmd.AddCommand(statusCmd)
 
 	// Add Memory command

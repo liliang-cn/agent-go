@@ -265,6 +265,23 @@ func (s *AgentGoDB) initSchema() error {
 		return fmt.Errorf("failed to create llm_providers table: %w", err)
 	}
 
+	_, err = s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS embedding_providers (
+			name TEXT PRIMARY KEY,
+			base_url TEXT NOT NULL,
+			key TEXT NOT NULL DEFAULT '',
+			model_name TEXT NOT NULL,
+			max_concurrency INTEGER NOT NULL DEFAULT 5,
+			capability INTEGER NOT NULL DEFAULT 3,
+			enabled BOOLEAN NOT NULL DEFAULT 1,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create embedding_providers table: %w", err)
+	}
+
 	return nil
 }
 

@@ -126,18 +126,77 @@ func (s *GlobalPoolService) Initialize(ctx context.Context, cfg *config.Config) 
 	}
 	s.llmPool = llmPool
 
-	// 5. Embedding Pool — derived from LLM providers, overriding model name when configured.
-	embeddingProviders := make([]pool.Provider, len(llmProviders))
-	for i, p := range llmProviders {
-		embeddingProviders[i] = p
-		if cfg.RAG.EmbeddingModel != "" {
-			embeddingProviders[i].ModelName = cfg.RAG.EmbeddingModel
+	// 5. Seed embedding providers from config into DB (first-run only).
+	existingEmb, err := db.ListEmbeddingProviders()
+	if err != nil {
+		return fmt.Errorf("failed to list embedding providers from db: %w", err)
+	}
+	existingEmbNames := make(map[string]bool, len(existingEmb))
+	for _, p := range existingEmb {
+		existingEmbNames[p.Name] = true
+	}
+	for _, p := range cfg.RAG.Embedding.Providers {
+		if existingEmbNames[p.Name] {
+			continue
+		}
+		_ = db.SaveEmbeddingProvider(&store.EmbeddingProvider{
+			Name:           p.Name,
+			BaseURL:        p.BaseURL,
+			Key:            p.Key,
+			ModelName:      p.ModelName,
+			MaxConcurrency: p.MaxConcurrency,
+			Capability:     p.Capability,
+			Enabled:        true,
+		})
+	}
+
+	// 6. Seed embedding pool config (strategy/enabled) from config if not in DB yet.
+	embCfgEnabled := cfg.RAG.Embedding.Enabled || cfg.RAG.Enabled
+	embCfgStrategy := cfg.RAG.Embedding.Strategy
+	if embCfgStrategy == "" {
+		embCfgStrategy = llmStrategy
+	}
+	if _, err := db.GetConfig("embedding.strategy"); err != nil {
+		_ = db.SaveConfig("embedding.strategy", string(embCfgStrategy))
+	}
+	if _, err := db.GetConfig("embedding.enabled"); err != nil {
+		enabled := "false"
+		if embCfgEnabled {
+			enabled = "true"
+		}
+		_ = db.SaveConfig("embedding.enabled", enabled)
+	}
+	embStrategy := pool.SelectionStrategy(mustGetConfig(db, "embedding.strategy", string(embCfgStrategy)))
+	embEnabled := mustGetConfig(db, "embedding.enabled", "false") == "true"
+
+	// 7. Build embedding pool from DB providers.
+	//    If no dedicated embedding providers exist, fall back to LLM providers
+	//    with EmbeddingModel override (backwards-compatible behaviour).
+	allEmbProviders, err := db.ListEmbeddingProviders()
+	if err != nil {
+		return fmt.Errorf("failed to load embedding providers from db: %w", err)
+	}
+	var embeddingProviders []pool.Provider
+	if len(allEmbProviders) > 0 {
+		for _, p := range allEmbProviders {
+			if p.Enabled {
+				embeddingProviders = append(embeddingProviders, store.ToPoolEmbeddingProvider(p))
+			}
+		}
+	} else {
+		// Fallback: derive from LLM providers, override model name.
+		embeddingProviders = make([]pool.Provider, len(llmProviders))
+		for i, p := range llmProviders {
+			embeddingProviders[i] = p
+			if cfg.RAG.EmbeddingModel != "" {
+				embeddingProviders[i].ModelName = cfg.RAG.EmbeddingModel
+			}
 		}
 	}
 
 	embeddingPool, err := pool.NewPool(pool.PoolConfig{
-		Enabled:   cfg.RAG.Enabled,
-		Strategy:  llmStrategy,
+		Enabled:   embEnabled,
+		Strategy:  embStrategy,
 		Providers: embeddingProviders,
 	})
 	if err != nil {
@@ -691,6 +750,105 @@ func (s *GlobalPoolService) syncProviderToPool(p *store.LLMProvider) error {
 	if err := s.llmPool.UpdateProvider(prov); err != nil {
 		// Provider not in pool yet — add it.
 		return s.llmPool.AddProvider(prov)
+	}
+	return nil
+}
+
+// ===== Embedding Provider CRUD =====
+
+// ListEmbeddingProviders returns all persisted embedding providers from the database.
+func (s *GlobalPoolService) ListEmbeddingProviders() ([]*store.EmbeddingProvider, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if !s.initialized {
+		return nil, fmt.Errorf("pool service not initialized")
+	}
+	return s.db.ListEmbeddingProviders()
+}
+
+// SaveEmbeddingProvider persists an embedding provider and syncs the live pool.
+func (s *GlobalPoolService) SaveEmbeddingProvider(p *store.EmbeddingProvider) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.initialized {
+		return fmt.Errorf("pool service not initialized")
+	}
+	if err := s.db.SaveEmbeddingProvider(p); err != nil {
+		return err
+	}
+	prov := store.ToPoolEmbeddingProvider(p)
+	if !p.Enabled {
+		_ = s.embeddingPool.RemoveProvider(p.Name)
+		return nil
+	}
+	if err := s.embeddingPool.UpdateProvider(prov); err != nil {
+		return s.embeddingPool.AddProvider(prov)
+	}
+	return nil
+}
+
+// DeleteEmbeddingProvider removes an embedding provider from DB and live pool.
+func (s *GlobalPoolService) DeleteEmbeddingProvider(name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.initialized {
+		return fmt.Errorf("pool service not initialized")
+	}
+	if err := s.db.DeleteEmbeddingProvider(name); err != nil {
+		return err
+	}
+	_ = s.embeddingPool.RemoveProvider(name)
+	return nil
+}
+
+// GetEmbeddingProvider returns a single embedding provider by name.
+func (s *GlobalPoolService) GetEmbeddingProvider(name string) (*store.EmbeddingProvider, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if !s.initialized {
+		return nil, fmt.Errorf("pool service not initialized")
+	}
+	return s.db.GetEmbeddingProvider(name)
+}
+
+// EmbeddingPoolConfig holds pool-level settings for the embedding pool.
+type EmbeddingPoolConfig struct {
+	Strategy pool.SelectionStrategy `json:"strategy"`
+	Enabled  bool                   `json:"enabled"`
+}
+
+// GetEmbeddingPoolConfig returns current embedding pool settings from the database.
+func (s *GlobalPoolService) GetEmbeddingPoolConfig() (*EmbeddingPoolConfig, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if !s.initialized {
+		return nil, fmt.Errorf("pool service not initialized")
+	}
+	strategy := mustGetConfig(s.db, "embedding.strategy", "round_robin")
+	enabled := mustGetConfig(s.db, "embedding.enabled", "false") == "true"
+	return &EmbeddingPoolConfig{
+		Strategy: pool.SelectionStrategy(strategy),
+		Enabled:  enabled,
+	}, nil
+}
+
+// SaveEmbeddingPoolConfig persists embedding pool-level settings.
+// Changes take effect on next restart.
+func (s *GlobalPoolService) SaveEmbeddingPoolConfig(cfg EmbeddingPoolConfig) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.initialized {
+		return fmt.Errorf("pool service not initialized")
+	}
+	enabled := "false"
+	if cfg.Enabled {
+		enabled = "true"
+	}
+	if err := s.db.SaveConfig("embedding.strategy", string(cfg.Strategy)); err != nil {
+		return fmt.Errorf("save embedding.strategy: %w", err)
+	}
+	if err := s.db.SaveConfig("embedding.enabled", enabled); err != nil {
+		return fmt.Errorf("save embedding.enabled: %w", err)
 	}
 	return nil
 }
