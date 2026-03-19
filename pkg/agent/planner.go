@@ -531,7 +531,7 @@ func (p *Planner) buildIntentRecognitionPrompt(goal string, session *Session) st
 // getAvailableIntentTypes returns available intent types based on configured tools
 func (p *Planner) getAvailableIntentTypes() []string {
 	// Base intent types always available
-	intents := []string{"file_create", "file_read", "file_edit", "web_search", "analysis", "general_qa"}
+	intents := []string{"file_create", "file_read", "file_edit", "web_search", "analysis", "general_qa", "memory_recall", "memory_save"}
 
 	// Check if RAG tools are available
 	if p.hasRAGTools() {
@@ -574,6 +574,37 @@ func (p *Planner) fallbackIntentRecognition(goal string) *IntentRecognitionResul
 	} else if containsAny(lowerGoal, []string{"搜索", "查找信息", "web search", "google", "百度"}) {
 		intent.IntentType = "web_search"
 		intent.Confidence = 0.6
+		intent.Topic = p.extractTopic(goal)
+	} else if containsAny(lowerGoal, []string{
+		"what did i ask you to remember", "what was the", "what is the",
+		"i asked you to remember", "previously asked you to remember",
+		"recall from memory", "from memory", "remind me what",
+		"我之前让你记住", "我让你记住", "你记得", "从记忆里", "根据记忆", "之前说过",
+	}) && containsAny(lowerGoal, []string{
+		"remember", "memory", "recall",
+		"记住", "记忆", "记得",
+	}) {
+		intent.IntentType = "memory_recall"
+		intent.Confidence = 0.8
+		intent.Topic = p.extractTopic(goal)
+	} else if containsAny(lowerGoal, []string{
+		"remember:", "save to memory", "please remember", "remember that",
+		"store this in memory", "save this", "keep this in mind",
+		"my favorite", "i prefer", "my preference is",
+		"记住:", "记住：", "请记住", "帮我记住", "保存到记忆", "存到记忆", "记一下",
+	}) {
+		intent.IntentType = "memory_save"
+		intent.Confidence = 0.8
+		intent.Topic = p.extractTopic(goal)
+	} else if containsAny(lowerGoal, []string{
+		"meeting", "kickoff", "standup", "sync", "deadline", "appointment", "interview",
+		"会议", "启动会", "开会", "例会", "截止", "约了", "面试",
+	}) && containsAny(lowerGoal, []string{
+		"tomorrow", "today", "tonight", "next week", "next monday", "at ", "pm", "am", ":",
+		"明天", "今天", "今晚", "下周", "下午", "上午", "点", "：",
+	}) {
+		intent.IntentType = "memory_save"
+		intent.Confidence = 0.72
 		intent.Topic = p.extractTopic(goal)
 	} else if containsAny(lowerGoal, []string{"分析", "总结", "对比", "解释"}) {
 		intent.IntentType = "analysis"

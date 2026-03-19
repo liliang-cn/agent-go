@@ -16,6 +16,7 @@ import (
 	"github.com/liliang-cn/agent-go/pkg/agent"
 	"github.com/liliang-cn/agent-go/pkg/config"
 	"github.com/liliang-cn/agent-go/pkg/domain"
+	"github.com/liliang-cn/agent-go/pkg/services"
 	"github.com/spf13/cobra"
 )
 
@@ -158,7 +159,7 @@ func runChat(cmd *cobra.Command, args []string) error {
 }
 
 func buildChatConciergeService(chatCfg *config.Config, agentDBPath string, manager *agent.SquadManager) (*agent.Service, error) {
-	if manager != nil && !chatNoMemory && !chatWithPTC {
+	if manager != nil && !chatNoMemory && !chatWithPTC && !chatCfg.GetMemoryStoreType().UsesVector() {
 		if svc, err := manager.GetAgentService(agent.BuiltInConciergeAgentName); err == nil {
 			svc.SetDebug(debug)
 			svc.SetProgressCallback(progressCallback)
@@ -182,10 +183,20 @@ func buildChatConciergeService(chatCfg *config.Config, agentDBPath string, manag
 		WithProgress(progressCallback)
 
 	if !chatNoMemory {
-		builder.WithMemory()
+		builder.WithMemory(agent.WithMemoryStoreType(chatCfg.GetMemoryStoreType().String()))
 	}
 	if chatWithPTC {
 		builder.WithPTC()
+	}
+
+	globalPool := services.GetGlobalPoolService()
+	if err := globalPool.Initialize(context.Background(), chatCfg); err == nil {
+		if llmSvc, llmErr := globalPool.GetLLMService(); llmErr == nil {
+			builder.WithLLM(llmSvc)
+		}
+		if embedSvc, embedErr := globalPool.GetEmbeddingService(context.Background()); embedErr == nil {
+			builder.WithEmbedder(embedSvc)
+		}
 	}
 
 	svc, err := builder.Build()

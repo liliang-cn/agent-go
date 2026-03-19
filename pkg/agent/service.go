@@ -502,7 +502,18 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 	var ptcRes *PTCResult
 	var execMetrics *executionMetrics
 
-	if s.isPTCEnabled() {
+	if !s.isPTCEnabled() {
+		if recalledAnswer, ok, err := s.answerExplicitMemoryRecall(runCtx, goal, intent, memoryContext, memoryMemories, cfg); err != nil {
+			s.logger.Warn("Explicit memory recall shortcut failed", slog.Any("error", err))
+		} else if ok {
+			finalResult = recalledAnswer
+			execMetrics = &executionMetrics{}
+		}
+	}
+
+	if finalResult != nil {
+		// Shortcut path already produced the answer.
+	} else if s.isPTCEnabled() {
 		var err error
 		finalResult, ptcRes, err = s.runPTCExecution(runCtx, goal, session, cfg)
 		if err != nil {

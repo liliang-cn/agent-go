@@ -150,7 +150,11 @@ Return JSON with: should_store (boolean), reasoning (string), and memories array
 	m.defaults[MetadataExtraction] = `Extract structured metadata from the following content. Return JSON with fields: summary, title, keywords (array), document_type, creation_date.`
 
 	// 10. Router Intent Analysis
-	m.defaults[RouterIntentAnalysis] = `Analyze this user query and classify the intent into one of the following: {{.Intents}}. Return JSON with intent_type and confidence.`
+	m.defaults[RouterIntentAnalysis] = `Analyze this user query and classify the intent into one of the following: {{.Intents}}.
+Use memory_save when the user explicitly asks you to remember, store, or keep a fact/preference for future use.
+Use memory_save also for concise durable future plans such as meetings, deadlines, appointments, or scheduled events that are likely to be needed later.
+Use memory_recall when the user asks what was remembered before or asks you to answer from memory.
+Return JSON with intent_type and confidence.`
 
 	// 11. RAG Graph Extraction
 	m.defaults[RAGGraphExtraction] = `You are a knowledge graph expert. Extract entities and relationships from the following text. Return JSON with entities (name, type, description) and relationships (source, target, relation, description).`

@@ -219,8 +219,10 @@ func (s *Service) extractParameters(query, intentName string) map[string]string 
 		if topic := extractAfterKeywords(queryLower, []string{"search for", "find", "look up", "about"}); topic != "" {
 			params["query"] = strings.TrimSpace(topic)
 		}
-	case "rag_query", "question":
+	case "rag_query", "question", "memory_recall":
 		params["query"] = strings.TrimSpace(query)
+	case "memory_save":
+		params["content"] = strings.TrimSpace(query)
 	}
 
 	return params
@@ -337,6 +339,28 @@ func (s *Service) RegisterDefaultIntents() error {
 		},
 
 		// ========== Web / Network ==========
+		{
+			Name: "memory_save",
+			Utterances: []string{
+				"remember this", "remember that", "please remember", "save to memory",
+				"store this in memory", "keep this in mind", "save this for later",
+				"my favorite is", "i prefer", "my preference is",
+				"the meeting is tomorrow at", "kickoff is tomorrow at", "deadline is tomorrow",
+				"明天下午开会", "明天启动会", "明天下午3点开会", "截止时间是明天",
+				"记住这个", "记住这件事", "请记住", "帮我记住", "保存到记忆", "存到记忆",
+			},
+			Metadata: map[string]string{"category": "memory", "priority": "high"},
+		},
+		{
+			Name: "memory_recall",
+			Utterances: []string{
+				"what did i ask you to remember", "what was i asked you to remember",
+				"what do you remember about", "recall from memory", "from memory",
+				"what did i tell you before", "what did i say before",
+				"我之前让你记住什么", "我让你记住了什么", "你还记得什么", "从记忆里找",
+			},
+			Metadata: map[string]string{"category": "memory", "priority": "high"},
+		},
 		{
 			Name: "web_search",
 			Utterances: []string{

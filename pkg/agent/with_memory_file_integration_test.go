@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/liliang-cn/agent-go/pkg/config"
 	"github.com/liliang-cn/agent-go/pkg/domain"
@@ -105,6 +106,164 @@ func (f *fileMemoryTestLLM) RecognizeIntent(ctx context.Context, request string)
 	return nil, nil
 }
 
+type explicitRecallTestLLM struct {
+	generateCalls          int
+	generateWithToolsCalls int
+	lastGeneratePrompt     string
+}
+
+func (e *explicitRecallTestLLM) Generate(ctx context.Context, prompt string, opts *domain.GenerationOptions) (string, error) {
+	e.generateCalls++
+	e.lastGeneratePrompt = prompt
+	if strings.Contains(prompt, "The vector memory test token is mango-9135.") {
+		return "mango-9135", nil
+	}
+	return "I couldn't find that in memory.", nil
+}
+
+func (e *explicitRecallTestLLM) Stream(ctx context.Context, prompt string, opts *domain.GenerationOptions, callback func(string)) error {
+	return nil
+}
+
+func (e *explicitRecallTestLLM) GenerateWithTools(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions) (*domain.GenerationResult, error) {
+	e.generateWithToolsCalls++
+	return &domain.GenerationResult{Content: "tool-path"}, nil
+}
+
+func (e *explicitRecallTestLLM) StreamWithTools(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions, callback domain.ToolCallCallback) error {
+	return nil
+}
+
+func (e *explicitRecallTestLLM) GenerateStructured(ctx context.Context, prompt string, schema interface{}, opts *domain.GenerationOptions) (*domain.StructuredResult, error) {
+	return structuredJSON(map[string]interface{}{
+		"intent_type": "general_qa",
+		"confidence":  0.95,
+	}), nil
+}
+
+func (e *explicitRecallTestLLM) RecognizeIntent(ctx context.Context, request string) (*domain.IntentResult, error) {
+	return &domain.IntentResult{Intent: domain.IntentQuestion, Confidence: 0.95}, nil
+}
+
+type memoryToolCallingTestLLM struct {
+	generateWithToolsCalls int
+	sawMemoryPrompt        bool
+	sawMemorySaveTool      bool
+}
+
+func (m *memoryToolCallingTestLLM) Generate(ctx context.Context, prompt string, opts *domain.GenerationOptions) (string, error) {
+	return "", nil
+}
+
+func (m *memoryToolCallingTestLLM) Stream(ctx context.Context, prompt string, opts *domain.GenerationOptions, callback func(string)) error {
+	return nil
+}
+
+func (m *memoryToolCallingTestLLM) GenerateWithTools(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions) (*domain.GenerationResult, error) {
+	m.generateWithToolsCalls++
+	if len(messages) > 0 {
+		systemPrompt := messages[0].Content
+		if strings.Contains(systemPrompt, "Memory tool usage:") && strings.Contains(systemPrompt, "`memory_save`") {
+			m.sawMemoryPrompt = true
+		}
+	}
+	for _, tool := range tools {
+		if tool.Function.Name == "memory_save" {
+			m.sawMemorySaveTool = true
+			break
+		}
+	}
+
+	if m.generateWithToolsCalls == 1 {
+		if strings.Contains(userContent(messages), "明天下午3：00开启动会") {
+			return &domain.GenerationResult{
+				ToolCalls: []domain.ToolCall{{
+					ID:   "memory-save-implicit-schedule",
+					Type: "function",
+					Function: domain.FunctionCall{
+						Name: "memory_save",
+						Arguments: map[string]interface{}{
+							"content": "明天下午3：00开启动会。",
+							"type":    "fact",
+						},
+					},
+				}},
+			}, nil
+		}
+		return &domain.GenerationResult{
+			ToolCalls: []domain.ToolCall{{
+				ID:   "memory-save-1",
+				Type: "function",
+				Function: domain.FunctionCall{
+					Name: "memory_save",
+					Arguments: map[string]interface{}{
+						"content": "My secret code is abc-123.",
+						"type":    "fact",
+					},
+				},
+			}},
+		}, nil
+	}
+
+	return &domain.GenerationResult{Content: "I'll remember that."}, nil
+}
+
+func (m *memoryToolCallingTestLLM) StreamWithTools(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions, callback domain.ToolCallCallback) error {
+	return nil
+}
+
+func (m *memoryToolCallingTestLLM) GenerateStructured(ctx context.Context, prompt string, schema interface{}, opts *domain.GenerationOptions) (*domain.StructuredResult, error) {
+	switch {
+	case schemaHasProperty(schema, "intent_type"):
+		return structuredJSON(map[string]interface{}{
+			"intent_type": "memory_save",
+			"confidence":  0.95,
+		}), nil
+	case schemaHasProperty(schema, "should_store"):
+		return structuredJSON(map[string]interface{}{
+			"should_store": false,
+			"memories":     []map[string]interface{}{},
+		}), nil
+	default:
+		return structuredJSON(map[string]interface{}{}), nil
+	}
+}
+
+func (m *memoryToolCallingTestLLM) RecognizeIntent(ctx context.Context, request string) (*domain.IntentResult, error) {
+	return &domain.IntentResult{Intent: domain.IntentAction, Confidence: 0.95}, nil
+}
+
+func userContent(messages []domain.Message) string {
+	if len(messages) == 0 {
+		return ""
+	}
+	return messages[len(messages)-1].Content
+}
+
+type vectorMemoryTestEmbedder struct{}
+
+func (vectorMemoryTestEmbedder) Embed(ctx context.Context, text string) ([]float64, error) {
+	lower := strings.ToLower(text)
+	switch {
+	case strings.Contains(lower, "secret"), strings.Contains(lower, "code"), strings.Contains(lower, "abc-123"):
+		return []float64{1, 0, 0}, nil
+	default:
+		return []float64{0, 1, 0}, nil
+	}
+}
+
+func (e vectorMemoryTestEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]float64, error) {
+	results := make([][]float64, 0, len(texts))
+	for _, text := range texts {
+		vector, err := e.Embed(ctx, text)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, vector)
+	}
+	return results, nil
+}
+
 func structuredJSON(data interface{}) *domain.StructuredResult {
 	raw, _ := json.Marshal(data)
 	return &domain.StructuredResult{
@@ -154,6 +313,12 @@ func testAgentConfig(home string) *config.Config {
 		},
 	}
 	cfg.ApplyHomeLayout()
+	return cfg
+}
+
+func testVectorAgentConfig(home string) *config.Config {
+	cfg := testAgentConfig(home)
+	cfg.Memory.StoreType = "vector"
 	return cfg
 }
 
@@ -218,6 +383,153 @@ func TestAgentWithMemoryStoresAndRecallsFileMemory(t *testing.T) {
 	}
 	if !llm.sawMemoryContext {
 		t.Fatal("expected second turn to include memory context in LLM input")
+	}
+}
+
+func TestAgentUsesMemorySaveToolWhenPromptSignalsDurableMemory(t *testing.T) {
+	ctx := context.Background()
+	home := t.TempDir()
+	llm := &memoryToolCallingTestLLM{}
+
+	svc, err := New("memory-agent").
+		WithConfig(testVectorAgentConfig(home)).
+		WithLLM(llm).
+		WithEmbedder(vectorMemoryTestEmbedder{}).
+		WithMemory(WithMemoryStoreType("vector")).
+		Build()
+	if err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+	defer svc.Close()
+
+	result, err := svc.Chat(ctx, "Please remember that my secret code is abc-123.")
+	if err != nil {
+		t.Fatalf("chat failed: %v", err)
+	}
+	if got := result.Text(); got != "I'll remember that." {
+		t.Fatalf("unexpected response: %q", got)
+	}
+	if !llm.sawMemoryPrompt {
+		t.Fatal("expected system prompt to include memory tool guidance")
+	}
+	if !llm.sawMemorySaveTool {
+		t.Fatal("expected memory_save to be exposed to the LLM")
+	}
+	if llm.generateWithToolsCalls < 2 {
+		t.Fatalf("expected multiple tool-calling rounds, got %d", llm.generateWithToolsCalls)
+	}
+
+	mems, total, err := svc.MemoryService().List(ctx, 10, 0)
+	if err != nil {
+		t.Fatalf("list memories failed: %v", err)
+	}
+	if total == 0 || len(mems) == 0 {
+		t.Fatal("expected memory_save tool call to persist memory")
+	}
+
+	found := false
+	for _, mem := range mems {
+		if strings.Contains(mem.Content, "My secret code is abc-123.") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected saved memory content, got %+v", mems)
+	}
+}
+
+func TestAgentUsesMemorySaveToolForImplicitScheduleStatement(t *testing.T) {
+	ctx := context.Background()
+	home := t.TempDir()
+	llm := &memoryToolCallingTestLLM{}
+
+	svc, err := New("memory-agent").
+		WithConfig(testVectorAgentConfig(home)).
+		WithLLM(llm).
+		WithEmbedder(vectorMemoryTestEmbedder{}).
+		WithMemory(WithMemoryStoreType("vector")).
+		Build()
+	if err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+	defer svc.Close()
+
+	result, err := svc.Chat(ctx, "明天下午3：00开启动会。")
+	if err != nil {
+		t.Fatalf("chat failed: %v", err)
+	}
+	if got := result.Text(); got != "I'll remember that." {
+		t.Fatalf("unexpected response: %q", got)
+	}
+	if !llm.sawMemoryPrompt || !llm.sawMemorySaveTool {
+		t.Fatal("expected implicit schedule statement to have memory-save guidance and tool access")
+	}
+
+	mems, total, err := svc.MemoryService().List(ctx, 10, 0)
+	if err != nil {
+		t.Fatalf("list memories failed: %v", err)
+	}
+	if total == 0 || len(mems) == 0 {
+		t.Fatal("expected implicit schedule statement to persist memory")
+	}
+
+	found := false
+	for _, mem := range mems {
+		if strings.Contains(mem.Content, "明天下午3：00开启动会") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected saved implicit schedule memory, got %+v", mems)
+	}
+}
+
+func TestAgentExplicitMemoryRecallUsesShortcutAnswer(t *testing.T) {
+	ctx := context.Background()
+	home := t.TempDir()
+	llm := &explicitRecallTestLLM{}
+
+	svc, err := New("memory-agent").
+		WithConfig(testAgentConfig(home)).
+		WithLLM(llm).
+		WithMemory().
+		Build()
+	if err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+	defer svc.Close()
+
+	if err := svc.MemoryService().Add(ctx, &domain.Memory{
+		ID:         "memory-token-1",
+		SessionID:  "agent:memory-agent",
+		ScopeType:  domain.MemoryScopeAgent,
+		ScopeID:    "memory-agent",
+		Type:       domain.MemoryTypePreference,
+		Content:    "The vector memory test token is mango-9135.",
+		Importance: 0.9,
+		CreatedAt:  time.Now(),
+	}); err != nil {
+		t.Fatalf("add memory failed: %v", err)
+	}
+
+	result, err := svc.Chat(ctx, "What is the vector memory test token I asked you to remember? Reply with only the token.")
+	if err != nil {
+		t.Fatalf("chat failed: %v", err)
+	}
+
+	if got := strings.TrimSpace(result.Text()); got != "mango-9135" {
+		t.Fatalf("expected explicit recall shortcut answer, got %q", got)
+	}
+	if llm.generateCalls == 0 {
+		t.Fatal("expected shortcut to call Generate")
+	}
+	if llm.generateWithToolsCalls != 0 {
+		t.Fatalf("expected shortcut to avoid GenerateWithTools, got %d calls", llm.generateWithToolsCalls)
+	}
+	if !strings.Contains(llm.lastGeneratePrompt, "The vector memory test token is mango-9135.") {
+		t.Fatalf("expected recall prompt to contain memory context, got %q", llm.lastGeneratePrompt)
 	}
 }
 

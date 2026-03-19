@@ -27,6 +27,151 @@ const (
 	olderConversationLimit   = 12
 )
 
+func isExplicitMemoryRecallQuery(goal string) bool {
+	query := strings.ToLower(strings.TrimSpace(goal))
+	if query == "" {
+		return false
+	}
+
+	storePrefixes := []string{
+		"remember:",
+		"save to memory",
+		"记住:",
+		"记住：",
+		"请记住",
+	}
+	for _, prefix := range storePrefixes {
+		if strings.HasPrefix(query, prefix) {
+			return false
+		}
+	}
+
+	questionHints := []string{
+		"what", "which", "who", "where", "when", "how",
+		"什么", "哪个", "谁", "哪里", "什么时候", "怎么",
+	}
+	recallHints := []string{
+		"remember", "recall", "memory", "from memory", "remind me",
+		"i asked you to remember", "previously asked you to remember", "earlier asked you to remember",
+		"you remember",
+		"记得", "记忆", "从记忆里", "根据记忆", "我之前让你记住", "我让你记住", "之前说过",
+	}
+
+	hasQuestionHint := false
+	for _, hint := range questionHints {
+		if strings.Contains(query, hint) {
+			hasQuestionHint = true
+			break
+		}
+	}
+
+	for _, hint := range recallHints {
+		if strings.Contains(query, hint) {
+			return hasQuestionHint || strings.Contains(query, "reply with only") || strings.Contains(query, "只回复") || strings.Contains(query, "只返回")
+		}
+	}
+
+	return false
+}
+
+func isExplicitMemoryRecallIntent(goal string, intent *IntentRecognitionResult) bool {
+	if intent != nil && strings.TrimSpace(intent.IntentType) == "memory_recall" {
+		return true
+	}
+	return isExplicitMemoryRecallQuery(goal)
+}
+
+func isExplicitMemorySaveIntent(goal string, intent *IntentRecognitionResult) bool {
+	if intent != nil && strings.TrimSpace(intent.IntentType) == "memory_save" {
+		return true
+	}
+
+	goalLower := strings.ToLower(strings.TrimSpace(goal))
+	return strings.HasPrefix(goalLower, "remember:") ||
+		strings.HasPrefix(goalLower, "save to memory") ||
+		strings.HasPrefix(goalLower, "my favorite") ||
+		strings.HasPrefix(goalLower, "i prefer") ||
+		strings.Contains(goalLower, "preference is") ||
+		strings.HasPrefix(goalLower, "please remember") ||
+		strings.HasPrefix(goalLower, "remember that") ||
+		strings.HasPrefix(goalLower, "记住:") ||
+		strings.HasPrefix(goalLower, "记住：") ||
+		strings.HasPrefix(goalLower, "请记住")
+}
+
+func extractExplicitMemorySaveContent(goal string) string {
+	trimmed := strings.TrimSpace(goal)
+	lower := strings.ToLower(trimmed)
+
+	prefixes := []string{
+		"remember:",
+		"save to memory",
+		"please remember",
+		"remember that",
+		"store this in memory",
+		"keep this in mind",
+		"记住:",
+		"记住：",
+		"请记住",
+		"帮我记住",
+		"保存到记忆",
+		"存到记忆",
+	}
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(lower, prefix) {
+			if len(trimmed) >= len(prefix) {
+				return strings.TrimSpace(trimmed[len(prefix):])
+			}
+			return ""
+		}
+	}
+
+	return trimmed
+}
+
+func (s *Service) answerExplicitMemoryRecall(ctx context.Context, goal string, intent *IntentRecognitionResult, memoryContext string, memories []*domain.MemoryWithScore, cfg *RunConfig) (string, bool, error) {
+	if s == nil || s.llmService == nil || !isExplicitMemoryRecallIntent(goal, intent) || len(memories) == 0 {
+		return "", false, nil
+	}
+
+	recalled := strings.TrimSpace(memoryContext)
+	if recalled == "" {
+		return "", false, nil
+	}
+
+	prompt := fmt.Sprintf(`You are answering a direct memory recall question.
+Use only the recalled memory snippets below.
+Follow the user's formatting instructions exactly.
+If the user asks for only a token, ID, or short value, return only that value.
+If the answer is not present in the recalled memories, reply exactly: I couldn't find that in memory.
+
+Question:
+%s
+
+Recalled memories:
+%s
+`, goal, recalled)
+
+	maxTokens := cfg.MaxTokens
+	if maxTokens <= 0 || maxTokens > 300 {
+		maxTokens = 120
+	}
+
+	resp, err := s.llmService.Generate(ctx, prompt, &domain.GenerationOptions{
+		Temperature: 0,
+		MaxTokens:   maxTokens,
+	})
+	if err != nil {
+		return "", false, err
+	}
+
+	resp = strings.TrimSpace(resp)
+	if resp == "" {
+		return "", false, nil
+	}
+	return resp, true, nil
+}
+
 // executeWithLLM lets LLM decide which tool to use and executes with multi-round support
 func (s *Service) executeWithLLM(ctx context.Context, goal string, intent *IntentRecognitionResult, session *Session, memoryContext string, ragContext string, cfg *RunConfig) (interface{}, *executionMetrics, error) {
 	maxRounds := cfg.MaxTurns
@@ -764,19 +909,13 @@ func (s *Service) finalizeExecution(ctx context.Context, session *Session, goal 
 	if s.memoryService != nil {
 		// Auto-store for explicit memory request patterns
 		goalLower := strings.ToLower(goal)
-		if strings.HasPrefix(goalLower, "remember:") ||
-			strings.HasPrefix(goalLower, "save to memory") ||
-			strings.HasPrefix(goalLower, "my favorite") ||
-			strings.HasPrefix(goalLower, "i prefer") ||
-			strings.Contains(goalLower, "preference is") {
+		if isExplicitMemorySaveIntent(goal, intent) {
 
 			if !s.hasRunMemorySaved() {
 				// Direct storage for explicit memory requests
-				content := goal
-				if strings.HasPrefix(goalLower, "remember:") {
-					content = strings.TrimSpace(goal[len("remember:"):])
-				} else if strings.HasPrefix(goalLower, "save to memory") {
-					content = strings.TrimSpace(goal[len("save to memory"):])
+				content := extractExplicitMemorySaveContent(goal)
+				if strings.TrimSpace(content) == "" {
+					content = goal
 				}
 
 				scope := memorypkg.AgentScope(queryContext.AgentID)
@@ -784,8 +923,15 @@ func (s *Service) finalizeExecution(ctx context.Context, session *Session, goal 
 					scope = memorypkg.SessionScope(queryContext.SessionID)
 				}
 
+				memType := domain.MemoryTypeFact
+				if strings.HasPrefix(goalLower, "my favorite") ||
+					strings.HasPrefix(goalLower, "i prefer") ||
+					strings.Contains(goalLower, "preference is") {
+					memType = domain.MemoryTypePreference
+				}
+
 				if err := s.memoryService.Add(ctx, &domain.Memory{
-					Type:       domain.MemoryTypePreference,
+					Type:       memType,
 					SessionID:  memorypkg.ToBankID(scope),
 					ScopeType:  scope.Type,
 					ScopeID:    scope.ID,

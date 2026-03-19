@@ -685,6 +685,9 @@ func (m *SquadManager) getOrBuildService(name string) (*Service, error) {
 			if llmSvc, llmErr := globalPool.GetLLMServiceWithHint(selectionHintForAgentModel(model)); llmErr == nil {
 				builder.WithLLM(llmSvc)
 			}
+			if embedSvc, embedErr := globalPool.GetEmbeddingService(context.Background()); embedErr == nil {
+				builder.WithEmbedder(embedSvc)
+			}
 		}
 	}
 
@@ -692,7 +695,15 @@ func (m *SquadManager) getOrBuildService(name string) (*Service, error) {
 		builder.WithRAG()
 	}
 	if model.EnableMemory {
-		builder.WithMemory()
+		storeType := ""
+		if agentgoCfg != nil {
+			storeType = agentgoCfg.GetMemoryStoreType().String()
+		}
+		if storeType != "" {
+			builder.WithMemory(WithMemoryStoreType(storeType))
+		} else {
+			builder.WithMemory()
+		}
 	}
 	if model.EnablePTC {
 		builder.WithPTC()

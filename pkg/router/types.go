@@ -315,7 +315,7 @@ func (r *FallbackLLMRecognizer) buildRecognitionPrompt(query string) string {
 
 		"Query": query,
 
-		"Intents": "rag_query, file_create, file_read, web_search, analysis, general_qa",
+		"Intents": "rag_query, memory_recall, memory_save, file_create, file_read, web_search, analysis, general_qa",
 	}
 
 	rendered, err := r.promptManager.Render(prompt.RouterIntentAnalysis, data)

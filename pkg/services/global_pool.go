@@ -150,6 +150,13 @@ func (s *GlobalPoolService) Initialize(ctx context.Context, cfg *config.Config) 
 		})
 	}
 
+	// 5.5. Seed the fallback embedding model into DB if configured.
+	if cfg.RAG.EmbeddingModel != "" {
+		if _, err := db.GetConfig("rag.embedding_model"); err != nil {
+			_ = db.SaveConfig("rag.embedding_model", cfg.RAG.EmbeddingModel)
+		}
+	}
+
 	// 6. Seed embedding pool config (strategy/enabled) from config if not in DB yet.
 	embCfgEnabled := cfg.RAG.Embedding.Enabled || cfg.RAG.Enabled
 	embCfgStrategy := cfg.RAG.Embedding.Strategy
@@ -176,6 +183,7 @@ func (s *GlobalPoolService) Initialize(ctx context.Context, cfg *config.Config) 
 	if err != nil {
 		return fmt.Errorf("failed to load embedding providers from db: %w", err)
 	}
+	embeddingModel := mustGetConfig(db, "rag.embedding_model", cfg.RAG.EmbeddingModel)
 	var embeddingProviders []pool.Provider
 	if len(allEmbProviders) > 0 {
 		for _, p := range allEmbProviders {
@@ -188,8 +196,8 @@ func (s *GlobalPoolService) Initialize(ctx context.Context, cfg *config.Config) 
 		embeddingProviders = make([]pool.Provider, len(llmProviders))
 		for i, p := range llmProviders {
 			embeddingProviders[i] = p
-			if cfg.RAG.EmbeddingModel != "" {
-				embeddingProviders[i].ModelName = cfg.RAG.EmbeddingModel
+			if embeddingModel != "" {
+				embeddingProviders[i].ModelName = embeddingModel
 			}
 		}
 	}
@@ -326,14 +334,14 @@ func (s *GlobalPoolService) GetAgentGoDB() *store.AgentGoDB {
 
 // ChatOptions 顶级Chat API配置选项
 type ChatOptions struct {
-	SessionID         string
-	Provider          string
-	Model             string
-	MaxTokens         int
-	Temperature       float64
-	SystemPrompt      string
-	HistoryLimit      int
-	SkipPersistence   bool
+	SessionID       string
+	Provider        string
+	Model           string
+	MaxTokens       int
+	Temperature     float64
+	SystemPrompt    string
+	HistoryLimit    int
+	SkipPersistence bool
 }
 
 // Chat 顶级Chat API：支持Provider指定与历史自动持久化
@@ -642,8 +650,9 @@ func mustGetConfig(db *store.AgentGoDB, key, fallback string) string {
 
 // LLMPoolConfig holds the pool-level settings stored in the database.
 type LLMPoolConfig struct {
-	Strategy pool.SelectionStrategy `json:"strategy"`
-	Enabled  bool                   `json:"enabled"`
+	Strategy       pool.SelectionStrategy `json:"strategy"`
+	Enabled        bool                   `json:"enabled"`
+	EmbeddingModel string                 `json:"embedding_model"`
 }
 
 // GetLLMPoolConfig returns the current pool-level settings from the database.
@@ -656,9 +665,11 @@ func (s *GlobalPoolService) GetLLMPoolConfig() (*LLMPoolConfig, error) {
 	}
 	strategy := mustGetConfig(s.db, "llm.strategy", "round_robin")
 	enabled := mustGetConfig(s.db, "llm.enabled", "true") == "true"
+	embeddingModel := mustGetConfig(s.db, "rag.embedding_model", s.config.RAG.EmbeddingModel)
 	return &LLMPoolConfig{
-		Strategy: pool.SelectionStrategy(strategy),
-		Enabled:  enabled,
+		Strategy:       pool.SelectionStrategy(strategy),
+		Enabled:        enabled,
+		EmbeddingModel: embeddingModel,
 	}, nil
 }
 
@@ -681,6 +692,9 @@ func (s *GlobalPoolService) SaveLLMPoolConfig(cfg LLMPoolConfig) error {
 	}
 	if err := s.db.SaveConfig("llm.enabled", enabled); err != nil {
 		return fmt.Errorf("save llm.enabled: %w", err)
+	}
+	if err := s.db.SaveConfig("rag.embedding_model", cfg.EmbeddingModel); err != nil {
+		return fmt.Errorf("save rag.embedding_model: %w", err)
 	}
 	return nil
 }
