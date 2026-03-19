@@ -1,5 +1,5 @@
 ---
-name: agentgo
+name: agent-go
 description: Use AgentGo for local RAG (Retrieval Augmented Generation) operations including document ingestion, semantic search, and Q&A. Supports multi-provider LLM, MCP tools, Skills, and cognitive memory (Hindsight/PageIndex). Use when building local knowledge bases, AI assistants with evolving long-term memory.
 license: MIT
 metadata:

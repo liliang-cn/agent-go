@@ -143,10 +143,14 @@ func runRemove(cmd *cobra.Command, args []string) error {
 func getDefaultSkillsPaths() []string {
 	paths := []string{".skills"}
 
+	homeDir, _ := os.UserHomeDir()
+	if homeDir != "" {
+		paths = append(paths, filepath.Join(homeDir, ".agents", "skills"))
+	}
+
 	if cfg := rag.GetConfig(); cfg != nil {
 		paths = append(paths, cfg.SkillsDir())
 	} else {
-		homeDir, _ := os.UserHomeDir()
 		paths = append(paths, filepath.Join(".agentgo", "skills"))
 		paths = append(paths, filepath.Join(homeDir, ".agentgo", "skills"))
 	}
@@ -214,10 +218,14 @@ func findSkillDirectory(skillName string) (string, error) {
 		filepath.Join(".skills", skillName),
 	}
 
+	homeDir, _ := os.UserHomeDir()
+	if homeDir != "" {
+		paths = append(paths, filepath.Join(homeDir, ".agents", "skills", skillName))
+	}
+
 	if cfg := rag.GetConfig(); cfg != nil {
 		paths = append(paths, filepath.Join(cfg.SkillsDir(), skillName))
 	} else {
-		homeDir, _ := os.UserHomeDir()
 		paths = append(paths, filepath.Join("./.agentgo/skills", skillName))
 		paths = append(paths, filepath.Join(homeDir, ".agentgo/skills", skillName))
 	}

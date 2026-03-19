@@ -3,6 +3,7 @@ package skills
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/liliang-cn/agent-go/cmd/agentgo-cli/rag"
@@ -130,6 +131,9 @@ func init() {
 	Cmd.AddCommand(showCmd)
 	Cmd.AddCommand(runCmd)
 	Cmd.AddCommand(loadCmd)
+
+	listCmd.Flags().Bool("flat", false, "Show a flat skill list without collection grouping")
+	listCmd.Flags().Bool("grouped", false, "Show skills grouped by collection")
 }
 
 // listCmd lists available skills
@@ -139,6 +143,12 @@ var listCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := initializeSkills(cmd); err != nil {
 			return err
+		}
+
+		flat, _ := cmd.Flags().GetBool("flat")
+		grouped, _ := cmd.Flags().GetBool("grouped")
+		if flat && grouped {
+			return fmt.Errorf("--flat and --grouped cannot be used together")
 		}
 
 		// Show search paths if requested
@@ -172,19 +182,44 @@ var listCmd = &cobra.Command{
 		}
 
 		fmt.Printf("Found %d skills:\n\n", len(allSkills))
+		collections, err := skillsService.ListCollections(cmd.Context())
+		if err != nil {
+			return fmt.Errorf("failed to list collections: %w", err)
+		}
+
+		useGrouped := grouped || !flat
+		if useGrouped && len(collections) > 0 {
+			for _, collection := range collections {
+				fmt.Printf("Collection: %s (%d)\n", collection.Name, len(collection.Skills))
+				if collection.Path != "" {
+					fmt.Printf("  Path: %s\n", collection.Path)
+				}
+				fmt.Println()
+				for _, skill := range collection.Skills {
+					printSkillSummary(skill, "  ")
+				}
+			}
+
+			var standalone []*skills.Skill
+			for _, skill := range allSkills {
+				if skill.Collection == "" {
+					standalone = append(standalone, skill)
+				}
+			}
+			sort.Slice(standalone, func(i, j int) bool {
+				return standalone[i].Name < standalone[j].Name
+			})
+			if len(standalone) > 0 {
+				fmt.Printf("Standalone (%d)\n\n", len(standalone))
+				for _, skill := range standalone {
+					printSkillSummary(skill, "  ")
+				}
+			}
+			return nil
+		}
+
 		for _, skill := range allSkills {
-			status := "enabled"
-			if !skill.Enabled {
-				status = "disabled"
-			}
-			fmt.Printf("  /%s [%s]\n", skill.Name, status)
-			if skill.Description != "" {
-				fmt.Printf("    %s\n", skill.Description)
-			}
-			if skill.Category != "" {
-				fmt.Printf("    Category: %s\n", skill.Category)
-			}
-			fmt.Println()
+			printSkillSummary(skill, "  ")
 		}
 
 		return nil
@@ -221,6 +256,12 @@ var showCmd = &cobra.Command{
 		if skill.Category != "" {
 			fmt.Printf("Category: %s\n", skill.Category)
 		}
+		if skill.Collection != "" {
+			fmt.Printf("Collection: %s\n", skill.Collection)
+		}
+		if skill.CollectionPath != "" {
+			fmt.Printf("Collection Path: %s\n", skill.CollectionPath)
+		}
 		if len(skill.Tags) > 0 {
 			fmt.Printf("Tags: %v\n", skill.Tags)
 		}
@@ -251,6 +292,21 @@ var showCmd = &cobra.Command{
 
 		return nil
 	},
+}
+
+func printSkillSummary(skill *skills.Skill, indent string) {
+	status := "enabled"
+	if !skill.Enabled {
+		status = "disabled"
+	}
+	fmt.Printf("%s/%s [%s]\n", indent, skill.Name, status)
+	if skill.Description != "" {
+		fmt.Printf("%s  %s\n", indent, skill.Description)
+	}
+	if skill.Category != "" {
+		fmt.Printf("%s  Category: %s\n", indent, skill.Category)
+	}
+	fmt.Println()
 }
 
 // runCmd executes a skill

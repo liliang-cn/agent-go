@@ -1,6 +1,7 @@
 .PHONY: help build agentgo-cli agentgo-ui ui-build sync-ui-dist ui-dev ui-api-dev ui-web-dev ui-deps test check clean deps coverage-core
 
 CORE_COVERAGE_PKGS := ./pkg/config ./pkg/cache ./cmd/agentgo-ui/internal/handler ./pkg/prompt ./pkg/ptc/runtime/goja ./pkg/ptc/store ./pkg/rag/embedder ./pkg/scheduler/executors
+UI_RUNNER := $(shell if command -v fnm >/dev/null 2>&1; then printf 'fnm exec --using=22'; else printf 'env'; fi)
 
 GIT_TAG := $(shell git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
 LDFLAGS := -ldflags="-X 'main.version=$(GIT_TAG)'"
@@ -44,9 +45,13 @@ agentgo-ui: ui-build
 
 ui-build: sync-ui-dist
 
-sync-ui-dist:
+ui/node_modules: ui/package.json ui/package-lock.json
+	@echo "Installing UI deps..."
+	@cd ui && $(UI_RUNNER) npm ci
+
+sync-ui-dist: ui/node_modules
 	@echo "Building UI assets..."
-	@cd ui && npm run build
+	@cd ui && $(UI_RUNNER) npm run build
 	@mkdir -p cmd/agentgo-ui/dist
 	@cp -R ui/dist/. cmd/agentgo-ui/dist/
 
@@ -61,10 +66,10 @@ ui-api-dev:
 	@env GOCACHE=/tmp/go-build-cache GOMODCACHE=/tmp/go-mod-cache go tool air -c .air.toml
 
 ui-web-dev:
-	@cd ui && npm run dev
+	@cd ui && $(UI_RUNNER) npm run dev
 
 ui-deps:
-	@cd ui && npm install
+	@cd ui && $(UI_RUNNER) npm ci
 
 test: fix-embed
 	@go test ./...

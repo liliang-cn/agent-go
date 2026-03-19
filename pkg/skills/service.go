@@ -3,6 +3,9 @@ package skills
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -89,6 +92,10 @@ func (s *Service) LoadAll(ctx context.Context) error {
 		return fmt.Errorf("failed to load skills: %w", err)
 	}
 
+	if err := s.loadDirectSkills(ctx); err != nil {
+		return fmt.Errorf("failed to load direct skills: %w", err)
+	}
+
 	s.loaded = true
 	return nil
 }
@@ -117,6 +124,42 @@ func (s *Service) ListSkills(ctx context.Context, filter SkillFilter) ([]*Skill,
 	}
 
 	return result, nil
+}
+
+// ListCollections lists grouped skill collections/bundles.
+func (s *Service) ListCollections(ctx context.Context) ([]*Collection, error) {
+	skills, err := s.ListSkills(ctx, SkillFilter{})
+	if err != nil {
+		return nil, err
+	}
+
+	byName := make(map[string]*Collection)
+	for _, skill := range skills {
+		if skill.Collection == "" {
+			continue
+		}
+		col, ok := byName[skill.Collection]
+		if !ok {
+			col = &Collection{
+				Name:  skill.Collection,
+				Path:  skill.CollectionPath,
+			}
+			byName[skill.Collection] = col
+		}
+		col.Skills = append(col.Skills, skill)
+	}
+
+	collections := make([]*Collection, 0, len(byName))
+	for _, col := range byName {
+		sort.Slice(col.Skills, func(i, j int) bool {
+			return col.Skills[i].Name < col.Skills[j].Name
+		})
+		collections = append(collections, col)
+	}
+	sort.Slice(collections, func(i, j int) bool {
+		return collections[i].Name < collections[j].Name
+	})
+	return collections, nil
 }
 
 // matchesFilter checks if a skill matches the filter
@@ -208,7 +251,7 @@ func (s *Service) Execute(ctx context.Context, req *ExecutionRequest) (*Executio
 	}
 
 	// Get skill from registry
-	sk, err := s.registry.Get(req.SkillID)
+	sk, err := s.registry.GetWithLevel(ctx, req.SkillID, skillgo.LoadLevelContent)
 	if err != nil {
 		return &ExecutionResult{
 			Success:    false,
@@ -262,6 +305,68 @@ func (s *Service) Execute(ctx context.Context, req *ExecutionRequest) (*Executio
 	}
 
 	return result, nil
+}
+
+func (s *Service) loadDirectSkills(ctx context.Context) error {
+	candidates := make([]string, 0, len(s.config.Paths)+1)
+	candidates = append(candidates, s.config.Paths...)
+	if cwd, err := os.Getwd(); err == nil {
+		candidates = append(candidates, cwd)
+	}
+
+	seen := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+
+		skillPath, ok := resolveDirectSkillPath(candidate)
+		if !ok {
+			continue
+		}
+
+		absPath, err := filepath.Abs(skillPath)
+		if err != nil {
+			absPath = skillPath
+		}
+		if _, exists := seen[absPath]; exists {
+			continue
+		}
+		seen[absPath] = struct{}{}
+
+		if _, err := s.registry.GetByPath(absPath); err == nil {
+			continue
+		}
+
+		sk, err := s.loader.LoadMetadata(ctx, absPath)
+		if err != nil {
+			return err
+		}
+		s.registry.Add(sk)
+	}
+
+	return nil
+}
+
+func resolveDirectSkillPath(path string) (string, bool) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", false
+	}
+
+	if info.IsDir() {
+		skillFile := filepath.Join(path, "SKILL.md")
+		if fileInfo, err := os.Stat(skillFile); err == nil && !fileInfo.IsDir() {
+			return path, true
+		}
+		return "", false
+	}
+
+	if filepath.Base(path) == "SKILL.md" {
+		return path, true
+	}
+
+	return "", false
 }
 
 // executeHandler executes a Go function handler
@@ -543,13 +648,14 @@ func renderSkillContent(content string, variables map[string]interface{}) string
 	return result
 }
 
-
 func convertFromSkillGo(sk *skillgo.Skill) *Skill {
 	skill := &Skill{
 		ID:                     sk.Name,
 		Name:                   sk.Name,
 		Description:            sk.Meta.Description,
 		Version:                sk.Version,
+		Collection:             sk.Collection,
+		CollectionPath:         sk.CollectionPath,
 		Path:                   sk.Path,
 		Enabled:                true,
 		UserInvocable:          sk.IsUserInvocable(),

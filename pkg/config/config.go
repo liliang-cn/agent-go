@@ -269,7 +269,10 @@ func (c *Config) Validate() error {
 }
 
 func (c *Config) SkillsPaths() []string {
-	paths := []string{".skills", filepath.Join(c.Home, "skills")}
+	paths := []string{
+		".skills",
+		filepath.Join(c.Home, "skills"),
+	}
 
 	// Add ~/.agents/skills if exists
 	if home, err := os.UserHomeDir(); err == nil {

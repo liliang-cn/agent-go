@@ -12,6 +12,8 @@ type Skill struct {
 	Description string `json:"description"`
 	Version     string `json:"version"`
 	Author      string `json:"author,omitempty"`
+	Collection  string `json:"collection,omitempty"`
+	CollectionPath string `json:"collection_path,omitempty"`
 
 	// Progressive disclosure
 	Steps []SkillStep `json:"steps"`
@@ -33,6 +35,13 @@ type Skill struct {
 	Enabled   bool      `json:"enabled"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type Collection struct {
+	Name  string   `json:"name"`
+	Path  string   `json:"path"`
+	Scope string   `json:"scope,omitempty"`
+	Skills []*Skill `json:"skills"`
 }
 
 // SkillStep represents a single step in progressive disclosure

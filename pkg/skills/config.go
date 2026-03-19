@@ -27,12 +27,13 @@ type Config struct {
 // DefaultConfig returns default skills configuration
 func DefaultConfig() *Config {
 	homeDir, _ := os.UserHomeDir()
+	agentsSkills := filepath.Join(homeDir, ".agents", "skills")
 	localSkills := "./.agentgo/skills"
 	userSkills := filepath.Join(homeDir, ".agentgo", "skills")
 
 	return &Config{
 		Enabled:                true,
-		Paths:                  []string{".skills", localSkills, userSkills},
+		Paths:                  []string{".skills", agentsSkills, localSkills, userSkills},
 		AutoLoad:               true,
 		CacheEnabled:           true,
 		DBPath:                 filepath.Join(homeDir, ".agentgo", "data", "agentgo.db"),

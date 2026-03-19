@@ -22,6 +22,8 @@ func (h *Handler) HandleSkillsList(w http.ResponseWriter, r *http.Request) {
 			"id":             s.ID,
 			"name":           s.Name,
 			"description":    s.Description,
+			"collection":     s.Collection,
+			"collection_path": s.CollectionPath,
 			"enabled":        s.Enabled,
 			"user_invocable": s.UserInvocable,
 			"path":           s.Path,
@@ -49,6 +51,7 @@ func (h *Handler) HandleSkillsOperation(w http.ResponseWriter, r *http.Request) 
 		}
 		JSONResponse(w, map[string]interface{}{
 			"id": skill.ID, "name": skill.Name, "description": skill.Description,
+			"collection": skill.Collection, "collection_path": skill.CollectionPath,
 		})
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

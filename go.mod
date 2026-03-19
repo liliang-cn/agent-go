@@ -18,7 +18,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/liliang-cn/cortexdb/v2 v2.12.0
 	github.com/liliang-cn/mcp-swagger-server v0.4.0
-	github.com/liliang-cn/skills-go v1.3.0
+	github.com/liliang-cn/skills-go v1.6.0
 	github.com/mark3labs/mcp-filesystem-server v0.11.1
 	github.com/mark3labs/mcp-go v0.32.0
 	github.com/mattn/go-runewidth v0.0.16
