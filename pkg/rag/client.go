@@ -31,25 +31,26 @@ type Client struct {
 }
 
 // NewClient creates a new RAG client
-func NewClient(cfg *config.Config, embedder domain.Embedder, llm domain.Generator, metadataExtractor domain.MetadataExtractor) (*Client, error) {
+// Optional vectorStore parameter allows passing an existing store instead of creating a new one
+func NewClient(cfg *config.Config, embedder domain.Embedder, llm domain.Generator, metadataExtractor domain.MetadataExtractor, vectorStore ...domain.VectorStore) (*Client, error) {
 	// Initialize vector store based on configuration
-	var vectorStore domain.VectorStore
+	var vs domain.VectorStore
 	var docStore *store.DocumentStore
-	var err error
 
-	// Default to SQLite
-	sqliteStore, err := store.NewSQLiteStore(cfg.CortexDBPath(), cfg.Internal.Storage.IndexType)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create vector store: %w", err)
-	}
-	vectorStore = sqliteStore
-	docStore = store.NewDocumentStore(sqliteStore.GetCortexdbStore())
-
-	// If docStore is still nil (for SQLite vector store), create it
-	if docStore == nil {
-		if sqliteStore, ok := vectorStore.(*store.SQLiteStore); ok {
+	// Use provided store or create new one
+	if len(vectorStore) > 0 && vectorStore[0] != nil {
+		vs = vectorStore[0]
+		if sqliteStore, ok := vs.(*store.SQLiteStore); ok {
 			docStore = store.NewDocumentStore(sqliteStore.GetCortexdbStore())
 		}
+	} else {
+		// Default to SQLite - create new store
+		sqliteStore, err2 := store.NewSQLiteStore(cfg.CortexDBPath(), cfg.Internal.Storage.IndexType)
+		if err2 != nil {
+			return nil, fmt.Errorf("failed to create vector store: %w", err2)
+		}
+		vs = sqliteStore
+		docStore = store.NewDocumentStore(sqliteStore.GetCortexdbStore())
 	}
 
 	// Initialize chunker
@@ -63,7 +64,7 @@ func NewClient(cfg *config.Config, embedder domain.Embedder, llm domain.Generato
 		embedder,
 		llm,
 		chunkerService,
-		vectorStore,
+		vs,
 		docStore,
 		cfg,
 		metadataExtractor,
@@ -82,7 +83,7 @@ func NewClient(cfg *config.Config, embedder domain.Embedder, llm domain.Generato
 
 	return &Client{
 		processor:   proc,
-		vectorStore: vectorStore,
+		vectorStore: vs,
 		docStore:    docStore,
 		embedder:    embedder,
 		llm:         llm,
