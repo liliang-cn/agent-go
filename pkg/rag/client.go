@@ -128,13 +128,13 @@ func (c *Client) IngestFile(ctx context.Context, filePath string, opts *IngestOp
 
 	// Handle enhanced extraction
 	/*
-	if opts.EnhancedExtraction {
-		origConfig := c.config.Ingest.MetadataExtraction.Enable
-		c.config.Ingest.MetadataExtraction.Enable = true
-		defer func() {
-			c.config.Ingest.MetadataExtraction.Enable = origConfig
-		}()
-	}
+		if opts.EnhancedExtraction {
+			origConfig := c.config.Ingest.MetadataExtraction.Enable
+			c.config.Ingest.MetadataExtraction.Enable = true
+			defer func() {
+				c.config.Ingest.MetadataExtraction.Enable = origConfig
+			}()
+		}
 	*/
 
 	resp, err := c.processor.Ingest(ctx, req)

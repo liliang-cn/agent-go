@@ -40,11 +40,11 @@ type rankOutput struct {
 // (or the default pool selection when providerName is empty).
 // Tests are ordered from easiest to hardest:
 //
-//	1. basic_echo         — exact instruction following
-//	2. json_output        — structured JSON compliance
-//	3. math_reasoning     — arithmetic reasoning
-//	4. tool_calling       — function/tool call support
-//	5. system_instruction — system-prompt adherence + JSON extraction
+//  1. basic_echo         — exact instruction following
+//  2. json_output        — structured JSON compliance
+//  3. math_reasoning     — arithmetic reasoning
+//  4. tool_calling       — function/tool call support
+//  5. system_instruction — system-prompt adherence + JSON extraction
 func (s *GlobalPoolService) RankProvider(ctx context.Context, providerName string) (*ProviderRankResult, error) {
 	s.mu.RLock()
 	if !s.initialized {

@@ -80,19 +80,19 @@ func (d *duckDuckGoSearchEngine) Search(ctx context.Context, query string, maxRe
 		chromedp.Run(allocCtx,
 			chromedp.Text(`h2`, &title, chromedp.ByQuery, chromedp.FromNode(node)),
 		)
-		
+
 		if title == "" {
 			chromedp.Run(allocCtx,
 				chromedp.Text(`.result__title`, &title, chromedp.ByQuery, chromedp.FromNode(node)),
 			)
 		}
-		
+
 		if title == "" {
 			chromedp.Run(allocCtx,
 				chromedp.Text(`[data-testid="result-title"]`, &title, chromedp.ByQuery, chromedp.FromNode(node)),
 			)
 		}
-		
+
 		if title == "" {
 			chromedp.Run(allocCtx,
 				chromedp.Text(`a`, &title, chromedp.ByQuery, chromedp.FromNode(node)),
@@ -103,19 +103,19 @@ func (d *duckDuckGoSearchEngine) Search(ctx context.Context, query string, maxRe
 		chromedp.Run(allocCtx,
 			chromedp.AttributeValue(`h2 a`, "href", &link, nil, chromedp.ByQuery, chromedp.FromNode(node)),
 		)
-		
+
 		if link == "" {
 			chromedp.Run(allocCtx,
 				chromedp.AttributeValue(`.result__title a`, "href", &link, nil, chromedp.ByQuery, chromedp.FromNode(node)),
 			)
 		}
-		
+
 		if link == "" {
 			chromedp.Run(allocCtx,
 				chromedp.AttributeValue(`[data-testid="result-title"]`, "href", &link, nil, chromedp.ByQuery, chromedp.FromNode(node)),
 			)
 		}
-		
+
 		if link == "" {
 			chromedp.Run(allocCtx,
 				chromedp.AttributeValue(`a`, "href", &link, nil, chromedp.ByQuery, chromedp.FromNode(node)),
@@ -126,19 +126,19 @@ func (d *duckDuckGoSearchEngine) Search(ctx context.Context, query string, maxRe
 		chromedp.Run(allocCtx,
 			chromedp.Text(`[data-result="snippet"]`, &snippet, chromedp.ByQuery, chromedp.FromNode(node)),
 		)
-		
+
 		if snippet == "" {
 			chromedp.Run(allocCtx,
 				chromedp.Text(`.result__snippet`, &snippet, chromedp.ByQuery, chromedp.FromNode(node)),
 			)
 		}
-		
+
 		if snippet == "" {
 			chromedp.Run(allocCtx,
 				chromedp.Text(`span`, &snippet, chromedp.ByQuery, chromedp.FromNode(node)),
 			)
 		}
-		
+
 		if snippet == "" {
 			chromedp.Run(allocCtx,
 				chromedp.Text(`p`, &snippet, chromedp.ByQuery, chromedp.FromNode(node)),
@@ -157,7 +157,7 @@ func (d *duckDuckGoSearchEngine) Search(ctx context.Context, query string, maxRe
 					}
 				}
 			}
-			
+
 			if strings.HasPrefix(link, "//") {
 				link = "https:" + link
 			} else if !strings.HasPrefix(link, "http") {

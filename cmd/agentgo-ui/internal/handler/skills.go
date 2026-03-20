@@ -19,14 +19,14 @@ func (h *Handler) HandleSkillsList(w http.ResponseWriter, r *http.Request) {
 	result := make([]map[string]interface{}, len(list))
 	for i, s := range list {
 		result[i] = map[string]interface{}{
-			"id":             s.ID,
-			"name":           s.Name,
-			"description":    s.Description,
-			"collection":     s.Collection,
+			"id":              s.ID,
+			"name":            s.Name,
+			"description":     s.Description,
+			"collection":      s.Collection,
 			"collection_path": s.CollectionPath,
-			"enabled":        s.Enabled,
-			"user_invocable": s.UserInvocable,
-			"path":           s.Path,
+			"enabled":         s.Enabled,
+			"user_invocable":  s.UserInvocable,
+			"path":            s.Path,
 		}
 	}
 	JSONResponse(w, result)

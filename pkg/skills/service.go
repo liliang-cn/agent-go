@@ -141,8 +141,8 @@ func (s *Service) ListCollections(ctx context.Context) ([]*Collection, error) {
 		col, ok := byName[skill.Collection]
 		if !ok {
 			col = &Collection{
-				Name:  skill.Collection,
-				Path:  skill.CollectionPath,
+				Name: skill.Collection,
+				Path: skill.CollectionPath,
 			}
 			byName[skill.Collection] = col
 		}

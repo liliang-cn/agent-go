@@ -40,10 +40,10 @@ func (m *SquadManager) registerBuiltInAgentDelegationTools(svc *Service, model *
 		out := make([]map[string]interface{}, 0, len(agents))
 		for _, builtin := range agents {
 			out = append(out, map[string]interface{}{
-				"name":        builtin.Name,
-				"description": builtin.Description,
+				"name":         builtin.Name,
+				"description":  builtin.Description,
 				"instructions": singleLinePromptText(builtin.Instructions),
-				"model":       strings.TrimSpace(builtin.Model),
+				"model":        strings.TrimSpace(builtin.Model),
 			})
 		}
 		return out, nil

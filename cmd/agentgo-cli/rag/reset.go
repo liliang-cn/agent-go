@@ -45,7 +45,6 @@ var resetCmd = &cobra.Command{
 			return fmt.Errorf("failed to create vector store: %w", err)
 		}
 
-
 		// Close the store when done
 		defer func() {
 			if closer, ok := vectorStore.(interface{ Close() error }); ok {

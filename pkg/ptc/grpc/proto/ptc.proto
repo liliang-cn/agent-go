@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package ptc;
 
-option go_package = "github.com/liliang-cn/agent-go/pkg/ptc/grpc/pb";
+option go_package = "github.com/liliang-cn/agent-go/v2/pkg/ptc/grpc/pb";
 
 // PTCService provides programmatic tool calling functionality
 service PTCService {

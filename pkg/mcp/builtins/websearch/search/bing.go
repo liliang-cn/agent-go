@@ -77,7 +77,7 @@ func (b *bingSearchEngine) Search(ctx context.Context, query string, maxResults 
 			title := jsResult["title"]
 			link := jsResult["url"]
 			snippet := jsResult["snippet"]
-			
+
 			if link != "" {
 				results = append(results, SearchResult{
 					Title:   strings.TrimSpace(title),

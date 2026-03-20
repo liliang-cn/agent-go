@@ -157,17 +157,17 @@ func (h *HybridMultiEngineSearcher) SearchAndAggregate(ctx context.Context, quer
 	// Aggregate all content
 	var aggregated string
 	aggregated += fmt.Sprintf("# Search Results for: %s\n\n", query)
-	
+
 	for i, result := range results {
 		aggregated += fmt.Sprintf("## %d. %s\n", i+1, result.Title)
 		aggregated += fmt.Sprintf("**Source:** %s\n", result.URL)
 		aggregated += fmt.Sprintf("**Engine:** %s\n\n", result.Engine)
-		
+
 		// Always include snippet as it often contains the key fact (zero-click info)
 		if result.Snippet != "" {
 			aggregated += fmt.Sprintf("**Snippet:** %s\n\n", result.Snippet)
 		}
-		
+
 		if result.Content != "" {
 			// Limit content per result
 			content := result.Content
@@ -176,7 +176,7 @@ func (h *HybridMultiEngineSearcher) SearchAndAggregate(ctx context.Context, quer
 			}
 			aggregated += fmt.Sprintf("**Extracted Content:**\n%s", content)
 		}
-		
+
 		aggregated += "\n\n---\n\n"
 	}
 

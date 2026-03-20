@@ -881,12 +881,12 @@ func WithPTCTimeout(d time.Duration) PTCOption { return func(c *PTCConfig) { c.T
 
 // SquadBuilder allows chainable SquadManager configuration.
 type SquadBuilder struct {
-	store        *Store
-	dbPath       string
-	agentName    string
-	squadName    string
-	cfg          *config.Config
-	skipSeeding  bool
+	store       *Store
+	dbPath      string
+	agentName   string
+	squadName   string
+	cfg         *config.Config
+	skipSeeding bool
 
 	svc      *SquadManager
 	buildErr error

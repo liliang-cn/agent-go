@@ -79,19 +79,19 @@ func (b *braveSearchEngine) Search(ctx context.Context, query string, maxResults
 		chromedp.Run(allocCtx,
 			chromedp.Text(`.snippet-title`, &title, chromedp.ByQuery, chromedp.FromNode(node)),
 		)
-		
+
 		if title == "" {
 			chromedp.Run(allocCtx,
 				chromedp.Text(`h3`, &title, chromedp.ByQuery, chromedp.FromNode(node)),
 			)
 		}
-		
+
 		if title == "" {
 			chromedp.Run(allocCtx,
 				chromedp.Text(`a[data-testid="result-title"]`, &title, chromedp.ByQuery, chromedp.FromNode(node)),
 			)
 		}
-		
+
 		if title == "" {
 			chromedp.Run(allocCtx,
 				chromedp.Text(`a`, &title, chromedp.ByQuery, chromedp.FromNode(node)),
@@ -102,19 +102,19 @@ func (b *braveSearchEngine) Search(ctx context.Context, query string, maxResults
 		chromedp.Run(allocCtx,
 			chromedp.AttributeValue(`.result-header a`, "href", &link, nil, chromedp.ByQuery, chromedp.FromNode(node)),
 		)
-		
+
 		if link == "" {
 			chromedp.Run(allocCtx,
 				chromedp.AttributeValue(`.snippet-title`, "href", &link, nil, chromedp.ByQuery, chromedp.FromNode(node)),
 			)
 		}
-		
+
 		if link == "" {
 			chromedp.Run(allocCtx,
 				chromedp.AttributeValue(`a[data-testid="result-title"]`, "href", &link, nil, chromedp.ByQuery, chromedp.FromNode(node)),
 			)
 		}
-		
+
 		if link == "" {
 			chromedp.Run(allocCtx,
 				chromedp.AttributeValue(`a`, "href", &link, nil, chromedp.ByQuery, chromedp.FromNode(node)),
@@ -125,19 +125,19 @@ func (b *braveSearchEngine) Search(ctx context.Context, query string, maxResults
 		chromedp.Run(allocCtx,
 			chromedp.Text(`.snippet-description`, &snippet, chromedp.ByQuery, chromedp.FromNode(node)),
 		)
-		
+
 		if snippet == "" {
 			chromedp.Run(allocCtx,
 				chromedp.Text(`[data-testid="result-description"]`, &snippet, chromedp.ByQuery, chromedp.FromNode(node)),
 			)
 		}
-		
+
 		if snippet == "" {
 			chromedp.Run(allocCtx,
 				chromedp.Text(`.desc`, &snippet, chromedp.ByQuery, chromedp.FromNode(node)),
 			)
 		}
-		
+
 		if snippet == "" {
 			chromedp.Run(allocCtx,
 				chromedp.Text(`p`, &snippet, chromedp.ByQuery, chromedp.FromNode(node)),

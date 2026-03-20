@@ -7,12 +7,12 @@ import (
 
 // Skill represents a loaded skill from SKILL.md
 type Skill struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Version     string `json:"version"`
-	Author      string `json:"author,omitempty"`
-	Collection  string `json:"collection,omitempty"`
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	Description    string `json:"description"`
+	Version        string `json:"version"`
+	Author         string `json:"author,omitempty"`
+	Collection     string `json:"collection,omitempty"`
 	CollectionPath string `json:"collection_path,omitempty"`
 
 	// Progressive disclosure
@@ -38,9 +38,9 @@ type Skill struct {
 }
 
 type Collection struct {
-	Name  string   `json:"name"`
-	Path  string   `json:"path"`
-	Scope string   `json:"scope,omitempty"`
+	Name   string   `json:"name"`
+	Path   string   `json:"path"`
+	Scope  string   `json:"scope,omitempty"`
 	Skills []*Skill `json:"skills"`
 }
 

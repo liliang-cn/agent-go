@@ -86,11 +86,11 @@ func asyncTaskHookResult(task *AsyncTask, policy FollowUpAgentPolicy) map[string
 		return nil
 	}
 	return map[string]interface{}{
-		"type":            "async_agent_task",
-		"task_id":         task.ID,
-		"agent_name":      policy.AgentName,
-		"priority":        policy.Priority,
-		"scenario_tags":   append([]string(nil), policy.ScenarioTags...),
+		"type":             "async_agent_task",
+		"task_id":          task.ID,
+		"agent_name":       policy.AgentName,
+		"priority":         policy.Priority,
+		"scenario_tags":    append([]string(nil), policy.ScenarioTags...),
 		"hook_description": policy.HookDescription,
 	}
 }

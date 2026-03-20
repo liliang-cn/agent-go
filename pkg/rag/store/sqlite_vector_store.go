@@ -854,7 +854,7 @@ func (s *DocumentStore) Get(ctx context.Context, id string) (domain.Document, er
 		ID:       doc.ID,
 		Path:     doc.Title,
 		URL:      doc.SourceURL,
-		Content:   doc.Content,
+		Content:  doc.Content,
 		Metadata: doc.Metadata,
 		Created:  doc.CreatedAt,
 	}, nil
@@ -872,7 +872,7 @@ func (s *DocumentStore) List(ctx context.Context) ([]domain.Document, error) {
 			ID:       doc.ID,
 			Path:     doc.Title,
 			URL:      doc.SourceURL,
-		Content:   doc.Content,
+			Content:  doc.Content,
 			Metadata: doc.Metadata,
 			Created:  doc.CreatedAt,
 		}

@@ -108,11 +108,11 @@ func (e *HybridExtractor) ExtractSummary(ctx context.Context, url string, maxLen
 // ExtractMultiple extracts content from multiple URLs concurrently
 func (e *HybridExtractor) ExtractMultiple(ctx context.Context, urls []string) map[string]string {
 	results := make(map[string]string)
-	
-	// For simplicity and to avoid browser instance explosion, we'll do this sequentially 
+
+	// For simplicity and to avoid browser instance explosion, we'll do this sequentially
 	// or with a very small concurrency limit in real use.
 	// Here we reuse the shared browser logic if needed, but for now we'll call ExtractContent.
-	
+
 	for _, targetURL := range urls {
 		content, err := e.ExtractContent(ctx, targetURL)
 		if err != nil {

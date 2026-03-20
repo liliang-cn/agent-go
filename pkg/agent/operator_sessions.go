@@ -25,20 +25,20 @@ type operatorSessionManager struct {
 }
 
 type operatorSession struct {
-	id        string
-	provider  string
-	command   string
-	args      []string
-	workdir   string
-	cmd       *exec.Cmd
-	ptyFile   *os.File
-	output    []byte
-	createdAt time.Time
-	updatedAt time.Time
+	id         string
+	provider   string
+	command    string
+	args       []string
+	workdir    string
+	cmd        *exec.Cmd
+	ptyFile    *os.File
+	output     []byte
+	createdAt  time.Time
+	updatedAt  time.Time
 	finishedAt *time.Time
-	exitCode  *int
-	errText   string
-	mu        sync.RWMutex
+	exitCode   *int
+	errText    string
+	mu         sync.RWMutex
 }
 
 var globalOperatorSessions = &operatorSessionManager{

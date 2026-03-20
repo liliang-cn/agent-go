@@ -1082,12 +1082,12 @@ func summarizeMemoriesForHooks(memories []*domain.MemoryWithScore) []map[string]
 			continue
 		}
 		out = append(out, map[string]interface{}{
-			"id":        mem.ID,
-			"type":      string(mem.Type),
-			"content":   strings.TrimSpace(mem.Content),
-			"score":     mem.Score,
-			"scope":     formatMemoryScopeString(mem.ScopeType, mem.ScopeID, mem.SessionID),
-			"source":    string(mem.SourceType),
+			"id":      mem.ID,
+			"type":    string(mem.Type),
+			"content": strings.TrimSpace(mem.Content),
+			"score":   mem.Score,
+			"scope":   formatMemoryScopeString(mem.ScopeType, mem.ScopeID, mem.SessionID),
+			"source":  string(mem.SourceType),
 		})
 	}
 	return out

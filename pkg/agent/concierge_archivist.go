@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	ArchivistAgentName     = "Archivist"
+	ArchivistAgentName      = "Archivist"
 	archivistVerifierPrefix = "VERIFIER_NEEDED:"
 )
 
