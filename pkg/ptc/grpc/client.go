@@ -10,8 +10,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"github.com/liliang-cn/agent-go/pkg/ptc"
-	pb "github.com/liliang-cn/agent-go/pkg/ptc/grpc/pb"
+	"github.com/liliang-cn/agent-go/v2/pkg/ptc"
+	pb "github.com/liliang-cn/agent-go/v2/pkg/ptc/grpc/pb"
 )
 
 // Client is a gRPC client for the PTC service

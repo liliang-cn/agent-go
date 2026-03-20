@@ -13,8 +13,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/liliang-cn/agent-go/pkg/ptc"
-	pb "github.com/liliang-cn/agent-go/pkg/ptc/grpc/pb"
+	"github.com/liliang-cn/agent-go/v2/pkg/ptc"
+	pb "github.com/liliang-cn/agent-go/v2/pkg/ptc/grpc/pb"
 )
 
 // Server implements the PTC gRPC service

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/liliang-cn/agent-go/pkg/config"
-	"github.com/liliang-cn/agent-go/pkg/domain"
+	"github.com/liliang-cn/agent-go/v2/pkg/config"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 )
 
 func TestGetSquadStatusIdleByDefault(t *testing.T) {

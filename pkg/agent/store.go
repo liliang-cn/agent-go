@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/liliang-cn/agent-go/pkg/domain"
-	"github.com/liliang-cn/agent-go/pkg/store"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v2/pkg/store"
 )
 
 // Store provides persistent storage for agent plans and sessions by wrapping AgentGoDB

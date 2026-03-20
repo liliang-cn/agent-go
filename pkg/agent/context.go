@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/liliang-cn/agent-go/pkg/skills"
+	"github.com/liliang-cn/agent-go/v2/pkg/skills"
 )
 
 // SystemContext 系统上下文信息

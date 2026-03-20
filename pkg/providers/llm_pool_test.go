@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/liliang-cn/agent-go/pkg/domain"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 )
 
 // MockLLMProvider is a mock implementation of domain.LLMProvider for testing

@@ -14,9 +14,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/liliang-cn/agent-go/pkg/config"
-	"github.com/liliang-cn/agent-go/pkg/domain"
-	"github.com/liliang-cn/agent-go/pkg/services"
+	"github.com/liliang-cn/agent-go/v2/pkg/config"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v2/pkg/services"
 )
 
 // SquadManager handles the lifecycle, discovery, and execution routing for squad agents.

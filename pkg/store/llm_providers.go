@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/liliang-cn/agent-go/pkg/pool"
+	"github.com/liliang-cn/agent-go/v2/pkg/pool"
 )
 
 // LLMProvider persisted provider configuration.

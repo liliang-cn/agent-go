@@ -3,7 +3,7 @@ package agent
 import (
 	"strings"
 
-	"github.com/liliang-cn/agent-go/pkg/config"
+	"github.com/liliang-cn/agent-go/v2/pkg/config"
 )
 
 func buildStandaloneAgentPrompt(cfg *config.Config, model *AgentModel) string {

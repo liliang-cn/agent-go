@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/liliang-cn/agent-go/pkg/domain"
-	"github.com/liliang-cn/agent-go/pkg/providers"
-	"github.com/liliang-cn/agent-go/pkg/store"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v2/pkg/providers"
+	"github.com/liliang-cn/agent-go/v2/pkg/store"
 	"github.com/stretchr/testify/require"
 )
 

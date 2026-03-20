@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/liliang-cn/agent-go/pkg/domain"
-	memorypkg "github.com/liliang-cn/agent-go/pkg/memory"
-	"github.com/liliang-cn/agent-go/pkg/prompt"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	memorypkg "github.com/liliang-cn/agent-go/v2/pkg/memory"
+	"github.com/liliang-cn/agent-go/v2/pkg/prompt"
 	"golang.org/x/sync/errgroup"
 )
 

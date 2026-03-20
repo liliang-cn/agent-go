@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/liliang-cn/agent-go/pkg/domain"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 )
 
 func TestClientGenerateWithToolsIncludesNativeWebSearch(t *testing.T) {

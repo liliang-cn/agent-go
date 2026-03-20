@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/liliang-cn/agent-go/pkg/domain"
-	"github.com/liliang-cn/agent-go/pkg/rag/store"
-	"github.com/liliang-cn/agent-go/pkg/services"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v2/pkg/rag/store"
+	"github.com/liliang-cn/agent-go/v2/pkg/services"
 	"github.com/spf13/cobra"
 )
 

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/liliang-cn/agent-go/pkg/agent"
+	"github.com/liliang-cn/agent-go/v2/pkg/agent"
 )
 
 func captureStdout(t *testing.T, fn func()) string {

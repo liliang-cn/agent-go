@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/liliang-cn/agent-go/pkg/domain"
-	"github.com/liliang-cn/agent-go/pkg/prompt"
-	"github.com/liliang-cn/agent-go/pkg/store"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v2/pkg/prompt"
+	"github.com/liliang-cn/agent-go/v2/pkg/store"
 )
 
 // Service implements the MemoryService interface

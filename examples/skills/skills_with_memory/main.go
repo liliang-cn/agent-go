@@ -7,8 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/liliang-cn/agent-go/pkg/agent"
-	"github.com/liliang-cn/agent-go/pkg/skills"
+	"github.com/liliang-cn/agent-go/v2/pkg/agent"
+	"github.com/liliang-cn/agent-go/v2/pkg/skills"
 )
 
 func main() {

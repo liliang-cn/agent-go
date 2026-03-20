@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/liliang-cn/agent-go/pkg/config"
+	"github.com/liliang-cn/agent-go/v2/pkg/config"
 	"github.com/spf13/cobra"
 )
 

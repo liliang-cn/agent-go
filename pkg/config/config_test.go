@@ -7,8 +7,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/liliang-cn/agent-go/pkg/mcp"
-	"github.com/liliang-cn/agent-go/pkg/pool"
+	"github.com/liliang-cn/agent-go/v2/pkg/mcp"
+	"github.com/liliang-cn/agent-go/v2/pkg/pool"
 )
 
 func validConfig(home string) *Config {

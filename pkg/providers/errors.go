@@ -3,7 +3,7 @@ package providers
 import (
 	"fmt"
 
-	"github.com/liliang-cn/agent-go/pkg/domain"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 )
 
 // Common error messages and utilities for providers

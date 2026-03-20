@@ -3,7 +3,7 @@ package mcp
 import (
 	"context"
 
-	"github.com/liliang-cn/agent-go/pkg/domain"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 )
 
 // MemoryTools creates a set of MCP tools for memory management

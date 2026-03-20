@@ -7,9 +7,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/liliang-cn/agent-go/pkg/domain"
-	"github.com/liliang-cn/agent-go/pkg/ptc"
-	"github.com/liliang-cn/agent-go/pkg/search"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v2/pkg/ptc"
+	"github.com/liliang-cn/agent-go/v2/pkg/search"
 )
 
 // ToolHandler executes a tool call synchronously.

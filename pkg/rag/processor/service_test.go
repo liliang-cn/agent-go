@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/liliang-cn/agent-go/pkg/config"
-	"github.com/liliang-cn/agent-go/pkg/domain"
+	"github.com/liliang-cn/agent-go/v2/pkg/config"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 )
 
 // Simple mock implementations for basic testing

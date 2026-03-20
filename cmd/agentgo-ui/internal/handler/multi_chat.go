@@ -9,7 +9,7 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
-	"github.com/liliang-cn/agent-go/pkg/agent"
+	"github.com/liliang-cn/agent-go/v2/pkg/agent"
 )
 
 var agentMentionRe = regexp.MustCompile(`(^|[\s,;])@([A-Za-z0-9_-]+)`)

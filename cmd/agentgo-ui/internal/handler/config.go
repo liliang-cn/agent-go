@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/liliang-cn/agent-go/pkg/config"
+	"github.com/liliang-cn/agent-go/v2/pkg/config"
 	toml "github.com/pelletier/go-toml/v2"
 )
 

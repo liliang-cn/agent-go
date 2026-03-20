@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/liliang-cn/agent-go/pkg/config"
-	"github.com/liliang-cn/agent-go/pkg/domain"
-	"github.com/liliang-cn/agent-go/pkg/prompt"
+	"github.com/liliang-cn/agent-go/v2/pkg/config"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v2/pkg/prompt"
 )
 
 type promptTestMemoryService struct{}

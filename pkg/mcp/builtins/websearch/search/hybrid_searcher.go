@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/liliang-cn/agent-go/pkg/mcp/builtins/websearch/extraction"
+	"github.com/liliang-cn/agent-go/v2/pkg/mcp/builtins/websearch/extraction"
 )
 
 // HybridMultiEngineSearcher combines goquery search with chromedp extraction

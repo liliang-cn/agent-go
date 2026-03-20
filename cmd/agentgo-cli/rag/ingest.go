@@ -9,11 +9,11 @@ import (
 	"runtime"
 	"sync"
 
-	"github.com/liliang-cn/agent-go/pkg/domain"
-	"github.com/liliang-cn/agent-go/pkg/rag/chunker"
-	"github.com/liliang-cn/agent-go/pkg/rag/processor"
-	"github.com/liliang-cn/agent-go/pkg/rag/store"
-	"github.com/liliang-cn/agent-go/pkg/services"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v2/pkg/rag/chunker"
+	"github.com/liliang-cn/agent-go/v2/pkg/rag/processor"
+	"github.com/liliang-cn/agent-go/v2/pkg/rag/store"
+	"github.com/liliang-cn/agent-go/v2/pkg/services"
 	"github.com/spf13/cobra"
 )
 

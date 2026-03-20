@@ -1,7 +1,7 @@
 package rag
 
 import (
-	"github.com/liliang-cn/agent-go/pkg/config"
+	"github.com/liliang-cn/agent-go/v2/pkg/config"
 )
 
 // Variables exported from parent package

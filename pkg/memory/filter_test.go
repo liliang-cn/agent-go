@@ -3,7 +3,7 @@ package memory
 import (
 	"testing"
 
-	"github.com/liliang-cn/agent-go/pkg/domain"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 )
 
 func TestNoiseFilter_Filter(t *testing.T) {

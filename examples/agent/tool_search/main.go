@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/liliang-cn/agent-go/pkg/agent"
-	"github.com/liliang-cn/agent-go/pkg/config"
+	"github.com/liliang-cn/agent-go/v2/pkg/agent"
+	"github.com/liliang-cn/agent-go/v2/pkg/config"
 )
 
 func main() {

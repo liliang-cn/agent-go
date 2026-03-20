@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/liliang-cn/agent-go/pkg/domain"
-	memorypkg "github.com/liliang-cn/agent-go/pkg/memory"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	memorypkg "github.com/liliang-cn/agent-go/v2/pkg/memory"
 )
 
 // Module is implemented by any component that can self-register tools into

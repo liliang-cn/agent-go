@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/liliang-cn/agent-go/pkg/config"
-	"github.com/liliang-cn/agent-go/pkg/domain"
-	"github.com/liliang-cn/agent-go/pkg/mcp"
-	"github.com/liliang-cn/agent-go/pkg/scheduler"
+	"github.com/liliang-cn/agent-go/v2/pkg/config"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v2/pkg/mcp"
+	"github.com/liliang-cn/agent-go/v2/pkg/scheduler"
 )
 
 // MCPTaskOutput represents the output of an MCP task execution

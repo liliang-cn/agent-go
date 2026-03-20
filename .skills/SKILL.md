@@ -25,7 +25,7 @@ An agent running continuously with heartbeat scheduling and task queues.
 ### Simple Agent with RAG
 
 ```go
-import "github.com/liliang-cn/agent-go/pkg/agent"
+import "github.com/liliang-cn/agent-go/v2/pkg/agent"
 
 svc, err := agent.New("my-agent").
     WithRAG().

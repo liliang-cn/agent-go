@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/liliang-cn/agent-go/pkg/domain"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 )
 
 func TestNewSubAgent(t *testing.T) {

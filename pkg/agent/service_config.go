@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/liliang-cn/agent-go/pkg/domain"
-	"github.com/liliang-cn/agent-go/pkg/mcp"
-	"github.com/liliang-cn/agent-go/pkg/ptc"
-	"github.com/liliang-cn/agent-go/pkg/router"
-	"github.com/liliang-cn/agent-go/pkg/skills"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v2/pkg/mcp"
+	"github.com/liliang-cn/agent-go/v2/pkg/ptc"
+	"github.com/liliang-cn/agent-go/v2/pkg/router"
+	"github.com/liliang-cn/agent-go/v2/pkg/skills"
 )
 
 // SetMCPService sets the MCP service for full public access

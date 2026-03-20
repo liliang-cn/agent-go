@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/liliang-cn/agent-go/pkg/domain"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 	skillgo "github.com/liliang-cn/skills-go/skill"
 	"golang.org/x/sync/errgroup"
 )

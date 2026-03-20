@@ -3,7 +3,7 @@ package store
 import (
 	"fmt"
 
-	"github.com/liliang-cn/agent-go/pkg/domain"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 )
 
 // StoreConfig holds configuration for vector stores

@@ -6,13 +6,13 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/liliang-cn/agent-go/cmd/agentgo-cli/rag"
-	"github.com/liliang-cn/agent-go/pkg/domain"
-	"github.com/liliang-cn/agent-go/pkg/rag/chunker"
-	"github.com/liliang-cn/agent-go/pkg/rag/processor"
-	ragstore "github.com/liliang-cn/agent-go/pkg/rag/store"
-	"github.com/liliang-cn/agent-go/pkg/services"
-	"github.com/liliang-cn/agent-go/pkg/skills"
+	"github.com/liliang-cn/agent-go/v2/cmd/agentgo-cli/rag"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v2/pkg/rag/chunker"
+	"github.com/liliang-cn/agent-go/v2/pkg/rag/processor"
+	ragstore "github.com/liliang-cn/agent-go/v2/pkg/rag/store"
+	"github.com/liliang-cn/agent-go/v2/pkg/services"
+	"github.com/liliang-cn/agent-go/v2/pkg/skills"
 	"github.com/spf13/cobra"
 )
 

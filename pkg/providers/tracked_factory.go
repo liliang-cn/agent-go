@@ -3,8 +3,8 @@ package providers
 import (
 	"context"
 
-	"github.com/liliang-cn/agent-go/pkg/domain"
-	"github.com/liliang-cn/agent-go/pkg/usage"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v2/pkg/usage"
 )
 
 // TrackedFactory implements the ProviderFactory interface with usage tracking

@@ -3,7 +3,7 @@ package handler
 import (
 	"net/http"
 
-	"github.com/liliang-cn/agent-go/pkg/skills"
+	"github.com/liliang-cn/agent-go/v2/pkg/skills"
 )
 
 func (h *Handler) HandleSkillsList(w http.ResponseWriter, r *http.Request) {

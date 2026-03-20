@@ -9,7 +9,7 @@ import (
 	"strings"
 	"context"
 
-	"github.com/liliang-cn/agent-go/pkg/rag"
+	"github.com/liliang-cn/agent-go/v2/pkg/rag"
 )
 
 // RAG handlers

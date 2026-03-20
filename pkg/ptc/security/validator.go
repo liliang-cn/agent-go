@@ -4,7 +4,7 @@ import (
 	"regexp"
 	"sync"
 
-	"github.com/liliang-cn/agent-go/pkg/ptc"
+	"github.com/liliang-cn/agent-go/v2/pkg/ptc"
 )
 
 // Validator validates code for security issues

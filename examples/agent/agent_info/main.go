@@ -6,9 +6,9 @@ import (
 	"log"
 	"strings"
 
-	"github.com/liliang-cn/agent-go/pkg/agent"
-	"github.com/liliang-cn/agent-go/pkg/config"
-	"github.com/liliang-cn/agent-go/pkg/skills"
+	"github.com/liliang-cn/agent-go/v2/pkg/agent"
+	"github.com/liliang-cn/agent-go/v2/pkg/config"
+	"github.com/liliang-cn/agent-go/v2/pkg/skills"
 )
 
 func main() {

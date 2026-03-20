@@ -6,9 +6,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/liliang-cn/agent-go/pkg/domain"
-	"github.com/liliang-cn/agent-go/pkg/ptc"
-	"github.com/liliang-cn/agent-go/pkg/skills"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v2/pkg/ptc"
+	"github.com/liliang-cn/agent-go/v2/pkg/skills"
 )
 
 // ChatWithPTC sends a message with PTC (Parallel Tool Calling) support.

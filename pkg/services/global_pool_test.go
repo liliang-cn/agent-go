@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/liliang-cn/agent-go/pkg/config"
-	"github.com/liliang-cn/agent-go/pkg/pool"
-	"github.com/liliang-cn/agent-go/pkg/store"
+	"github.com/liliang-cn/agent-go/v2/pkg/config"
+	"github.com/liliang-cn/agent-go/v2/pkg/pool"
+	"github.com/liliang-cn/agent-go/v2/pkg/store"
 )
 
 type modelNamer interface {

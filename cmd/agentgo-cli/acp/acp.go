@@ -10,10 +10,10 @@ import (
 	"path/filepath"
 
 	acpsdk "github.com/coder/acp-go-sdk"
-	"github.com/liliang-cn/agent-go/pkg/acpserver"
-	"github.com/liliang-cn/agent-go/pkg/agent"
-	"github.com/liliang-cn/agent-go/pkg/config"
-	agentgomcp "github.com/liliang-cn/agent-go/pkg/mcp"
+	"github.com/liliang-cn/agent-go/v2/pkg/acpserver"
+	"github.com/liliang-cn/agent-go/v2/pkg/agent"
+	"github.com/liliang-cn/agent-go/v2/pkg/config"
+	agentgomcp "github.com/liliang-cn/agent-go/v2/pkg/mcp"
 	"github.com/spf13/cobra"
 )
 

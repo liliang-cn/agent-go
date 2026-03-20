@@ -9,8 +9,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/liliang-cn/agent-go/pkg/mcp"
-	"github.com/liliang-cn/agent-go/pkg/pool"
+	"github.com/liliang-cn/agent-go/v2/pkg/mcp"
+	"github.com/liliang-cn/agent-go/v2/pkg/pool"
 	"github.com/spf13/viper"
 )
 

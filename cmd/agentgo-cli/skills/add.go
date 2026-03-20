@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/liliang-cn/agent-go/cmd/agentgo-cli/rag"
+	"github.com/liliang-cn/agent-go/v2/cmd/agentgo-cli/rag"
 	"github.com/spf13/cobra"
 )
 

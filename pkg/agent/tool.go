@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/liliang-cn/agent-go/pkg/domain"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 )
 
 // Tool is a self-contained tool definition: schema + handler.

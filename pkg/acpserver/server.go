@@ -10,7 +10,7 @@ import (
 
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/google/uuid"
-	"github.com/liliang-cn/agent-go/pkg/agent"
+	"github.com/liliang-cn/agent-go/v2/pkg/agent"
 )
 
 // SessionRuntime is the subset of agent.Service needed by the ACP bridge.

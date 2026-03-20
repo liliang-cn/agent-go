@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/liliang-cn/agent-go/pkg/pool"
-	"github.com/liliang-cn/agent-go/pkg/services"
-	"github.com/liliang-cn/agent-go/pkg/store"
+	"github.com/liliang-cn/agent-go/v2/pkg/pool"
+	"github.com/liliang-cn/agent-go/v2/pkg/services"
+	"github.com/liliang-cn/agent-go/v2/pkg/store"
 	"github.com/spf13/cobra"
 )
 

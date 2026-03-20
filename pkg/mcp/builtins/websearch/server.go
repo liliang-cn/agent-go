@@ -5,8 +5,8 @@ import (
 	"encoding/base64"
 	"fmt"
 
-	"github.com/liliang-cn/agent-go/pkg/mcp/builtins/websearch/extraction"
-	"github.com/liliang-cn/agent-go/pkg/mcp/builtins/websearch/search"
+	"github.com/liliang-cn/agent-go/v2/pkg/mcp/builtins/websearch/extraction"
+	"github.com/liliang-cn/agent-go/v2/pkg/mcp/builtins/websearch/search"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )

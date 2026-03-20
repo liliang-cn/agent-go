@@ -4,7 +4,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/liliang-cn/agent-go/pkg/domain"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 )
 
 // ScoringConfig holds configuration for memory scoring

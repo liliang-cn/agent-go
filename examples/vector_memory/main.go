@@ -7,10 +7,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/liliang-cn/agent-go/pkg/domain"
-	"github.com/liliang-cn/agent-go/pkg/memory"
-	"github.com/liliang-cn/agent-go/pkg/providers"
-	"github.com/liliang-cn/agent-go/pkg/store"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v2/pkg/memory"
+	"github.com/liliang-cn/agent-go/v2/pkg/providers"
+	"github.com/liliang-cn/agent-go/v2/pkg/store"
 )
 
 func main() {

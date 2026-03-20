@@ -19,7 +19,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/liliang-cn/agent-go/pkg/agent"
+	"github.com/liliang-cn/agent-go/v2/pkg/agent"
 )
 
 func main() {

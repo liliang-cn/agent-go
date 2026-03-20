@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/liliang-cn/agent-go/pkg/prompt"
+	"github.com/liliang-cn/agent-go/v2/pkg/prompt"
 )
 
 // buildSystemPrompt constructs the system prompt for the current agent.

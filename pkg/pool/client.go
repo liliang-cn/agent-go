@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/liliang-cn/agent-go/pkg/domain"
-	"github.com/liliang-cn/agent-go/pkg/prompt"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v2/pkg/prompt"
 )
 
 // Client OpenAI兼容的LLM/Embedding Client

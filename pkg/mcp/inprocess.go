@@ -6,7 +6,7 @@ import (
 	"io"
 	"log"
 
-	websearchserver "github.com/liliang-cn/agent-go/pkg/mcp/builtins/websearch"
+	websearchserver "github.com/liliang-cn/agent-go/v2/pkg/mcp/builtins/websearch"
 	"github.com/mark3labs/mcp-filesystem-server/filesystemserver"
 	mcpgo_server "github.com/mark3labs/mcp-go/server"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"

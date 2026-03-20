@@ -755,7 +755,7 @@ const file_pkg_ptc_grpc_proto_ptc_proto_rawDesc = "" +
 	"\aExecute\x12\x13.ptc.ExecuteRequest\x1a\x14.ptc.ExecuteResponse\x129\n" +
 	"\rExecuteStream\x12\x13.ptc.ExecuteRequest\x1a\x11.ptc.ExecuteChunk0\x01\x12:\n" +
 	"\tListTools\x12\x15.ptc.ListToolsRequest\x1a\x16.ptc.ListToolsResponse\x12@\n" +
-	"\vGetToolInfo\x12\x17.ptc.GetToolInfoRequest\x1a\x18.ptc.GetToolInfoResponseB0Z.github.com/liliang-cn/agent-go/pkg/ptc/grpc/pbb\x06proto3"
+	"\vGetToolInfo\x12\x17.ptc.GetToolInfoRequest\x1a\x18.ptc.GetToolInfoResponseB0Z.github.com/liliang-cn/agent-go/v2/pkg/ptc/grpc/pbb\x06proto3"
 
 var (
 	file_pkg_ptc_grpc_proto_ptc_proto_rawDescOnce sync.Once

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/liliang-cn/agent-go/pkg/domain"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 )
 
 func TestService_Split(t *testing.T) {

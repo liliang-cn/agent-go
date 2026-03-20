@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/liliang-cn/agent-go/pkg/domain"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 )
 
 // BM25Config holds configuration for BM25 search

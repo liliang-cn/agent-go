@@ -7,8 +7,8 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/liliang-cn/agent-go/pkg/agent"
-	agentgolog "github.com/liliang-cn/agent-go/pkg/log"
+	"github.com/liliang-cn/agent-go/v2/pkg/agent"
+	agentgolog "github.com/liliang-cn/agent-go/v2/pkg/log"
 )
 
 func runSquadLiveDispatch(ctx context.Context, manager *agent.SquadManager, conversationKey, agentName, instruction string, debug bool) (string, error) {

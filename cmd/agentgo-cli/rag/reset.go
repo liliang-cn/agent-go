@@ -7,8 +7,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/liliang-cn/agent-go/pkg/domain"
-	"github.com/liliang-cn/agent-go/pkg/rag/store"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v2/pkg/rag/store"
 	"github.com/spf13/cobra"
 )
 

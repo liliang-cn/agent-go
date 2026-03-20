@@ -6,9 +6,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/liliang-cn/agent-go/pkg/config"
-	agentgomcp "github.com/liliang-cn/agent-go/pkg/mcp"
-	"github.com/liliang-cn/agent-go/pkg/services"
+	"github.com/liliang-cn/agent-go/v2/pkg/config"
+	agentgomcp "github.com/liliang-cn/agent-go/v2/pkg/mcp"
+	"github.com/liliang-cn/agent-go/v2/pkg/services"
 	skillsmcp "github.com/liliang-cn/skills-go/mcp"
 	"github.com/spf13/cobra"
 )

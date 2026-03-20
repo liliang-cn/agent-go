@@ -4,7 +4,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/liliang-cn/agent-go/pkg/domain"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 )
 
 // NoiseFilterConfig holds configuration for noise filtering

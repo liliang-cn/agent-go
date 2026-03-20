@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/liliang-cn/agent-go/pkg/ptc"
+	"github.com/liliang-cn/agent-go/v2/pkg/ptc"
 )
 
 func TestGetPTCSystemPrompt_RemovesSearchGuidance(t *testing.T) {

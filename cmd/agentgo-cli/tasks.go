@@ -12,7 +12,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/liliang-cn/agent-go/pkg/scheduler"
+	"github.com/liliang-cn/agent-go/v2/pkg/scheduler"
 	"github.com/spf13/cobra"
 )
 

@@ -20,7 +20,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/liliang-cn/agent-go/pkg/mcp"
+	"github.com/liliang-cn/agent-go/v2/pkg/mcp"
 )
 
 func main() {

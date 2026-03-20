@@ -8,11 +8,11 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/liliang-cn/agent-go/pkg/agent"
-	"github.com/liliang-cn/agent-go/pkg/config"
-	"github.com/liliang-cn/agent-go/pkg/ptc"
-	"github.com/liliang-cn/agent-go/pkg/rag"
-	"github.com/liliang-cn/agent-go/pkg/skills"
+	"github.com/liliang-cn/agent-go/v2/pkg/agent"
+	"github.com/liliang-cn/agent-go/v2/pkg/config"
+	"github.com/liliang-cn/agent-go/v2/pkg/ptc"
+	"github.com/liliang-cn/agent-go/v2/pkg/rag"
+	"github.com/liliang-cn/agent-go/v2/pkg/skills"
 	"github.com/spf13/cobra"
 )
 

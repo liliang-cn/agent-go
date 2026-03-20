@@ -3,7 +3,7 @@ package security
 import (
 	"testing"
 
-	"github.com/liliang-cn/agent-go/pkg/ptc"
+	"github.com/liliang-cn/agent-go/v2/pkg/ptc"
 )
 
 func TestValidator_Validate(t *testing.T) {

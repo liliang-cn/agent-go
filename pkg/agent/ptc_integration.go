@@ -9,10 +9,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/liliang-cn/agent-go/pkg/domain"
-	"github.com/liliang-cn/agent-go/pkg/ptc"
-	"github.com/liliang-cn/agent-go/pkg/ptc/runtime/goja"
-	"github.com/liliang-cn/agent-go/pkg/ptc/runtime/wazero"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v2/pkg/ptc"
+	"github.com/liliang-cn/agent-go/v2/pkg/ptc/runtime/goja"
+	"github.com/liliang-cn/agent-go/v2/pkg/ptc/runtime/wazero"
 )
 
 // PTCIntegration handles Programmatic Tool Calling integration

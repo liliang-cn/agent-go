@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/liliang-cn/agent-go/pkg/domain"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 )
 
 // Factory implements the ProviderFactory interface

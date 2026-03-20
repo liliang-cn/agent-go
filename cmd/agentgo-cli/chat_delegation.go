@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/liliang-cn/agent-go/cmd/agentgo-cli/internal/cliui"
-	"github.com/liliang-cn/agent-go/pkg/agent"
+	"github.com/liliang-cn/agent-go/v2/cmd/agentgo-cli/internal/cliui"
+	"github.com/liliang-cn/agent-go/v2/pkg/agent"
 )
 
 func runDelegatedTaskChainAsync(ctx context.Context, manager *agent.SquadManager, sessionID string, tasks []delegatedTask, follower *chatTaskFollower, background bool) error {

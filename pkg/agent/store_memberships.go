@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/liliang-cn/agent-go/pkg/store"
+	"github.com/liliang-cn/agent-go/v2/pkg/store"
 )
 
 func (s *Store) SaveSquadMembership(membership *SquadMembership) error {

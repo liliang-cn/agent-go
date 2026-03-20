@@ -3,7 +3,7 @@ package agent
 import (
 	"strings"
 
-	"github.com/liliang-cn/agent-go/pkg/pool"
+	"github.com/liliang-cn/agent-go/v2/pkg/pool"
 )
 
 func selectionHintForAgentModel(model *AgentModel) pool.SelectionHint {

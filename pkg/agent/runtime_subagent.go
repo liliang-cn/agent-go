@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/liliang-cn/agent-go/pkg/domain"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 )
 
 func (r *Runtime) executeToolViaSubAgent(ctx context.Context, tc domain.ToolCall) (interface{}, error, bool) {

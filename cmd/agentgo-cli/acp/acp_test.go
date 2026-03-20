@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	acpsdk "github.com/coder/acp-go-sdk"
-	"github.com/liliang-cn/agent-go/pkg/acpserver"
-	"github.com/liliang-cn/agent-go/pkg/config"
+	"github.com/liliang-cn/agent-go/v2/pkg/acpserver"
+	"github.com/liliang-cn/agent-go/v2/pkg/config"
 )
 
 func TestConvertACPMCPServers(t *testing.T) {

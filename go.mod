@@ -1,4 +1,4 @@
-module github.com/liliang-cn/agent-go
+module github.com/liliang-cn/agent-go/v2
 
 go 1.25
 

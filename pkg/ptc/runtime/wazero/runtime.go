@@ -12,8 +12,8 @@ import (
 	"github.com/tetratelabs/wazero/api"
 	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
 
-	"github.com/liliang-cn/agent-go/pkg/ptc"
-	gojart "github.com/liliang-cn/agent-go/pkg/ptc/runtime/goja"
+	"github.com/liliang-cn/agent-go/v2/pkg/ptc"
+	gojart "github.com/liliang-cn/agent-go/v2/pkg/ptc/runtime/goja"
 )
 
 // Runtime implements SandboxRuntime using Wazero WASM

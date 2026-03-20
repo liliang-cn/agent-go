@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/liliang-cn/agent-go/pkg/config"
+	"github.com/liliang-cn/agent-go/v2/pkg/config"
 )
 
 func testConfig(t *testing.T) *config.Config {

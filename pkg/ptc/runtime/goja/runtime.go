@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/dop251/goja"
-	"github.com/liliang-cn/agent-go/pkg/ptc"
+	"github.com/liliang-cn/agent-go/v2/pkg/ptc"
 )
 
 // wrapCode wraps user code to allow top-level return statements.

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/liliang-cn/agent-go/pkg/services"
+	"github.com/liliang-cn/agent-go/v2/pkg/services"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )

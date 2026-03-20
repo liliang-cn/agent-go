@@ -11,12 +11,12 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/liliang-cn/agent-go/cmd/agentgo-cli/internal/cliui"
-	"github.com/liliang-cn/agent-go/cmd/agentgo-cli/internal/lineinput"
-	"github.com/liliang-cn/agent-go/pkg/agent"
-	"github.com/liliang-cn/agent-go/pkg/config"
-	"github.com/liliang-cn/agent-go/pkg/domain"
-	"github.com/liliang-cn/agent-go/pkg/services"
+	"github.com/liliang-cn/agent-go/v2/cmd/agentgo-cli/internal/cliui"
+	"github.com/liliang-cn/agent-go/v2/cmd/agentgo-cli/internal/lineinput"
+	"github.com/liliang-cn/agent-go/v2/pkg/agent"
+	"github.com/liliang-cn/agent-go/v2/pkg/config"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v2/pkg/services"
 	"github.com/spf13/cobra"
 )
 

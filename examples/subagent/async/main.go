@@ -26,7 +26,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/liliang-cn/agent-go/pkg/agent"
+	"github.com/liliang-cn/agent-go/v2/pkg/agent"
 )
 
 // ── Mock data pipeline ───────────────────────────────────────────────────────

@@ -16,9 +16,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
-	"github.com/liliang-cn/agent-go/pkg/agent"
-	"github.com/liliang-cn/agent-go/pkg/config"
-	agentgolog "github.com/liliang-cn/agent-go/pkg/log"
+	"github.com/liliang-cn/agent-go/v2/pkg/agent"
+	"github.com/liliang-cn/agent-go/v2/pkg/config"
+	agentgolog "github.com/liliang-cn/agent-go/v2/pkg/log"
 	"github.com/mattn/go-runewidth"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"

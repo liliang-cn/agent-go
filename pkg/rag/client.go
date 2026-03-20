@@ -7,13 +7,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/liliang-cn/agent-go/pkg/agent"
-	"github.com/liliang-cn/agent-go/pkg/config"
-	"github.com/liliang-cn/agent-go/pkg/domain"
-	"github.com/liliang-cn/agent-go/pkg/mcp"
-	"github.com/liliang-cn/agent-go/pkg/rag/chunker"
-	"github.com/liliang-cn/agent-go/pkg/rag/processor"
-	"github.com/liliang-cn/agent-go/pkg/rag/store"
+	"github.com/liliang-cn/agent-go/v2/pkg/agent"
+	"github.com/liliang-cn/agent-go/v2/pkg/config"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v2/pkg/mcp"
+	"github.com/liliang-cn/agent-go/v2/pkg/rag/chunker"
+	"github.com/liliang-cn/agent-go/v2/pkg/rag/processor"
+	"github.com/liliang-cn/agent-go/v2/pkg/rag/store"
 )
 
 // Client provides high-level RAG operations
