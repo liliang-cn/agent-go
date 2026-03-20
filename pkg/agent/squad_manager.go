@@ -83,6 +83,9 @@ type SharedTask struct {
 
 // SeedDefaultMembers seeds the built-in default squad and standalone agents.
 func (m *SquadManager) SeedDefaultMembers() error {
+	agentName := m.getAgentName()
+	squadName := m.getSquadName()
+
 	if _, err := m.ensureDefaultSquad(); err != nil {
 		return err
 	}
@@ -112,12 +115,12 @@ func (m *SquadManager) SeedDefaultMembers() error {
 		}
 	}
 
-	for _, builtin := range defaultBuiltInStandaloneAgents() {
+	for _, builtin := range defaultBuiltInStandaloneAgents(agentName) {
 		if err := m.ensureBuiltInStandaloneAgent(ctx, builtin); err != nil {
 			return err
 		}
 	}
-	if err := m.ensureDefaultSquadCaptain(ctx); err != nil {
+	if err := m.ensureDefaultSquadCaptain(ctx, agentName, squadName); err != nil {
 		return err
 	}
 	if err := m.detachBuiltInStandaloneAgentsFromDefaultSquad(defaultConciergeAgentName, defaultAssistantAgentName, defaultStakeholderAgentName); err != nil {
@@ -127,23 +130,24 @@ func (m *SquadManager) SeedDefaultMembers() error {
 }
 
 func (m *SquadManager) ensureDefaultSquad() (*Squad, error) {
+	squadName := m.getSquadName()
 	squads, err := m.store.ListTeams()
 	if err != nil {
 		return nil, err
 	}
 	for _, squad := range squads {
-		if squad.ID == defaultSquadID || strings.EqualFold(squad.Name, defaultSquadName) || strings.EqualFold(squad.Name, legacyDefaultSquadName) {
+		if squad.ID == defaultSquadID || strings.EqualFold(squad.Name, squadName) || strings.EqualFold(squad.Name, legacyDefaultSquadName) {
 			updated := false
 			if squad.ID != defaultSquadID {
 				squad.ID = defaultSquadID
 				updated = true
 			}
-			if !strings.EqualFold(squad.Name, defaultSquadName) {
-				squad.Name = defaultSquadName
+			if !strings.EqualFold(squad.Name, squadName) {
+				squad.Name = squadName
 				updated = true
 			}
 			if strings.TrimSpace(squad.Description) == "" || strings.EqualFold(strings.TrimSpace(squad.Description), "Default workspace squad.") {
-				squad.Description = defaultSquadDescription
+				squad.Description = fmt.Sprintf("Default %s squad.", m.getAgentName())
 				updated = true
 			}
 			if updated {
@@ -158,8 +162,8 @@ func (m *SquadManager) ensureDefaultSquad() (*Squad, error) {
 
 	squad := &Squad{
 		ID:          defaultSquadID,
-		Name:        defaultSquadName,
-		Description: defaultSquadDescription,
+		Name:        squadName,
+		Description: fmt.Sprintf("Default %s squad.", m.getAgentName()),
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}
@@ -199,6 +203,18 @@ func (m *SquadManager) SetConfig(cfg *config.Config) {
 	m.cfg = cfg
 }
 
+// SetAgentName sets the global agent name used in built-in prompts and squad names.
+// This overrides the agent.name field from config file or environment.
+// Call before SeedDefaultMembers for the names to take effect during initialization.
+func (m *SquadManager) SetAgentName(name string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.cfg == nil {
+		m.cfg = &config.Config{}
+	}
+	m.cfg.Agent.Name = name
+}
+
 func (m *SquadManager) configuredAgentGoConfig() *config.Config {
 	m.mu.RLock()
 	cfg := m.cfg
@@ -211,6 +227,25 @@ func (m *SquadManager) configuredAgentGoConfig() *config.Config {
 		return nil
 	}
 	return loaded
+}
+
+func (m *SquadManager) getAgentName() string {
+	if cfg := m.configuredAgentGoConfig(); cfg != nil && cfg.Agent.Name != "" {
+		return cfg.Agent.Name
+	}
+	return "AgentGo"
+}
+
+func (m *SquadManager) getSquadName() string {
+	if cfg := m.configuredAgentGoConfig(); cfg != nil {
+		if cfg.Squad.Name != "" {
+			return cfg.Squad.Name
+		}
+		if cfg.Agent.Name != "" {
+			return cfg.Agent.Name + " Squad"
+		}
+	}
+	return "AgentGo Squad"
 }
 
 // EnqueueSharedTask queues a squad task under one squad lead agent and returns an immediate acknowledgement.
@@ -812,18 +847,24 @@ func (m *SquadManager) decorateDelegableBuiltInAgentPrompt(base string, model *A
 }
 
 func buildTeamSystemPrompt(cfg *config.Config, model *AgentModel) string {
-	if cfg == nil {
-		return "You are working as part of an AgentGo squad."
+	agentName := "AgentGo"
+	squadName := "AgentGo Squad"
+	if cfg != nil && cfg.Agent.Name != "" {
+		agentName = cfg.Agent.Name
+		squadName = agentName + " Squad"
 	}
 
-	workspace := strings.TrimSpace(cfg.WorkspaceDir())
+	workspace := ""
+	if cfg != nil {
+		workspace = strings.TrimSpace(cfg.WorkspaceDir())
+	}
 	projectRoot := ""
 	if cwd, err := os.Getwd(); err == nil {
 		projectRoot = strings.TrimSpace(cwd)
 	}
 
 	lines := []string{
-		"You are working as part of an AgentGo squad.",
+		fmt.Sprintf("You are working as part of a %s.", squadName),
 		"The squad shares one workspace and one project context.",
 	}
 	lines = append(lines, buildRuntimeContextLines()...)

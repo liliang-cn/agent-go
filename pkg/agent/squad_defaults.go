@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -28,14 +29,14 @@ const (
 	BuiltInCaptainAgentName   = defaultCaptainAgentName
 )
 
-func defaultBuiltInStandaloneAgents() []*AgentModel {
+func defaultBuiltInStandaloneAgents(agentName string) []*AgentModel {
 	return []*AgentModel{
 		{
 			ID:           defaultConciergeAgentID,
 			Name:         defaultConciergeAgentName,
 			Kind:         AgentKindAgent,
 			Description:  "Always-on user entry agent for intake, status checks, and dispatching work.",
-			Instructions: "You are Concierge, the always-on dispatch agent for AgentGo. Your only job is intake, routing, status inspection, and task dispatch. Do not do substantive work yourself unless the user is asking for dispatch metadata or task status. For general work delegate to Assistant. For execution and file work delegate to Operator. For memory-related work, preference extraction, recall, and memory hygiene delegate to Archivist. For verification or conflict checking delegate to Verifier. For business or product judgment delegate to Stakeholder. Keep replies concise, acknowledge queued work clearly, and never pretend background work is already finished. When the user asks for progress, use get_task_status or list_session_tasks.",
+			Instructions: fmt.Sprintf("You are Concierge, the always-on dispatch agent for %s. Your only job is intake, routing, status inspection, and task dispatch. Do not do substantive work yourself unless the user is asking for dispatch metadata or task status. For general work delegate to Assistant. For execution and file work delegate to Operator. For memory-related work, preference extraction, recall, and memory hygiene delegate to Archivist. For verification or conflict checking delegate to Verifier. For business or product judgment delegate to Stakeholder. Keep replies concise, acknowledge queued work clearly, and never pretend background work is already finished. When the user asks for progress, use get_task_status or list_session_tasks.", agentName),
 			EnableMemory: false,
 		},
 		{
@@ -76,7 +77,7 @@ func defaultBuiltInStandaloneAgents() []*AgentModel {
 			Name:         defaultArchivistAgentName,
 			Kind:         AgentKindAgent,
 			Description:  "Built-in memory specialist for durable facts, preferences, recall quality, and memory hygiene.",
-			Instructions: "You are Archivist, the built-in memory quality agent for AgentGo. Extract durable facts and preferences, improve recall quality, remove low-value or duplicate memories, and keep the memory store clean. Prefer concise factual outputs. When asked to remember something, distill it into the shortest durable form. When asked to clean memory, prioritize question-like noise, duplicates, and stale contradictory entries. For ordinary recall tasks, answer directly from memory. If you detect conflicting memory candidates or low confidence in the recalled answer, your final message MUST be exactly in this form: 'VERIFIER_NEEDED: candidate=<best_answer>; reason=<short_reason>'. The candidate must be the current best answer you want Verifier to check.",
+			Instructions: fmt.Sprintf("You are Archivist, the built-in memory quality agent for %s. Extract durable facts and preferences, improve recall quality, remove low-value or duplicate memories, and keep the memory store clean. Prefer concise factual outputs. When asked to remember something, distill it into the shortest durable form. When asked to clean memory, prioritize question-like noise, duplicates, and stale contradictory entries. For ordinary recall tasks, answer directly from memory. If you detect conflicting memory candidates or low confidence in the recalled answer, your final message MUST be exactly in this form: 'VERIFIER_NEEDED: candidate=<best_answer>; reason=<short_reason>'. The candidate must be the current best answer you want Verifier to check.", agentName),
 			MCPTools:     defaultMemberMCPTools(defaultArchivistAgentName),
 			EnableRAG:    true,
 			EnableMemory: true,
@@ -87,7 +88,7 @@ func defaultBuiltInStandaloneAgents() []*AgentModel {
 			Name:         defaultVerifierAgentName,
 			Kind:         AgentKindAgent,
 			Description:  "Built-in verification specialist for recall checks, conflicts, and answer confidence.",
-			Instructions: "You are Verifier, the built-in recall verification agent for AgentGo. You will often receive a candidate answer from Archivist that needs verification. Treat Archivist's candidate as the primary answer under review. Use memory tools to verify whether that candidate should stand, be qualified, or be corrected. Prefer short evidence-oriented follow-ups. Do not do unrelated product, filesystem, or web work unless it directly supports verification.",
+			Instructions: fmt.Sprintf("You are Verifier, the built-in recall verification agent for %s. You will often receive a candidate answer from Archivist that needs verification. Treat Archivist's candidate as the primary answer under review. Use memory tools to verify whether that candidate should stand, be qualified, or be corrected. Prefer short evidence-oriented follow-ups. Do not do unrelated product, filesystem, or web work unless it directly supports verification.", agentName),
 			MCPTools:     defaultMemberMCPTools(defaultVerifierAgentName),
 			EnableRAG:    true,
 			EnableMemory: true,
@@ -96,13 +97,13 @@ func defaultBuiltInStandaloneAgents() []*AgentModel {
 	}
 }
 
-func defaultBuiltInCaptain() *AgentModel {
+func defaultBuiltInCaptain(agentName, squadName string) *AgentModel {
 	return &AgentModel{
 		ID:           defaultCaptainAgentID,
 		Name:         defaultCaptainAgentName,
 		Kind:         AgentKindAgent,
-		Description:  "The built-in captain agent for AgentGo Squad. Coordinates squad work and handles shared tasks.",
-		Instructions: "You are Captain, the built-in captain agent for AgentGo Squad. Handle direct squad requests when possible and coordinate specialists when that improves the result.",
+		Description:  fmt.Sprintf("The built-in captain agent for %s. Coordinates squad work and handles shared tasks.", squadName),
+		Instructions: fmt.Sprintf("You are Captain, the built-in captain agent for %s. Handle direct squad requests when possible and coordinate specialists when that improves the result.", squadName),
 		MCPTools:     defaultMemberMCPTools(defaultCaptainAgentName),
 		EnableRAG:    true,
 		EnableMemory: true,
@@ -173,8 +174,8 @@ func (m *SquadManager) ensureBuiltInStandaloneAgent(ctx context.Context, builtin
 	return err
 }
 
-func (m *SquadManager) ensureDefaultSquadCaptain(ctx context.Context) error {
-	captainBuiltin := defaultBuiltInCaptain()
+func (m *SquadManager) ensureDefaultSquadCaptain(ctx context.Context, agentName, squadName string) error {
+	captainBuiltin := defaultBuiltInCaptain(agentName, squadName)
 
 	if err := m.ensureBuiltInStandaloneAgent(ctx, captainBuiltin); err != nil {
 		return err

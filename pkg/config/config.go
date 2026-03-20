@@ -28,11 +28,23 @@ type Config struct {
 	Memory  MemoryConfig  `mapstructure:"memory"`
 	Cache   CacheConfig   `mapstructure:"cache"`
 	Tooling ToolingConfig `mapstructure:"tooling"`
+	Agent   AgentConfig   `mapstructure:"agent"`
+	Squad   SquadConfig   `mapstructure:"squad"`
 
 	// Internal storage configs (not exposed to user directly)
 	Internal struct {
 		Storage CortexdbConfig `mapstructure:"-"`
 	} `mapstructure:"-"`
+}
+
+// AgentConfig holds global agent settings.
+type AgentConfig struct {
+	Name string `mapstructure:"name"`
+}
+
+// SquadConfig holds global squad settings.
+type SquadConfig struct {
+	Name string `mapstructure:"name"`
 }
 
 type ServerConfig struct {
@@ -217,6 +229,7 @@ func setDefaults(vp *viper.Viper) {
 	vp.SetDefault("cache.store_type", "memory")
 	vp.SetDefault("tooling.enable_search_tools", true)
 	vp.SetDefault("tooling.web_search.mode", "mcp")
+	vp.SetDefault("agent.name", "AgentGo")
 }
 
 func bindEnvVars(vp *viper.Viper) {

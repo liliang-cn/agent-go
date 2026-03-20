@@ -285,6 +285,17 @@ func (b *Builder) WithConfig(cfg *config.Config) *Builder {
 	return b
 }
 
+// WithAgentName sets the global agent name used in built-in prompts and squad names.
+// This overrides the agent.name field from config file or environment.
+// Must be called before Build() to take effect.
+func (b *Builder) WithAgentName(name string) *Builder {
+	if b.agentgoCfg == nil {
+		b.agentgoCfg = &config.Config{}
+	}
+	b.agentgoCfg.Agent.Name = name
+	return b
+}
+
 // WithLLM sets a custom LLM service for the agent.
 // This overrides the default LLM from the global pool configured in agentgo.toml.
 //
@@ -863,3 +874,139 @@ func WithPTCMaxToolCalls(n int) PTCOption { return func(c *PTCConfig) { c.MaxToo
 
 // WithPTCTimeout sets PTC timeout
 func WithPTCTimeout(d time.Duration) PTCOption { return func(c *PTCConfig) { c.Timeout = d } }
+
+// ============================================================
+// SquadBuilder - chainable builder for SquadManager
+// ============================================================
+
+// SquadBuilder allows chainable SquadManager configuration.
+type SquadBuilder struct {
+	store        *Store
+	dbPath       string
+	agentName    string
+	squadName    string
+	cfg          *config.Config
+	skipSeeding  bool
+
+	svc      *SquadManager
+	buildErr error
+}
+
+// NewSquad creates a new squad builder.
+// Assign to (*SquadManager, error) to build - no explicit Build() needed!
+//
+// Example:
+//
+//	// Simple squad manager
+//	mgr, err := agent.NewSquad("~/.agentgo/data/agentgo.db")
+//
+//	// Chainable configuration
+//	mgr, err := agent.NewSquad("~/.agentgo/data/agentgo.db").
+//		WithAgentName("MyApp").
+//		WithSquadName("My Team")
+func NewSquad(dbPathOrStore interface{}) *SquadBuilder {
+	b := &SquadBuilder{}
+	switch v := dbPathOrStore.(type) {
+	case string:
+		b.dbPath = v
+	case *Store:
+		b.store = v
+	default:
+		b.buildErr = fmt.Errorf("dbPathOrStore must be a string path or *Store, got %T", v)
+	}
+	return b
+}
+
+// WithAgentName sets the global agent name used in built-in prompts and squad names.
+// This overrides the agent.name field from config file or environment.
+// Must be called before Build() to take effect during initialization.
+func (b *SquadBuilder) WithAgentName(name string) *SquadBuilder {
+	b.agentName = name
+	return b
+}
+
+// WithSquadName sets the default squad name.
+// If not set, defaults to "<AgentName> Squad".
+func (b *SquadBuilder) WithSquadName(name string) *SquadBuilder {
+	b.squadName = name
+	return b
+}
+
+// WithConfig sets the agentgo config.
+func (b *SquadBuilder) WithConfig(cfg *config.Config) *SquadBuilder {
+	b.cfg = cfg
+	return b
+}
+
+// SkipSeeding skips seeding default built-in agents and squad.
+func (b *SquadBuilder) SkipSeeding() *SquadBuilder {
+	b.skipSeeding = true
+	return b
+}
+
+// Build creates the SquadManager.
+func (b *SquadBuilder) Build() (*SquadManager, error) {
+	if b.buildErr != nil {
+		return nil, b.buildErr
+	}
+	if b.svc != nil {
+		return b.svc, b.buildErr
+	}
+
+	if b.store == nil && b.dbPath == "" {
+		b.buildErr = fmt.Errorf("dbPath or store is required")
+		return nil, b.buildErr
+	}
+
+	if b.store == nil {
+		var err error
+		b.store, err = NewStore(b.dbPath)
+		if err != nil {
+			b.buildErr = fmt.Errorf("failed to create store: %w", err)
+			return nil, b.buildErr
+		}
+	}
+
+	mgr := NewSquadManager(b.store)
+
+	// Apply config
+	if b.cfg != nil {
+		mgr.SetConfig(b.cfg)
+	}
+
+	// Apply agent name override
+	if b.agentName != "" {
+		mgr.SetAgentName(b.agentName)
+	}
+
+	// Apply squad name override if set
+	if b.squadName != "" {
+		mgr.mu.Lock()
+		if mgr.cfg == nil {
+			mgr.cfg = &config.Config{}
+		}
+		mgr.cfg.Squad.Name = b.squadName
+		mgr.mu.Unlock()
+	}
+
+	// Seed default members
+	if !b.skipSeeding {
+		if err := mgr.SeedDefaultMembers(); err != nil {
+			b.buildErr = err
+			return nil, b.buildErr
+		}
+	}
+
+	b.svc = mgr
+	return b.svc, b.buildErr
+}
+
+// Unpack allows direct assignment to (*SquadManager, error)
+func (b *SquadBuilder) Unpack() (*SquadManager, error) {
+	return b.Build()
+}
+
+// Get builds and returns the SquadManager (alias for Build)
+func (b *SquadBuilder) Get() (*SquadManager, error) {
+	return b.Build()
+}

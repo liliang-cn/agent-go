@@ -130,8 +130,17 @@ func (s *sessionRuntime) Close() error {
 }
 
 func prepareSessionConfig(base *config.Config, sessionCfg acpserver.SessionConfig) (*config.Config, func() error, error) {
-	cfgCopy := *base
-	cfgCopy.MCP = base.MCP
+	// Deep copy via JSON to avoid copying mutex from embedded mcp.Config
+	data, err := json.Marshal(base)
+	if err != nil {
+		return nil, nil, fmt.Errorf("marshal config: %w", err)
+	}
+	var cfgCopy config.Config
+	if err := json.Unmarshal(data, &cfgCopy); err != nil {
+		return nil, nil, fmt.Errorf("unmarshal config: %w", err)
+	}
+
+	// Reset MCP servers to avoid sharing mutable state
 	cfgCopy.MCP.Servers = append([]string{}, base.MCP.Servers...)
 	cfgCopy.MCP.LoadedServers = append([]agentgomcp.ServerConfig{}, base.MCP.LoadedServers...)
 
@@ -150,7 +159,7 @@ func prepareSessionConfig(base *config.Config, sessionCfg acpserver.SessionConfi
 
 	tmpFile := filepath.Join(cfgCopy.DataDir(), "acp", fmt.Sprintf("mcp-%s.json", sessionCfg.SessionID))
 	payload := agentgomcp.JSONServersConfig{MCPServers: serverDefs}
-	data, err := json.MarshalIndent(payload, "", "  ")
+	data, err = json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		return nil, nil, fmt.Errorf("marshal ACP MCP server config: %w", err)
 	}
