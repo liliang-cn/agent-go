@@ -14,6 +14,7 @@ func (m *SquadManager) RegisterConciergeTools(concierge *Service) {
 		return
 	}
 	configureConciergeService(concierge)
+	m.configureConciergeVerifierHook(concierge)
 
 	register := func(name, description string, parameters map[string]interface{}, handler func(context.Context, map[string]interface{}) (interface{}, error)) {
 		if concierge.toolRegistry != nil && concierge.toolRegistry.Has(name) {
@@ -278,17 +279,21 @@ func (m *SquadManager) RegisterConciergeTools(concierge *Service) {
 }
 
 var conciergeBaseAllowedToolNames = map[string]struct{}{
-	"task_complete":      {},
-	"llm":                {},
-	"list_squads":        {},
-	"get_squad_status":   {},
-	"list_agents":        {},
-	"get_agent_status":   {},
-	"submit_agent_task":  {},
-	"submit_squad_task":  {},
-	"get_task_status":    {},
-	"list_session_tasks": {},
-	"list_squad_tasks":   {},
+	"task_complete":             {},
+	"llm":                       {},
+	"list_squads":               {},
+	"get_squad_status":          {},
+	"list_agents":               {},
+	"get_agent_status":          {},
+	"submit_agent_task":         {},
+	"submit_squad_task":         {},
+	"get_task_status":           {},
+	"list_session_tasks":        {},
+	"list_squad_tasks":          {},
+	"delegate_builtin_agent":    {},
+	"submit_builtin_agent_task": {},
+	"get_delegated_task_status": {},
+	"list_builtin_agents":       {},
 }
 
 func configureConciergeService(concierge *Service) {

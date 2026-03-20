@@ -25,6 +25,7 @@ var (
 const (
 	memoryBucketPrefix    = "memory:"
 	memoryBucketNamespace = "agentgo"
+	memoryStoreRetryCount = 8
 )
 
 // Memory is a local internal structure, but we prefer using domain.Memory for interface methods.
@@ -73,7 +74,12 @@ func NewMemoryStore(dbPath string) (*MemoryStore, error) {
 		return nil, errors.New("dbPath is required")
 	}
 
-	db, err := cortexdb.Open(cortexdb.DefaultConfig(dbPath))
+	var db *cortexdb.DB
+	err := retrySQLiteBusy(context.Background(), func() error {
+		var openErr error
+		db, openErr = cortexdb.Open(cortexdb.DefaultConfig(dbPath))
+		return openErr
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize cortexdb memory store: %w", err)
 	}
@@ -142,7 +148,7 @@ func (s *MemoryStore) SearchByText(ctx context.Context, query string, topK int) 
 	}
 
 	searchPattern := "%" + strings.ToLower(strings.TrimSpace(query)) + "%"
-	rows, err := s.store.GetDB().QueryContext(ctx, `
+	rows, err := s.queryWithRetry(ctx, `
 		SELECT m.id, m.session_id, s.user_id, m.role, m.content, m.vector, m.metadata, m.created_at, s.metadata
 		FROM messages m
 		JOIN sessions s ON s.id = m.session_id
@@ -257,7 +263,7 @@ func (s *MemoryStore) IncrementAccess(ctx context.Context, id string) error {
 		return err
 	}
 
-	_, err = s.store.GetDB().ExecContext(ctx, `UPDATE messages SET metadata = ? WHERE id = ?`, metadataJSON, id)
+	err = s.execWithRetry(ctx, `UPDATE messages SET metadata = ? WHERE id = ?`, metadataJSON, id)
 	return err
 }
 
@@ -287,7 +293,7 @@ func (s *MemoryStore) List(ctx context.Context, limit, offset int) ([]*domain.Me
 	}
 
 	var total int
-	if err := s.store.GetDB().QueryRowContext(ctx, `
+	if err := s.queryRowWithRetry(ctx, `
 		SELECT COUNT(*)
 		FROM messages m
 		JOIN sessions s ON s.id = m.session_id
@@ -296,7 +302,7 @@ func (s *MemoryStore) List(ctx context.Context, limit, offset int) ([]*domain.Me
 		return nil, 0, err
 	}
 
-	rows, err := s.store.GetDB().QueryContext(ctx, `
+	rows, err := s.queryWithRetry(ctx, `
 		SELECT m.id, m.session_id, s.user_id, m.role, m.content, m.vector, m.metadata, m.created_at, s.metadata
 		FROM messages m
 		JOIN sessions s ON s.id = m.session_id
@@ -327,7 +333,7 @@ func (s *MemoryStore) Delete(ctx context.Context, id string) error {
 		return err
 	}
 
-	if _, err := s.store.GetDB().ExecContext(ctx, `DELETE FROM messages WHERE id = ?`, id); err != nil {
+	if err := s.execWithRetry(ctx, `DELETE FROM messages WHERE id = ?`, id); err != nil {
 		return err
 	}
 
@@ -342,12 +348,11 @@ func (s *MemoryStore) DeleteBySession(ctx context.Context, sessionID string) err
 	}
 
 	bucket := memoryBucketForScope(scope)
-	if _, err := s.store.GetDB().ExecContext(ctx, `DELETE FROM messages WHERE session_id = ?`, bucket.BucketID); err != nil {
+	if err := s.execWithRetry(ctx, `DELETE FROM messages WHERE session_id = ?`, bucket.BucketID); err != nil {
 		return err
 	}
 
-	_, err := s.store.GetDB().ExecContext(ctx, `DELETE FROM sessions WHERE id = ?`, bucket.BucketID)
-	return err
+	return s.execWithRetry(ctx, `DELETE FROM sessions WHERE id = ?`, bucket.BucketID)
 }
 
 func (s *MemoryStore) InitSchema(ctx context.Context) error {
@@ -380,7 +385,7 @@ func (s *MemoryStore) ConfigureBank(ctx context.Context, bankID string, config *
 		return err
 	}
 
-	_, err = s.store.GetDB().ExecContext(ctx, `
+	err = s.execWithRetry(ctx, `
 		UPDATE sessions
 		SET metadata = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
@@ -459,7 +464,7 @@ func (s *MemoryStore) storeMemory(ctx context.Context, memory *domain.Memory, sc
 		role = roleValue
 	}
 
-	_, err = s.store.GetDB().ExecContext(ctx, `
+	err = s.execWithRetry(ctx, `
 		INSERT INTO messages (id, session_id, role, content, vector, metadata, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
@@ -490,7 +495,7 @@ func (s *MemoryStore) searchBuckets(ctx context.Context, bucketIDs []string, vec
 	queryVec := toFloat32(vector)
 	seen := make(map[string]*domain.MemoryWithScore)
 	for _, bucketID := range bucketIDs {
-		rows, err := s.store.GetDB().QueryContext(ctx, `
+		rows, err := s.queryWithRetry(ctx, `
 			SELECT m.id, m.session_id, s.user_id, m.role, m.content, m.vector, m.metadata, m.created_at, s.metadata
 			FROM messages m
 			JOIN sessions s ON s.id = m.session_id
@@ -545,31 +550,33 @@ func (s *MemoryStore) ensureMemoryBucket(ctx context.Context, bucket memoryBucke
 		return fmt.Errorf("memory bucket id is required")
 	}
 
-	_, err := s.store.GetSession(ctx, bucket.BucketID)
-	if err == nil {
-		return nil
-	}
-	if !errors.Is(err, core.ErrNotFound) {
-		return err
-	}
+	return retrySQLiteBusy(ctx, func() error {
+		_, err := s.store.GetSession(ctx, bucket.BucketID)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, core.ErrNotFound) {
+			return err
+		}
 
-	return s.store.CreateSession(ctx, &core.Session{
-		ID:     bucket.BucketID,
-		UserID: bucket.UserID,
-		Metadata: map[string]interface{}{
-			"kind":               "memory_bucket",
-			"namespace":          memoryBucketNamespace,
-			"scope":              encodedScopeForBucket(bucket.Scope),
-			"agentgo_scope_type": string(bucket.Scope.Type),
-			"agentgo_scope_id":   bucket.Scope.ID,
-			"logical_bank_id":    bucket.LogicalBankID,
-		},
+		return s.store.CreateSession(ctx, &core.Session{
+			ID:     bucket.BucketID,
+			UserID: bucket.UserID,
+			Metadata: map[string]interface{}{
+				"kind":               "memory_bucket",
+				"namespace":          memoryBucketNamespace,
+				"scope":              encodedScopeForBucket(bucket.Scope),
+				"agentgo_scope_type": string(bucket.Scope.Type),
+				"agentgo_scope_id":   bucket.Scope.ID,
+				"logical_bank_id":    bucket.LogicalBankID,
+			},
+		})
 	})
 }
 
 func (s *MemoryStore) cleanupEmptyBucket(ctx context.Context, bucketID string) error {
 	var remaining int
-	if err := s.store.GetDB().QueryRowContext(ctx, `
+	if err := s.queryRowWithRetry(ctx, `
 		SELECT COUNT(*)
 		FROM messages
 		WHERE session_id = ?
@@ -580,12 +587,11 @@ func (s *MemoryStore) cleanupEmptyBucket(ctx context.Context, bucketID string) e
 		return nil
 	}
 
-	_, err := s.store.GetDB().ExecContext(ctx, `DELETE FROM sessions WHERE id = ?`, bucketID)
-	return err
+	return s.execWithRetry(ctx, `DELETE FROM sessions WHERE id = ?`, bucketID)
 }
 
 func (s *MemoryStore) listMemoryBucketIDs(ctx context.Context) ([]string, error) {
-	rows, err := s.store.GetDB().QueryContext(ctx, `
+	rows, err := s.queryWithRetry(ctx, `
 		SELECT id
 		FROM sessions
 		WHERE id LIKE ?
@@ -607,7 +613,7 @@ func (s *MemoryStore) listMemoryBucketIDs(ctx context.Context) ([]string, error)
 }
 
 func (s *MemoryStore) loadStoredMemoryRow(ctx context.Context, id string) (*storedMemoryRow, error) {
-	rows, err := s.store.GetDB().QueryContext(ctx, `
+	rows, err := s.queryWithRetry(ctx, `
 		SELECT m.id, m.session_id, s.user_id, m.role, m.content, m.vector, m.metadata, m.created_at, s.metadata
 		FROM messages m
 		JOIN sessions s ON s.id = m.session_id
@@ -631,7 +637,7 @@ func (s *MemoryStore) loadStoredMemoryRow(ctx context.Context, id string) (*stor
 
 func (s *MemoryStore) loadSessionMetadata(ctx context.Context, bucketID string) (map[string]interface{}, error) {
 	var metadataJSON []byte
-	err := s.store.GetDB().QueryRowContext(ctx, `
+	err := s.queryRowWithRetry(ctx, `
 		SELECT metadata
 		FROM sessions
 		WHERE id = ?
@@ -648,6 +654,84 @@ func (s *MemoryStore) loadSessionMetadata(ctx context.Context, bucketID string) 
 		_ = json.Unmarshal(metadataJSON, &metadata)
 	}
 	return metadata, nil
+}
+
+func (s *MemoryStore) execWithRetry(ctx context.Context, query string, args ...interface{}) error {
+	return retrySQLiteBusy(ctx, func() error {
+		_, err := s.store.GetDB().ExecContext(ctx, query, args...)
+		return err
+	})
+}
+
+func (s *MemoryStore) queryWithRetry(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+	var rows *sql.Rows
+	err := retrySQLiteBusy(ctx, func() error {
+		var queryErr error
+		rows, queryErr = s.store.GetDB().QueryContext(ctx, query, args...)
+		return queryErr
+	})
+	return rows, err
+}
+
+func (s *MemoryStore) queryRowWithRetry(ctx context.Context, query string, args ...interface{}) *retryRow {
+	return &retryRow{
+		scan: func(dest ...interface{}) error {
+			return retrySQLiteBusy(ctx, func() error {
+				return s.store.GetDB().QueryRowContext(ctx, query, args...).Scan(dest...)
+			})
+		},
+	}
+}
+
+type retryRow struct {
+	scan func(dest ...interface{}) error
+}
+
+func (r *retryRow) Scan(dest ...interface{}) error {
+	return r.scan(dest...)
+}
+
+func retrySQLiteBusy(ctx context.Context, fn func() error) error {
+	var lastErr error
+	for attempt := 0; attempt < memoryStoreRetryCount; attempt++ {
+		if ctx != nil {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+		if err := fn(); err == nil {
+			return nil
+		} else {
+			lastErr = err
+			if !isSQLiteBusyErr(err) || attempt == memoryStoreRetryCount-1 {
+				return err
+			}
+		}
+
+		delay := time.Duration(attempt+1) * 75 * time.Millisecond
+		if ctx == nil {
+			time.Sleep(delay)
+			continue
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return lastErr
+}
+
+func isSQLiteBusyErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "database is locked") ||
+		strings.Contains(msg, "database table is locked") ||
+		strings.Contains(msg, "sqlite_busy")
 }
 
 func scanStoredMemoryRow(rows *sql.Rows) (*storedMemoryRow, error) {

@@ -74,6 +74,29 @@ func isExplicitMemoryRecallQuery(goal string) bool {
 	return false
 }
 
+func looksLikeInformationSeekingQuery(goal string) bool {
+	query := strings.ToLower(strings.TrimSpace(goal))
+	if query == "" {
+		return false
+	}
+	if strings.ContainsAny(goal, "?\n\r\t") || strings.Contains(goal, "？") {
+		return true
+	}
+	prefixes := []string{
+		"what ", "which ", "who ", "where ", "when ", "why ", "how ",
+		"can you", "could you", "would you", "will you",
+		"tell me", "explain", "describe", "list ", "show ", "find ", "search ", "compare ",
+		"什么", "哪个", "谁", "哪里", "什么时候", "为什么", "怎么",
+		"告诉我", "解释", "描述", "列出", "展示", "查找", "搜索", "比较",
+	}
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(query, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 func isExplicitMemoryRecallIntent(goal string, intent *IntentRecognitionResult) bool {
 	if intent != nil && strings.TrimSpace(intent.IntentType) == "memory_recall" {
 		return true
@@ -82,6 +105,9 @@ func isExplicitMemoryRecallIntent(goal string, intent *IntentRecognitionResult) 
 }
 
 func isExplicitMemorySaveIntent(goal string, intent *IntentRecognitionResult) bool {
+	if looksLikeInformationSeekingQuery(goal) {
+		return false
+	}
 	if intent != nil && strings.TrimSpace(intent.IntentType) == "memory_save" {
 		return true
 	}
@@ -223,7 +249,7 @@ func (s *Service) executeWithLLM(ctx context.Context, goal string, intent *Inten
 
 		s.emitProgress("thinking", fmt.Sprintf("[%s] Thinking...", currentAgent.Name()), round+1, "")
 
-		result, turnTokens, err := s.runOneLLMTurn(ctx, currentAgent, messages, cfg, round)
+		result, turnTokens, err := s.runOneLLMTurn(ctx, currentAgent, messages, cfg, round, goal, intent)
 		if err != nil {
 			return nil, metrics, err
 		}
@@ -347,8 +373,13 @@ func buildConversationContextMessage(summary, memoryContext, ragContext string) 
 }
 
 // runOneLLMTurn builds the prompt for this round and calls the LLM once.
-func (s *Service) runOneLLMTurn(ctx context.Context, currentAgent *Agent, messages []domain.Message, cfg *RunConfig, round int) (*domain.GenerationResult, int, error) {
+func (s *Service) runOneLLMTurn(ctx context.Context, currentAgent *Agent, messages []domain.Message, cfg *RunConfig, round int, goal string, intent *IntentRecognitionResult) (*domain.GenerationResult, int, error) {
 	tools := s.collectAllAvailableTools(ctx, currentAgent)
+	if looksLikeInformationSeekingQuery(goal) {
+		tools = filterToolDefinitions(tools, func(tool domain.ToolDefinition) bool {
+			return tool.Function.Name != "memory_save"
+		})
+	}
 	systemMsg := s.buildSystemPrompt(ctx, currentAgent)
 	genMessages := append([]domain.Message{{Role: "system", Content: systemMsg}}, messages...)
 
@@ -538,6 +569,19 @@ func toolResultToString(result interface{}) string {
 		}
 		return fmt.Sprintf("%v", v)
 	}
+}
+
+func filterToolDefinitions(tools []domain.ToolDefinition, keep func(tool domain.ToolDefinition) bool) []domain.ToolDefinition {
+	if len(tools) == 0 {
+		return nil
+	}
+	filtered := make([]domain.ToolDefinition, 0, len(tools))
+	for _, tool := range tools {
+		if keep == nil || keep(tool) {
+			filtered = append(filtered, tool)
+		}
+	}
+	return filtered
 }
 
 // appendToolRoundToMessages appends the assistant message and tool result messages.
@@ -1009,17 +1053,115 @@ func (s *Service) finalizeExecution(ctx context.Context, session *Session, goal 
 	s.ragSourcesMu.Unlock()
 
 	// Emit PostExecution Hook on per-service registry
-	s.hooks.Emit(HookEventPostExecution, HookData{
+	hookResults := s.hooks.Emit(HookEventPostExecution, HookData{
 		SessionID: session.GetID(),
 		AgentID:   session.AgentID,
 		Goal:      goal,
 		Result:    finalResult,
 		Metadata: map[string]interface{}{
-			"intent": intent.IntentType,
+			"intent":             intent.IntentType,
+			"tools_used":         append([]string(nil), res.ToolsUsed...),
+			"memory_summaries":   summarizeMemoriesForHooks(memoryMemories),
+			"memory_scope_chain": res.Metadata["memory_scope_chain"],
 		},
 	})
+	if len(hookResults) > 0 {
+		appendPostExecutionHookResults(res.Metadata, hookResults)
+	}
 
 	return res, nil
+}
+
+func summarizeMemoriesForHooks(memories []*domain.MemoryWithScore) []map[string]interface{} {
+	if len(memories) == 0 {
+		return nil
+	}
+	out := make([]map[string]interface{}, 0, len(memories))
+	for _, mem := range memories {
+		if mem == nil || mem.Memory == nil {
+			continue
+		}
+		out = append(out, map[string]interface{}{
+			"id":        mem.ID,
+			"type":      string(mem.Type),
+			"content":   strings.TrimSpace(mem.Content),
+			"score":     mem.Score,
+			"scope":     formatMemoryScopeString(mem.ScopeType, mem.ScopeID, mem.SessionID),
+			"source":    string(mem.SourceType),
+		})
+	}
+	return out
+}
+
+func formatMemoryScopeString(scopeType domain.MemoryScopeType, scopeID, sessionID string) string {
+	scopeTypeStr := strings.TrimSpace(string(scopeType))
+	scopeID = strings.TrimSpace(scopeID)
+	sessionID = strings.TrimSpace(sessionID)
+	if scopeTypeStr == "" {
+		switch {
+		case sessionID == "", sessionID == "global", sessionID == "default":
+			scopeTypeStr = "global"
+		case strings.Contains(sessionID, ":"):
+			parts := strings.SplitN(sessionID, ":", 2)
+			scopeTypeStr = strings.TrimSpace(parts[0])
+			if scopeID == "" && len(parts) == 2 {
+				scopeID = strings.TrimSpace(parts[1])
+			}
+		default:
+			scopeTypeStr = "session"
+			if scopeID == "" {
+				scopeID = sessionID
+			}
+		}
+	}
+	if scopeTypeStr == "" {
+		return ""
+	}
+	if scopeTypeStr == "global" || scopeID == "" {
+		return scopeTypeStr
+	}
+	return scopeTypeStr + ":" + scopeID
+}
+
+func appendPostExecutionHookResults(metadata map[string]interface{}, hookResults []interface{}) {
+	if len(hookResults) == 0 {
+		return
+	}
+	taskIDs, _ := metadata["async_task_ids"].([]string)
+	for _, item := range hookResults {
+		m, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(fmt.Sprint(m["type"])) != "async_agent_task" {
+			continue
+		}
+		taskID := strings.TrimSpace(fmt.Sprint(m["task_id"]))
+		if taskID == "" {
+			continue
+		}
+		taskIDs = append(taskIDs, taskID)
+	}
+	if len(taskIDs) > 0 {
+		metadata["async_task_ids"] = uniqueTaskStrings(taskIDs)
+	}
+}
+
+func uniqueTaskStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
 }
 
 // performRAGQuery performs a RAG query to get relevant documents

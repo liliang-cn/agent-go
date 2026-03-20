@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -25,6 +26,9 @@ func NewAgentGoDB(dbPath string) (*AgentGoDB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(0)
 
 	if err := configureSQLiteDB(db); err != nil {
 		db.Close()
@@ -46,19 +50,45 @@ func NewAgentGoDB(dbPath string) (*AgentGoDB, error) {
 
 // configureSQLiteDB sets up SQLite connection parameters
 func configureSQLiteDB(db *sql.DB) error {
-	_, err := db.Exec("PRAGMA journal_mode=WAL")
-	if err != nil {
-		return fmt.Errorf("failed to set WAL mode: %w", err)
-	}
-	_, err = db.Exec("PRAGMA busy_timeout=5000")
+	_, err := db.Exec("PRAGMA busy_timeout=5000")
 	if err != nil {
 		return fmt.Errorf("failed to set busy timeout: %w", err)
+	}
+	if err := execSQLiteWithRetry(db, "PRAGMA journal_mode=WAL", 5, 100*time.Millisecond); err != nil {
+		return fmt.Errorf("failed to set WAL mode: %w", err)
 	}
 	_, err = db.Exec("PRAGMA synchronous=NORMAL")
 	if err != nil {
 		return fmt.Errorf("failed to set synchronous: %w", err)
 	}
 	return nil
+}
+
+func execSQLiteWithRetry(db *sql.DB, query string, attempts int, delay time.Duration) error {
+	var lastErr error
+	for i := 0; i < attempts; i++ {
+		if _, err := db.Exec(query); err == nil {
+			return nil
+		} else {
+			lastErr = err
+			if !isSQLiteLockedError(err) || i == attempts-1 {
+				return err
+			}
+		}
+		time.Sleep(delay)
+	}
+	return lastErr
+}
+
+func isSQLiteLockedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, sql.ErrConnDone) {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "database is locked") || strings.Contains(msg, "database table is locked")
 }
 
 // initSchema creates all necessary tables

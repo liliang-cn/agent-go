@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
 )
@@ -56,5 +57,17 @@ func TestCountMessages(t *testing.T) {
 	}
 	if count != 2 {
 		t.Fatalf("expected 2 messages, got %d", count)
+	}
+}
+
+func TestIsSQLiteLockedError(t *testing.T) {
+	if !isSQLiteLockedError(errors.New("database is locked (261)")) {
+		t.Fatal("expected database is locked to be treated as retryable")
+	}
+	if !isSQLiteLockedError(errors.New("database table is locked: foo")) {
+		t.Fatal("expected database table is locked to be treated as retryable")
+	}
+	if isSQLiteLockedError(errors.New("permission denied")) {
+		t.Fatal("did not expect unrelated sqlite error to be treated as retryable")
 	}
 }

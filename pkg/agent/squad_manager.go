@@ -662,7 +662,15 @@ func (m *SquadManager) getOrBuildService(name string) (*Service, error) {
 	builder := New(model.Name)
 	systemPrompt := strings.TrimSpace(model.Instructions)
 
-	if cfg := m.configuredAgentGoConfig(); cfg != nil {
+	cfg := m.cfg
+	if cfg == nil {
+		var loadErr error
+		cfg, loadErr = config.Load("")
+		if loadErr != nil {
+			cfg = nil
+		}
+	}
+	if cfg != nil {
 		agentgoCfg = cfg
 		if len(model.Squads) > 0 {
 			systemPrompt = m.buildTeamSystemPromptForModel(cfg, model) + "\n\n" + buildTeamMemberPrompt(model)

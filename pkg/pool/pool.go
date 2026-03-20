@@ -3,6 +3,7 @@ package pool
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
 	"strings"
@@ -16,6 +17,11 @@ import (
 
 // SelectionStrategy 选择策略
 type SelectionStrategy string
+
+var (
+	ErrProviderAlreadyExists = errors.New("provider already exists")
+	ErrProviderNotFound      = errors.New("provider not found")
+)
 
 const (
 	StrategyRoundRobin SelectionStrategy = "round_robin"
@@ -573,7 +579,7 @@ func (p *Pool) AddProvider(prov Provider) error {
 	defer p.mu.Unlock()
 
 	if _, exists := p.clients[prov.Name]; exists {
-		return fmt.Errorf("provider %q already exists; use UpdateProvider to modify it", prov.Name)
+		return fmt.Errorf("%w: %q; use UpdateProvider to modify it", ErrProviderAlreadyExists, prov.Name)
 	}
 
 	if prov.MaxConcurrency <= 0 {
@@ -601,7 +607,7 @@ func (p *Pool) RemoveProvider(name string) error {
 
 	w, ok := p.clients[name]
 	if !ok {
-		return fmt.Errorf("provider %q not found", name)
+		return fmt.Errorf("%w: %q", ErrProviderNotFound, name)
 	}
 
 	w.client.Close()
@@ -617,7 +623,7 @@ func (p *Pool) UpdateProvider(prov Provider) error {
 
 	old, ok := p.clients[prov.Name]
 	if !ok {
-		return fmt.Errorf("provider %q not found; use AddProvider to create it", prov.Name)
+		return fmt.Errorf("%w: %q; use AddProvider to create it", ErrProviderNotFound, prov.Name)
 	}
 
 	if prov.MaxConcurrency <= 0 {

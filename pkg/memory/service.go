@@ -278,6 +278,9 @@ func (s *Service) StoreIfWorthwhile(ctx context.Context, req *domain.MemoryStore
 	if len(cleanGoal) < 5 || cleanGoal == "hi" || cleanGoal == "hello" || cleanGoal == "hey" {
 		return nil
 	}
+	if shouldSkipAutoStoreForTaskGoal(req.TaskGoal) {
+		return nil
+	}
 
 	prompt := s.buildSummaryPrompt(req)
 	schema := map[string]interface{}{
@@ -873,6 +876,68 @@ func heuristicMemorySummary(req *domain.MemoryStoreRequest) *domain.MemorySummar
 		Memories:    []domain.MemoryItem{item},
 		Reasoning:   "Stored via deterministic dialogue heuristic fallback.",
 	}
+}
+
+func shouldSkipAutoStoreForTaskGoal(goal string) bool {
+	goal = strings.TrimSpace(goal)
+	if goal == "" {
+		return true
+	}
+	if looksLikeExplicitMemorySave(goal) {
+		return false
+	}
+	return looksLikeInformationSeekingQuestion(goal)
+}
+
+func looksLikeExplicitMemorySave(goal string) bool {
+	lower := strings.ToLower(strings.TrimSpace(goal))
+	if lower == "" {
+		return false
+	}
+	prefixes := []string{
+		"remember:",
+		"save to memory",
+		"please remember",
+		"remember that",
+		"store this in memory",
+		"keep this in mind",
+		"记住:",
+		"记住：",
+		"请记住",
+		"帮我记住",
+		"保存到记忆",
+		"存到记忆",
+	}
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func looksLikeInformationSeekingQuestion(goal string) bool {
+	trimmed := strings.TrimSpace(goal)
+	if trimmed == "" {
+		return false
+	}
+	lower := strings.ToLower(trimmed)
+	if strings.ContainsAny(trimmed, "?\n\r\t") || strings.Contains(trimmed, "？") {
+		return true
+	}
+	prefixes := []string{
+		"what ", "which ", "who ", "where ", "when ", "why ", "how ",
+		"can you", "could you", "would you", "will you",
+		"tell me", "explain", "describe", "list ", "show ", "find ", "search ", "compare ",
+		"什么", "哪个", "谁", "哪里", "什么时候", "为什么", "怎么",
+		"告诉我", "解释", "描述", "列出", "展示", "查找", "搜索", "比较",
+	}
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func looksLikeHeuristicMemoryStatement(text string) bool {

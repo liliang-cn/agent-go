@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -762,6 +763,9 @@ func (s *GlobalPoolService) syncProviderToPool(p *store.LLMProvider) error {
 		return nil
 	}
 	if err := s.llmPool.UpdateProvider(prov); err != nil {
+		if !errors.Is(err, pool.ErrProviderNotFound) {
+			return err
+		}
 		// Provider not in pool yet — add it.
 		return s.llmPool.AddProvider(prov)
 	}
@@ -796,6 +800,9 @@ func (s *GlobalPoolService) SaveEmbeddingProvider(p *store.EmbeddingProvider) er
 		return nil
 	}
 	if err := s.embeddingPool.UpdateProvider(prov); err != nil {
+		if !errors.Is(err, pool.ErrProviderNotFound) {
+			return err
+		}
 		return s.embeddingPool.AddProvider(prov)
 	}
 	return nil

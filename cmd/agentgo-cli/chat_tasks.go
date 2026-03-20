@@ -81,6 +81,15 @@ func (f *chatTaskFollower) StartTask(ctx context.Context, taskID string) {
 	go f.followTask(ctx, taskID)
 }
 
+func (f *chatTaskFollower) StartTaskIDs(ctx context.Context, taskIDs []string) {
+	if f == nil {
+		return
+	}
+	for _, taskID := range taskIDs {
+		f.StartTask(ctx, taskID)
+	}
+}
+
 func (f *chatTaskFollower) followTask(ctx context.Context, taskID string) {
 	events, unsubscribe, err := f.manager.SubscribeTask(taskID)
 	if err != nil {
@@ -98,6 +107,9 @@ func (f *chatTaskFollower) followTask(ctx context.Context, taskID string) {
 				return
 			}
 			renderChatTaskEvent(evt)
+			if evt.Type == agent.TaskEventTypeCompleted || evt.Type == agent.TaskEventTypeFailed || evt.Type == agent.TaskEventTypeCancelled {
+				f.StartSessionTasks(ctx, evt.SessionID)
+			}
 		}
 	}
 }
@@ -110,14 +122,23 @@ func renderChatTaskEvent(evt *agent.TaskEvent) {
 	taskLabel := shortTaskID(evt.TaskID)
 	switch evt.Type {
 	case agent.TaskEventTypeCreated:
+		if isFollowUpAgentEvent(evt.AgentName) && !shouldRenderChatTaskRuntimeEvent() {
+			return
+		}
 		printChatTaskLine("%s [%s] %s", cliui.TaskCreated, taskLabel, firstNonEmpty(evt.Message, "Task created."))
 	case agent.TaskEventTypeStarted:
+		if isFollowUpAgentEvent(evt.AgentName) && !shouldRenderChatTaskRuntimeEvent() {
+			return
+		}
 		printChatTaskLine("%s [%s] %s", cliui.TaskStarted, taskLabel, firstNonEmpty(evt.Message, "Task started."))
 	case agent.TaskEventTypeRuntime:
 		if shouldRenderChatTaskRuntimeEvent() {
 			renderRuntimeTaskEvent(taskLabel, evt.Runtime)
 		}
 	case agent.TaskEventTypeCompleted:
+		if renderFollowUpSupplement(evt.AgentName, evt.Message) {
+			return
+		}
 		line := fmt.Sprintf("%s [%s] Task completed", cliui.Success, taskLabel)
 		if evt.AgentName != "" {
 			line += fmt.Sprintf(" by @%s", evt.AgentName)
@@ -172,6 +193,9 @@ func printChatTaskSnapshot(task *agent.AsyncTask) {
 	taskLabel := shortTaskID(task.ID)
 	switch task.Status {
 	case agent.AsyncTaskStatusCompleted:
+		if renderFollowUpSupplement(task.AgentName, task.ResultText) {
+			return
+		}
 		line := fmt.Sprintf("%s [%s] Task completed", cliui.Success, taskLabel)
 		if text := strings.TrimSpace(task.ResultText); text != "" {
 			printChatTaskBlock(line, text)
@@ -204,6 +228,30 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+func executionResultAsyncTaskIDs(result *agent.ExecutionResult) []string {
+	if result == nil || len(result.Metadata) == 0 {
+		return nil
+	}
+	raw, ok := result.Metadata["async_task_ids"]
+	if !ok {
+		return nil
+	}
+	switch typed := raw.(type) {
+	case []string:
+		return append([]string(nil), typed...)
+	case []interface{}:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if text := strings.TrimSpace(fmt.Sprint(item)); text != "" {
+				out = append(out, text)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
 func isTerminalTask(status agent.AsyncTaskStatus) bool {
 	switch status {
 	case agent.AsyncTaskStatusCompleted, agent.AsyncTaskStatusFailed, agent.AsyncTaskStatusCancelled:
@@ -218,6 +266,36 @@ func formatChatTaskToolCall(name string) string {
 		return "starting tool"
 	}
 	return fmt.Sprintf("using %s", name)
+}
+
+func renderFollowUpSupplement(agentName, text string) bool {
+	agentName = strings.TrimSpace(agentName)
+	if agentName == "" {
+		return false
+	}
+	text = strings.TrimSpace(text)
+	if text == "" || text == "NO_MEMORY_ACTION_NEEDED" {
+		return true
+	}
+	if !strings.HasPrefix(text, "Supplement:") {
+		if !strings.EqualFold(agentName, agent.ArchivistAgentName) {
+			return false
+		}
+	}
+	printChatTaskBlock(fmt.Sprintf("@%s: %s", agentName, text))
+	return true
+}
+
+func isFollowUpAgentEvent(agentName string) bool {
+	agentName = strings.TrimSpace(agentName)
+	switch {
+	case strings.EqualFold(agentName, agent.ArchivistAgentName):
+		return true
+	case strings.EqualFold(agentName, agent.VerifierAgentName):
+		return true
+	default:
+		return false
+	}
 }
 
 func printChatTaskLine(format string, args ...interface{}) {

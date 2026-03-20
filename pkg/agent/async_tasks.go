@@ -423,6 +423,14 @@ func (m *SquadManager) forwardRuntimeEvents(taskID string, events <-chan *Event)
 }
 
 func (m *SquadManager) completeAsyncTask(taskID, finalText, agentName string) {
+	if strings.EqualFold(strings.TrimSpace(agentName), ArchivistAgentName) {
+		if displayText, verifierPrompt, ok := parseArchivistVerifierEscalation(finalText); ok {
+			finalText = displayText
+			if strings.TrimSpace(verifierPrompt) != "" {
+				_, _ = m.SubmitAgentTask(context.Background(), m.taskSessionID(taskID), VerifierAgentName, verifierPrompt)
+			}
+		}
+	}
 	finishedAt := time.Now()
 	task := m.updateAsyncTask(taskID, func(existing *AsyncTask) {
 		existing.Status = AsyncTaskStatusCompleted
@@ -442,6 +450,15 @@ func (m *SquadManager) completeAsyncTask(taskID, finalText, agentName string) {
 		Message:   task.ResultText,
 		Timestamp: finishedAt,
 	}, true)
+}
+
+func (m *SquadManager) taskSessionID(taskID string) string {
+	m.taskMu.RLock()
+	defer m.taskMu.RUnlock()
+	if task := m.asyncTasks[taskID]; task != nil {
+		return strings.TrimSpace(task.SessionID)
+	}
+	return ""
 }
 
 func (m *SquadManager) failAsyncTask(taskID, agentName string, err error) {

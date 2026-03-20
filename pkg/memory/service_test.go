@@ -461,15 +461,30 @@ func TestService_StoreIfWorthwhile(t *testing.T) {
 			TaskResult: "I don't know yet.",
 		}
 
-		isolatedLLM.On("GenerateStructured", ctx, mock.Anything, mock.Anything, mock.Anything).Return(&domain.StructuredResult{
-			Raw:   `{"should_store": false, "memories": []}`,
-			Valid: true,
-		}, nil)
+		err := isolatedService.StoreIfWorthwhile(ctx, req)
+
+		assert.NoError(t, err)
+		isolatedLLM.AssertNotCalled(t, "GenerateStructured")
+		isolatedStore.AssertNotCalled(t, "Store")
+		isolatedEmbedder.AssertNotCalled(t, "Embed")
+	})
+
+	t.Run("Question-like task goals never auto-store even if LLM says yes", func(t *testing.T) {
+		isolatedStore := new(MockMemoryStore)
+		isolatedLLM := new(MockGenerator)
+		isolatedEmbedder := new(MockEmbedder)
+		isolatedService := NewService(isolatedStore, isolatedLLM, isolatedEmbedder, nil)
+
+		req := &domain.MemoryStoreRequest{
+			SessionID:  "session-question-2",
+			TaskGoal:   "What is my favorite snack? Reply with only the snack.",
+			TaskResult: "cashew-7714",
+		}
 
 		err := isolatedService.StoreIfWorthwhile(ctx, req)
 
 		assert.NoError(t, err)
-		isolatedLLM.AssertExpectations(t)
+		isolatedLLM.AssertNotCalled(t, "GenerateStructured")
 		isolatedStore.AssertNotCalled(t, "Store")
 		isolatedEmbedder.AssertNotCalled(t, "Embed")
 	})

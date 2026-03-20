@@ -10,10 +10,15 @@ var delegableBuiltInAgentNames = []string{
 	defaultAssistantAgentName,
 	defaultOperatorAgentName,
 	defaultStakeholderAgentName,
+	defaultArchivistAgentName,
+	defaultVerifierAgentName,
 }
 
 func (m *SquadManager) registerBuiltInAgentDelegationTools(svc *Service, model *AgentModel) {
-	if svc == nil || model == nil || isBuiltInAgentModel(model) {
+	if svc == nil || model == nil {
+		return
+	}
+	if isBuiltInAgentModel(model) && !strings.EqualFold(strings.TrimSpace(model.Name), defaultConciergeAgentName) {
 		return
 	}
 
@@ -44,12 +49,12 @@ func (m *SquadManager) registerBuiltInAgentDelegationTools(svc *Service, model *
 		return out, nil
 	})
 
-	register("delegate_builtin_agent", "Synchronously delegate a focused task to one built-in standalone agent such as Operator, Assistant, or Stakeholder and wait for the inline result.", map[string]interface{}{
+	register("delegate_builtin_agent", "Synchronously delegate a focused task to one built-in standalone agent such as Operator, Assistant, Stakeholder, Archivist, or Verifier and wait for the inline result.", map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
 			"agent_name": map[string]interface{}{
 				"type":        "string",
-				"description": "Built-in standalone agent name: Assistant, Operator, or Stakeholder.",
+				"description": "Built-in standalone agent name: Assistant, Operator, Stakeholder, Archivist, or Verifier.",
 			},
 			"prompt": map[string]interface{}{
 				"type":        "string",
@@ -82,7 +87,7 @@ func (m *SquadManager) registerBuiltInAgentDelegationTools(svc *Service, model *
 		"properties": map[string]interface{}{
 			"agent_name": map[string]interface{}{
 				"type":        "string",
-				"description": "Built-in standalone agent name: Assistant, Operator, or Stakeholder.",
+				"description": "Built-in standalone agent name: Assistant, Operator, Stakeholder, Archivist, or Verifier.",
 			},
 			"prompt": map[string]interface{}{
 				"type":        "string",

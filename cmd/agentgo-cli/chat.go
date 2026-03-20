@@ -148,6 +148,9 @@ func runChat(cmd *cobra.Command, args []string) error {
 	}
 
 	displayResult(result)
+	if follower := newChatTaskFollower(agentManager); follower != nil {
+		follower.StartTaskIDs(ctx, executionResultAsyncTaskIDs(result))
+	}
 
 	// Show session ID after first message
 	if currentSessionID == "" {
@@ -168,7 +171,7 @@ func buildChatConciergeService(chatCfg *config.Config, agentDBPath string, manag
 		}
 	}
 
-	systemPrompt := "You are Concierge, the always-on intake agent for AgentGo. Accept user requests, clarify ambiguous asks, answer simple questions directly, inspect squad or agent status, and submit squad or agent work when deeper execution is needed. Prefer lightweight orchestration over doing heavy work yourself. For repository, filesystem, code generation, or web lookup tasks, submit the work to Assistant by default unless the user names a different target. Acknowledge queued work clearly and never pretend background work is already finished."
+	systemPrompt := "You are Concierge, the always-on dispatch agent for AgentGo. Your only job is intake, routing, status inspection, and task dispatch. Do not do substantive work yourself unless the user is asking for dispatch metadata or task status. For general work delegate to Assistant. For execution and file work delegate to Operator. For memory-related work, preference extraction, recall, and memory hygiene delegate to Archivist. For verification or conflict checking delegate to Verifier. For business or product judgment delegate to Stakeholder. Keep replies concise, acknowledge queued work clearly, and never pretend background work is already finished."
 	if manager != nil {
 		if model, err := manager.GetAgentByName(agent.BuiltInConciergeAgentName); err == nil && strings.TrimSpace(model.Instructions) != "" {
 			systemPrompt = strings.TrimSpace(model.Instructions)
@@ -182,9 +185,6 @@ func buildChatConciergeService(chatCfg *config.Config, agentDBPath string, manag
 		WithDebug(debug).
 		WithProgress(progressCallback)
 
-	if !chatNoMemory {
-		builder.WithMemory(agent.WithMemoryStoreType(chatCfg.GetMemoryStoreType().String()))
-	}
 	if chatWithPTC {
 		builder.WithPTC()
 	}
@@ -452,6 +452,9 @@ func runInteractiveChat(ctx context.Context, svc *agent.Service, manager *agent.
 					fmt.Printf("%s Error: %v\n\n", cliui.Error, err)
 				} else {
 					displayResult(result)
+					if taskFollower != nil {
+						taskFollower.StartTaskIDs(chatCtx, executionResultAsyncTaskIDs(result))
+					}
 					if taskFollower != nil {
 						taskFollower.StartSessionTasks(chatCtx, svc.CurrentSessionID())
 					}

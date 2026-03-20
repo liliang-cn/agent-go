@@ -6,6 +6,7 @@ import (
 
 	"github.com/liliang-cn/agent-go/pkg/config"
 	"github.com/liliang-cn/agent-go/pkg/pool"
+	"github.com/liliang-cn/agent-go/pkg/store"
 )
 
 type modelNamer interface {
@@ -161,5 +162,68 @@ func TestGlobalPoolServiceSaveLLMPoolConfigPersistsEmbeddingModel(t *testing.T) 
 
 	if got := embeddingClient.GetModelName(); got != "embed-v2" {
 		t.Fatalf("expected embedding client model embed-v2, got %q", got)
+	}
+}
+
+func TestGlobalPoolServiceSaveEmbeddingProviderUpdatesExistingProvider(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Home = t.TempDir()
+	cfg.ApplyHomeLayout()
+	cfg.LLM.Enabled = true
+	cfg.LLM.Strategy = pool.StrategyLeastLoad
+	cfg.LLM.Providers = []pool.Provider{
+		{Name: "openai_local", BaseURL: "http://local.example/v1", Key: "x", ModelName: "gpt-oss", MaxConcurrency: 2, Capability: 5},
+	}
+	cfg.RAG.Enabled = false
+
+	svc := &GlobalPoolService{}
+	if err := svc.Initialize(context.Background(), cfg); err != nil {
+		t.Fatalf("Initialize failed: %v", err)
+	}
+
+	initial := &store.EmbeddingProvider{
+		Name:           "embedder",
+		BaseURL:        "http://embed.example/v1",
+		Key:            "k1",
+		ModelName:      "embed-v1",
+		MaxConcurrency: 2,
+		Capability:     3,
+		Enabled:        true,
+	}
+	if err := svc.SaveEmbeddingProvider(initial); err != nil {
+		t.Fatalf("SaveEmbeddingProvider initial failed: %v", err)
+	}
+
+	updated := &store.EmbeddingProvider{
+		Name:           "embedder",
+		BaseURL:        "http://embed2.example/v1",
+		Key:            "k2",
+		ModelName:      "embed-v2",
+		MaxConcurrency: 4,
+		Capability:     4,
+		Enabled:        true,
+	}
+	if err := svc.SaveEmbeddingProvider(updated); err != nil {
+		t.Fatalf("SaveEmbeddingProvider update failed: %v", err)
+	}
+
+	got, err := svc.GetEmbeddingProvider("embedder")
+	if err != nil {
+		t.Fatalf("GetEmbeddingProvider failed: %v", err)
+	}
+	if got.BaseURL != updated.BaseURL {
+		t.Fatalf("expected base URL %q, got %q", updated.BaseURL, got.BaseURL)
+	}
+	if got.ModelName != updated.ModelName {
+		t.Fatalf("expected model %q, got %q", updated.ModelName, got.ModelName)
+	}
+
+	client, err := svc.embeddingPool.GetByName("embedder")
+	if err != nil {
+		t.Fatalf("embeddingPool.GetByName failed: %v", err)
+	}
+	defer svc.ReleaseEmbedding(client)
+	if gotModel := client.GetModelName(); gotModel != "embed-v2" {
+		t.Fatalf("expected live embedding pool model %q, got %q", "embed-v2", gotModel)
 	}
 }

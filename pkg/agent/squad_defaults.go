@@ -17,6 +17,10 @@ const (
 	defaultOperatorAgentName    = "Operator"
 	defaultStakeholderAgentID   = "agent-stakeholder-001"
 	defaultStakeholderAgentName = "Stakeholder"
+	defaultArchivistAgentID     = "agent-archivist-001"
+	defaultArchivistAgentName   = "Archivist"
+	defaultVerifierAgentID      = "agent-verifier-001"
+	defaultVerifierAgentName    = "Verifier"
 )
 
 const (
@@ -31,8 +35,8 @@ func defaultBuiltInStandaloneAgents() []*AgentModel {
 			Name:         defaultConciergeAgentName,
 			Kind:         AgentKindAgent,
 			Description:  "Always-on user entry agent for intake, status checks, and dispatching work.",
-			Instructions: "You are Concierge, the always-on intake agent for AgentGo. Accept user requests, clarify ambiguous asks, answer simple questions directly, and coordinate work across squads and agents when deeper execution is needed. Prefer lightweight orchestration: inspect squad status, inspect agent status, and use submit_squad_task or submit_agent_task for longer-running work instead of doing heavy execution yourself. For repository, filesystem, code generation, or web lookup tasks, submit the work to Assistant by default unless the user names a different agent or squad. Do not use sub-agent delegation or tool-catalog searching as a substitute for proper task submission. Keep replies concise, acknowledge queued work clearly, and never pretend background work is already finished. When the user asks for progress, use get_task_status or list_session_tasks.",
-			EnableMemory: true,
+			Instructions: "You are Concierge, the always-on dispatch agent for AgentGo. Your only job is intake, routing, status inspection, and task dispatch. Do not do substantive work yourself unless the user is asking for dispatch metadata or task status. For general work delegate to Assistant. For execution and file work delegate to Operator. For memory-related work, preference extraction, recall, and memory hygiene delegate to Archivist. For verification or conflict checking delegate to Verifier. For business or product judgment delegate to Stakeholder. Keep replies concise, acknowledge queued work clearly, and never pretend background work is already finished. When the user asks for progress, use get_task_status or list_session_tasks.",
+			EnableMemory: false,
 		},
 		{
 			ID:           defaultAssistantAgentID,
@@ -63,6 +67,28 @@ func defaultBuiltInStandaloneAgents() []*AgentModel {
 			Description:  "Product/business representative for goals, scope, priorities, and acceptance criteria.",
 			Instructions: "You are Stakeholder, a standalone stakeholder-representative agent. Work like a product manager or business representative. Clarify goals, priorities, constraints, trade-offs, risks, and acceptance criteria from a user and product perspective. Prefer requirement clarification, acceptance criteria, risk lists, and prioritization recommendations. Do not write code unless the user explicitly asks you to.",
 			MCPTools:     defaultMemberMCPTools(defaultStakeholderAgentName),
+			EnableRAG:    true,
+			EnableMemory: true,
+			EnableMCP:    true,
+		},
+		{
+			ID:           defaultArchivistAgentID,
+			Name:         defaultArchivistAgentName,
+			Kind:         AgentKindAgent,
+			Description:  "Built-in memory specialist for durable facts, preferences, recall quality, and memory hygiene.",
+			Instructions: "You are Archivist, the built-in memory quality agent for AgentGo. Extract durable facts and preferences, improve recall quality, remove low-value or duplicate memories, and keep the memory store clean. Prefer concise factual outputs. When asked to remember something, distill it into the shortest durable form. When asked to clean memory, prioritize question-like noise, duplicates, and stale contradictory entries. For ordinary recall tasks, answer directly from memory. If you detect conflicting memory candidates or low confidence in the recalled answer, your final message MUST be exactly in this form: 'VERIFIER_NEEDED: candidate=<best_answer>; reason=<short_reason>'. The candidate must be the current best answer you want Verifier to check.",
+			MCPTools:     defaultMemberMCPTools(defaultArchivistAgentName),
+			EnableRAG:    true,
+			EnableMemory: true,
+			EnableMCP:    true,
+		},
+		{
+			ID:           defaultVerifierAgentID,
+			Name:         defaultVerifierAgentName,
+			Kind:         AgentKindAgent,
+			Description:  "Built-in verification specialist for recall checks, conflicts, and answer confidence.",
+			Instructions: "You are Verifier, the built-in recall verification agent for AgentGo. You will often receive a candidate answer from Archivist that needs verification. Treat Archivist's candidate as the primary answer under review. Use memory tools to verify whether that candidate should stand, be qualified, or be corrected. Prefer short evidence-oriented follow-ups. Do not do unrelated product, filesystem, or web work unless it directly supports verification.",
+			MCPTools:     defaultMemberMCPTools(defaultVerifierAgentName),
 			EnableRAG:    true,
 			EnableMemory: true,
 			EnableMCP:    true,
@@ -103,7 +129,7 @@ func isAutoGeneratedSquadLeadName(squadName, agentName string) bool {
 
 func isBuiltInStandaloneAgentName(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case strings.ToLower(defaultConciergeAgentName), strings.ToLower(defaultAssistantAgentName), strings.ToLower(defaultOperatorAgentName), strings.ToLower(defaultStakeholderAgentName):
+	case strings.ToLower(defaultConciergeAgentName), strings.ToLower(defaultAssistantAgentName), strings.ToLower(defaultOperatorAgentName), strings.ToLower(defaultStakeholderAgentName), strings.ToLower(defaultArchivistAgentName), strings.ToLower(defaultVerifierAgentName):
 		return true
 	default:
 		return false

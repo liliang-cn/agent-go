@@ -60,3 +60,10 @@ func TestIsExplicitMemorySaveIntentPrefersIntentSignal(t *testing.T) {
 		t.Fatal("expected memory_save intent to trigger explicit save path")
 	}
 }
+
+func TestIsExplicitMemorySaveIntentRejectsQuestionLikeGoal(t *testing.T) {
+	intent := &IntentRecognitionResult{IntentType: "memory_save", Confidence: 0.9}
+	if isExplicitMemorySaveIntent("What is my favorite snack? Reply with only the snack.", intent) {
+		t.Fatal("did not expect question-like goal to trigger explicit memory save path")
+	}
+}

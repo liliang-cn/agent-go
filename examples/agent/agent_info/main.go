@@ -19,18 +19,12 @@ func main() {
 	}
 
 	// ============================================================
-	// 创建带有所有功能的 Agent
+	// 创建一个最小可运行的 Agent
 	// ============================================================
-	fmt.Println("=== Creating Agent with all features ===")
+	fmt.Println("=== Creating Simple Agent ===")
 
 	agentSvc, err := agent.New("info-agent").
 		WithConfig(cfg).
-		WithRAG().
-		WithMemory().
-		WithMCP().
-		WithSkills().
-		WithDebug().
-		WithPTC().
 		Build()
 	if err != nil {
 		log.Fatalf("Failed to create agent: %v", err)
@@ -112,81 +106,24 @@ func main() {
 	}
 
 	// ============================================================
-	// 使用 RunStream + 高级 API 测试运行
+	// 简单问答测试
 	// ============================================================
 	fmt.Println("\n" + strings.Repeat("=", 60))
-	fmt.Println("Test Run with RunStream (High-level API)")
+	fmt.Println("Simple Ask Test")
 	fmt.Println(strings.Repeat("=", 60))
 
-	// 检查运行状态
 	fmt.Printf("\n📊 Status: %s\n", agentSvc.Status())
 	fmt.Printf("📊 IsRunning: %v\n", agentSvc.IsRunning())
+	fmt.Println("\n💬 Question: 你好，请用一句话介绍你自己")
 
-	// 使用高级 API - 链式调用
-	fmt.Println("\n🔄 Running with fluent API...")
-	eventChan, err := agentSvc.RunStream(ctx, "你好，请用一句话介绍你自己")
+	answer, err := agentSvc.Ask(ctx, "你好，请用一句话介绍你自己")
 	if err != nil {
-		fmt.Printf("❌ Error starting stream: %v\n", err)
+		fmt.Printf("❌ Ask failed: %v\n", err)
 		return
 	}
 
-	// 使用链式 API - 简单回调
-	handlers := agent.NewEventHandlerBuilder().
-		OnThinking(func(content string) {
-			fmt.Printf("🤔 %s\n", content)
-		}).
-		OnToolCall(func(name string, args map[string]interface{}) {
-			fmt.Printf("🔧 Calling tool: %s(%v)\n", name, args)
-		}).
-		OnToolResult(func(name string, result any) {
-			fmt.Printf("📝 Tool result: %s\n", name)
-		}).
-		OnComplete(func(content string) {
-			fmt.Printf("✅ Complete: %s\n", content)
-		}).
-		OnError(func(content string) {
-			fmt.Printf("❌ Error: %s\n", content)
-		}).
-		Build()
+	fmt.Printf("✅ Answer: %s\n", answer)
 
-	// 处理事件
-	for event := range eventChan {
-		handlers.Handle(event)
-	}
-
-	// 方式 2: 直接 switch 处理
-	fmt.Println("\n" + strings.Repeat("=", 60))
-	fmt.Println("Test Run with Direct Switch")
-	fmt.Println(strings.Repeat("=", 60))
-
-	eventChan2, _ := agentSvc.RunStream(ctx, "你知道些什么?")
-	fmt.Println("\n🔄 Running with direct switch...")
-
-	// 使用简单回调处理事件
-	for {
-		select {
-		case event, ok := <-eventChan2:
-			if !ok {
-				goto done
-			}
-			switch event.Type {
-			case agent.EventTypeThinking:
-				fmt.Printf("🤔 %s\n", event.Content)
-			case agent.EventTypeToolCall:
-				fmt.Printf("🔧 %s(%v)\n", event.ToolName, event.ToolArgs)
-			case agent.EventTypeToolResult:
-				fmt.Printf("📝 %s done\n", event.ToolName)
-			case agent.EventTypeComplete:
-				fmt.Printf("✅ %s\n", event.Content)
-			case agent.EventTypeError:
-				fmt.Printf("❌ %s\n", event.Content)
-			}
-		case <-ctx.Done():
-			goto done
-		}
-	}
-
-done:
 	// 再次检查状态
 	fmt.Printf("\n📊 Status after run: %s\n", agentSvc.Status())
 	fmt.Printf("📊 IsRunning after run: %v\n", agentSvc.IsRunning())

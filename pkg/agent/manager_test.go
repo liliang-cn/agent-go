@@ -101,8 +101,10 @@ func TestSeedDefaultMembersCreatesBuiltInsByDefault(t *testing.T) {
 	if concierge.Description != "Always-on user entry agent for intake, status checks, and dispatching work." {
 		t.Fatalf("unexpected Concierge description: %q", concierge.Description)
 	}
-	if !strings.Contains(concierge.Instructions, "inspect squad status") || !strings.Contains(concierge.Instructions, "submit_squad_task") {
-		t.Fatalf("expected Concierge prompt to focus on orchestration, got %q", concierge.Instructions)
+	if !strings.Contains(concierge.Instructions, "only job is intake, routing, status inspection, and task dispatch") ||
+		!strings.Contains(concierge.Instructions, "delegate to Archivist") ||
+		!strings.Contains(concierge.Instructions, "delegate to Verifier") {
+		t.Fatalf("expected Concierge prompt to focus on dispatch-only routing, got %q", concierge.Instructions)
 	}
 	if concierge.EnableMCP || len(concierge.MCPTools) != 0 {
 		t.Fatalf("expected Concierge to stay lightweight without default MCP tools, got enable_mcp=%v tools=%v", concierge.EnableMCP, concierge.MCPTools)
