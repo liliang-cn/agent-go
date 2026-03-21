@@ -17,8 +17,6 @@ ui/dist/
 cmd/agentgo-ui/dist/
 ui-config.json
 
-.agentgo/
-
 workspace/
 
 progress.md
