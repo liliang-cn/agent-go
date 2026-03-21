@@ -407,7 +407,7 @@ func (s *GlobalPoolService) Chat(ctx context.Context, message string, opts ChatO
 		}
 		fmt.Printf("\n🐛 DEBUG - TOKENS")
 		fmt.Printf("Prompt tokens (est.): %d\n", promptTokens)
-		fmt.Println("============================================\n")
+		fmt.Println("============================================")
 	}
 
 	// Direct LLM chat doesn't use tools here, but we use the flexible GenerateWithTools
@@ -428,7 +428,7 @@ func (s *GlobalPoolService) Chat(ctx context.Context, message string, opts ChatO
 		fmt.Println(answer)
 		fmt.Printf("\n🐛 DEBUG - TOKENS")
 		fmt.Printf("Prompt tokens (est.): %d | Response tokens (est.): %d | Total (est.): %d\n", promptTokens, respTokens, promptTokens+respTokens)
-		fmt.Println("============================================\n")
+		fmt.Println("============================================")
 	}
 
 	// 5. Automatic Persistence to agentgo.db
@@ -499,7 +499,7 @@ func (s *GlobalPoolService) StreamChat(ctx context.Context, message string, opts
 		}
 		fmt.Printf("\n🐛 DEBUG - TOKENS")
 		fmt.Printf("Prompt tokens (est.): %d\n", promptTokens)
-		fmt.Println("============================================\n")
+		fmt.Println("============================================")
 	}
 
 	// 4. Stream and Capture Answer
@@ -528,7 +528,7 @@ func (s *GlobalPoolService) StreamChat(ctx context.Context, message string, opts
 		fmt.Println("\n============================================")
 		fmt.Println("🐛 DEBUG - RESPONSE")
 		fmt.Printf("Response tokens (est.): %d | Total (est.): %d\n", respTokens, promptTokens+respTokens)
-		fmt.Println("============================================\n")
+		fmt.Println("============================================")
 	}
 
 	// 5. Automatic Persistence to agentgo.db once stream ends

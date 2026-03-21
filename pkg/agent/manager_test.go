@@ -64,8 +64,11 @@ func TestSeedDefaultMembersCreatesBuiltInsByDefault(t *testing.T) {
 	if assistant.Kind != AgentKindAgent {
 		t.Fatalf("expected Assistant standalone kind, got %q", assistant.Kind)
 	}
-	if len(assistant.Squads) != 0 {
-		t.Fatalf("expected Assistant to be standalone, got squads=%+v", assistant.Squads)
+	if len(assistant.Squads) != 1 {
+		t.Fatalf("expected Assistant to be in default squad, got squads=%+v", assistant.Squads)
+	}
+	if assistant.Squads[0].Role != AgentKindSpecialist {
+		t.Fatalf("expected Assistant role specialist, got %q", assistant.Squads[0].Role)
 	}
 
 	operator, err := manager.GetAgentByName("Operator")
@@ -75,8 +78,11 @@ func TestSeedDefaultMembersCreatesBuiltInsByDefault(t *testing.T) {
 	if operator.Kind != AgentKindAgent {
 		t.Fatalf("expected Operator standalone kind, got %q", operator.Kind)
 	}
-	if len(operator.Squads) != 0 {
-		t.Fatalf("expected Operator to be standalone, got squads=%+v", operator.Squads)
+	if len(operator.Squads) != 1 {
+		t.Fatalf("expected Operator to be in default squad, got squads=%+v", operator.Squads)
+	}
+	if operator.Squads[0].Role != AgentKindSpecialist {
+		t.Fatalf("expected Operator role specialist, got %q", operator.Squads[0].Role)
 	}
 	if operator.Description != "An execution-focused standalone operator for file work, environment checks, and runnable validation steps." {
 		t.Fatalf("unexpected Operator description: %q", operator.Description)
@@ -95,8 +101,11 @@ func TestSeedDefaultMembersCreatesBuiltInsByDefault(t *testing.T) {
 	if concierge.Kind != AgentKindAgent {
 		t.Fatalf("expected Concierge standalone kind, got %q", concierge.Kind)
 	}
-	if len(concierge.Squads) != 0 {
-		t.Fatalf("expected Concierge to be standalone, got squads=%+v", concierge.Squads)
+	if len(concierge.Squads) != 1 {
+		t.Fatalf("expected Concierge to be in default squad, got squads=%+v", concierge.Squads)
+	}
+	if concierge.Squads[0].Role != AgentKindSpecialist {
+		t.Fatalf("expected Concierge role specialist, got %q", concierge.Squads[0].Role)
 	}
 	if concierge.Description != "Always-on user entry agent for intake, status checks, and dispatching work." {
 		t.Fatalf("unexpected Concierge description: %q", concierge.Description)
@@ -117,8 +126,11 @@ func TestSeedDefaultMembersCreatesBuiltInsByDefault(t *testing.T) {
 	if stakeholder.Kind != AgentKindAgent {
 		t.Fatalf("expected Stakeholder standalone kind, got %q", stakeholder.Kind)
 	}
-	if len(stakeholder.Squads) != 0 {
-		t.Fatalf("expected Stakeholder to be standalone, got squads=%+v", stakeholder.Squads)
+	if len(stakeholder.Squads) != 1 {
+		t.Fatalf("expected Stakeholder to be in default squad, got squads=%+v", stakeholder.Squads)
+	}
+	if stakeholder.Squads[0].Role != AgentKindSpecialist {
+		t.Fatalf("expected Stakeholder role specialist, got %q", stakeholder.Squads[0].Role)
 	}
 	if stakeholder.Description != "Product/business representative for goals, scope, priorities, and acceptance criteria." {
 		t.Fatalf("unexpected Stakeholder description: %q", stakeholder.Description)

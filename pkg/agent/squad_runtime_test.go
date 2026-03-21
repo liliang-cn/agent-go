@@ -104,8 +104,8 @@ func TestGetAgentStatusIncludesConcierge(t *testing.T) {
 	if status.Status != "idle" {
 		t.Fatalf("expected idle concierge, got %q", status.Status)
 	}
-	if len(status.Squads) != 0 {
-		t.Fatalf("expected concierge to remain standalone, got squads=%+v", status.Squads)
+	if len(status.Squads) != 1 {
+		t.Fatalf("expected concierge to be in default squad, got squads=%+v", status.Squads)
 	}
 }
 
