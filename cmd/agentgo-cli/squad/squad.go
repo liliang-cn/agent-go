@@ -585,8 +585,8 @@ func runInteractiveSquadChat(ctx context.Context, manager *agent.SquadManager) e
 	conversationKey := "cli-squad-" + uuid.NewString()
 
 	fmt.Println("🤝 AgentGo Squad Mode")
-	fmt.Println("💡 Direct requests go to Captain by default")
-	fmt.Println("💡 Use @Captain or any existing squad agent name to delegate")
+	fmt.Println("💡 Direct requests go to Concierge by default")
+	fmt.Println("💡 Use @Concierge or any existing squad agent name to delegate")
 	fmt.Println("💡 Ctrl+C cancels the current input")
 	fmt.Println("💡 Ctrl+D exits when the input is empty")
 	fmt.Println("💡 Type 'quit' or 'exit' to end")
@@ -832,7 +832,7 @@ func runSquadMessage(ctx context.Context, manager *agent.SquadManager, conversat
 
 	if len(tasks) == 0 {
 		tasks = []delegatedTask{{
-			AgentName:   "Captain",
+			AgentName:   "Concierge",
 			Instruction: message,
 		}}
 	}

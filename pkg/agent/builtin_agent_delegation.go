@@ -167,7 +167,7 @@ func (m *SquadManager) listDelegableBuiltInAgents() ([]*AgentModel, error) {
 		if err != nil {
 			return nil, err
 		}
-		if len(model.Squads) != 0 || !isBuiltInAgentModel(model) {
+		if !isBuiltInAgentModel(model) {
 			continue
 		}
 		out = append(out, model)
@@ -186,8 +186,8 @@ func (m *SquadManager) resolveDelegableBuiltInAgent(name string) (*AgentModel, e
 			if err != nil {
 				return nil, err
 			}
-			if len(model.Squads) != 0 || !isBuiltInAgentModel(model) {
-				return nil, fmt.Errorf("%s is not an eligible built-in standalone agent", name)
+			if !isBuiltInAgentModel(model) {
+				return nil, fmt.Errorf("%s is not a delegable built-in agent", name)
 			}
 			return model, nil
 		}

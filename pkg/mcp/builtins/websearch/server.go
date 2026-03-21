@@ -42,9 +42,9 @@ func (s *Server) GetMCPServer() *server.MCPServer {
 func (s *Server) registerTools() error {
 	mcpServer := s.mcpServer
 
-	// websearch_basic
+	// basic - simple web search
 	mcpServer.AddTool(mcp.Tool{
-		Name:        "websearch_basic",
+		Name:        "basic",
 		Description: "Basic web search returning titles, URLs and snippets from a single search engine",
 		InputSchema: mcp.ToolInputSchema{
 			Type: "object",
@@ -77,9 +77,9 @@ func (s *Server) registerTools() error {
 		}, nil
 	})
 
-	// websearch_with_content
+	// with_content - web search with content extraction
 	mcpServer.AddTool(mcp.Tool{
-		Name:        "websearch_with_content",
+		Name:        "with_content",
 		Description: "Web search with intelligent content extraction from result pages",
 		InputSchema: mcp.ToolInputSchema{
 			Type: "object",
@@ -124,9 +124,9 @@ func (s *Server) registerTools() error {
 		}, nil
 	})
 
-	// websearch_multi_engine
+	// multi_engine - search across multiple engines
 	mcpServer.AddTool(mcp.Tool{
-		Name:        "websearch_multi_engine",
+		Name:        "multi_engine",
 		Description: "Comprehensive search across multiple engines with content extraction",
 		InputSchema: mcp.ToolInputSchema{
 			Type: "object",
@@ -173,9 +173,9 @@ func (s *Server) registerTools() error {
 		}, nil
 	})
 
-	// websearch_ai_summary
+	// ai_summary - search with AI summarization
 	mcpServer.AddTool(mcp.Tool{
-		Name:        "websearch_ai_summary",
+		Name:        "ai_summary",
 		Description: "Search and return AI-ready aggregated content optimized for analysis and summarization",
 		InputSchema: mcp.ToolInputSchema{
 			Type: "object",

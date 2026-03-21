@@ -539,6 +539,16 @@ func normalizeMCPToolResult(toolName string, result interface{}) interface{} {
 	}
 	switch result.(type) {
 	case map[string]interface{}, []interface{}:
+		// MCP tools (toolName starts with "mcp_") return results like
+		// {content: [...], is_error: false} which is NOT a standard envelope.
+		// Always wrap MCP results in the standard {success, data, error} envelope.
+		if strings.HasPrefix(toolName, "mcp_") {
+			return normalizeMCPToolEnvelope(toolName, map[string]interface{}{
+				"success": true,
+				"data":    result,
+				"error":   nil,
+			})
+		}
 		return result
 	}
 

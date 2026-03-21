@@ -198,6 +198,97 @@ func (m *SquadManager) ensureDefaultSquadCaptain(ctx context.Context, agentName,
 	return nil
 }
 
+func (m *SquadManager) ensureDefaultSquadConcierge(ctx context.Context, agentName, squadName string) error {
+	// Build Concierge agent model directly
+	conciergeBuiltin := &AgentModel{
+		ID:           defaultConciergeAgentID,
+		Name:         defaultConciergeAgentName,
+		Kind:         AgentKindAgent,
+		Description:  "Always-on user entry agent for intake, status checks, and dispatching work.",
+		Instructions: fmt.Sprintf("You are Concierge, the always-on dispatch agent for %s. Your only job is intake, routing, status inspection, and task dispatch. Do not do substantive work yourself unless the user is asking for dispatch metadata or task status. For general work delegate to Assistant. For execution and file work delegate to Operator. For memory-related work, preference extraction, recall, and memory hygiene delegate to Archivist. For verification or conflict checking delegate to Verifier. For business or product judgment delegate to Stakeholder. Keep replies concise, acknowledge queued work clearly, and never pretend background work is already finished. When the user asks for progress, use get_task_status or list_session_tasks.", agentName),
+		EnableMemory: false,
+	}
+
+	// Ensure the standalone agent exists
+	if err := m.ensureBuiltInStandaloneAgent(ctx, conciergeBuiltin); err != nil {
+		return err
+	}
+
+	concierge, err := m.store.GetAgentModelByName(defaultConciergeAgentName)
+	if err != nil {
+		return err
+	}
+
+	// Add Concierge to default squad as a specialist
+	if err := m.store.SaveSquadMembership(&SquadMembership{
+		AgentID: concierge.ID,
+		SquadID: defaultSquadID,
+		Role:    AgentKindSpecialist,
+	}); err != nil {
+		return err
+	}
+
+	m.clearCachedAgent(concierge.Name)
+	return nil
+}
+
+func (m *SquadManager) ensureDefaultSquadSpecialists(ctx context.Context, agentName string) error {
+	// Add all built-in specialists to the default squad
+	specialists := []struct {
+		name        string
+		id          string
+	}{
+		{defaultAssistantAgentName, defaultAssistantAgentID},
+		{defaultOperatorAgentName, defaultOperatorAgentID},
+		{defaultStakeholderAgentName, defaultStakeholderAgentID},
+		{defaultArchivistAgentName, defaultArchivistAgentID},
+		{defaultVerifierAgentName, defaultVerifierAgentID},
+	}
+
+	for _, spec := range specialists {
+		model, err := m.store.GetAgentModelByName(spec.name)
+		if err != nil {
+			// Agent doesn't exist yet, create it from built-in defaults
+			builtins := defaultBuiltInStandaloneAgents(agentName)
+			var found *AgentModel
+			for _, b := range builtins {
+				if b.Name == spec.name {
+					found = b
+					break
+				}
+			}
+			if found == nil {
+				continue
+			}
+			if err := m.ensureBuiltInStandaloneAgent(ctx, found); err != nil {
+				return err
+			}
+			model, err = m.store.GetAgentModelByName(spec.name)
+			if err != nil {
+				continue
+			}
+		}
+
+		// Check if already a member
+		for _, squad := range model.Squads {
+			if squad.SquadID == defaultSquadID {
+				continue
+			}
+		}
+
+		if err := m.store.SaveSquadMembership(&SquadMembership{
+			AgentID: model.ID,
+			SquadID: defaultSquadID,
+			Role:    AgentKindSpecialist,
+		}); err != nil {
+			return err
+		}
+		m.clearCachedAgent(model.Name)
+	}
+
+	return nil
+}
+
 func (m *SquadManager) detachBuiltInStandaloneAgentsFromDefaultSquad(names ...string) error {
 	for _, name := range names {
 		model, err := m.store.GetAgentModelByName(strings.TrimSpace(name))

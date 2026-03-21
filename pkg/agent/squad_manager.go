@@ -123,7 +123,10 @@ func (m *SquadManager) SeedDefaultMembers() error {
 	if err := m.ensureDefaultSquadCaptain(ctx, agentName, squadName); err != nil {
 		return err
 	}
-	if err := m.detachBuiltInStandaloneAgentsFromDefaultSquad(defaultConciergeAgentName, defaultAssistantAgentName, defaultStakeholderAgentName); err != nil {
+	if err := m.ensureDefaultSquadConcierge(ctx, agentName, squadName); err != nil {
+		return err
+	}
+	if err := m.ensureDefaultSquadSpecialists(ctx, agentName); err != nil {
 		return err
 	}
 	return nil

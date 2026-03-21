@@ -246,7 +246,11 @@ func (p *PTCIntegration) ExecuteJavascriptTool(ctx context.Context, args map[str
 		result.Error = execResult.Error
 	}
 
-	return result.FormatForLLM(), nil
+	// Capture the formatted output so runWithConfig can use it as finalResult.
+	// FormatForLLM() checks r.Output first, so set it before calling.
+	result.Output = result.FormatForLLM()
+
+	return result.Output, nil
 }
 
 // ExecuteCode executes JavaScript code in the sandbox.
@@ -357,11 +361,15 @@ func (p *PTCIntegration) GetPTCTools(availableTools []ptc.ToolInfo) []domain.Too
 		return nil
 	}
 
-	// Collect unique MCP server prefixes (e.g. "mcp_filesystem", "mcp_websearch")
-	serverNames := collectMCPServerNames(availableTools)
-	var serverHint string
-	if len(serverNames) > 0 {
-		serverHint = "\n\nAvailable MCP servers: " + strings.Join(serverNames, ", ")
+	// Collect all available tool names grouped by category
+	var allToolNames []string
+	for _, t := range availableTools {
+		allToolNames = append(allToolNames, t.Name)
+	}
+
+	var toolListHint string
+	if len(allToolNames) > 0 {
+		toolListHint = "\n\nALL available callTool() names: " + strings.Join(allToolNames, ", ")
 	}
 
 	return []domain.ToolDefinition{
@@ -372,7 +380,7 @@ func (p *PTCIntegration) GetPTCTools(availableTools []ptc.ToolInfo) []domain.Too
 				Description: "Execute JavaScript code in a secure sandbox. Call multiple tools, process results, or orchestrate complex logic. " +
 					"Use callTool(name, args) to invoke a tool by exact name. " +
 					"MCP tools usually return an object like {success, data, error}; inspect data or use toolData(result) in JS. " +
-					"NOTE: task_complete is NOT callable inside the sandbox — call it directly." + serverHint,
+					"NOTE: task_complete is NOT callable inside the sandbox — call it directly." + toolListHint,
 				Parameters: map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
@@ -434,6 +442,34 @@ func (p *PTCIntegration) GetPTCSystemPrompt(availableTools []ptc.ToolInfo) strin
 	sb.WriteString("- End with a top-level `return` statement.\n")
 	sb.WriteString("Example: `<code>const r = callTool('mcp_filesystem_read_file', {path: '/tmp/f'}); if (!toolOk(r)) return r; return toolData(r);</code>`\n")
 
+	// Add complete list of available tools with exact names
+	if len(availableTools) > 0 {
+		sb.WriteString("\n## Available Tools (callTool names)\n")
+		// Group by category
+		mcpTools := make([]string, 0)
+		skillTools := make([]string, 0)
+		otherTools := make([]string, 0)
+		for _, t := range availableTools {
+			switch t.Category {
+			case "mcp":
+				mcpTools = append(mcpTools, t.Name)
+			case "skill":
+				skillTools = append(skillTools, t.Name)
+			default:
+				otherTools = append(otherTools, t.Name)
+			}
+		}
+		if len(mcpTools) > 0 {
+			sb.WriteString("\nMCP tools: " + strings.Join(mcpTools, ", ") + "\n")
+		}
+		if len(skillTools) > 0 {
+			sb.WriteString("\nSkill tools: " + strings.Join(skillTools, ", ") + "\n")
+		}
+		if len(otherTools) > 0 {
+			sb.WriteString("\nOther tools: " + strings.Join(otherTools, ", ") + "\n")
+		}
+	}
+
 	return sb.String()
 }
 
@@ -478,6 +514,9 @@ func (p *PTCIntegration) ProcessLLMResponse(ctx context.Context, content string,
 		result.Type = PTCResultTypeExecuted
 	}
 
+	// Set Output so runWithConfig can use the formatted result as finalResult.
+	result.Output = result.FormatForLLM()
+
 	return result, nil
 }
 
@@ -498,6 +537,9 @@ type PTCResult struct {
 	Code            string               `json:"code,omitempty"`
 	ExecutionResult *ptc.ExecutionResult `json:"execution_result,omitempty"`
 	Error           string               `json:"error,omitempty"`
+	// Output holds the formatted result string produced by FormatForLLM.
+	// This is checked by runWithConfig to determine finalResult.
+	Output string `json:"output,omitempty"`
 }
 
 // FormatForLLM formats the PTC result for sending back to LLM
@@ -507,6 +549,10 @@ func (r *PTCResult) FormatForLLM() string {
 		return r.OriginalContent
 
 	case PTCResultTypeExecuted:
+		// If Output was pre-formatted (e.g., by ExecuteJavascriptTool), return it directly.
+		if r.Output != "" {
+			return r.Output
+		}
 		if r.ExecutionResult == nil {
 			return r.OriginalContent
 		}

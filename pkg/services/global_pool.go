@@ -11,6 +11,7 @@ import (
 	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 	"github.com/liliang-cn/agent-go/v2/pkg/pool"
 	"github.com/liliang-cn/agent-go/v2/pkg/store"
+	"github.com/liliang-cn/agent-go/v2/pkg/usage"
 )
 
 var (
@@ -343,6 +344,7 @@ type ChatOptions struct {
 	SystemPrompt    string
 	HistoryLimit    int
 	SkipPersistence bool
+	Debug           bool
 }
 
 // Chat 顶级Chat API：支持Provider指定与历史自动持久化
@@ -385,12 +387,49 @@ func (s *GlobalPoolService) Chat(ctx context.Context, message string, opts ChatO
 		MaxTokens:   opts.MaxTokens,
 		Temperature: opts.Temperature,
 	}
+
+	// Debug: print prompt
+	if opts.Debug {
+		tc := usage.NewTokenCounter()
+		model := client.GetModelName()
+		promptTokens := tc.EstimateConversationTokens(toUsageMessages(messages), model)
+		fmt.Println("\n============================================")
+		fmt.Println("🐛 DEBUG - PROVIDER/MODEL")
+		fmt.Printf("Provider: %s | Model: %s\n", client.GetProviderName(), client.GetModelName())
+		fmt.Println("\n🐛 DEBUG - PROMPT")
+		for i, m := range messages {
+			role := m.Role
+			content := m.Content
+			if len(content) > 200 {
+				content = content[:200] + "..."
+			}
+			fmt.Printf("[%d] %s: %s\n", i, role, content)
+		}
+		fmt.Printf("\n🐛 DEBUG - TOKENS")
+		fmt.Printf("Prompt tokens (est.): %d\n", promptTokens)
+		fmt.Println("============================================\n")
+	}
+
 	// Direct LLM chat doesn't use tools here, but we use the flexible GenerateWithTools
 	res, err := client.GenerateWithTools(ctx, messages, nil, genOpts)
 	if err != nil {
 		return "", err
 	}
 	answer := res.Content
+
+	// Debug: print response
+	if opts.Debug {
+		tc := usage.NewTokenCounter()
+		model := client.GetModelName()
+		promptTokens := tc.EstimateConversationTokens(toUsageMessages(messages), model)
+		respTokens := tc.EstimateTokens(answer, model)
+		fmt.Println("\n============================================")
+		fmt.Println("🐛 DEBUG - RESPONSE")
+		fmt.Println(answer)
+		fmt.Printf("\n🐛 DEBUG - TOKENS")
+		fmt.Printf("Prompt tokens (est.): %d | Response tokens (est.): %d | Total (est.): %d\n", promptTokens, respTokens, promptTokens+respTokens)
+		fmt.Println("============================================\n")
+	}
 
 	// 5. Automatic Persistence to agentgo.db
 	if !opts.SkipPersistence && opts.SessionID != "" && s.db != nil {
@@ -441,6 +480,28 @@ func (s *GlobalPoolService) StreamChat(ctx context.Context, message string, opts
 	}
 	messages = append(messages, domain.Message{Role: "user", Content: message})
 
+	// Debug: print prompt and tokens
+	if opts.Debug {
+		tc := usage.NewTokenCounter()
+		model := client.GetModelName()
+		promptTokens := tc.EstimateConversationTokens(toUsageMessages(messages), model)
+		fmt.Println("\n============================================")
+		fmt.Println("🐛 DEBUG - PROVIDER/MODEL")
+		fmt.Printf("Provider: %s | Model: %s\n", client.GetProviderName(), client.GetModelName())
+		fmt.Println("\n🐛 DEBUG - PROMPT")
+		for i, m := range messages {
+			role := m.Role
+			content := m.Content
+			if len(content) > 200 {
+				content = content[:200] + "..."
+			}
+			fmt.Printf("[%d] %s: %s\n", i, role, content)
+		}
+		fmt.Printf("\n🐛 DEBUG - TOKENS")
+		fmt.Printf("Prompt tokens (est.): %d\n", promptTokens)
+		fmt.Println("============================================\n")
+	}
+
 	// 4. Stream and Capture Answer
 	var fullAnswer strings.Builder
 	wrappedCallback := func(delta *domain.GenerationResult) error {
@@ -457,6 +518,18 @@ func (s *GlobalPoolService) StreamChat(ctx context.Context, message string, opts
 	}
 
 	err = client.StreamWithTools(ctx, messages, nil, genOpts, wrappedCallback)
+
+	// Debug: print response tokens
+	if opts.Debug && err == nil {
+		tc := usage.NewTokenCounter()
+		model := client.GetModelName()
+		respTokens := tc.EstimateTokens(fullAnswer.String(), model)
+		promptTokens := tc.EstimateConversationTokens(toUsageMessages(messages[:len(messages)-1]), model)
+		fmt.Println("\n============================================")
+		fmt.Println("🐛 DEBUG - RESPONSE")
+		fmt.Printf("Response tokens (est.): %d | Total (est.): %d\n", respTokens, promptTokens+respTokens)
+		fmt.Println("============================================\n")
+	}
 
 	// 5. Automatic Persistence to agentgo.db once stream ends
 	if err == nil && !opts.SkipPersistence && opts.SessionID != "" && s.db != nil {
@@ -836,6 +909,18 @@ func (s *GlobalPoolService) GetEmbeddingProvider(name string) (*store.EmbeddingP
 type EmbeddingPoolConfig struct {
 	Strategy pool.SelectionStrategy `json:"strategy"`
 	Enabled  bool                   `json:"enabled"`
+}
+
+// toUsageMessages converts domain messages to usage messages for token counting.
+func toUsageMessages(messages []domain.Message) []usage.Message {
+	result := make([]usage.Message, len(messages))
+	for i, m := range messages {
+		result[i] = usage.Message{
+			Role:    m.Role,
+			Content: m.Content,
+		}
+	}
+	return result
 }
 
 // GetEmbeddingPoolConfig returns current embedding pool settings from the database.

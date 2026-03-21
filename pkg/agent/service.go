@@ -520,8 +520,8 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 			return nil, err
 		}
 		// Use execution result if available
-		if ptcRes != nil && ptcRes.ExecutionResult != nil && ptcRes.ExecutionResult.Output != "" {
-			finalResult = ptcRes.ExecutionResult.Output
+		if ptcRes != nil && ptcRes.Output != "" {
+			finalResult = ptcRes.Output
 		}
 	} else {
 		var err error

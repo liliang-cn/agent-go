@@ -14,6 +14,7 @@ import (
 var (
 	llmProvider string
 	llmStream   bool
+	llmDebug    bool
 
 	// flags for add/update
 	llmFlagName           string
@@ -54,6 +55,7 @@ var llmChatCmd = &cobra.Command{
 		chatOpts := services.ChatOptions{
 			Provider:  strings.TrimSpace(llmProvider),
 			MaxTokens: 30000,
+			Debug:     llmDebug,
 		}
 
 		if llmStream {
@@ -489,6 +491,7 @@ func init() {
 	// chat flags
 	llmChatCmd.Flags().StringVarP(&llmProvider, "provider", "p", "", "LLM provider to use")
 	llmChatCmd.Flags().BoolVarP(&llmStream, "stream", "s", false, "Stream the response")
+	llmChatCmd.Flags().BoolVarP(&llmDebug, "debug", "d", false, "Show debug output (prompt and response)")
 
 	// add flags
 	llmAddCmd.Flags().StringVar(&llmFlagName, "name", "", "Provider name (required)")

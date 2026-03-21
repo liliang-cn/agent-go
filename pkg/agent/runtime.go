@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 	"github.com/liliang-cn/agent-go/v2/pkg/skills"
+	"github.com/liliang-cn/agent-go/v2/pkg/usage"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -85,6 +86,8 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		summary = r.session.Summary
 	}
 	messages := r.svc.buildConversationMessages(r.session, goal, ragContext, memoryContext, summary)
+	// Ensure the current user message is in the session before starting
+	r.session.AddMessage(domain.Message{Role: "user", Content: goal})
 
 	const maxRounds = 20
 	for round := 0; round < maxRounds; round++ {
@@ -108,15 +111,20 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			var promptBuilder strings.Builder
 			info := r.svc.Info()
 			fmt.Fprintf(&promptBuilder, "MODEL: %s (%s)\n", info.Model, info.BaseURL)
+			// Token estimation
+			tc := usage.NewTokenCounter()
+			promptTokens := tc.EstimateConversationTokens(toUsageMessages(genMessages), info.Model)
 			// Tools list
 			fmt.Fprintf(&promptBuilder, "=== TOOLS (%d) ===\n", len(tools))
 			for _, t := range tools {
 				fmt.Fprintf(&promptBuilder, "  • %s: %s\n", t.Function.Name, t.Function.Description)
 			}
-			fmt.Fprintf(&promptBuilder, "\n=== MESSAGES ===\n")
+			fmt.Fprintf(&promptBuilder, "\n=== MESSAGES (%d) ===\n", len(genMessages))
 			for _, m := range genMessages {
 				fmt.Fprintf(&promptBuilder, "[%s]:\n%s\n", strings.ToUpper(m.Role), m.Content)
 			}
+			fmt.Fprintf(&promptBuilder, "\n=== TOKENS ===\n")
+			fmt.Fprintf(&promptBuilder, "Prompt tokens (est.): %d\n", promptTokens)
 			r.emitDebug(round+1, "prompt", promptBuilder.String())
 		}
 
@@ -209,6 +217,11 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 				Timestamp: time.Now(),
 			}
 			// Persist session history to agentgo.db
+			if len(messages) > 0 {
+				for _, msg := range messages {
+					r.session.AddMessage(msg)
+				}
+			}
 			if err := r.svc.store.SaveSession(r.session); err != nil {
 				r.svc.logger.Warn("failed to save session history", slog.String("error", err.Error()))
 			}
@@ -224,6 +237,9 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		// --- DEBUG: LOG LLM RESPONSE ---
 		if r.debugEnabled() {
 			var respBuilder strings.Builder
+			info := r.svc.Info()
+			tc := usage.NewTokenCounter()
+			respTokens := tc.EstimateTokens(fullContent.String(), info.Model)
 			fmt.Fprintf(&respBuilder, "CONTENT: %s\n", fullContent.String())
 			if len(toolCalls) > 0 {
 				fmt.Fprintf(&respBuilder, "TOOL CALLS:\n")
@@ -235,6 +251,8 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			for i, m := range messages {
 				fmt.Fprintf(&respBuilder, " [%d] %s: %s\n", i, strings.ToUpper(m.Role), m.Content)
 			}
+			fmt.Fprintf(&respBuilder, "\n=== TOKENS ===\n")
+			fmt.Fprintf(&respBuilder, "Response tokens (est.): %d\n", respTokens)
 			r.emitDebug(round+1, "response", respBuilder.String())
 		}
 
@@ -483,6 +501,11 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			}
 
 			// Persist session history to agentgo.db
+			if len(messages) > 0 {
+				for _, msg := range messages {
+					r.session.AddMessage(msg)
+				}
+			}
 			if err := r.svc.store.SaveSession(r.session); err != nil {
 				r.svc.logger.Warn("failed to save session history", slog.String("error", err.Error()))
 			}
@@ -586,18 +609,7 @@ func (r *Runtime) executeToolOrHandoff(ctx context.Context, tc domain.ToolCall) 
 		}
 	} else if toolName == "execute_javascript" && r.svc.ptcIntegration != nil {
 		// 6. PTC: execute_javascript tool (JavaScript sandbox)
-		code, _ := tc.Function.Arguments["code"].(string)
-		contextVars, _ := tc.Function.Arguments["context"].(map[string]interface{})
-		if code == "" {
-			execErr = fmt.Errorf("execute_javascript: 'code' argument is required")
-		} else {
-			res, err := r.svc.ptcIntegration.ExecuteCode(ctx, code, contextVars)
-			if err != nil {
-				execErr = err
-			} else {
-				result = res.Output
-			}
-		}
+		result, execErr = r.svc.ptcIntegration.ExecuteJavascriptTool(ctx, tc.Function.Arguments)
 	} else if domain.IsToolSearchTool(resolvedToolName) {
 		// 7. Tool Search: search for deferred tools
 		query, _ := tc.Function.Arguments["query"].(string)
@@ -767,4 +779,16 @@ func (r *Runtime) emitDebug(round int, debugType string, content string) {
 
 func (r *Runtime) debugEnabled() bool {
 	return r.svc.debug || (r.cfg != nil && r.cfg.Debug)
+}
+
+// toUsageMessages converts domain messages to usage messages for token counting.
+func toUsageMessages(messages []domain.Message) []usage.Message {
+	result := make([]usage.Message, len(messages))
+	for i, m := range messages {
+		result[i] = usage.Message{
+			Role:    m.Role,
+			Content: m.Content,
+		}
+	}
+	return result
 }
