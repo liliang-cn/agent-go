@@ -377,8 +377,8 @@ func TestRuntime_CallToolJSONStringResult(t *testing.T) {
 	defer runtime.Close()
 
 	// Simulate an MCP tool that returns a JSON string (like websearch_basic does)
-	err := runtime.RegisterTool("mcp_websearch", func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-		// This is what MCP tools actually return: a JSON-encoded string
+	err := runtime.RegisterTool("websearch", func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+		// Tool returns a JSON-encoded string — should be auto-parsed into an object
 		return `{"results": [{"title": "Result 1", "url": "https://example.com/1"}, {"title": "Result 2", "url": "https://example.com/2"}], "query": "test"}`, nil
 	})
 	if err != nil {
@@ -388,7 +388,7 @@ func TestRuntime_CallToolJSONStringResult(t *testing.T) {
 	ctx := context.Background()
 	req := &ptc.ExecutionRequest{
 		Code: `
-const res = callTool('mcp_websearch', {query: 'test'});
+const res = callTool('websearch', {query: 'test'});
 // This should work because the JSON string is auto-parsed into an object
 return {
 	count: res.results.length,
