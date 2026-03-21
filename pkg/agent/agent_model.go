@@ -17,6 +17,7 @@ const (
 // AgentModel represents the configuration of a dynamic agent in the database.
 type AgentModel struct {
 	ID                    string            `json:"id"`
+	A2AID                 string            `json:"a2a_id,omitempty"`
 	TeamID                string            `json:"squad_id,omitempty"`
 	Name                  string            `json:"name"`
 	Kind                  AgentKind         `json:"kind"`
@@ -33,6 +34,7 @@ type AgentModel struct {
 	EnableMemory          bool              `json:"enable_memory"`
 	EnablePTC             bool              `json:"enable_ptc"`
 	EnableMCP             bool              `json:"enable_mcp"`
+	EnableA2A             bool              `json:"enable_a2a"`
 	CreatedAt             time.Time         `json:"created_at"`
 	UpdatedAt             time.Time         `json:"updated_at"`
 }
@@ -48,8 +50,10 @@ type SquadMembership struct {
 
 type Squad struct {
 	ID          string    `json:"id"`
+	A2AID       string    `json:"a2a_id,omitempty"`
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
+	EnableA2A   bool      `json:"enable_a2a"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }

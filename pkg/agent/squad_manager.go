@@ -203,6 +203,10 @@ func (m *SquadManager) SetConfig(cfg *config.Config) {
 	m.cfg = cfg
 }
 
+func (m *SquadManager) GetStore() *Store {
+	return m.store
+}
+
 // SetAgentName sets the global agent name used in built-in prompts and squad names.
 // This overrides the agent.name field from config file or environment.
 // Call before SeedDefaultMembers for the names to take effect during initialization.
@@ -535,6 +539,9 @@ func (m *SquadManager) CreateSquad(_ context.Context, squad *Squad) (*Squad, err
 	if strings.TrimSpace(squad.ID) == "" {
 		squad.ID = uuid.New().String()
 	}
+	if strings.TrimSpace(squad.A2AID) == "" {
+		squad.A2AID = uuid.NewString()
+	}
 	if strings.TrimSpace(squad.Description) == "" {
 		squad.Description = squad.Name
 	}
@@ -580,6 +587,10 @@ func (m *SquadManager) ListSquads() ([]*Squad, error) {
 
 func (m *SquadManager) GetSquadByName(name string) (*Squad, error) {
 	return m.store.GetTeamByName(strings.TrimSpace(name))
+}
+
+func (m *SquadManager) GetSquadByA2AID(a2aID string) (*Squad, error) {
+	return m.store.GetTeamByA2AID(strings.TrimSpace(a2aID))
 }
 
 func (m *SquadManager) AddCaptain(ctx context.Context, squadID, name, description, instructions string) (*AgentModel, error) {

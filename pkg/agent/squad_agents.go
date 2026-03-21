@@ -64,6 +64,10 @@ func (m *SquadManager) GetAgentByName(name string) (*AgentModel, error) {
 	return m.store.GetAgentModelByName(strings.TrimSpace(name))
 }
 
+func (m *SquadManager) GetAgentByA2AID(a2aID string) (*AgentModel, error) {
+	return m.store.GetAgentModelByA2AID(strings.TrimSpace(a2aID))
+}
+
 func (m *SquadManager) GetAgentService(name string) (*Service, error) {
 	return m.getOrBuildService(strings.TrimSpace(name))
 }
@@ -82,6 +86,9 @@ func (m *SquadManager) CreateAgent(ctx context.Context, model *AgentModel) (*Age
 
 	if strings.TrimSpace(model.ID) == "" {
 		model.ID = uuid.NewString()
+	}
+	if strings.TrimSpace(model.A2AID) == "" {
+		model.A2AID = uuid.NewString()
 	}
 	model.Name = strings.TrimSpace(model.Name)
 	if model.Name == "" {
@@ -208,6 +215,10 @@ func (m *SquadManager) UpdateAgent(_ context.Context, model *AgentModel) (*Agent
 	current.EnableMemory = model.EnableMemory || current.EnableMemory
 	current.EnablePTC = model.EnablePTC || current.EnablePTC
 	current.EnableMCP = model.EnableMCP || current.EnableMCP
+	current.EnableA2A = model.EnableA2A
+	if strings.TrimSpace(model.A2AID) != "" {
+		current.A2AID = strings.TrimSpace(model.A2AID)
+	}
 	current.UpdatedAt = time.Now()
 
 	if err := m.store.SaveAgentModel(current); err != nil {

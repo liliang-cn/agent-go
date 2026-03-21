@@ -168,7 +168,7 @@ func (b *Builder) WithMCP(opts ...MCPOption) *Builder {
 // WithMemory enables memory service
 func (b *Builder) WithMemory(opts ...MemoryOption) *Builder {
 	b.enableMemory = true
-	cfg := MemoryConfig{StoreType: "file"} // default
+	cfg := MemoryConfig{} // defaults come from config file, not here
 	for _, opt := range opts {
 		opt(&cfg)
 	}
@@ -682,10 +682,11 @@ func (b *Builder) buildMemoryService(agentgoCfg *config.Config, embedSvc domain.
 	if storeType.UsesVector() && embedSvc == nil {
 		log.Printf("[WARN] Memory store type '%s' requires embedding model, but none available. Falling back to 'file'.", storeType)
 		storeType = config.MemoryStoreTypeFile
-		if memPath == agentgoCfg.MemoryVectorDBPath() {
-			memPath = filepath.Join(agentgoCfg.DataDir(), "memories")
-		}
 	}
+
+	memPath = normalizeFileMemoryPath(storeType, memPath, agentgoCfg)
+
+	log.Printf("[DEBUG] Memory: storeType=%s, memPath=%s, embedSvc=%v", storeType, memPath, embedSvc != nil)
 
 	switch storeType {
 	case config.MemoryStoreTypeFile:
@@ -755,6 +756,31 @@ func (b *Builder) buildMemoryService(agentgoCfg *config.Config, embedSvc domain.
 	}
 
 	return memSvc, storeType.String(), nil
+}
+
+func normalizeFileMemoryPath(storeType config.MemoryStoreType, memPath string, agentgoCfg *config.Config) string {
+	if storeType != config.MemoryStoreTypeFile && storeType != config.MemoryStoreTypeHybrid {
+		return memPath
+	}
+
+	defaultPath := filepath.Join(agentgoCfg.DataDir(), "memories")
+	if memPath == "" {
+		return defaultPath
+	}
+
+	cleanPath := filepath.Clean(memPath)
+	vectorPath := filepath.Clean(agentgoCfg.MemoryVectorDBPath())
+	if cleanPath == vectorPath {
+		return defaultPath
+	}
+
+	// File-backed memory store needs a directory. If the selected path still
+	// looks like a DB file (for example after vector->file fallback), coerce it.
+	if filepath.Ext(cleanPath) == ".db" {
+		return defaultPath
+	}
+
+	return memPath
 }
 
 func (b *Builder) buildRAGProcessor(agentgoCfg *config.Config, embedSvc domain.Embedder, llmSvc domain.Generator, memSvc domain.MemoryService) (domain.Processor, error) {

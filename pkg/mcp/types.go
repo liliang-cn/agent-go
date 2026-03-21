@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 	"sync"
 	"time"
 
+	agentgolog "github.com/liliang-cn/agent-go/v2/pkg/log"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -154,7 +154,7 @@ func (c *Config) LoadServersFromJSON() error {
 		if err := c.loadServerFile(serverFile); err != nil {
 			// Skip files that don't exist, fail on other errors
 			if errors.Is(err, os.ErrNotExist) {
-				log.Printf("MCP config file not found, skipping: %s", serverFile)
+				agentgolog.Debugf("MCP config file not found, skipping: %s", serverFile)
 				continue
 			}
 			return fmt.Errorf("failed to load server file %s: %w", serverFile, err)
@@ -165,7 +165,7 @@ func (c *Config) LoadServersFromJSON() error {
 	if c.ServersConfigPath != "" {
 		if err := c.loadServerFile(c.ServersConfigPath); err != nil {
 			if errors.Is(err, os.ErrNotExist) {
-				log.Printf("MCP config file not found, skipping: %s", c.ServersConfigPath)
+				agentgolog.Debugf("MCP config file not found, skipping: %s", c.ServersConfigPath)
 			} else {
 				return fmt.Errorf("failed to load server file %s: %w", c.ServersConfigPath, err)
 			}

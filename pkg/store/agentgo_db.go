@@ -112,6 +112,7 @@ func (s *AgentGoDB) initSchema() error {
 	_, err = s.db.Exec(`
 		CREATE TABLE IF NOT EXISTS agents (
 			id TEXT PRIMARY KEY,
+			a2a_id TEXT UNIQUE,
 			team_id TEXT,
 			name TEXT UNIQUE NOT NULL,
 			kind TEXT DEFAULT 'captain',
@@ -127,6 +128,7 @@ func (s *AgentGoDB) initSchema() error {
 			enable_memory BOOLEAN DEFAULT 0,
 			enable_ptc BOOLEAN DEFAULT 0,
 			enable_mcp BOOLEAN DEFAULT 0,
+			enable_a2a BOOLEAN DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)
@@ -134,19 +136,28 @@ func (s *AgentGoDB) initSchema() error {
 	if err != nil {
 		return fmt.Errorf("failed to create agents table: %w", err)
 	}
+	_, _ = s.db.Exec(`ALTER TABLE agents ADD COLUMN a2a_id TEXT`)
+	_, _ = s.db.Exec(`ALTER TABLE agents ADD COLUMN enable_a2a BOOLEAN DEFAULT 0`)
 
 	// Teams/Squads table
 	_, err = s.db.Exec(`
 		CREATE TABLE IF NOT EXISTS squads (
 			id TEXT PRIMARY KEY,
+			a2a_id TEXT UNIQUE,
 			name TEXT UNIQUE NOT NULL,
 			description TEXT NOT NULL,
+			enable_a2a BOOLEAN DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to create squads table: %w", err)
+	}
+	_, _ = s.db.Exec(`ALTER TABLE squads ADD COLUMN a2a_id TEXT`)
+	_, _ = s.db.Exec(`ALTER TABLE squads ADD COLUMN enable_a2a BOOLEAN DEFAULT 0`)
+	if err := s.backfillA2AIDsLocked(); err != nil {
+		return fmt.Errorf("failed to backfill a2a ids: %w", err)
 	}
 
 	// Squad memberships
@@ -776,8 +787,10 @@ func (s *AgentGoDB) ListConfig() (map[string]string, error) {
 // Squad represents a team/squad definition
 type Squad struct {
 	ID          string    `json:"id"`
+	A2AID       string    `json:"a2a_id"`
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
+	EnableA2A   bool      `json:"enable_a2a"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
@@ -786,15 +799,20 @@ type Squad struct {
 func (s *AgentGoDB) SaveSquad(squad *Squad) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if strings.TrimSpace(squad.A2AID) == "" {
+		squad.A2AID = uuid.NewString()
+	}
 
 	_, err := s.db.Exec(`
-		INSERT INTO squads (id, name, description, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?)
+		INSERT INTO squads (id, a2a_id, name, description, enable_a2a, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
+			a2a_id = excluded.a2a_id,
 			name = excluded.name,
 			description = excluded.description,
+			enable_a2a = excluded.enable_a2a,
 			updated_at = CURRENT_TIMESTAMP
-	`, squad.ID, squad.Name, squad.Description, squad.CreatedAt, squad.UpdatedAt)
+	`, squad.ID, squad.A2AID, squad.Name, squad.Description, squad.EnableA2A, squad.CreatedAt, squad.UpdatedAt)
 	return err
 }
 
@@ -805,9 +823,9 @@ func (s *AgentGoDB) GetSquad(id string) (*Squad, error) {
 
 	squad := &Squad{}
 	err := s.db.QueryRow(`
-		SELECT id, name, description, created_at, updated_at
+		SELECT id, a2a_id, name, description, enable_a2a, created_at, updated_at
 		FROM squads WHERE id = ?
-	`, id).Scan(&squad.ID, &squad.Name, &squad.Description, &squad.CreatedAt, &squad.UpdatedAt)
+	`, id).Scan(&squad.ID, &squad.A2AID, &squad.Name, &squad.Description, &squad.EnableA2A, &squad.CreatedAt, &squad.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -821,9 +839,24 @@ func (s *AgentGoDB) GetSquadByName(name string) (*Squad, error) {
 
 	squad := &Squad{}
 	err := s.db.QueryRow(`
-		SELECT id, name, description, created_at, updated_at
+		SELECT id, a2a_id, name, description, enable_a2a, created_at, updated_at
 		FROM squads WHERE lower(name) = lower(?)
-	`, name).Scan(&squad.ID, &squad.Name, &squad.Description, &squad.CreatedAt, &squad.UpdatedAt)
+	`, name).Scan(&squad.ID, &squad.A2AID, &squad.Name, &squad.Description, &squad.EnableA2A, &squad.CreatedAt, &squad.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return squad, nil
+}
+
+func (s *AgentGoDB) GetSquadByA2AID(a2aID string) (*Squad, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	squad := &Squad{}
+	err := s.db.QueryRow(`
+		SELECT id, a2a_id, name, description, enable_a2a, created_at, updated_at
+		FROM squads WHERE a2a_id = ?
+	`, strings.TrimSpace(a2aID)).Scan(&squad.ID, &squad.A2AID, &squad.Name, &squad.Description, &squad.EnableA2A, &squad.CreatedAt, &squad.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -836,7 +869,7 @@ func (s *AgentGoDB) ListSquads() ([]*Squad, error) {
 	defer s.mu.RUnlock()
 
 	rows, err := s.db.Query(`
-		SELECT id, name, description, created_at, updated_at
+		SELECT id, a2a_id, name, description, enable_a2a, created_at, updated_at
 		FROM squads ORDER BY name ASC
 	`)
 	if err != nil {
@@ -847,7 +880,7 @@ func (s *AgentGoDB) ListSquads() ([]*Squad, error) {
 	var squads []*Squad
 	for rows.Next() {
 		squad := &Squad{}
-		if err := rows.Scan(&squad.ID, &squad.Name, &squad.Description, &squad.CreatedAt, &squad.UpdatedAt); err != nil {
+		if err := rows.Scan(&squad.ID, &squad.A2AID, &squad.Name, &squad.Description, &squad.EnableA2A, &squad.CreatedAt, &squad.UpdatedAt); err != nil {
 			continue
 		}
 		squads = append(squads, squad)
@@ -867,6 +900,7 @@ func (s *AgentGoDB) DeleteSquad(id string) error {
 // AgentModel represents an agent model configuration
 type AgentModel struct {
 	ID                    string    `json:"id"`
+	A2AID                 string    `json:"a2a_id"`
 	TeamID                string    `json:"team_id"`
 	Name                  string    `json:"name"`
 	Kind                  string    `json:"kind"`
@@ -882,6 +916,7 @@ type AgentModel struct {
 	EnableMemory          bool      `json:"enable_memory"`
 	EnablePTC             bool      `json:"enable_ptc"`
 	EnableMCP             bool      `json:"enable_mcp"`
+	EnableA2A             bool      `json:"enable_a2a"`
 	CreatedAt             time.Time `json:"created_at"`
 	UpdatedAt             time.Time `json:"updated_at"`
 }
@@ -890,14 +925,18 @@ type AgentModel struct {
 func (s *AgentGoDB) SaveAgentModel(agent *AgentModel) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if strings.TrimSpace(agent.A2AID) == "" {
+		agent.A2AID = uuid.NewString()
+	}
 
 	mcpToolsJSON, _ := json.Marshal(agent.MCPTools)
 	skillsJSON, _ := json.Marshal(agent.Skills)
 
 	_, err := s.db.Exec(`
-		INSERT INTO agents (id, team_id, name, kind, description, instructions, model, preferred_provider, preferred_model, required_llm_capability, mcp_tools, skills, enable_rag, enable_memory, enable_ptc, enable_mcp, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO agents (id, a2a_id, team_id, name, kind, description, instructions, model, preferred_provider, preferred_model, required_llm_capability, mcp_tools, skills, enable_rag, enable_memory, enable_ptc, enable_mcp, enable_a2a, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
+			a2a_id = excluded.a2a_id,
 			team_id = excluded.team_id,
 			name = excluded.name,
 			kind = excluded.kind,
@@ -913,8 +952,9 @@ func (s *AgentGoDB) SaveAgentModel(agent *AgentModel) error {
 			enable_memory = excluded.enable_memory,
 			enable_ptc = excluded.enable_ptc,
 			enable_mcp = excluded.enable_mcp,
+			enable_a2a = excluded.enable_a2a,
 			updated_at = CURRENT_TIMESTAMP
-	`, agent.ID, agent.TeamID, agent.Name, agent.Kind, agent.Description, agent.Instructions, agent.Model, agent.PreferredProvider, agent.PreferredModel, agent.RequiredLLMCapability, string(mcpToolsJSON), string(skillsJSON), agent.EnableRAG, agent.EnableMemory, agent.EnablePTC, agent.EnableMCP, agent.CreatedAt, agent.UpdatedAt)
+	`, agent.ID, agent.A2AID, agent.TeamID, agent.Name, agent.Kind, agent.Description, agent.Instructions, agent.Model, agent.PreferredProvider, agent.PreferredModel, agent.RequiredLLMCapability, string(mcpToolsJSON), string(skillsJSON), agent.EnableRAG, agent.EnableMemory, agent.EnablePTC, agent.EnableMCP, agent.EnableA2A, agent.CreatedAt, agent.UpdatedAt)
 	return err
 }
 
@@ -927,10 +967,10 @@ func (s *AgentGoDB) GetAgentModel(id string) (*AgentModel, error) {
 	var mcpToolsJSON, skillsJSON string
 
 	err := s.db.QueryRow(`
-		SELECT id, team_id, name, kind, description, instructions, model, preferred_provider, preferred_model, required_llm_capability, mcp_tools, skills, enable_rag, enable_memory, enable_ptc, enable_mcp, created_at, updated_at
+		SELECT id, a2a_id, team_id, name, kind, description, instructions, model, preferred_provider, preferred_model, required_llm_capability, mcp_tools, skills, enable_rag, enable_memory, enable_ptc, enable_mcp, enable_a2a, created_at, updated_at
 		FROM agents WHERE id = ?
-	`, id).Scan(&agent.ID, &agent.TeamID, &agent.Name, &agent.Kind, &agent.Description, &agent.Instructions, &agent.Model, &agent.PreferredProvider, &agent.PreferredModel, &agent.RequiredLLMCapability,
-		&mcpToolsJSON, &skillsJSON, &agent.EnableRAG, &agent.EnableMemory, &agent.EnablePTC, &agent.EnableMCP, &agent.CreatedAt, &agent.UpdatedAt)
+	`, id).Scan(&agent.ID, &agent.A2AID, &agent.TeamID, &agent.Name, &agent.Kind, &agent.Description, &agent.Instructions, &agent.Model, &agent.PreferredProvider, &agent.PreferredModel, &agent.RequiredLLMCapability,
+		&mcpToolsJSON, &skillsJSON, &agent.EnableRAG, &agent.EnableMemory, &agent.EnablePTC, &agent.EnableMCP, &agent.EnableA2A, &agent.CreatedAt, &agent.UpdatedAt)
 
 	if err != nil {
 		return nil, err
@@ -951,10 +991,10 @@ func (s *AgentGoDB) GetAgentModelByName(name string) (*AgentModel, error) {
 	var mcpToolsJSON, skillsJSON string
 
 	err := s.db.QueryRow(`
-		SELECT id, team_id, name, kind, description, instructions, model, preferred_provider, preferred_model, required_llm_capability, mcp_tools, skills, enable_rag, enable_memory, enable_ptc, enable_mcp, created_at, updated_at
+		SELECT id, a2a_id, team_id, name, kind, description, instructions, model, preferred_provider, preferred_model, required_llm_capability, mcp_tools, skills, enable_rag, enable_memory, enable_ptc, enable_mcp, enable_a2a, created_at, updated_at
 		FROM agents WHERE name = ?
-	`, name).Scan(&agent.ID, &agent.TeamID, &agent.Name, &agent.Kind, &agent.Description, &agent.Instructions, &agent.Model, &agent.PreferredProvider, &agent.PreferredModel, &agent.RequiredLLMCapability,
-		&mcpToolsJSON, &skillsJSON, &agent.EnableRAG, &agent.EnableMemory, &agent.EnablePTC, &agent.EnableMCP, &agent.CreatedAt, &agent.UpdatedAt)
+	`, name).Scan(&agent.ID, &agent.A2AID, &agent.TeamID, &agent.Name, &agent.Kind, &agent.Description, &agent.Instructions, &agent.Model, &agent.PreferredProvider, &agent.PreferredModel, &agent.RequiredLLMCapability,
+		&mcpToolsJSON, &skillsJSON, &agent.EnableRAG, &agent.EnableMemory, &agent.EnablePTC, &agent.EnableMCP, &agent.EnableA2A, &agent.CreatedAt, &agent.UpdatedAt)
 
 	if err != nil {
 		return nil, err
@@ -966,13 +1006,34 @@ func (s *AgentGoDB) GetAgentModelByName(name string) (*AgentModel, error) {
 	return agent, nil
 }
 
+func (s *AgentGoDB) GetAgentModelByA2AID(a2aID string) (*AgentModel, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	agent := &AgentModel{}
+	var mcpToolsJSON, skillsJSON string
+
+	err := s.db.QueryRow(`
+		SELECT id, a2a_id, team_id, name, kind, description, instructions, model, preferred_provider, preferred_model, required_llm_capability, mcp_tools, skills, enable_rag, enable_memory, enable_ptc, enable_mcp, enable_a2a, created_at, updated_at
+		FROM agents WHERE a2a_id = ?
+	`, strings.TrimSpace(a2aID)).Scan(&agent.ID, &agent.A2AID, &agent.TeamID, &agent.Name, &agent.Kind, &agent.Description, &agent.Instructions, &agent.Model, &agent.PreferredProvider, &agent.PreferredModel, &agent.RequiredLLMCapability,
+		&mcpToolsJSON, &skillsJSON, &agent.EnableRAG, &agent.EnableMemory, &agent.EnablePTC, &agent.EnableMCP, &agent.EnableA2A, &agent.CreatedAt, &agent.UpdatedAt)
+
+	if err != nil {
+		return nil, err
+	}
+	_ = json.Unmarshal([]byte(mcpToolsJSON), &agent.MCPTools)
+	_ = json.Unmarshal([]byte(skillsJSON), &agent.Skills)
+	return agent, nil
+}
+
 // ListAgentModels retrieves all agent models
 func (s *AgentGoDB) ListAgentModels() ([]*AgentModel, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	rows, err := s.db.Query(`
-		SELECT id, team_id, name, kind, description, instructions, model, preferred_provider, preferred_model, required_llm_capability, mcp_tools, skills, enable_rag, enable_memory, enable_ptc, enable_mcp, created_at, updated_at
+		SELECT id, a2a_id, team_id, name, kind, description, instructions, model, preferred_provider, preferred_model, required_llm_capability, mcp_tools, skills, enable_rag, enable_memory, enable_ptc, enable_mcp, enable_a2a, created_at, updated_at
 		FROM agents ORDER BY name ASC
 	`)
 	if err != nil {
@@ -985,8 +1046,8 @@ func (s *AgentGoDB) ListAgentModels() ([]*AgentModel, error) {
 		agent := &AgentModel{}
 		var mcpToolsJSON, skillsJSON string
 
-		err := rows.Scan(&agent.ID, &agent.TeamID, &agent.Name, &agent.Kind, &agent.Description, &agent.Instructions, &agent.Model, &agent.PreferredProvider, &agent.PreferredModel, &agent.RequiredLLMCapability,
-			&mcpToolsJSON, &skillsJSON, &agent.EnableRAG, &agent.EnableMemory, &agent.EnablePTC, &agent.EnableMCP, &agent.CreatedAt, &agent.UpdatedAt)
+		err := rows.Scan(&agent.ID, &agent.A2AID, &agent.TeamID, &agent.Name, &agent.Kind, &agent.Description, &agent.Instructions, &agent.Model, &agent.PreferredProvider, &agent.PreferredModel, &agent.RequiredLLMCapability,
+			&mcpToolsJSON, &skillsJSON, &agent.EnableRAG, &agent.EnableMemory, &agent.EnablePTC, &agent.EnableMCP, &agent.EnableA2A, &agent.CreatedAt, &agent.UpdatedAt)
 		if err != nil {
 			continue
 		}
@@ -1009,6 +1070,49 @@ func (s *AgentGoDB) DeleteAgentModel(id string) error {
 	}
 	_, err := s.db.Exec(`DELETE FROM agents WHERE id = ?`, id)
 	return err
+}
+
+func (s *AgentGoDB) backfillA2AIDsLocked() error {
+	rows, err := s.db.Query(`SELECT id FROM agents WHERE a2a_id IS NULL OR trim(a2a_id) = ''`)
+	if err != nil {
+		return err
+	}
+	var agentIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		agentIDs = append(agentIDs, id)
+	}
+	rows.Close()
+	for _, id := range agentIDs {
+		if _, err := s.db.Exec(`UPDATE agents SET a2a_id = ? WHERE id = ?`, uuid.NewString(), id); err != nil {
+			return err
+		}
+	}
+
+	rows, err = s.db.Query(`SELECT id FROM squads WHERE a2a_id IS NULL OR trim(a2a_id) = ''`)
+	if err != nil {
+		return err
+	}
+	var squadIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		squadIDs = append(squadIDs, id)
+	}
+	rows.Close()
+	for _, id := range squadIDs {
+		if _, err := s.db.Exec(`UPDATE squads SET a2a_id = ? WHERE id = ?`, uuid.NewString(), id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // SquadMembership represents an agent's membership in a squad

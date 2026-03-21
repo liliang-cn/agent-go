@@ -19,6 +19,7 @@ var (
 	agentInstructions    string
 	agentProvider        string
 	agentModel           string
+	agentA2AEnabled      bool
 	agentUpdateName      string
 	agentUpdateRole      string
 	agentUpdateSquadID   string
@@ -60,14 +61,15 @@ var agentListCmd = &cobra.Command{
 		}
 
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-		fmt.Fprintln(w, "NAME\tKIND\tSQUADS\tMODEL\tBUILT-IN")
+		fmt.Fprintln(w, "NAME\tKIND\tSQUADS\tMODEL\tBUILT-IN\tA2A")
 		for _, model := range agents {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
 				model.Name,
 				kindDisplay(model.Kind),
 				squadMembershipDisplay(model, squadNames),
 				effectiveModelDisplay(model, displayCfg),
 				boolFlag(isBuiltInAgent(model, squadNames)),
+				boolFlag(model.EnableA2A),
 			)
 		}
 		w.Flush()
@@ -116,6 +118,7 @@ var agentShowCmd = &cobra.Command{
 		fmt.Printf("Memory: %s\n", enabledState(model.EnableMemory))
 		fmt.Printf("MCP: %s\n", enabledState(model.EnableMCP))
 		fmt.Printf("PTC: %s\n", enabledState(model.EnablePTC))
+		fmt.Printf("A2A: %s\n", enabledState(model.EnableA2A))
 		fmt.Printf("Skills: %s\n", joinOrDash(model.Skills))
 		fmt.Printf("MCP Tools: %s\n", joinOrDash(model.MCPTools))
 		fmt.Printf("Created: %s\n", formatTimestamp(model.CreatedAt))
@@ -159,6 +162,7 @@ var agentAddCmd = &cobra.Command{
 			PreferredProvider: strings.TrimSpace(agentProvider),
 			PreferredModel:    strings.TrimSpace(agentModel),
 			Model:             strings.TrimSpace(agentModel),
+			EnableA2A:         agentA2AEnabled,
 		})
 		if err != nil {
 			return err
@@ -197,6 +201,7 @@ var agentUpdateCmd = &cobra.Command{
 			EnableMemory:      current.EnableMemory,
 			EnablePTC:         current.EnablePTC,
 			EnableMCP:         current.EnableMCP,
+			EnableA2A:         current.EnableA2A,
 		}
 		if strings.TrimSpace(agentUpdateName) != "" {
 			updated.Name = strings.TrimSpace(agentUpdateName)
@@ -220,6 +225,9 @@ var agentUpdateCmd = &cobra.Command{
 				return normalizeErr
 			}
 			updated.Kind = role
+		}
+		if cmd.Flags().Changed("a2a") {
+			updated.EnableA2A = agentA2AEnabled
 		}
 		model, err := manager.UpdateAgent(context.Background(), updated)
 		if err != nil {

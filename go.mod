@@ -3,6 +3,7 @@ module github.com/liliang-cn/agent-go/v2
 go 1.25
 
 require (
+	github.com/a2aproject/a2a-go v0.3.12
 	github.com/JohannesKaufmann/html-to-markdown/v2 v2.5.0
 	github.com/PuerkitoBio/goquery v1.10.3
 	github.com/charmbracelet/bubbletea v1.3.10

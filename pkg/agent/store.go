@@ -186,6 +186,7 @@ func (s *Store) DeleteSession(id string) error {
 func (s *Store) SaveAgentModel(agent *AgentModel) error {
 	return s.agentGoDB.SaveAgentModel(&store.AgentModel{
 		ID:                    agent.ID,
+		A2AID:                 agent.A2AID,
 		TeamID:                agent.TeamID,
 		Name:                  agent.Name,
 		Kind:                  string(agent.Kind),
@@ -201,9 +202,22 @@ func (s *Store) SaveAgentModel(agent *AgentModel) error {
 		EnableMemory:          agent.EnableMemory,
 		EnablePTC:             agent.EnablePTC,
 		EnableMCP:             agent.EnableMCP,
+		EnableA2A:             agent.EnableA2A,
 		CreatedAt:             agent.CreatedAt,
 		UpdatedAt:             agent.UpdatedAt,
 	})
+}
+
+func (s *Store) GetAgentModelByA2AID(a2aID string) (*AgentModel, error) {
+	a, err := s.agentGoDB.GetAgentModelByA2AID(a2aID)
+	if err != nil {
+		return nil, err
+	}
+	model := convertToAgentModel(a)
+	if err := s.hydrateAgentMemberships(model); err != nil {
+		return nil, err
+	}
+	return model, nil
 }
 
 // GetAgentModel retrieves an agent model by ID
@@ -254,11 +268,21 @@ func (s *Store) ListAgentModels() ([]*AgentModel, error) {
 func (s *Store) SaveTeam(team *Squad) error {
 	return s.agentGoDB.SaveSquad(&store.Squad{
 		ID:          team.ID,
+		A2AID:       team.A2AID,
 		Name:        team.Name,
 		Description: team.Description,
+		EnableA2A:   team.EnableA2A,
 		CreatedAt:   team.CreatedAt,
 		UpdatedAt:   team.UpdatedAt,
 	})
+}
+
+func (s *Store) GetTeamByA2AID(a2aID string) (*Squad, error) {
+	sq, err := s.agentGoDB.GetSquadByA2AID(a2aID)
+	if err != nil {
+		return nil, err
+	}
+	return convertToSquad(sq), nil
 }
 
 // GetTeam retrieves a team by ID
@@ -313,6 +337,7 @@ func (s *Store) Close() error {
 func convertToAgentModel(a *store.AgentModel) *AgentModel {
 	return &AgentModel{
 		ID:                    a.ID,
+		A2AID:                 a.A2AID,
 		TeamID:                a.TeamID,
 		Name:                  a.Name,
 		Kind:                  AgentKind(a.Kind),
@@ -328,6 +353,7 @@ func convertToAgentModel(a *store.AgentModel) *AgentModel {
 		EnableMemory:          a.EnableMemory,
 		EnablePTC:             a.EnablePTC,
 		EnableMCP:             a.EnableMCP,
+		EnableA2A:             a.EnableA2A,
 		CreatedAt:             a.CreatedAt,
 		UpdatedAt:             a.UpdatedAt,
 	}
@@ -336,8 +362,10 @@ func convertToAgentModel(a *store.AgentModel) *AgentModel {
 func convertToSquad(sq *store.Squad) *Squad {
 	return &Squad{
 		ID:          sq.ID,
+		A2AID:       sq.A2AID,
 		Name:        sq.Name,
 		Description: sq.Description,
+		EnableA2A:   sq.EnableA2A,
 		CreatedAt:   sq.CreatedAt,
 		UpdatedAt:   sq.UpdatedAt,
 	}

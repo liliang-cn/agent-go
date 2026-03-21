@@ -486,6 +486,17 @@ func TestAgentUsesMemorySaveToolForImplicitScheduleStatement(t *testing.T) {
 	}
 }
 
+func TestNormalizeFileMemoryPathRewritesVectorDBPathForFileStore(t *testing.T) {
+	home := t.TempDir()
+	cfg := testAgentConfig(home)
+
+	got := normalizeFileMemoryPath(config.MemoryStoreTypeFile, cfg.MemoryVectorDBPath(), cfg)
+	want := filepath.Join(home, "data", "memories")
+	if got != want {
+		t.Fatalf("normalizeFileMemoryPath() = %s, want %s", got, want)
+	}
+}
+
 func TestAgentExplicitMemoryRecallUsesShortcutAnswer(t *testing.T) {
 	ctx := context.Background()
 	home := t.TempDir()

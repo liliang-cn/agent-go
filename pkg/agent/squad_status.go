@@ -10,6 +10,7 @@ type SquadRuntimeStatus struct {
 	SquadID         string   `json:"squad_id"`
 	Name            string   `json:"name"`
 	Description     string   `json:"description"`
+	EnableA2A       bool     `json:"enable_a2a"`
 	Status          string   `json:"status"`
 	AgentCount      int      `json:"agent_count"`
 	CaptainCount    int      `json:"captain_count"`
@@ -41,6 +42,7 @@ func (m *SquadManager) GetSquadStatus(squadID string) (*SquadRuntimeStatus, erro
 		SquadID:     squad.ID,
 		Name:        squad.Name,
 		Description: squad.Description,
+		EnableA2A:   squad.EnableA2A,
 		Status:      "idle",
 	}
 

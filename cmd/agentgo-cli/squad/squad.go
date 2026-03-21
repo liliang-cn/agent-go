@@ -59,6 +59,7 @@ func init() {
 	SquadCmd.AddCommand(deleteCmd)
 	SquadCmd.AddCommand(listCmd)
 	SquadCmd.AddCommand(statusCmd)
+	SquadCmd.AddCommand(squadA2ACmd)
 	SquadCmd.AddCommand(memberCmd)
 	memberCmd.AddCommand(memberAddCmd)
 	memberCmd.AddCommand(memberListCmd)
@@ -197,6 +198,7 @@ var listCmd = &cobra.Command{
 			Agents      int
 			Status      string
 			BuiltIn     bool
+			A2A         bool
 			Description string
 		}
 
@@ -208,6 +210,7 @@ var listCmd = &cobra.Command{
 				BuiltIn:     squad.SquadID == builtInSquadID,
 				Status:      squad.Status,
 				Agents:      squad.AgentCount,
+				A2A:         squad.EnableA2A,
 			}
 			if len(squad.CaptainNames) > 0 {
 				row.LeadAgent = squad.CaptainNames[0]
@@ -232,9 +235,9 @@ var listCmd = &cobra.Command{
 			return nil
 		}
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-		fmt.Fprintln(w, "NAME\tCAPTAIN\tAGENTS\tSTATUS\tBUILT-IN\tDESCRIPTION")
+		fmt.Fprintln(w, "NAME\tCAPTAIN\tAGENTS\tSTATUS\tBUILT-IN\tA2A\tDESCRIPTION")
 		for _, row := range rows {
-			fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\t%s\n", row.Name, valueOrDash(row.LeadAgent), row.Agents, row.Status, yesNo(row.BuiltIn), row.Description)
+			fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\t%s\t%s\n", row.Name, valueOrDash(row.LeadAgent), row.Agents, row.Status, yesNo(row.BuiltIn), yesNo(row.A2A), row.Description)
 		}
 		w.Flush()
 		return nil
