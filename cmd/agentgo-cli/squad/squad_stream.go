@@ -4,19 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"github.com/liliang-cn/agent-go/v2/pkg/agent"
-	agentgolog "github.com/liliang-cn/agent-go/v2/pkg/log"
 )
 
 func runSquadLiveDispatch(ctx context.Context, manager *agent.SquadManager, conversationKey, agentName, instruction string, debug bool) (string, error) {
-	if debug {
-		prevLevel := agentgolog.Level()
-		agentgolog.SetLevel(slog.LevelWarn)
-		defer agentgolog.SetLevel(prevLevel)
-	}
 
 	var (
 		events <-chan *agent.Event
