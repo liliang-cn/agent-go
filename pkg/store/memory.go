@@ -141,44 +141,52 @@ func (s *MemoryStore) StoreWithScope(ctx context.Context, memory *domain.Memory,
 	return s.storeMemory(ctx, memory, scope)
 }
 
-// SearchByText performs simple lexical search across cortexdb memory buckets.
+// SearchByText performs lexical search across cortexdb memory buckets with
+// CJK n-gram tokenization, importance weighting, and time decay.
 func (s *MemoryStore) SearchByText(ctx context.Context, query string, topK int) ([]*domain.MemoryWithScore, error) {
 	if topK <= 0 {
 		topK = 10
 	}
 
+	tokens := tokenizeText(query)
+	if len(tokens) == 0 {
+		return nil, nil
+	}
+
+	// Build a LIKE pattern for the first token to narrow the SQL scan,
+	// then re-score all candidates in Go for accuracy.
 	searchPattern := "%" + strings.ToLower(strings.TrimSpace(query)) + "%"
 	rows, err := s.queryWithRetry(ctx, `
 		SELECT m.id, m.session_id, s.user_id, m.role, m.content, m.vector, m.metadata, m.created_at, s.metadata
 		FROM messages m
 		JOIN sessions s ON s.id = m.session_id
-		WHERE s.id LIKE ? AND LOWER(m.content) LIKE ?
+		WHERE s.id LIKE ?
+		  AND (LOWER(m.content) LIKE ? OR LOWER(m.content) LIKE ?)
 		ORDER BY m.created_at DESC
 		LIMIT ?
-	`, memoryBucketPrefix+"%", searchPattern, topK*4)
+	`, memoryBucketPrefix+"%", searchPattern, "%"+tokens[0]+"%", topK*4)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
+	now := time.Now()
 	var results []*domain.MemoryWithScore
 	for rows.Next() {
 		row, err := scanStoredMemoryRow(rows)
 		if err != nil {
 			continue
 		}
-
-		score := calculateTextScore(query, row.Content)
-		results = append(results, &domain.MemoryWithScore{
-			Memory: row.toDomainMemory(),
-			Score:  score,
-		})
+		textScore := ngramMatchScore(tokens, row.Content)
+		if textScore == 0 {
+			continue
+		}
+		mem := row.toDomainMemory()
+		score := applyMemoryBoosts(textScore, mem.Importance, mem.CreatedAt, now)
+		results = append(results, &domain.MemoryWithScore{Memory: mem, Score: score})
 	}
 
 	sort.Slice(results, func(i, j int) bool {
-		if results[i].Score == results[j].Score {
-			return results[i].CreatedAt.After(results[j].CreatedAt)
-		}
 		return results[i].Score > results[j].Score
 	})
 	if len(results) > topK {
@@ -1121,35 +1129,6 @@ func cosineSimilarity(a, b []float32) float64 {
 	return dot / (math.Sqrt(normA) * math.Sqrt(normB))
 }
 
-func calculateTextScore(query, content string) float64 {
-	queryLower := strings.ToLower(query)
-	contentLower := strings.ToLower(content)
-
-	queryTerms := strings.Fields(queryLower)
-	contentTerms := strings.Fields(contentLower)
-	if len(queryTerms) == 0 {
-		return 0
-	}
-
-	matches := 0
-	for _, queryTerm := range queryTerms {
-		for _, contentTerm := range contentTerms {
-			if strings.Contains(contentTerm, queryTerm) {
-				matches++
-				break
-			}
-		}
-	}
-
-	score := float64(matches) / float64(len(queryTerms))
-	if strings.Contains(contentLower, queryLower) {
-		score *= 1.5
-		if score > 1.0 {
-			score = 1.0
-		}
-	}
-	return score
-}
 
 func toFloat32(v []float64) []float32 {
 	if len(v) == 0 {

@@ -678,9 +678,9 @@ func (b *Builder) buildMemoryService(agentgoCfg *config.Config, embedSvc domain.
 		memPath = agentgoCfg.MemoryPrimaryPath()
 	}
 
-	// Warn if vector/hybrid requested but no embedding model available
-	if storeType.UsesVector() && embedSvc == nil {
-		log.Printf("[WARN] Memory store type '%s' requires embedding model, but none available. Falling back to 'file'.", storeType)
+	// Warn if vector-only requested but no embedder (hybrid still works via text search)
+	if storeType == config.MemoryStoreTypeVector && embedSvc == nil {
+		log.Printf("[WARN] Memory store type 'vector' requires embedding model, but none available. Falling back to 'file'.")
 		storeType = config.MemoryStoreTypeFile
 	}
 

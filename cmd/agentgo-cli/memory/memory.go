@@ -174,25 +174,67 @@ func newAddCommand(opts *CommandOptions) *cobra.Command {
 
 // newUpdateCommand creates the update subcommand
 func newUpdateCommand(opts *CommandOptions) *cobra.Command {
+	var (
+		newType    string
+		importance float64
+	)
+
 	cmd := &cobra.Command{
-		Use:   "update <memory-id> <instruction>",
-		Short: "Update a memory using LLM",
-		Args:  cobra.ExactArgs(2),
+		Use:   "update <memory-id> [instruction]",
+		Short: "Update a memory's content (via LLM), type, or importance",
+		Long: `Update a memory. Provide an instruction to rewrite content via LLM.
+Use --type to change the memory type directly (no LLM needed).
+Use --importance to adjust the importance score directly.`,
+		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			id := args[0]
+			instruction := ""
+			if len(args) == 2 {
+				instruction = args[1]
+			}
+
 			svc, err := createMemoryService(opts)
 			if err != nil {
 				return err
 			}
 
-			if err := svc.Update(cmd.Context(), args[0], args[1]); err != nil {
+			// Direct patch: type or importance changed without LLM
+			if newType != "" || cmd.Flags().Changed("importance") {
+				mem, err := svc.Get(cmd.Context(), id)
+				if err != nil {
+					return fmt.Errorf("memory not found: %w", err)
+				}
+				if newType != "" {
+					if !isValidMemoryType(newType) {
+						return fmt.Errorf("invalid type %q: must be one of fact, skill, pattern, context, preference", newType)
+					}
+					mem.Type = domain.MemoryType(newType)
+				}
+				if cmd.Flags().Changed("importance") {
+					mem.Importance = importance
+				}
+				if err := svc.Patch(cmd.Context(), mem); err != nil {
+					return fmt.Errorf("patch failed: %w", err)
+				}
+				fmt.Println("Memory updated successfully.")
+				return nil
+			}
+
+			// LLM-based content update
+			if instruction == "" {
+				return fmt.Errorf("provide an instruction or use --type / --importance to update directly")
+			}
+			if err := svc.Update(cmd.Context(), id, instruction); err != nil {
 				return fmt.Errorf("update failed: %w", err)
 			}
 
 			fmt.Println("Memory updated successfully.")
-
 			return nil
 		},
 	}
+
+	cmd.Flags().StringVarP(&newType, "type", "t", "", "New memory type (fact, skill, pattern, context, preference)")
+	cmd.Flags().Float64VarP(&importance, "importance", "i", 0, "New importance score (0-1)")
 
 	return cmd
 }
@@ -343,11 +385,6 @@ func createMemoryService(opts *CommandOptions) (*memory.Service, error) {
 			}
 			llm, _ = factory.CreateLLMProvider(context.Background(), llmConfig)
 		}
-	}
-
-	// Downgrade hybrid to file if no embedder available
-	if storeType == config.MemoryStoreTypeHybrid && embedder == nil {
-		storeType = config.MemoryStoreTypeFile
 	}
 
 	var shadowStore domain.MemoryStore

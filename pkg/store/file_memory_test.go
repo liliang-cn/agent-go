@@ -382,3 +382,163 @@ func TestFileMemoryStoreScopeViewsAndArchive(t *testing.T) {
 		t.Fatalf("expected archive reason in manifest, got %s", string(manifestData))
 	}
 }
+
+// ── tokenizeText ──────────────────────────────────────────────────────────────
+
+func TestTokenizeText_ASCII(t *testing.T) {
+	tokens := tokenizeText("RAG system search")
+	want := []string{"rag", "system", "search"}
+	if len(tokens) != len(want) {
+		t.Fatalf("got %v, want %v", tokens, want)
+	}
+	for i, w := range want {
+		if tokens[i] != w {
+			t.Errorf("[%d] got %q want %q", i, tokens[i], w)
+		}
+	}
+}
+
+func TestTokenizeText_CJK(t *testing.T) {
+	tokens := tokenizeText("RAG系统")
+	// must include "rag", single chars "系","统", bigram "系统"
+	has := func(s string) bool {
+		for _, t := range tokens {
+			if t == s {
+				return true
+			}
+		}
+		return false
+	}
+	for _, want := range []string{"rag", "系", "统", "系统"} {
+		if !has(want) {
+			t.Errorf("missing token %q in %v", want, tokens)
+		}
+	}
+}
+
+func TestTokenizeText_NoDuplicates(t *testing.T) {
+	tokens := tokenizeText("Go Go Go")
+	count := 0
+	for _, tok := range tokens {
+		if tok == "go" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected deduplicated tokens, got %d occurrences of 'go'", count)
+	}
+}
+
+// ── ngramMatchScore ───────────────────────────────────────────────────────────
+
+func TestNgramMatchScore(t *testing.T) {
+	cases := []struct {
+		query   string
+		content string
+		wantGT  float64 // score must be > this
+		wantLE  float64 // score must be <= this
+	}{
+		{"RAG系统", "项目使用 RAG 系统做语义检索", 0.5, 1.0},
+		{"RAG系统", "今天天气不错", 0, 0}, // no match → 0
+		{"Go语言", "Go 语言开发 Agent", 0.5, 1.0},
+	}
+	for _, c := range cases {
+		tokens := tokenizeText(c.query)
+		score := ngramMatchScore(tokens, c.content)
+		if c.wantGT == 0 && c.wantLE == 0 {
+			if score != 0 {
+				t.Errorf("query=%q content=%q: want 0, got %f", c.query, c.content, score)
+			}
+			continue
+		}
+		if score <= c.wantGT || score > c.wantLE {
+			t.Errorf("query=%q content=%q: score %f not in (%f, %f]",
+				c.query, c.content, score, c.wantGT, c.wantLE)
+		}
+	}
+}
+
+// ── applyMemoryBoosts ─────────────────────────────────────────────────────────
+
+func TestApplyMemoryBoosts_ImportanceRanking(t *testing.T) {
+	now := time.Now()
+	// Same text score, different importance → higher importance wins
+	lowImp := applyMemoryBoosts(1.0, 0.1, now, now)
+	highImp := applyMemoryBoosts(1.0, 0.9, now, now)
+	if highImp <= lowImp {
+		t.Errorf("high importance (%.3f) should outscore low importance (%.3f)", highImp, lowImp)
+	}
+}
+
+func TestApplyMemoryBoosts_TimeDecay(t *testing.T) {
+	now := time.Now()
+	recent := applyMemoryBoosts(1.0, 0.5, now.Add(-24*time.Hour), now)      // 1 day old
+	old := applyMemoryBoosts(1.0, 0.5, now.Add(-365*24*time.Hour), now)     // 1 year old
+	veryOld := applyMemoryBoosts(1.0, 0.5, now.Add(-3*365*24*time.Hour), now) // 3 years old
+	if recent <= old {
+		t.Errorf("recent (%.3f) should outscore old (%.3f)", recent, old)
+	}
+	if old <= veryOld {
+		t.Errorf("old (%.3f) should outscore very old (%.3f)", old, veryOld)
+	}
+}
+
+// ── SearchByText integration ──────────────────────────────────────────────────
+
+func TestFileMemoryStoreSearchByText_CJK(t *testing.T) {
+	ctx := context.Background()
+	s, err := NewFileMemoryStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now()
+	mems := []*domain.Memory{
+		{ID: "m1", Type: domain.MemoryTypeFact, Content: "项目名叫 AgentGo，核心功能是本地 RAG 和记忆系统", Importance: 0.5, CreatedAt: now},
+		{ID: "m2", Type: domain.MemoryTypeFact, Content: "李亮喜欢用 Go 语言开发 AI Agent 系统", Importance: 0.5, CreatedAt: now},
+		{ID: "m3", Type: domain.MemoryTypePreference, Content: "偏好用 PostgreSQL 做关系数据，SQLite 做本地嵌入存储", Importance: 0.9, CreatedAt: now},
+	}
+	for _, m := range mems {
+		if err := s.Store(ctx, m); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// "RAG系统" should rank m1 first (contains both "RAG" and "系统")
+	hits, err := s.SearchByText(ctx, "RAG系统", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) == 0 {
+		t.Fatal("expected results, got none")
+	}
+	if hits[0].Memory.ID != "m1" {
+		t.Errorf("expected m1 first, got %s (score=%.3f)", hits[0].Memory.ID, hits[0].Score)
+	}
+
+	// "数据库存储" should return only m3
+	hits, err = s.SearchByText(ctx, "数据库存储", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 || hits[0].Memory.ID != "m3" {
+		ids := make([]string, len(hits))
+		for i, h := range hits {
+			ids[i] = h.Memory.ID
+		}
+		t.Errorf("expected only m3, got %v", ids)
+	}
+
+	// importance boost: m3 has 0.9 importance; with same text match m3 should rank higher
+	hits, err = s.SearchByText(ctx, "本地", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) < 2 {
+		t.Skip("need at least 2 results to test importance ranking")
+	}
+	// m3 (importance=0.9) and m1 (importance=0.5) both contain "本地"
+	if hits[0].Memory.ID != "m3" {
+		t.Errorf("expected m3 (high importance) first, got %s", hits[0].Memory.ID)
+	}
+}

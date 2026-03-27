@@ -470,13 +470,21 @@ func (s *Service) Search(ctx context.Context, query string, topK int) ([]*domain
 	}
 
 	// 2. Perform search
-	if s.embedder == nil {
-		mems, _, _ := s.store.List(ctx, topK, 0)
-		var res []*domain.MemoryWithScore
-		for _, m := range mems {
-			res = append(res, &domain.MemoryWithScore{Memory: m, Score: 0.5})
+	// If no shadow index and no embedder, or the primary store is file-based,
+	// use text search so scores reflect actual relevance instead of a fixed 1.0.
+	if s.shadowIndex == nil && s.embedder == nil {
+		return searchStore.SearchByText(ctx, query, topK)
+	}
+	if s.shadowIndex == nil {
+		// File store with embedder: text search gives better results than
+		// passing a vector to FileMemoryStore which ignores it.
+		if results, err := searchStore.SearchByText(ctx, query, topK); err == nil && len(results) > 0 {
+			return results, nil
 		}
-		return res, nil
+	}
+
+	if s.embedder == nil {
+		return searchStore.SearchByText(ctx, query, topK)
 	}
 
 	vec, err := s.embedder.Embed(ctx, query)
@@ -508,6 +516,12 @@ func (s *Service) Search(ctx context.Context, query string, topK int) ([]*domain
 
 func (s *Service) Get(ctx context.Context, id string) (*domain.Memory, error) {
 	return s.store.Get(ctx, id)
+}
+
+// Patch directly overwrites the stored memory with the provided value (no LLM involved).
+func (s *Service) Patch(ctx context.Context, mem *domain.Memory) error {
+	mem.UpdatedAt = time.Now()
+	return s.store.Update(ctx, mem)
 }
 
 func (s *Service) List(ctx context.Context, limit, offset int) ([]*domain.Memory, int, error) {

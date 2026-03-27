@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -279,43 +280,126 @@ func (s *FileMemoryStore) SearchByText(ctx context.Context, query string, topK i
 		return nil, err
 	}
 
-	queryLower := strings.ToLower(query)
-	var results []*domain.MemoryWithScore
+	tokens := tokenizeText(query)
+	if len(tokens) == 0 {
+		return nil, nil
+	}
 
-	queryTerms := strings.Fields(queryLower)
+	now := time.Now()
+	var results []*domain.MemoryWithScore
 	for _, m := range all {
 		if m.Archived {
 			continue
 		}
-		contentLower := strings.ToLower(m.Content)
-
-		// Score based on term coverage: how many query terms appear in content
-		matchedTerms := 0
-		for _, term := range queryTerms {
-			if strings.Contains(contentLower, term) {
-				matchedTerms++
-			}
-		}
-		if matchedTerms == 0 {
+		textScore := ngramMatchScore(tokens, m.Content)
+		if textScore == 0 {
 			continue
 		}
-
-		score := float64(matchedTerms) / float64(len(queryTerms))
-		// Boost for exact phrase match
-		if strings.Contains(contentLower, queryLower) {
-			score = score*0.5 + 0.5 // at least 0.5, up to 1.0
-		}
-
-		results = append(results, &domain.MemoryWithScore{
-			Memory: m,
-			Score:  score,
-		})
+		score := applyMemoryBoosts(textScore, m.Importance, m.CreatedAt, now)
+		results = append(results, &domain.MemoryWithScore{Memory: m, Score: score})
 	}
 
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Score > results[j].Score
+	})
 	if len(results) > topK {
 		results = results[:topK]
 	}
 	return results, nil
+}
+
+// tokenizeText splits text into tokens supporting both space-separated words and
+// CJK character n-grams (bigrams) for Chinese/Japanese/Korean text without a dictionary.
+func tokenizeText(text string) []string {
+	text = strings.ToLower(strings.TrimSpace(text))
+	seen := make(map[string]struct{})
+	var tokens []string
+
+	add := func(t string) {
+		if t == "" {
+			return
+		}
+		if _, ok := seen[t]; !ok {
+			seen[t] = struct{}{}
+			tokens = append(tokens, t)
+		}
+	}
+
+	runes := []rune(text)
+	var asciiBuf strings.Builder
+	for i, r := range runes {
+		if isCJK(r) {
+			// Flush any pending ASCII word
+			if w := strings.TrimSpace(asciiBuf.String()); w != "" {
+				for _, f := range strings.Fields(w) {
+					add(f)
+				}
+				asciiBuf.Reset()
+			}
+			// Add single CJK character
+			add(string(r))
+			// Add CJK bigram
+			if i+1 < len(runes) && isCJK(runes[i+1]) {
+				add(string(runes[i : i+2]))
+			}
+		} else {
+			asciiBuf.WriteRune(r)
+		}
+	}
+	if w := strings.TrimSpace(asciiBuf.String()); w != "" {
+		for _, f := range strings.Fields(w) {
+			add(f)
+		}
+	}
+	return tokens
+}
+
+func isCJK(r rune) bool {
+	return (r >= 0x4E00 && r <= 0x9FFF) || // CJK Unified Ideographs
+		(r >= 0x3400 && r <= 0x4DBF) || // CJK Extension A
+		(r >= 0x20000 && r <= 0x2A6DF) // CJK Extension B
+}
+
+// ngramMatchScore returns a [0,1] score based on how many query tokens appear in content.
+func ngramMatchScore(queryTokens []string, content string) float64 {
+	contentLower := strings.ToLower(content)
+	matched := 0
+	for _, tok := range queryTokens {
+		if strings.Contains(contentLower, tok) {
+			matched++
+		}
+	}
+	if matched == 0 {
+		return 0
+	}
+	score := float64(matched) / float64(len(queryTokens))
+	// Boost for full query phrase match
+	if strings.Contains(contentLower, strings.Join(queryTokens, "")) {
+		score = min(score*1.5, 1.0)
+	}
+	return score
+}
+
+// applyMemoryBoosts multiplies textScore by importance and time-decay factors.
+// importance: user-assigned weight [0,1], defaults to 0.5
+// decay: memories older than ~100 days lose ~63% weight (λ=0.01/day)
+func applyMemoryBoosts(textScore, importance float64, createdAt, now time.Time) float64 {
+	if importance <= 0 {
+		importance = 0.5
+	}
+	importanceBoost := 0.5 + importance*0.5 // maps [0,1] → [0.5, 1.0]
+
+	days := now.Sub(createdAt).Hours() / 24
+	decay := math.Exp(-0.007 * days) // half-life ≈ 99 days
+
+	return textScore * importanceBoost * decay
+}
+
+func min(a, b float64) float64 {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // scopeToBankIDFile converts MemoryScope to bank ID for file store
