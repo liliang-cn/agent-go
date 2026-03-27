@@ -56,7 +56,16 @@ func (s *Service) resolveMemoryQueryContextFromContext(ctx context.Context) doma
 	session := getCurrentSession(ctx)
 	queryContext := s.resolveMemoryQueryContext(session)
 	if agent := getCurrentAgent(ctx); agent != nil {
-		queryContext.AgentID = firstNonEmpty(strings.TrimSpace(agent.Name()), queryContext.AgentID)
+		currentAgentID := strings.TrimSpace(agent.Name())
+		switch {
+		case currentAgentID == "":
+			// Keep inherited query context as-is.
+		case queryContext.AgentID == "":
+			queryContext.AgentID = currentAgentID
+		case !isBuiltInStandaloneAgentName(currentAgentID):
+			// Custom or primary agents should own their memory scope.
+			queryContext.AgentID = currentAgentID
+		}
 	}
 	return queryContext
 }

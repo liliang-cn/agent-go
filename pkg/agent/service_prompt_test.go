@@ -92,6 +92,30 @@ func TestBuildSystemPromptOmitsOperationalNotesForConcierge(t *testing.T) {
 	}
 }
 
+func TestBuildSystemPromptOmitsOperationalNotesForIntentRouter(t *testing.T) {
+	routerAgent := NewAgentWithConfig(BuiltInIntentRouterAgentName, "intent router instructions", nil)
+	svc := &Service{
+		agent:         routerAgent,
+		promptManager: prompt.NewManager(),
+		cfg: &config.Config{
+			Tooling: config.ToolingConfig{
+				WebSearch: config.WebSearchConfig{Mode: "auto"},
+			},
+		},
+	}
+
+	got := svc.buildSystemPrompt(context.Background(), routerAgent)
+	if strings.Contains(got, "\nRules:\n") {
+		t.Fatalf("expected intent router prompt to omit rules, got %q", got)
+	}
+	if strings.Contains(got, "Web search capability:") {
+		t.Fatalf("expected intent router prompt to omit web search note, got %q", got)
+	}
+	if !strings.Contains(got, "intent router instructions") {
+		t.Fatalf("expected intent router instructions in prompt, got %q", got)
+	}
+}
+
 func TestBuildSystemPromptKeepsOperationalNotesForAssistant(t *testing.T) {
 	assistant := NewAgentWithConfig("Assistant", "assistant instructions", nil)
 	svc := &Service{
@@ -183,5 +207,45 @@ func TestBuildSystemPromptOmitsMemoryToolGuidanceInFileOnlyMode(t *testing.T) {
 	got := svc.buildSystemPrompt(context.Background(), assistant)
 	if strings.Contains(got, "Memory tool usage:") {
 		t.Fatalf("expected file-only prompt to omit memory tool guidance, got %q", got)
+	}
+}
+
+func TestBuildSystemPromptIncludesAgentMessagingGuidanceWhenMessagingToolsCallable(t *testing.T) {
+	assistant := NewAgentWithConfig("Assistant", "assistant instructions", nil)
+	registry := NewToolRegistry()
+	registry.Register(domain.ToolDefinition{
+		Type: "function",
+		Function: domain.ToolFunction{
+			Name:        "send_agent_message",
+			Description: "Send a short built-in message to another agent",
+			Parameters:  map[string]interface{}{"type": "object"},
+		},
+	}, nil, CategoryCustom)
+	registry.Register(domain.ToolDefinition{
+		Type: "function",
+		Function: domain.ToolFunction{
+			Name:        "get_agent_messages",
+			Description: "Read pending mailbox messages",
+			Parameters:  map[string]interface{}{"type": "object"},
+		},
+	}, nil, CategoryCustom)
+
+	svc := &Service{
+		agent:         assistant,
+		promptManager: prompt.NewManager(),
+		toolRegistry:  registry,
+		cfg: &config.Config{
+			Tooling: config.ToolingConfig{
+				WebSearch: config.WebSearchConfig{Mode: "auto"},
+			},
+		},
+	}
+
+	got := svc.buildSystemPrompt(context.Background(), assistant)
+	if !strings.Contains(got, "Inter-agent messaging:") {
+		t.Fatalf("expected messaging guidance in prompt, got %q", got)
+	}
+	if !strings.Contains(got, "`send_agent_message`") || !strings.Contains(got, "`get_agent_messages`") {
+		t.Fatalf("expected prompt to mention messaging tools explicitly, got %q", got)
 	}
 }

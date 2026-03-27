@@ -185,6 +185,12 @@ type RunConfig struct {
 	// SessionID specifies a session ID for multi-turn conversations
 	SessionID string
 
+	// Inherited memory scope lets a delegated run keep the caller's durable memory namespace
+	// without reusing the same session ID.
+	InheritedMemoryAgentID string
+	InheritedMemorySquadID string
+	InheritedMemoryUserID  string
+
 	// Stream enables streaming mode for real-time events
 	Stream bool
 }
@@ -273,6 +279,15 @@ func WithHistoryDBPath(path string) RunOption {
 // WithSessionID sets a specific session ID for the run
 func WithSessionID(sessionID string) RunOption {
 	return func(c *RunConfig) { c.SessionID = sessionID }
+}
+
+// WithInheritedMemoryScope carries the caller's memory scope into a delegated run.
+func WithInheritedMemoryScope(agentID, squadID, userID string) RunOption {
+	return func(c *RunConfig) {
+		c.InheritedMemoryAgentID = agentID
+		c.InheritedMemorySquadID = squadID
+		c.InheritedMemoryUserID = userID
+	}
 }
 
 // WithStream enables streaming mode, returns events via the returned channel

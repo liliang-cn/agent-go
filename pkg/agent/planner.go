@@ -553,6 +553,7 @@ func (p *Planner) hasRAGTools() bool {
 
 // fallbackIntentRecognition provides basic regex-based intent recognition as fallback
 func (p *Planner) fallbackIntentRecognition(goal string) *IntentRecognitionResult {
+	goal = normalizeTaskPrompt(goal)
 	intent := &IntentRecognitionResult{
 		IntentType: "general_qa",
 		Confidence: 0.5,
@@ -596,13 +597,17 @@ func (p *Planner) fallbackIntentRecognition(goal string) *IntentRecognitionResul
 		intent.IntentType = "memory_save"
 		intent.Confidence = 0.8
 		intent.Topic = p.extractTopic(goal)
-	} else if containsAny(lowerGoal, []string{
-		"meeting", "kickoff", "standup", "sync", "deadline", "appointment", "interview",
-		"会议", "启动会", "开会", "例会", "截止", "约了", "面试",
-	}) && containsAny(lowerGoal, []string{
-		"tomorrow", "today", "tonight", "next week", "next monday", "at ", "pm", "am", ":",
-		"明天", "今天", "今晚", "下周", "下午", "上午", "点", "：",
-	}) {
+	} else if !looksLikeInformationSeekingQuery(goal) &&
+		containsAny(lowerGoal, []string{
+			"tomorrow", "today", "tonight", "next week", "next monday", "at ", "pm", "am", ":",
+			"明天", "今天", "今晚", "下周", "下午", "上午", "点", "：",
+		}) &&
+		containsAny(lowerGoal, []string{
+			"meeting", "kickoff", "standup", "sync", "deadline", "appointment", "interview",
+			"go to", "go ", "visit", "arrive", "leave", "travel", "eat", "dinner", "lunch", "breakfast",
+			"会议", "启动会", "开会", "例会", "截止", "约了", "面试",
+			"去", "吃饭", "吃", "约", "见", "看", "拜访", "出发", "回来",
+		}) {
 		intent.IntentType = "memory_save"
 		intent.Confidence = 0.72
 		intent.Topic = p.extractTopic(goal)

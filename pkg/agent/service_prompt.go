@@ -18,7 +18,7 @@ func (s *Service) buildSystemPrompt(ctx context.Context, agent *Agent) string {
 		"- Skills: calling a skill tool returns step-by-step instructions — follow them, then call task_complete.",
 		"- Never repeat the same tool call with identical arguments.",
 	}, "\n")
-	if isConciergeAgent(agent) {
+	if isDispatchOnlyAgent(agent) {
 		operationalRules = ""
 	}
 
@@ -47,11 +47,15 @@ func (s *Service) buildSystemPrompt(ctx context.Context, agent *Agent) string {
 		rendered += "\n\n" + note
 	}
 
+	if note := s.buildAgentMessagingPromptNote(ctx, agent); note != "" {
+		rendered += "\n\n" + note
+	}
+
 	if summary := s.buildToolCatalogSummary(ctx); summary != "" {
 		rendered += "\n\n" + summary
 	}
 
-	if !isConciergeAgent(agent) {
+	if !isDispatchOnlyAgent(agent) {
 		if note := s.buildWebSearchPromptNote(agent); note != "" {
 			rendered += "\n\n" + note
 		}
@@ -65,6 +69,13 @@ func isConciergeAgent(agent *Agent) bool {
 		return false
 	}
 	return strings.EqualFold(agent.Name(), BuiltInConciergeAgentName)
+}
+
+func isDispatchOnlyAgent(agent *Agent) bool {
+	if agent == nil {
+		return false
+	}
+	return isBuiltInDispatchOnlyAgentName(agent.Name())
 }
 
 // buildEnrichedPrompt builds a prompt enriched with memory and RAG results
@@ -108,6 +119,11 @@ func (s *Service) buildPTCSystemPrompt(ctx context.Context) string {
 	}
 
 	if note := s.buildMemoryPromptNote(ctx, s.agent); note != "" {
+		sb.WriteString("\n\n")
+		sb.WriteString(note)
+	}
+
+	if note := s.buildAgentMessagingPromptNote(ctx, s.agent); note != "" {
 		sb.WriteString("\n\n")
 		sb.WriteString(note)
 	}
@@ -167,5 +183,47 @@ func (s *Service) buildMemoryPromptNote(ctx context.Context, agent *Agent) strin
 		lines = append(lines, "- If the user asks what was previously remembered or asks you to answer from memory, call `memory_recall` before answering.")
 	}
 
+	return strings.Join(lines, "\n")
+}
+
+func (s *Service) buildAgentMessagingPromptNote(ctx context.Context, agent *Agent) string {
+	if s == nil {
+		return ""
+	}
+
+	hasSend := false
+	hasRead := false
+
+	if s.ptcIntegration != nil && s.ptcIntegration.config.Enabled {
+		for _, tool := range s.ptcAvailableCallTools(ctx) {
+			switch tool.Name {
+			case "send_agent_message":
+				hasSend = true
+			case "get_agent_messages":
+				hasRead = true
+			}
+		}
+	} else if s.toolRegistry != nil {
+		for _, tool := range s.collectAllAvailableTools(ctx, agent) {
+			switch tool.Function.Name {
+			case "send_agent_message":
+				hasSend = true
+			case "get_agent_messages":
+				hasRead = true
+			}
+		}
+	}
+
+	if !hasSend && !hasRead {
+		return ""
+	}
+
+	lines := []string{"Inter-agent messaging:"}
+	if hasSend {
+		lines = append(lines, "- Use `send_agent_message` to hand off short facts, findings, or requests to another named agent without blocking on an inline response.")
+	}
+	if hasRead {
+		lines = append(lines, "- Use `get_agent_messages` to read pending mailbox items sent to you by other agents before you answer or continue a multi-agent workflow.")
+	}
 	return strings.Join(lines, "\n")
 }

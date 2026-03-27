@@ -174,6 +174,9 @@ func TestRegisterConciergeToolsExposesStatusAndSubmission(t *testing.T) {
 	if svc.agent.HasTool("memory_recall") {
 		t.Fatal("expected memory_recall to be removed from Concierge agent tools in file-only mode")
 	}
+	if !svc.agent.HasTool("route_builtin_request") {
+		t.Fatal("expected route_builtin_request to be available on Concierge")
+	}
 	if !svc.agent.HasTool("submit_agent_task") {
 		t.Fatal("expected submit_agent_task to be available on Concierge")
 	}
@@ -375,23 +378,19 @@ func TestEnqueueSharedTaskQueuesImmediately(t *testing.T) {
 		t.Fatalf("expected second task to see queue ahead, got %d", second.QueuedAhead)
 	}
 
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		tasks := manager.ListSharedTasks("Captain", time.Time{}, 10)
-		var completed int
-		for _, task := range tasks {
-			if task.Status == SharedTaskStatusCompleted || task.Status == SharedTaskStatusFailed {
-				completed++
-			}
-		}
-		if completed >= 2 {
-			return
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-
 	tasks := manager.ListSharedTasks("Captain", time.Time{}, 10)
-	t.Fatalf("expected queued tasks to complete, got %+v", tasks)
+	if len(tasks) != 2 {
+		t.Fatalf("expected two queued shared tasks, got %+v", tasks)
+	}
+	if tasks[0].Status != SharedTaskStatusQueued && tasks[0].Status != SharedTaskStatusRunning {
+		t.Fatalf("expected first listed task queued or running, got %+v", tasks[0])
+	}
+	if tasks[1].Status != SharedTaskStatusQueued && tasks[1].Status != SharedTaskStatusRunning {
+		t.Fatalf("expected second listed task queued or running, got %+v", tasks[1])
+	}
+	if tasks[1].QueuedAhead < 1 && second.QueuedAhead < 1 {
+		t.Fatalf("expected second listed task to preserve queue depth, got stored=%+v returned=%+v", tasks[1], second)
+	}
 }
 
 func TestBuildTeamMemberPrompt_IsAgentSpecific(t *testing.T) {

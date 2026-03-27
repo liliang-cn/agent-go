@@ -28,6 +28,7 @@ const (
 )
 
 func isExplicitMemoryRecallQuery(goal string) bool {
+	goal = normalizeTaskPrompt(goal)
 	query := strings.ToLower(strings.TrimSpace(goal))
 	if query == "" {
 		return false
@@ -71,10 +72,23 @@ func isExplicitMemoryRecallQuery(goal string) bool {
 		}
 	}
 
+	scheduleTimeHints := []string{
+		"today", "tomorrow", "tonight", "this afternoon", "this evening", "next week",
+		"今天", "明天", "今晚", "下午", "上午", "早上", "晚上", "下周",
+	}
+	scheduleSubjectHints := []string{
+		"schedule", "plan", "plans", "agenda", "appointment", "meeting", "todo",
+		"安排", "计划", "日程", "行程", "约", "待办", "会议",
+	}
+	if looksLikeInformationSeekingQuery(goal) && containsAny(query, scheduleTimeHints) && containsAny(query, scheduleSubjectHints) {
+		return true
+	}
+
 	return false
 }
 
 func looksLikeInformationSeekingQuery(goal string) bool {
+	goal = normalizeTaskPrompt(goal)
 	query := strings.ToLower(strings.TrimSpace(goal))
 	if query == "" {
 		return false
@@ -105,6 +119,7 @@ func isExplicitMemoryRecallIntent(goal string, intent *IntentRecognitionResult) 
 }
 
 func isExplicitMemorySaveIntent(goal string, intent *IntentRecognitionResult) bool {
+	goal = normalizeTaskPrompt(goal)
 	if looksLikeInformationSeekingQuery(goal) {
 		return false
 	}
@@ -126,7 +141,7 @@ func isExplicitMemorySaveIntent(goal string, intent *IntentRecognitionResult) bo
 }
 
 func extractExplicitMemorySaveContent(goal string) string {
-	trimmed := strings.TrimSpace(goal)
+	trimmed := normalizeTaskPrompt(goal)
 	lower := strings.ToLower(trimmed)
 
 	prefixes := []string{

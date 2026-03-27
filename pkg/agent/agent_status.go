@@ -104,11 +104,11 @@ func isBuiltInAgentModel(model *AgentModel) bool {
 		return false
 	}
 	switch strings.TrimSpace(model.ID) {
-	case defaultConciergeAgentID, defaultAssistantAgentID, defaultOperatorAgentID, defaultCaptainAgentID, defaultStakeholderAgentID, defaultArchivistAgentID, defaultVerifierAgentID:
+	case defaultConciergeAgentID, defaultIntentRouterAgentID, defaultPromptOptimizerAgentID, defaultAssistantAgentID, defaultOperatorAgentID, defaultCaptainAgentID, defaultStakeholderAgentID, defaultArchivistAgentID, defaultVerifierAgentID:
 		return true
 	}
 	switch strings.TrimSpace(model.Name) {
-	case defaultConciergeAgentName, defaultAssistantAgentName, defaultOperatorAgentName, defaultCaptainAgentName, defaultStakeholderAgentName, defaultArchivistAgentName, defaultVerifierAgentName:
+	case defaultConciergeAgentName, defaultIntentRouterAgentName, defaultPromptOptimizerAgentName, defaultAssistantAgentName, defaultOperatorAgentName, defaultCaptainAgentName, defaultStakeholderAgentName, defaultArchivistAgentName, defaultVerifierAgentName:
 		return true
 	default:
 		return false

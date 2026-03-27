@@ -332,7 +332,7 @@ func (s *Service) buildToolCatalogSummary(ctx context.Context) string {
 }
 
 func (s *Service) buildWebSearchPromptNote(currentAgent *Agent) string {
-	if isConciergeAgent(currentAgent) || (currentAgent == nil && isConciergeAgent(s.agent)) {
+	if isDispatchOnlyAgent(currentAgent) || (currentAgent == nil && isDispatchOnlyAgent(s.agent)) {
 		return ""
 	}
 

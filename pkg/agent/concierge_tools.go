@@ -23,6 +23,34 @@ func (m *SquadManager) RegisterConciergeTools(concierge *Service) {
 		concierge.AddTool(name, description, parameters, handler)
 	}
 
+	register("route_builtin_request", "Run PromptOptimizer and IntentRouter in parallel, then dispatch the optimized request to the best-fit built-in specialist and return the inline result.", map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"prompt": map[string]interface{}{
+				"type":        "string",
+				"description": "The user's substantive request to route.",
+			},
+		},
+		"required": []string{"prompt"},
+	}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+		prompt := getStringArg(args, "prompt")
+		if prompt == "" {
+			return nil, fmt.Errorf("prompt is required")
+		}
+		queryContext := concierge.resolveMemoryQueryContextFromContext(ctx)
+		routed, err := m.routeBuiltInRequest(ctx, prompt, queryContext)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{
+			"target_agent":     routed.TargetAgent,
+			"intent_type":      routed.IntentType,
+			"routing_reason":   routed.Reason,
+			"optimized_prompt": routed.OptimizedPrompt,
+			"result":           routed.Result,
+		}, nil
+	})
+
 	register("list_squads", "List all squads with their current runtime status.", map[string]interface{}{
 		"type":       "object",
 		"properties": map[string]interface{}{},
@@ -279,21 +307,20 @@ func (m *SquadManager) RegisterConciergeTools(concierge *Service) {
 }
 
 var conciergeBaseAllowedToolNames = map[string]struct{}{
-	"task_complete":             {},
-	"llm":                       {},
-	"list_squads":               {},
-	"get_squad_status":          {},
-	"list_agents":               {},
-	"get_agent_status":          {},
-	"submit_agent_task":         {},
-	"submit_squad_task":         {},
-	"get_task_status":           {},
-	"list_session_tasks":        {},
-	"list_squad_tasks":          {},
-	"delegate_builtin_agent":    {},
-	"submit_builtin_agent_task": {},
-	"get_delegated_task_status": {},
-	"list_builtin_agents":       {},
+	"task_complete":         {},
+	"llm":                   {},
+	"route_builtin_request": {},
+	"send_agent_message":    {},
+	"get_agent_messages":    {},
+	"list_squads":           {},
+	"get_squad_status":      {},
+	"list_agents":           {},
+	"get_agent_status":      {},
+	"submit_agent_task":     {},
+	"submit_squad_task":     {},
+	"get_task_status":       {},
+	"list_session_tasks":    {},
+	"list_squad_tasks":      {},
 }
 
 func configureConciergeService(concierge *Service) {

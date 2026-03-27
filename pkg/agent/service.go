@@ -386,6 +386,16 @@ func (s *Service) RunStreamWithOptions(ctx context.Context, goal string, opts ..
 	if err != nil {
 		session = NewSessionWithID(sessionID, s.agent.ID())
 	}
+	if inherited := strings.TrimSpace(cfg.InheritedMemoryAgentID); inherited != "" {
+		session.SetContext(sessionContextMemoryAgentScope, inherited)
+	}
+	if inherited := strings.TrimSpace(cfg.InheritedMemorySquadID); inherited != "" {
+		session.SetContext(sessionContextMemorySquadScope, inherited)
+	}
+	if inherited := strings.TrimSpace(cfg.InheritedMemoryUserID); inherited != "" {
+		session.SetContext(sessionContextMemoryUserScope, inherited)
+	}
+	s.rememberMemoryQueryContext(session, s.resolveMemoryQueryContext(session))
 
 	runtime := NewRuntime(s, session, cfg)
 	return runtime.RunStream(ctx, goal), nil
@@ -447,6 +457,15 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 		}
 	} else {
 		session = NewSession(s.agent.ID())
+	}
+	if inherited := strings.TrimSpace(cfg.InheritedMemoryAgentID); inherited != "" {
+		session.SetContext(sessionContextMemoryAgentScope, inherited)
+	}
+	if inherited := strings.TrimSpace(cfg.InheritedMemorySquadID); inherited != "" {
+		session.SetContext(sessionContextMemorySquadScope, inherited)
+	}
+	if inherited := strings.TrimSpace(cfg.InheritedMemoryUserID); inherited != "" {
+		session.SetContext(sessionContextMemoryUserScope, inherited)
 	}
 	memoryQueryContext := s.resolveMemoryQueryContext(session)
 	s.rememberMemoryQueryContext(session, memoryQueryContext)

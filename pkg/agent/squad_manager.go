@@ -37,6 +37,8 @@ type SquadManager struct {
 	sessionTasks   map[string][]string
 	taskSubs       map[string]map[chan *TaskEvent]struct{}
 	taskCancels    map[string]context.CancelFunc
+	mailboxMu      sync.RWMutex
+	agentMailboxes map[string]*agentMailbox
 }
 
 // TeamManager is kept as a compatibility alias for older call sites.
@@ -190,6 +192,7 @@ func NewSquadManager(s *Store) *SquadManager {
 		sessionTasks:   make(map[string][]string),
 		taskSubs:       make(map[string]map[chan *TaskEvent]struct{}),
 		taskCancels:    make(map[string]context.CancelFunc),
+		agentMailboxes: make(map[string]*agentMailbox),
 	}
 	manager.restoreSharedTasks()
 	return manager
@@ -732,6 +735,7 @@ func (m *SquadManager) getOrBuildService(name string) (*Service, error) {
 		}
 	}
 	systemPrompt = m.decorateDelegableBuiltInAgentPrompt(systemPrompt, model)
+	systemPrompt = m.decorateKnownAgentsPrompt(systemPrompt, model)
 	builder.WithSystemPrompt(systemPrompt)
 
 	if agentgoCfg != nil {
@@ -802,7 +806,11 @@ func (m *SquadManager) getOrBuildService(name string) (*Service, error) {
 		m.RegisterCaptainTools(newSvc)
 		configureCaptainService(newSvc)
 	}
+	if strings.EqualFold(strings.TrimSpace(model.Name), defaultConciergeAgentName) {
+		m.RegisterConciergeTools(newSvc)
+	}
 	m.registerBuiltInAgentDelegationTools(newSvc, model)
+	m.registerAgentMessagingTools(newSvc, model)
 	if strings.EqualFold(strings.TrimSpace(model.Name), defaultOperatorAgentName) {
 		registerOperatorTools(newSvc)
 	}
@@ -851,6 +859,18 @@ func (m *SquadManager) decorateDelegableBuiltInAgentPrompt(base string, model *A
 		return base
 	}
 	context := strings.TrimSpace(m.buildDelegableBuiltInAgentsContext(model))
+	if context == "" {
+		return base
+	}
+	if base == "" {
+		return context
+	}
+	return strings.TrimSpace(base + "\n\n" + context)
+}
+
+func (m *SquadManager) decorateKnownAgentsPrompt(base string, model *AgentModel) string {
+	base = strings.TrimSpace(base)
+	context := strings.TrimSpace(m.buildKnownAgentsContext(model))
 	if context == "" {
 		return base
 	}
@@ -1212,7 +1232,7 @@ func isMeaningfulDispatchText(text string) bool {
 
 // DispatchTask runs the task on the target squad agent service directly.
 func (m *SquadManager) DispatchTask(ctx context.Context, agentName string, instruction string) (string, error) {
-	return m.dispatchTask(ctx, agentName, instruction, "")
+	return m.dispatchTaskWithOptions(ctx, agentName, instruction, "", nil)
 }
 
 // ChatWithMember runs a squad chat turn with persistent history scoped to one conversation key and squad agent.
@@ -1221,10 +1241,14 @@ func (m *SquadManager) ChatWithMember(ctx context.Context, conversationKey, agen
 	if conversationKey == "" {
 		return m.DispatchTask(ctx, agentName, instruction)
 	}
-	return m.dispatchTask(ctx, agentName, instruction, m.conversationSessionID(conversationKey, agentName))
+	return m.dispatchTaskWithOptions(ctx, agentName, instruction, m.conversationSessionID(conversationKey, agentName), nil)
 }
 
 func (m *SquadManager) dispatchTask(ctx context.Context, agentName string, instruction string, sessionID string) (string, error) {
+	return m.dispatchTaskWithOptions(ctx, agentName, instruction, sessionID, nil)
+}
+
+func (m *SquadManager) dispatchTaskWithOptions(ctx context.Context, agentName string, instruction string, sessionID string, extraOpts []RunOption) (string, error) {
 	if err := m.ensureAgentRunning(ctx, agentName); err != nil {
 		return "", fmt.Errorf("cannot start agent %s: %w", agentName, err)
 	}
@@ -1243,6 +1267,7 @@ func (m *SquadManager) dispatchTask(ctx context.Context, agentName string, instr
 	if strings.TrimSpace(sessionID) != "" {
 		runOptions = append(runOptions, WithSessionID(sessionID))
 	}
+	runOptions = append(runOptions, extraOpts...)
 
 	res, err := svc.Run(ctx, wrappedInstruction, runOptions...)
 	if err != nil {

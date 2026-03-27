@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"testing"
 
 	"github.com/liliang-cn/agent-go/v2/pkg/domain"
@@ -48,5 +49,46 @@ func TestRememberMemoryQueryContext(t *testing.T) {
 	}
 	if value, ok := session.GetContext(sessionContextMemoryUserScope); !ok || value != "user-1" {
 		t.Fatalf("expected user scope to be stored in session context, got %v %v", value, ok)
+	}
+}
+
+func TestResolveMemoryQueryContextFromContextPreservesInheritedScopeForBuiltInAgent(t *testing.T) {
+	svc := &Service{
+		agent:              NewAgent("Concierge"),
+		memoryScopeAgentID: "Concierge",
+		memoryScopeSquadID: "squad-alpha",
+	}
+
+	session := NewSession("session-1")
+	session.SetContext(sessionContextMemoryAgentScope, "Concierge")
+	session.SetContext(sessionContextMemorySquadScope, "squad-alpha")
+
+	ctx := withCurrentSession(context.Background(), session)
+	ctx = withCurrentAgent(ctx, NewAgent("Archivist"))
+
+	queryContext := svc.resolveMemoryQueryContextFromContext(ctx)
+	if queryContext.AgentID != "Concierge" {
+		t.Fatalf("expected inherited agent scope Concierge, got %q", queryContext.AgentID)
+	}
+	if queryContext.SquadID != "squad-alpha" {
+		t.Fatalf("expected inherited squad scope squad-alpha, got %q", queryContext.SquadID)
+	}
+}
+
+func TestResolveMemoryQueryContextFromContextUsesCurrentScopeForCustomAgent(t *testing.T) {
+	svc := &Service{
+		agent:              NewAgent("Concierge"),
+		memoryScopeAgentID: "Concierge",
+	}
+
+	session := NewSession("session-1")
+	session.SetContext(sessionContextMemoryAgentScope, "Concierge")
+
+	ctx := withCurrentSession(context.Background(), session)
+	ctx = withCurrentAgent(ctx, NewAgent("ReleasePlanner"))
+
+	queryContext := svc.resolveMemoryQueryContextFromContext(ctx)
+	if queryContext.AgentID != "ReleasePlanner" {
+		t.Fatalf("expected current custom agent scope ReleasePlanner, got %q", queryContext.AgentID)
 	}
 }

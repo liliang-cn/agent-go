@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	memorypkg "github.com/liliang-cn/agent-go/v2/pkg/memory"
 	"github.com/liliang-cn/agent-go/v2/pkg/skills"
 	"github.com/liliang-cn/agent-go/v2/pkg/usage"
 	"golang.org/x/sync/errgroup"
@@ -713,6 +715,45 @@ func (r *Runtime) prepareContext(ctx context.Context, goal string) (string, stri
 func (r *Runtime) saveToMemory(ctx context.Context, goal, result string) {
 	if r.svc.memoryService != nil {
 		queryContext := r.svc.resolveMemoryQueryContext(r.session)
+		intent := &IntentRecognitionResult{}
+		if r.svc.planner != nil {
+			intent = r.svc.planner.fallbackIntentRecognition(goal)
+		}
+		if isExplicitMemorySaveIntent(goal, intent) && !r.svc.hasRunMemorySaved() {
+			content := extractExplicitMemorySaveContent(goal)
+			if strings.TrimSpace(content) == "" {
+				content = goal
+			}
+
+			scope := memorypkg.AgentScope(queryContext.AgentID)
+			if scope.ID == "" && queryContext.SessionID != "" {
+				scope = memorypkg.SessionScope(queryContext.SessionID)
+			}
+
+			memType := domain.MemoryTypeFact
+			goalLower := strings.ToLower(goal)
+			if strings.HasPrefix(goalLower, "my favorite") ||
+				strings.HasPrefix(goalLower, "i prefer") ||
+				strings.Contains(goalLower, "preference is") {
+				memType = domain.MemoryTypePreference
+			}
+
+			if err := r.svc.memoryService.Add(ctx, &domain.Memory{
+				Type:       memType,
+				SessionID:  memorypkg.ToBankID(scope),
+				ScopeType:  scope.Type,
+				ScopeID:    scope.ID,
+				Content:    content,
+				Importance: 0.8,
+				Metadata: map[string]interface{}{
+					"source": "user_direct",
+				},
+			}); err != nil {
+				r.svc.logger.Warn("failed to store explicit memory after stream run", slog.String("error", err.Error()))
+			} else {
+				log.Printf("[Agent] Stored to memory: %s", content)
+			}
+		}
 		if err := r.svc.memoryService.StoreIfWorthwhile(ctx, &domain.MemoryStoreRequest{
 			SessionID:  r.session.GetID(),
 			AgentID:    queryContext.AgentID,

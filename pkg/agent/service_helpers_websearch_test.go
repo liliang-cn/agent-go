@@ -198,3 +198,20 @@ func TestBuildWebSearchPromptNoteSkipsConcierge(t *testing.T) {
 		t.Fatalf("expected concierge to skip web search note, got %q", note)
 	}
 }
+
+func TestBuildWebSearchPromptNoteSkipsIntentRouter(t *testing.T) {
+	svc := &Service{
+		cfg: &config.Config{
+			Tooling: config.ToolingConfig{
+				WebSearch: config.WebSearchConfig{
+					Mode: "auto",
+				},
+			},
+		},
+	}
+
+	note := svc.buildWebSearchPromptNote(NewAgentWithConfig(BuiltInIntentRouterAgentName, "intent router", nil))
+	if note != "" {
+		t.Fatalf("expected intent router to skip web search note, got %q", note)
+	}
+}

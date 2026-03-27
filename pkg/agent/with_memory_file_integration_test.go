@@ -118,6 +118,9 @@ func (e *explicitRecallTestLLM) Generate(ctx context.Context, prompt string, opt
 	if strings.Contains(prompt, "The vector memory test token is mango-9135.") {
 		return "mango-9135", nil
 	}
+	if strings.Contains(prompt, "用户明天17:00去万达广场吃饭。") {
+		return "明天下午17:00去万达广场吃饭。", nil
+	}
 	return "I couldn't find that in memory.", nil
 }
 
@@ -185,6 +188,21 @@ func (m *memoryToolCallingTestLLM) GenerateWithTools(ctx context.Context, messag
 						Arguments: map[string]interface{}{
 							"content": "明天下午3：00开启动会。",
 							"type":    "fact",
+						},
+					},
+				}},
+			}, nil
+		}
+		if strings.Contains(userContent(messages), "万达") {
+			return &domain.GenerationResult{
+				ToolCalls: []domain.ToolCall{{
+					ID:   "memory-save-schedule-wanda",
+					Type: "function",
+					Function: domain.FunctionCall{
+						Name: "memory_save",
+						Arguments: map[string]interface{}{
+							"content": "用户明天17:00去万达广场吃饭。",
+							"type":    "context",
 						},
 					},
 				}},
@@ -486,6 +504,76 @@ func TestAgentUsesMemorySaveToolForImplicitScheduleStatement(t *testing.T) {
 	}
 }
 
+func TestMemoryToolsUseInheritedScopeForBuiltInArchivist(t *testing.T) {
+	ctx := context.Background()
+	home := t.TempDir()
+
+	svc, err := New("memory-agent").
+		WithConfig(testVectorAgentConfig(home)).
+		WithLLM(&memoryToolCallingTestLLM{}).
+		WithEmbedder(vectorMemoryTestEmbedder{}).
+		WithMemory(WithMemoryStoreType("vector")).
+		Build()
+	if err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+	defer svc.Close()
+
+	session := NewSession("session-archivist-scope")
+	session.SetContext(sessionContextMemoryAgentScope, "Concierge")
+	session.SetContext(sessionContextMemorySquadScope, "default-squad")
+
+	toolCtx := withCurrentSession(ctx, session)
+	toolCtx = withCurrentAgent(toolCtx, NewAgent("Archivist"))
+
+	if _, err := svc.toolRegistry.Call(toolCtx, "memory_save", map[string]interface{}{
+		"content": "用户明天17:00去万达广场吃饭。",
+		"type":    "context",
+	}); err != nil {
+		t.Fatalf("memory_save failed: %v", err)
+	}
+
+	mems, total, err := svc.MemoryService().List(ctx, 10, 0)
+	if err != nil {
+		t.Fatalf("list memories failed: %v", err)
+	}
+	if total == 0 || len(mems) == 0 {
+		t.Fatal("expected memory_save to persist memory")
+	}
+
+	found := false
+	for _, mem := range mems {
+		if strings.Contains(mem.Content, "万达广场吃饭") {
+			found = true
+			if mem.ScopeType != domain.MemoryScopeAgent || mem.ScopeID != "Concierge" {
+				t.Fatalf("expected built-in Archivist save to inherit Concierge scope, got %+v", mem)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected saved schedule memory, got %+v", mems)
+	}
+
+	rawRecall, err := svc.toolRegistry.Call(toolCtx, "memory_recall", map[string]interface{}{
+		"query": "明天有什么安排",
+	})
+	if err != nil {
+		t.Fatalf("memory_recall failed: %v", err)
+	}
+
+	recall, ok := rawRecall.(map[string]interface{})
+	if !ok {
+		t.Fatalf("memory_recall returned %T, want map[string]interface{}", rawRecall)
+	}
+	if count, ok := recall["count"].(int); !ok || count < 1 {
+		t.Fatalf("expected scoped recall hit count, got %#v", recall["count"])
+	}
+	memories, _ := recall["memories"].(string)
+	if !strings.Contains(memories, "万达广场吃饭") {
+		t.Fatalf("expected recalled memories to mention stored schedule, got %q", memories)
+	}
+}
+
 func TestNormalizeFileMemoryPathRewritesVectorDBPathForFileStore(t *testing.T) {
 	home := t.TempDir()
 	cfg := testAgentConfig(home)
@@ -541,6 +629,53 @@ func TestAgentExplicitMemoryRecallUsesShortcutAnswer(t *testing.T) {
 	}
 	if !strings.Contains(llm.lastGeneratePrompt, "The vector memory test token is mango-9135.") {
 		t.Fatalf("expected recall prompt to contain memory context, got %q", llm.lastGeneratePrompt)
+	}
+}
+
+func TestAgentScheduleRecallUsesShortcutAnswer(t *testing.T) {
+	ctx := context.Background()
+	home := t.TempDir()
+	llm := &explicitRecallTestLLM{}
+
+	svc, err := New("memory-agent").
+		WithConfig(testAgentConfig(home)).
+		WithLLM(llm).
+		WithMemory().
+		Build()
+	if err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+	defer svc.Close()
+
+	if err := svc.MemoryService().Add(ctx, &domain.Memory{
+		ID:         "memory-schedule-1",
+		SessionID:  "agent:memory-agent",
+		ScopeType:  domain.MemoryScopeAgent,
+		ScopeID:    "memory-agent",
+		Type:       domain.MemoryTypeContext,
+		Content:    "用户明天17:00去万达广场吃饭。",
+		Importance: 0.9,
+		CreatedAt:  time.Now(),
+	}); err != nil {
+		t.Fatalf("add memory failed: %v", err)
+	}
+
+	result, err := svc.Chat(ctx, "明天有什么安排？")
+	if err != nil {
+		t.Fatalf("chat failed: %v", err)
+	}
+
+	if got := strings.TrimSpace(result.Text()); got != "明天下午17:00去万达广场吃饭。" {
+		t.Fatalf("expected schedule recall shortcut answer, got %q", got)
+	}
+	if llm.generateCalls == 0 {
+		t.Fatal("expected shortcut to call Generate")
+	}
+	if llm.generateWithToolsCalls != 0 {
+		t.Fatalf("expected shortcut to avoid GenerateWithTools, got %d calls", llm.generateWithToolsCalls)
+	}
+	if !strings.Contains(llm.lastGeneratePrompt, "用户明天17:00去万达广场吃饭。") {
+		t.Fatalf("expected recall prompt to contain schedule memory context, got %q", llm.lastGeneratePrompt)
 	}
 }
 

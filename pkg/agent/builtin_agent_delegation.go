@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-var delegableBuiltInAgentNames = []string{
+var coreDelegableBuiltInAgentNames = []string{
 	defaultAssistantAgentName,
 	defaultOperatorAgentName,
 	defaultStakeholderAgentName,
@@ -18,9 +18,11 @@ func (m *SquadManager) registerBuiltInAgentDelegationTools(svc *Service, model *
 	if svc == nil || model == nil {
 		return
 	}
-	if isBuiltInAgentModel(model) && !strings.EqualFold(strings.TrimSpace(model.Name), defaultConciergeAgentName) {
+	if isBuiltInAgentModel(model) && !canUseBuiltInDelegationTools(model) {
 		return
 	}
+	allowedAgentNames := delegableBuiltInAgentNamesFor(model)
+	allowedAgentLabel := strings.Join(allowedAgentNames, ", ")
 
 	register := func(name, description string, parameters map[string]interface{}, handler func(context.Context, map[string]interface{}) (interface{}, error)) {
 		if svc.toolRegistry != nil && svc.toolRegistry.Has(name) {
@@ -29,11 +31,11 @@ func (m *SquadManager) registerBuiltInAgentDelegationTools(svc *Service, model *
 		svc.AddTool(name, description, parameters, handler)
 	}
 
-	register("list_builtin_agents", "List delegable built-in standalone agents that this custom agent may use when its own role is not the best fit.", map[string]interface{}{
+	register("list_builtin_agents", "List delegable built-in standalone agents available to this agent.", map[string]interface{}{
 		"type":       "object",
 		"properties": map[string]interface{}{},
 	}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-		agents, err := m.listDelegableBuiltInAgents()
+		agents, err := m.listDelegableBuiltInAgentsFor(model)
 		if err != nil {
 			return nil, err
 		}
@@ -49,12 +51,12 @@ func (m *SquadManager) registerBuiltInAgentDelegationTools(svc *Service, model *
 		return out, nil
 	})
 
-	register("delegate_builtin_agent", "Synchronously delegate a focused task to one built-in standalone agent such as Operator, Assistant, Stakeholder, Archivist, or Verifier and wait for the inline result.", map[string]interface{}{
+	register("delegate_builtin_agent", fmt.Sprintf("Synchronously delegate a focused task to one allowed built-in standalone agent (%s) and wait for the inline result.", allowedAgentLabel), map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
 			"agent_name": map[string]interface{}{
 				"type":        "string",
-				"description": "Built-in standalone agent name: Assistant, Operator, Stakeholder, Archivist, or Verifier.",
+				"description": "Built-in standalone agent name: " + allowedAgentLabel + ".",
 			},
 			"prompt": map[string]interface{}{
 				"type":        "string",
@@ -68,11 +70,15 @@ func (m *SquadManager) registerBuiltInAgentDelegationTools(svc *Service, model *
 		if prompt == "" {
 			return nil, fmt.Errorf("prompt is required")
 		}
-		builtin, err := m.resolveDelegableBuiltInAgent(agentName)
+		builtin, err := m.resolveDelegableBuiltInAgentFor(model, agentName)
 		if err != nil {
 			return nil, err
 		}
-		result, err := m.DispatchTask(ctx, builtin.Name, prompt)
+		queryContext := svc.resolveMemoryQueryContextFromContext(ctx)
+		runOptions := []RunOption{
+			WithInheritedMemoryScope(queryContext.AgentID, queryContext.SquadID, queryContext.UserID),
+		}
+		result, err := m.dispatchTaskWithOptions(ctx, builtin.Name, prompt, "", runOptions)
 		if err != nil {
 			return nil, err
 		}
@@ -82,12 +88,12 @@ func (m *SquadManager) registerBuiltInAgentDelegationTools(svc *Service, model *
 		}, nil
 	})
 
-	register("submit_builtin_agent_task", "Asynchronously submit work to one built-in standalone agent and return immediately with a task id.", map[string]interface{}{
+	register("submit_builtin_agent_task", fmt.Sprintf("Asynchronously submit work to one allowed built-in standalone agent (%s) and return immediately with a task id.", allowedAgentLabel), map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
 			"agent_name": map[string]interface{}{
 				"type":        "string",
-				"description": "Built-in standalone agent name: Assistant, Operator, Stakeholder, Archivist, or Verifier.",
+				"description": "Built-in standalone agent name: " + allowedAgentLabel + ".",
 			},
 			"prompt": map[string]interface{}{
 				"type":        "string",
@@ -101,7 +107,7 @@ func (m *SquadManager) registerBuiltInAgentDelegationTools(svc *Service, model *
 		if prompt == "" {
 			return nil, fmt.Errorf("prompt is required")
 		}
-		builtin, err := m.resolveDelegableBuiltInAgent(agentName)
+		builtin, err := m.resolveDelegableBuiltInAgentFor(model, agentName)
 		if err != nil {
 			return nil, err
 		}
@@ -139,7 +145,7 @@ func (m *SquadManager) buildDelegableBuiltInAgentsContext(model *AgentModel) str
 	if model == nil || isBuiltInAgentModel(model) {
 		return ""
 	}
-	agents, err := m.listDelegableBuiltInAgents()
+	agents, err := m.listDelegableBuiltInAgentsFor(model)
 	if err != nil || len(agents) == 0 {
 		return ""
 	}
@@ -160,9 +166,26 @@ func (m *SquadManager) buildDelegableBuiltInAgentsContext(model *AgentModel) str
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
-func (m *SquadManager) listDelegableBuiltInAgents() ([]*AgentModel, error) {
-	out := make([]*AgentModel, 0, len(delegableBuiltInAgentNames))
-	for _, name := range delegableBuiltInAgentNames {
+func canUseBuiltInDelegationTools(model *AgentModel) bool {
+	if model == nil || !isBuiltInAgentModel(model) {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(model.Name)) {
+	case strings.ToLower(defaultIntentRouterAgentName):
+		return true
+	default:
+		return false
+	}
+}
+
+func delegableBuiltInAgentNamesFor(model *AgentModel) []string {
+	return append([]string(nil), coreDelegableBuiltInAgentNames...)
+}
+
+func (m *SquadManager) listDelegableBuiltInAgentsFor(model *AgentModel) ([]*AgentModel, error) {
+	names := delegableBuiltInAgentNamesFor(model)
+	out := make([]*AgentModel, 0, len(names))
+	for _, name := range names {
 		model, err := m.store.GetAgentModelByName(name)
 		if err != nil {
 			return nil, err
@@ -175,12 +198,12 @@ func (m *SquadManager) listDelegableBuiltInAgents() ([]*AgentModel, error) {
 	return out, nil
 }
 
-func (m *SquadManager) resolveDelegableBuiltInAgent(name string) (*AgentModel, error) {
+func (m *SquadManager) resolveDelegableBuiltInAgentFor(source *AgentModel, name string) (*AgentModel, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, fmt.Errorf("agent_name is required")
 	}
-	for _, allowed := range delegableBuiltInAgentNames {
+	for _, allowed := range delegableBuiltInAgentNamesFor(source) {
 		if strings.EqualFold(allowed, name) {
 			model, err := m.store.GetAgentModelByName(allowed)
 			if err != nil {

@@ -54,6 +54,12 @@ func TestIsExplicitMemoryRecallIntentPrefersIntentSignal(t *testing.T) {
 	}
 }
 
+func TestIsExplicitMemoryRecallIntentDetectsScheduleRecallQuery(t *testing.T) {
+	if !isExplicitMemoryRecallIntent("明天有什么安排？", nil) {
+		t.Fatal("expected schedule recall query to trigger explicit recall path")
+	}
+}
+
 func TestIsExplicitMemorySaveIntentPrefersIntentSignal(t *testing.T) {
 	intent := &IntentRecognitionResult{IntentType: "memory_save", Confidence: 0.9}
 	if !isExplicitMemorySaveIntent("short query", intent) {
@@ -65,5 +71,18 @@ func TestIsExplicitMemorySaveIntentRejectsQuestionLikeGoal(t *testing.T) {
 	intent := &IntentRecognitionResult{IntentType: "memory_save", Confidence: 0.9}
 	if isExplicitMemorySaveIntent("What is my favorite snack? Reply with only the snack.", intent) {
 		t.Fatal("did not expect question-like goal to trigger explicit memory save path")
+	}
+}
+
+func TestExplicitMemorySaveHelpersHandleSquadEnvelope(t *testing.T) {
+	goal := "Squad task context:\n- Target squad agent: Archivist\n- Execute only the work described in the Task section below.\n\nTask:\n记住：用户明天17:00去万达广场吃饭。"
+
+	if !isExplicitMemorySaveIntent(goal, nil) {
+		t.Fatal("expected squad envelope memory-save task to trigger explicit save path")
+	}
+
+	got := extractExplicitMemorySaveContent(goal)
+	if got != "用户明天17:00去万达广场吃饭。" {
+		t.Fatalf("unexpected extracted memory content: %q", got)
 	}
 }

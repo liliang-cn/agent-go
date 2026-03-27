@@ -8,26 +8,50 @@ import (
 )
 
 const (
-	defaultConciergeAgentID     = "agent-concierge-001"
-	defaultConciergeAgentName   = "Concierge"
-	defaultCaptainAgentID       = "agent-captain-001"
-	defaultCaptainAgentName     = "Captain"
-	defaultAssistantAgentID     = "agent-assistant-001"
-	defaultAssistantAgentName   = "Assistant"
-	defaultOperatorAgentID      = "agent-operator-001"
-	defaultOperatorAgentName    = "Operator"
-	defaultStakeholderAgentID   = "agent-stakeholder-001"
-	defaultStakeholderAgentName = "Stakeholder"
-	defaultArchivistAgentID     = "agent-archivist-001"
-	defaultArchivistAgentName   = "Archivist"
-	defaultVerifierAgentID      = "agent-verifier-001"
-	defaultVerifierAgentName    = "Verifier"
+	defaultConciergeAgentID         = "agent-concierge-001"
+	defaultConciergeAgentName       = "Concierge"
+	defaultIntentRouterAgentID      = "agent-intent-router-001"
+	defaultIntentRouterAgentName    = "IntentRouter"
+	defaultPromptOptimizerAgentID   = "agent-prompt-optimizer-001"
+	defaultPromptOptimizerAgentName = "PromptOptimizer"
+	defaultCaptainAgentID           = "agent-captain-001"
+	defaultCaptainAgentName         = "Captain"
+	defaultAssistantAgentID         = "agent-assistant-001"
+	defaultAssistantAgentName       = "Assistant"
+	defaultOperatorAgentID          = "agent-operator-001"
+	defaultOperatorAgentName        = "Operator"
+	defaultStakeholderAgentID       = "agent-stakeholder-001"
+	defaultStakeholderAgentName     = "Stakeholder"
+	defaultArchivistAgentID         = "agent-archivist-001"
+	defaultArchivistAgentName       = "Archivist"
+	defaultVerifierAgentID          = "agent-verifier-001"
+	defaultVerifierAgentName        = "Verifier"
 )
 
 const (
-	BuiltInConciergeAgentName = defaultConciergeAgentName
-	BuiltInCaptainAgentName   = defaultCaptainAgentName
+	BuiltInConciergeAgentName       = defaultConciergeAgentName
+	BuiltInIntentRouterAgentName    = defaultIntentRouterAgentName
+	BuiltInPromptOptimizerAgentName = defaultPromptOptimizerAgentName
+	BuiltInCaptainAgentName         = defaultCaptainAgentName
 )
+
+const (
+	defaultConciergeAgentDescription       = "Always-on user entry agent for intake, status checks, and dispatching work."
+	defaultIntentRouterAgentDescription    = "Built-in intent recognition router that classifies requests and delegates them to the right specialist."
+	defaultPromptOptimizerAgentDescription = "Built-in prompt optimizer that rewrites user requests into cleaner downstream instructions."
+)
+
+func defaultConciergeInstructions(agentName string) string {
+	return fmt.Sprintf("You are Concierge, the always-on dispatch agent for %s. Your only job is intake, routing, status inspection, and task dispatch. Do not do substantive work yourself unless the user is asking for dispatch metadata, agent or squad status, or task status. For almost every substantive user request, call route_builtin_request with the user's request. That tool runs PromptOptimizer and IntentRouter in parallel, then dispatches to the correct specialist. Do not manually impersonate downstream execution or claim that something was saved, recalled, verified, or executed unless route_builtin_request or a status tool has already confirmed it. Keep replies concise, acknowledge queued work clearly, and never pretend background work is already finished. When the user asks for progress, use get_task_status or list_session_tasks.", agentName)
+}
+
+func defaultIntentRouterInstructions(agentName string) string {
+	return fmt.Sprintf("You are IntentRouter, the built-in intent recognition agent for %s. Your only job is to use the LLM to classify the user's request and choose the single best-fit built-in standalone agent. Do not do substantive work yourself. Use Assistant for general Q&A, drafting, explanation, and everyday requests. Use Operator for execution, file work, runnable validation, environment inspection, and command-driven tasks. Use Archivist for remembering facts, recalling prior memory, schedules, preferences, and memory hygiene. Treat plain schedule-like statements such as appointments, meetings, or plans with dates or times as Archivist tasks even when the user does not explicitly say remember. Do not ask for calendar-management details like reminder lead time, exact venue branch, or relative-date expansion unless the user explicitly asks to create a formal calendar event or reminder. Use Verifier for recall conflict checks or confidence-sensitive validation. Use Stakeholder for product, business, scope, priority, and acceptance-criteria questions. Return concise routing decisions that are easy for Concierge to consume.", agentName)
+}
+
+func defaultPromptOptimizerInstructions(agentName string) string {
+	return fmt.Sprintf("You are PromptOptimizer, the built-in prompt optimization agent for %s. Your only job is to rewrite a user's request into a clearer downstream instruction for another built-in agent. Preserve facts, dates, constraints, names, and intent. Do not invent missing details, do not change commitments, and do not do the downstream work yourself. Return only the optimized prompt in the requested output format.", agentName)
+}
 
 func defaultBuiltInStandaloneAgents(agentName string) []*AgentModel {
 	return []*AgentModel{
@@ -35,8 +59,24 @@ func defaultBuiltInStandaloneAgents(agentName string) []*AgentModel {
 			ID:           defaultConciergeAgentID,
 			Name:         defaultConciergeAgentName,
 			Kind:         AgentKindAgent,
-			Description:  "Always-on user entry agent for intake, status checks, and dispatching work.",
-			Instructions: fmt.Sprintf("You are Concierge, the always-on dispatch agent for %s. Your only job is intake, routing, status inspection, and task dispatch. Do not do substantive work yourself unless the user is asking for dispatch metadata or task status. For general work delegate to Assistant. For execution and file work delegate to Operator. For memory-related work, preference extraction, recall, and memory hygiene delegate to Archivist. For verification or conflict checking delegate to Verifier. For business or product judgment delegate to Stakeholder. Keep replies concise, acknowledge queued work clearly, and never pretend background work is already finished. When the user asks for progress, use get_task_status or list_session_tasks.", agentName),
+			Description:  defaultConciergeAgentDescription,
+			Instructions: defaultConciergeInstructions(agentName),
+			EnableMemory: false,
+		},
+		{
+			ID:           defaultIntentRouterAgentID,
+			Name:         defaultIntentRouterAgentName,
+			Kind:         AgentKindAgent,
+			Description:  defaultIntentRouterAgentDescription,
+			Instructions: defaultIntentRouterInstructions(agentName),
+			EnableMemory: false,
+		},
+		{
+			ID:           defaultPromptOptimizerAgentID,
+			Name:         defaultPromptOptimizerAgentName,
+			Kind:         AgentKindAgent,
+			Description:  defaultPromptOptimizerAgentDescription,
+			Instructions: defaultPromptOptimizerInstructions(agentName),
 			EnableMemory: false,
 		},
 		{
@@ -77,7 +117,7 @@ func defaultBuiltInStandaloneAgents(agentName string) []*AgentModel {
 			Name:         defaultArchivistAgentName,
 			Kind:         AgentKindAgent,
 			Description:  "Built-in memory specialist for durable facts, preferences, recall quality, and memory hygiene.",
-			Instructions: fmt.Sprintf("You are Archivist, the built-in memory quality agent for %s. Extract durable facts and preferences, improve recall quality, remove low-value or duplicate memories, and keep the memory store clean. Prefer concise factual outputs. When asked to remember something, distill it into the shortest durable form. When asked to clean memory, prioritize question-like noise, duplicates, and stale contradictory entries. For ordinary recall tasks, answer directly from memory. If you detect conflicting memory candidates or low confidence in the recalled answer, your final message MUST be exactly in this form: 'VERIFIER_NEEDED: candidate=<best_answer>; reason=<short_reason>'. The candidate must be the current best answer you want Verifier to check.", agentName),
+			Instructions: fmt.Sprintf("You are Archivist, the built-in memory quality agent for %s. Extract durable facts and preferences, improve recall quality, remove low-value or duplicate memories, and keep the memory store clean. Prefer concise factual outputs. When asked to remember something, distill it into the shortest durable form. Also treat concise schedule or plan statements with dates or times as memory-save tasks even without an explicit remember phrase. For those schedule facts, store the durable fact directly instead of asking for reminder metadata, exact venue disambiguation, or relative-date expansion unless the user explicitly asks for a formal calendar or reminder workflow. When asked to clean memory, prioritize question-like noise, duplicates, and stale contradictory entries. For ordinary recall tasks, answer directly from memory. If you detect conflicting memory candidates or low confidence in the recalled answer, your final message MUST be exactly in this form: 'VERIFIER_NEEDED: candidate=<best_answer>; reason=<short_reason>'. The candidate must be the current best answer you want Verifier to check.", agentName),
 			MCPTools:     defaultMemberMCPTools(defaultArchivistAgentName),
 			EnableRAG:    true,
 			EnableMemory: true,
@@ -130,11 +170,24 @@ func isAutoGeneratedSquadLeadName(squadName, agentName string) bool {
 
 func isBuiltInStandaloneAgentName(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case strings.ToLower(defaultConciergeAgentName), strings.ToLower(defaultAssistantAgentName), strings.ToLower(defaultOperatorAgentName), strings.ToLower(defaultStakeholderAgentName), strings.ToLower(defaultArchivistAgentName), strings.ToLower(defaultVerifierAgentName):
+	case strings.ToLower(defaultConciergeAgentName), strings.ToLower(defaultIntentRouterAgentName), strings.ToLower(defaultPromptOptimizerAgentName), strings.ToLower(defaultAssistantAgentName), strings.ToLower(defaultOperatorAgentName), strings.ToLower(defaultStakeholderAgentName), strings.ToLower(defaultArchivistAgentName), strings.ToLower(defaultVerifierAgentName):
 		return true
 	default:
 		return false
 	}
+}
+
+func isBuiltInDispatchOnlyAgentName(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case strings.ToLower(defaultConciergeAgentName), strings.ToLower(defaultIntentRouterAgentName), strings.ToLower(defaultPromptOptimizerAgentName):
+		return true
+	default:
+		return false
+	}
+}
+
+func isBuiltInLightweightStandaloneAgentName(name string) bool {
+	return isBuiltInDispatchOnlyAgentName(name)
 }
 
 func (m *SquadManager) ensureBuiltInStandaloneAgent(ctx context.Context, builtin *AgentModel) error {
@@ -204,8 +257,8 @@ func (m *SquadManager) ensureDefaultSquadConcierge(ctx context.Context, agentNam
 		ID:           defaultConciergeAgentID,
 		Name:         defaultConciergeAgentName,
 		Kind:         AgentKindAgent,
-		Description:  "Always-on user entry agent for intake, status checks, and dispatching work.",
-		Instructions: fmt.Sprintf("You are Concierge, the always-on dispatch agent for %s. Your only job is intake, routing, status inspection, and task dispatch. Do not do substantive work yourself unless the user is asking for dispatch metadata or task status. For general work delegate to Assistant. For execution and file work delegate to Operator. For memory-related work, preference extraction, recall, and memory hygiene delegate to Archivist. For verification or conflict checking delegate to Verifier. For business or product judgment delegate to Stakeholder. Keep replies concise, acknowledge queued work clearly, and never pretend background work is already finished. When the user asks for progress, use get_task_status or list_session_tasks.", agentName),
+		Description:  defaultConciergeAgentDescription,
+		Instructions: defaultConciergeInstructions(agentName),
 		EnableMemory: false,
 	}
 
@@ -235,9 +288,11 @@ func (m *SquadManager) ensureDefaultSquadConcierge(ctx context.Context, agentNam
 func (m *SquadManager) ensureDefaultSquadSpecialists(ctx context.Context, agentName string) error {
 	// Add all built-in specialists to the default squad
 	specialists := []struct {
-		name        string
-		id          string
+		name string
+		id   string
 	}{
+		{defaultIntentRouterAgentName, defaultIntentRouterAgentID},
+		{defaultPromptOptimizerAgentName, defaultPromptOptimizerAgentID},
 		{defaultAssistantAgentName, defaultAssistantAgentID},
 		{defaultOperatorAgentName, defaultOperatorAgentID},
 		{defaultStakeholderAgentName, defaultStakeholderAgentID},

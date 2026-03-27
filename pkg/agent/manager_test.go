@@ -111,12 +111,59 @@ func TestSeedDefaultMembersCreatesBuiltInsByDefault(t *testing.T) {
 		t.Fatalf("unexpected Concierge description: %q", concierge.Description)
 	}
 	if !strings.Contains(concierge.Instructions, "only job is intake, routing, status inspection, and task dispatch") ||
-		!strings.Contains(concierge.Instructions, "delegate to Archivist") ||
-		!strings.Contains(concierge.Instructions, "delegate to Verifier") {
+		!strings.Contains(concierge.Instructions, "call route_builtin_request") ||
+		!strings.Contains(concierge.Instructions, "runs PromptOptimizer and IntentRouter in parallel") {
 		t.Fatalf("expected Concierge prompt to focus on dispatch-only routing, got %q", concierge.Instructions)
 	}
 	if concierge.EnableMCP || len(concierge.MCPTools) != 0 {
 		t.Fatalf("expected Concierge to stay lightweight without default MCP tools, got enable_mcp=%v tools=%v", concierge.EnableMCP, concierge.MCPTools)
+	}
+
+	intentRouter, err := manager.GetAgentByName(defaultIntentRouterAgentName)
+	if err != nil {
+		t.Fatalf("get standalone intent router failed: %v", err)
+	}
+	if intentRouter.Kind != AgentKindAgent {
+		t.Fatalf("expected IntentRouter standalone kind, got %q", intentRouter.Kind)
+	}
+	if len(intentRouter.Squads) != 1 {
+		t.Fatalf("expected IntentRouter to be in default squad, got squads=%+v", intentRouter.Squads)
+	}
+	if intentRouter.Squads[0].Role != AgentKindSpecialist {
+		t.Fatalf("expected IntentRouter role specialist, got %q", intentRouter.Squads[0].Role)
+	}
+	if intentRouter.Description != defaultIntentRouterAgentDescription {
+		t.Fatalf("unexpected IntentRouter description: %q", intentRouter.Description)
+	}
+	if !strings.Contains(intentRouter.Instructions, "use the LLM to classify the user's request") ||
+		!strings.Contains(intentRouter.Instructions, "choose the single best-fit built-in standalone agent") {
+		t.Fatalf("expected IntentRouter prompt to focus on intent recognition and delegation, got %q", intentRouter.Instructions)
+	}
+	if intentRouter.EnableMCP || len(intentRouter.MCPTools) != 0 {
+		t.Fatalf("expected IntentRouter to stay lightweight without default MCP tools, got enable_mcp=%v tools=%v", intentRouter.EnableMCP, intentRouter.MCPTools)
+	}
+
+	promptOptimizer, err := manager.GetAgentByName(defaultPromptOptimizerAgentName)
+	if err != nil {
+		t.Fatalf("get standalone prompt optimizer failed: %v", err)
+	}
+	if promptOptimizer.Kind != AgentKindAgent {
+		t.Fatalf("expected PromptOptimizer standalone kind, got %q", promptOptimizer.Kind)
+	}
+	if len(promptOptimizer.Squads) != 1 {
+		t.Fatalf("expected PromptOptimizer to be in default squad, got squads=%+v", promptOptimizer.Squads)
+	}
+	if promptOptimizer.Squads[0].Role != AgentKindSpecialist {
+		t.Fatalf("expected PromptOptimizer role specialist, got %q", promptOptimizer.Squads[0].Role)
+	}
+	if promptOptimizer.Description != defaultPromptOptimizerAgentDescription {
+		t.Fatalf("unexpected PromptOptimizer description: %q", promptOptimizer.Description)
+	}
+	if !strings.Contains(promptOptimizer.Instructions, "rewrite a user's request into a clearer downstream instruction") {
+		t.Fatalf("expected PromptOptimizer prompt to focus on prompt rewriting, got %q", promptOptimizer.Instructions)
+	}
+	if promptOptimizer.EnableMCP || len(promptOptimizer.MCPTools) != 0 {
+		t.Fatalf("expected PromptOptimizer to stay lightweight without default MCP tools, got enable_mcp=%v tools=%v", promptOptimizer.EnableMCP, promptOptimizer.MCPTools)
 	}
 
 	stakeholder, err := manager.GetAgentByName("Stakeholder")
@@ -373,6 +420,9 @@ enabled = true
 	}
 	if !names["Operator"] || !names["Assistant"] || !names["Stakeholder"] {
 		t.Fatalf("expected delegable built-in agents to include Operator, Assistant, Stakeholder, got %+v", names)
+	}
+	if names[defaultIntentRouterAgentName] {
+		t.Fatalf("did not expect IntentRouter to be delegable for custom agents, got %+v", names)
 	}
 	if names["Concierge"] {
 		t.Fatalf("did not expect Concierge to be delegable, got %+v", names)
