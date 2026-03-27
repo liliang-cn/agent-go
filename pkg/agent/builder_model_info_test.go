@@ -6,6 +6,7 @@ import (
 
 	"github.com/liliang-cn/agent-go/v2/pkg/config"
 	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	memorypkg "github.com/liliang-cn/agent-go/v2/pkg/memory"
 	"github.com/liliang-cn/agent-go/v2/pkg/pool"
 )
 
@@ -72,5 +73,26 @@ func TestResolveServiceModelInfoFallsBackToConfig(t *testing.T) {
 	}
 	if baseURL != "https://config.test/v1" {
 		t.Fatalf("expected config base URL, got %q", baseURL)
+	}
+}
+
+func TestBuildMemoryServiceKeepsHybridStoreWithoutEmbedder(t *testing.T) {
+	home := t.TempDir()
+	cfg := testAgentConfig(home)
+	if err := cfg.SetMemoryStoreTypeString("hybrid"); err != nil {
+		t.Fatalf("SetMemoryStoreTypeString() error = %v", err)
+	}
+
+	builder := New("memory-agent").WithConfig(cfg).WithMemory(WithMemoryStoreType("hybrid"))
+
+	memSvc, storeType, err := builder.buildMemoryService(cfg, nil, nil)
+	if err != nil {
+		t.Fatalf("buildMemoryService() error = %v", err)
+	}
+	if storeType != "hybrid" {
+		t.Fatalf("buildMemoryService() storeType = %q, want hybrid", storeType)
+	}
+	if _, ok := memSvc.(*memorypkg.Service); !ok {
+		t.Fatalf("buildMemoryService() returned %T, want *memory.Service", memSvc)
 	}
 }

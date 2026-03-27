@@ -305,6 +305,127 @@ func TestService_RetrieveAndInjectWithContextUsesScopeChain(t *testing.T) {
 	embedder.AssertExpectations(t)
 }
 
+func TestService_SearchPrefersTextSearchWhenNoEmbedder(t *testing.T) {
+	ctx := context.Background()
+	store := new(MockMemoryStore)
+	service := NewService(store, nil, nil, DefaultConfig())
+
+	expected := []*domain.MemoryWithScore{
+		{
+			Memory: &domain.Memory{ID: "m-text", Content: "项目使用 RAG系统 做检索"},
+			Score:  0.91,
+		},
+	}
+
+	store.On("SearchByText", ctx, "RAG系统", 7).Return(expected, nil).Once()
+
+	results, err := service.Search(ctx, "RAG系统", 7)
+	if err != nil {
+		t.Fatalf("Search() error = %v", err)
+	}
+	if len(results) != 1 || results[0].ID != "m-text" {
+		t.Fatalf("Search() returned %+v, want text-search hit", results)
+	}
+
+	store.AssertNotCalled(t, "Search")
+	store.AssertNotCalled(t, "Get")
+	store.AssertExpectations(t)
+}
+
+func TestService_SearchPrefersTextResultsBeforeEmbedding(t *testing.T) {
+	ctx := context.Background()
+	store := new(MockMemoryStore)
+	embedder := new(MockEmbedder)
+	service := NewService(store, nil, embedder, DefaultConfig())
+
+	expected := []*domain.MemoryWithScore{
+		{
+			Memory: &domain.Memory{ID: "m-cjk", Content: "本地 RAG系统 支持中文检索"},
+			Score:  0.97,
+		},
+	}
+
+	store.On("SearchByText", ctx, "RAG系统", 5).Return(expected, nil).Once()
+
+	results, err := service.Search(ctx, "RAG系统", 5)
+	if err != nil {
+		t.Fatalf("Search() error = %v", err)
+	}
+	if len(results) != 1 || results[0].ID != "m-cjk" {
+		t.Fatalf("Search() returned %+v, want text-search hit", results)
+	}
+
+	embedder.AssertNotCalled(t, "Embed")
+	store.AssertNotCalled(t, "Search")
+	store.AssertNotCalled(t, "Get")
+	store.AssertExpectations(t)
+}
+
+func TestService_SearchFallsBackToVectorAndRefreshesTruth(t *testing.T) {
+	ctx := context.Background()
+	store := new(MockMemoryStore)
+	embedder := new(MockEmbedder)
+	service := NewService(store, nil, embedder, DefaultConfig())
+
+	vector := []float64{0.2, 0.4, 0.8}
+	stale := &domain.MemoryWithScore{
+		Memory: &domain.Memory{ID: "m-shadow", Content: "stale content"},
+		Score:  0.73,
+	}
+	fresh := &domain.Memory{
+		ID:        "m-shadow",
+		Content:   "fresh content from primary store",
+		UpdatedAt: time.Now(),
+	}
+
+	store.On("SearchByText", ctx, "hybrid query", 4).Return([]*domain.MemoryWithScore{}, nil).Once()
+	embedder.On("Embed", ctx, "hybrid query").Return(vector, nil).Once()
+	store.On("Search", ctx, vector, 4, service.minScore).Return([]*domain.MemoryWithScore{stale}, nil).Once()
+	store.On("Get", ctx, "m-shadow").Return(fresh, nil).Once()
+
+	results, err := service.Search(ctx, "hybrid query", 4)
+	if err != nil {
+		t.Fatalf("Search() error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("Search() returned %d results, want 1", len(results))
+	}
+	if got := results[0].Content; got != "fresh content from primary store" {
+		t.Fatalf("Search() content = %q, want refreshed primary-store content", got)
+	}
+
+	embedder.AssertExpectations(t)
+	store.AssertExpectations(t)
+}
+
+func TestService_PatchUpdatesTimestamp(t *testing.T) {
+	ctx := context.Background()
+	store := new(MockMemoryStore)
+	service := NewService(store, nil, nil, DefaultConfig())
+
+	originalUpdatedAt := time.Now().Add(-2 * time.Hour)
+	mem := &domain.Memory{
+		ID:        "m-patch",
+		Content:   "patched memory",
+		UpdatedAt: originalUpdatedAt,
+	}
+
+	store.On("Update", ctx, mock.MatchedBy(func(m *domain.Memory) bool {
+		return m.ID == "m-patch" &&
+			m.Content == "patched memory" &&
+			m.UpdatedAt.After(originalUpdatedAt)
+	})).Return(nil).Once()
+
+	if err := service.Patch(ctx, mem); err != nil {
+		t.Fatalf("Patch() error = %v", err)
+	}
+	if !mem.UpdatedAt.After(originalUpdatedAt) {
+		t.Fatalf("Patch() UpdatedAt = %s, want after %s", mem.UpdatedAt, originalUpdatedAt)
+	}
+
+	store.AssertExpectations(t)
+}
+
 func TestService_Add(t *testing.T) {
 	ctx := context.Background()
 	store := new(MockMemoryStore)
