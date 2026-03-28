@@ -29,22 +29,21 @@ func NewManager(exampleName string) (*agent.TeamManager, *config.Config, error) 
 		return nil, nil, fmt.Errorf("prepare example home: %w", err)
 	}
 
-	cfgCopy := *cfg
-	cfgCopy.Home = home
-	cfgCopy.ApplyHomeLayout()
+	cfg.Home = home
+	cfg.ApplyHomeLayout()
 
-	store, err := agent.NewStore(cfgCopy.AgentDBPath())
+	store, err := agent.NewStore(cfg.AgentDBPath())
 	if err != nil {
 		return nil, nil, fmt.Errorf("open agent store: %w", err)
 	}
 
 	manager := agent.NewTeamManager(store)
-	manager.SetConfig(&cfgCopy)
+	manager.SetConfig(cfg)
 	if err := manager.SeedDefaultMembers(); err != nil {
 		return nil, nil, fmt.Errorf("seed default members: %w", err)
 	}
 
-	return manager, &cfgCopy, nil
+	return manager, cfg, nil
 }
 
 func DefaultTeam(manager *agent.TeamManager) (*agent.Team, error) {
