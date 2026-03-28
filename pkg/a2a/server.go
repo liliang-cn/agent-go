@@ -26,14 +26,14 @@ type AgentCatalog interface {
 	GetAgentByName(name string) (*agentpkg.AgentModel, error)
 	GetAgentByA2AID(a2aID string) (*agentpkg.AgentModel, error)
 	GetAgentService(name string) (AgentRunner, error)
-	ListSquads() ([]*agentpkg.Squad, error)
-	GetSquadByName(name string) (*agentpkg.Squad, error)
-	GetSquadByA2AID(a2aID string) (*agentpkg.Squad, error)
-	GetLeadAgentForSquad(squadID string) (*agentpkg.AgentModel, error)
+	ListTeams() ([]*agentpkg.Team, error)
+	GetTeamByName(name string) (*agentpkg.Team, error)
+	GetTeamByA2AID(a2aID string) (*agentpkg.Team, error)
+	GetLeadAgentForTeam(teamID string) (*agentpkg.AgentModel, error)
 }
 
 type AsyncTaskCatalog interface {
-	SubmitSquadTask(ctx context.Context, sessionID, squadID, prompt string, agentNames []string) (*agentpkg.AsyncTask, error)
+	SubmitTeamTask(ctx context.Context, sessionID, teamID, prompt string, agentNames []string) (*agentpkg.AsyncTask, error)
 	GetTask(taskID string) (*agentpkg.AsyncTask, error)
 	SubscribeTask(taskID string) (<-chan *agentpkg.TaskEvent, func(), error)
 	CancelTask(ctx context.Context, taskID string) (*agentpkg.AsyncTask, error)
@@ -142,8 +142,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/agents":
 		s.handleAgentsIndex(w, r)
 		return
-	case "/squads":
-		s.handleSquadsIndex(w, r)
+	case "/teams":
+		s.handleTeamsIndex(w, r)
 		return
 	}
 
@@ -173,17 +173,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		default:
 			http.NotFound(w, r)
 		}
-	case "squads":
-		squad, err := s.lookupExposedSquad(name)
+	case "teams":
+		team, err := s.lookupExposedTeam(name)
 		if err != nil {
 			http.NotFound(w, r)
 			return
 		}
 		switch endpointKind {
 		case "card":
-			s.handleSquadCard(w, r, squad)
+			s.handleTeamCard(w, r, team)
 		case "invoke":
-			endpoint, err := s.getSquadEndpoint(squad.Name)
+			endpoint, err := s.getTeamEndpoint(team.Name)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
@@ -210,7 +210,7 @@ func trimPathPrefix(requestPath, prefix string) (string, bool) {
 func parseResourcePath(rel string) (string, string, string, bool) {
 	trimmed := strings.Trim(rel, "/")
 	parts := strings.Split(trimmed, "/")
-	if len(parts) < 3 || (parts[0] != "agents" && parts[0] != "squads") {
+	if len(parts) < 3 || (parts[0] != "agents" && parts[0] != "teams") {
 		return "", "", "", false
 	}
 	name, err := url.PathUnescape(parts[1])
@@ -255,12 +255,12 @@ func (s *Server) handleAgentsIndex(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"agents": out})
 }
 
-func (s *Server) handleSquadsIndex(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleTeamsIndex(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	squads, err := s.listExposedSquads()
+	teams, err := s.listExposedTeams()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -270,16 +270,16 @@ func (s *Server) handleSquadsIndex(w http.ResponseWriter, r *http.Request) {
 		CardURL   string `json:"card_url"`
 		InvokeURL string `json:"invoke_url"`
 	}
-	out := make([]item, 0, len(squads))
-	for _, squad := range squads {
+	out := make([]item, 0, len(teams))
+	for _, team := range teams {
 		out = append(out, item{
-			Name:      squad.Name,
-			CardURL:   s.squadCardURL(r, squad),
-			InvokeURL: s.squadInvokeURL(r, squad),
+			Name:      team.Name,
+			CardURL:   s.teamCardURL(r, team),
+			InvokeURL: s.teamInvokeURL(r, team),
 		})
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"squads": out})
+	_ = json.NewEncoder(w).Encode(map[string]any{"teams": out})
 }
 
 func (s *Server) handleAgentCard(w http.ResponseWriter, r *http.Request, model *agentpkg.AgentModel) {
@@ -301,7 +301,7 @@ func (s *Server) handleAgentCard(w http.ResponseWriter, r *http.Request, model *
 	_ = json.NewEncoder(w).Encode(card)
 }
 
-func (s *Server) handleSquadCard(w http.ResponseWriter, r *http.Request, squad *agentpkg.Squad) {
+func (s *Server) handleTeamCard(w http.ResponseWriter, r *http.Request, team *agentpkg.Team) {
 	if r.Method == http.MethodOptions {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
@@ -313,7 +313,7 @@ func (s *Server) handleSquadCard(w http.ResponseWriter, r *http.Request, squad *
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	card := s.buildSquadCard(r, squad)
+	card := s.buildTeamCard(r, team)
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(card)
@@ -350,15 +350,15 @@ func (s *Server) buildAgentCard(r *http.Request, model *agentpkg.AgentModel) *a2
 	return card
 }
 
-func (s *Server) buildSquadCard(r *http.Request, squad *agentpkg.Squad) *a2aproto.AgentCard {
-	desc := strings.TrimSpace(squad.Description)
+func (s *Server) buildTeamCard(r *http.Request, team *agentpkg.Team) *a2aproto.AgentCard {
+	desc := strings.TrimSpace(team.Description)
 	if desc == "" {
-		desc = squad.Name
+		desc = team.Name
 	}
 	card := &a2aproto.AgentCard{
-		Name:               squad.Name,
+		Name:               team.Name,
 		Description:        desc,
-		URL:                s.squadInvokeURL(r, squad),
+		URL:                s.teamInvokeURL(r, team),
 		PreferredTransport: a2aproto.TransportProtocolJSONRPC,
 		ProtocolVersion:    string(a2aproto.Version),
 		Version:            s.cfg.AgentVersion,
@@ -368,11 +368,11 @@ func (s *Server) buildSquadCard(r *http.Request, squad *agentpkg.Squad) *a2aprot
 			Streaming: true,
 		},
 		Skills: []a2aproto.AgentSkill{{
-			ID:          normalizeSkillID(squad.Name),
-			Name:        squad.Name,
+			ID:          normalizeSkillID(team.Name),
+			Name:        team.Name,
 			Description: desc,
-			Tags:        []string{"squad", "agentgo", "orchestration"},
-			Examples:    []string{squad.Name + " coordinates work across its member agents."},
+			Tags:        []string{"team", "agentgo", "orchestration"},
+			Examples:    []string{team.Name + " coordinates work across its member agents."},
 		}},
 	}
 	if strings.TrimSpace(s.cfg.DocumentationURL) != "" {
@@ -455,15 +455,15 @@ func (s *Server) listExposedAgents() ([]*agentpkg.AgentModel, error) {
 	return out, nil
 }
 
-func (s *Server) listExposedSquads() ([]*agentpkg.Squad, error) {
-	squads, err := s.catalog.ListSquads()
+func (s *Server) listExposedTeams() ([]*agentpkg.Team, error) {
+	teams, err := s.catalog.ListTeams()
 	if err != nil {
 		return nil, err
 	}
-	out := make([]*agentpkg.Squad, 0, len(squads))
-	for _, squad := range squads {
-		if s.isExposedSquad(squad) {
-			out = append(out, squad)
+	out := make([]*agentpkg.Team, 0, len(teams))
+	for _, team := range teams {
+		if s.isExposedTeam(team) {
+			out = append(out, team)
 		}
 	}
 	return out, nil
@@ -484,23 +484,23 @@ func (s *Server) lookupExposedAgent(id string) (*agentpkg.AgentModel, error) {
 	return model, nil
 }
 
-func (s *Server) lookupExposedSquad(id string) (*agentpkg.Squad, error) {
+func (s *Server) lookupExposedTeam(id string) (*agentpkg.Team, error) {
 	id = strings.TrimSpace(id)
-	squad, err := s.catalog.GetSquadByA2AID(id)
+	team, err := s.catalog.GetTeamByA2AID(id)
 	if err != nil {
-		squad, err = s.catalog.GetSquadByName(id)
+		team, err = s.catalog.GetTeamByName(id)
 		if err != nil {
 			return nil, err
 		}
 	}
-	if !s.isExposedSquad(squad) {
-		return nil, fmt.Errorf("squad %q is not exposed via a2a", id)
+	if !s.isExposedTeam(team) {
+		return nil, fmt.Errorf("team %q is not exposed via a2a", id)
 	}
-	return squad, nil
+	return team, nil
 }
 
 func (s *Server) isExposedAgent(model *agentpkg.AgentModel) bool {
-	if model == nil || !model.EnableA2A || len(model.Squads) != 0 {
+	if model == nil || !model.EnableA2A || len(model.Teams) != 0 {
 		return false
 	}
 	if isBuiltIn(model) {
@@ -509,8 +509,8 @@ func (s *Server) isExposedAgent(model *agentpkg.AgentModel) bool {
 	return s.cfg.IncludeCustomAgents
 }
 
-func (s *Server) isExposedSquad(squad *agentpkg.Squad) bool {
-	return squad != nil && squad.EnableA2A
+func (s *Server) isExposedTeam(team *agentpkg.Team) bool {
+	return team != nil && team.EnableA2A
 }
 
 func isBuiltIn(model *agentpkg.AgentModel) bool {
@@ -548,23 +548,23 @@ func (s *Server) getAgentEndpoint(agentName string) (*agentEndpoint, error) {
 	return ep, nil
 }
 
-func (s *Server) getSquadEndpoint(squadName string) (*agentEndpoint, error) {
+func (s *Server) getTeamEndpoint(teamName string) (*agentEndpoint, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	key := "squad:" + squadName
+	key := "team:" + teamName
 	if ep := s.endpoints[key]; ep != nil {
 		return ep, nil
 	}
 
 	requestHandler := a2asrv.NewHandler(&executor{
 		catalog:      s.catalog,
-		resourceKind: "squad",
-		name:         squadName,
+		resourceKind: "team",
+		name:         teamName,
 		includeDebug: s.cfg.IncludeDebugEvents,
 	})
 	ep := &agentEndpoint{
-		agentName: squadName,
+		agentName: teamName,
 		handler:   a2asrv.NewJSONRPCHandler(requestHandler),
 	}
 	s.endpoints[key] = ep
@@ -579,12 +579,12 @@ func (s *Server) agentCardURL(r *http.Request, model *agentpkg.AgentModel) strin
 	return s.publicURL(r, path.Join(s.cfg.PathPrefix, "agents", url.PathEscape(a2aIDOrName(model.A2AID, model.Name)), ".well-known", "agent-card.json"))
 }
 
-func (s *Server) squadInvokeURL(r *http.Request, squad *agentpkg.Squad) string {
-	return s.publicURL(r, path.Join(s.cfg.PathPrefix, "squads", url.PathEscape(a2aIDOrName(squad.A2AID, squad.Name)), "invoke"))
+func (s *Server) teamInvokeURL(r *http.Request, team *agentpkg.Team) string {
+	return s.publicURL(r, path.Join(s.cfg.PathPrefix, "teams", url.PathEscape(a2aIDOrName(team.A2AID, team.Name)), "invoke"))
 }
 
-func (s *Server) squadCardURL(r *http.Request, squad *agentpkg.Squad) string {
-	return s.publicURL(r, path.Join(s.cfg.PathPrefix, "squads", url.PathEscape(a2aIDOrName(squad.A2AID, squad.Name)), ".well-known", "agent-card.json"))
+func (s *Server) teamCardURL(r *http.Request, team *agentpkg.Team) string {
+	return s.publicURL(r, path.Join(s.cfg.PathPrefix, "teams", url.PathEscape(a2aIDOrName(team.A2AID, team.Name)), ".well-known", "agent-card.json"))
 }
 
 func a2aIDOrName(a2aID, name string) string {
@@ -624,8 +624,8 @@ func (e *executor) Execute(ctx context.Context, reqCtx *a2asrv.RequestContext, q
 		return writeFinalStatus(ctx, q, reqCtx, a2aproto.TaskStateRejected, "A2A request did not contain any supported input content.")
 	}
 
-	if e.resourceKind == "squad" {
-		return e.executeSquadTask(ctx, reqCtx, q, prompt)
+	if e.resourceKind == "team" {
+		return e.executeTeamTask(ctx, reqCtx, q, prompt)
 	}
 
 	runner, err := e.resolveRunner()
@@ -728,18 +728,18 @@ func (e *executor) Execute(ctx context.Context, reqCtx *a2asrv.RequestContext, q
 	return writeFinalStatus(ctx, q, reqCtx, a2aproto.TaskStateCompleted, "")
 }
 
-func (e *executor) executeSquadTask(ctx context.Context, reqCtx *a2asrv.RequestContext, q eventqueue.Queue, prompt string) error {
+func (e *executor) executeTeamTask(ctx context.Context, reqCtx *a2asrv.RequestContext, q eventqueue.Queue, prompt string) error {
 	asyncCatalog, ok := e.catalog.(AsyncTaskCatalog)
 	if !ok {
-		return writeFinalStatus(ctx, q, reqCtx, a2aproto.TaskStateFailed, "squad async task support is unavailable")
+		return writeFinalStatus(ctx, q, reqCtx, a2aproto.TaskStateFailed, "team async task support is unavailable")
 	}
 
-	squad, err := e.catalog.GetSquadByName(e.name)
+	team, err := e.catalog.GetTeamByName(e.name)
 	if err != nil {
 		return writeFinalStatus(ctx, q, reqCtx, a2aproto.TaskStateFailed, err.Error())
 	}
 
-	submitted, err := asyncCatalog.SubmitSquadTask(ctx, string(reqCtx.TaskID), squad.ID, prompt, nil)
+	submitted, err := asyncCatalog.SubmitTeamTask(ctx, string(reqCtx.TaskID), team.ID, prompt, nil)
 	if err != nil {
 		return writeFinalStatus(ctx, q, reqCtx, a2aproto.TaskStateFailed, err.Error())
 	}
@@ -836,7 +836,7 @@ func (e *executor) executeSquadTask(ctx context.Context, reqCtx *a2asrv.RequestC
 
 	latest, err := asyncCatalog.GetTask(submitted.ID)
 	if err != nil {
-		return writeFinalStatus(ctx, q, reqCtx, a2aproto.TaskStateFailed, "squad task ended without terminal event")
+		return writeFinalStatus(ctx, q, reqCtx, a2aproto.TaskStateFailed, "team task ended without terminal event")
 	}
 	switch latest.Status {
 	case agentpkg.AsyncTaskStatusCompleted:
@@ -846,7 +846,7 @@ func (e *executor) executeSquadTask(ctx context.Context, reqCtx *a2asrv.RequestC
 	case agentpkg.AsyncTaskStatusCancelled:
 		return q.Write(ctx, newAsyncStatusEvent(reqCtx, latest, a2aproto.TaskStateCanceled, true, latest.ResultText))
 	default:
-		return writeFinalStatus(ctx, q, reqCtx, a2aproto.TaskStateFailed, "squad task stream closed before terminal state")
+		return writeFinalStatus(ctx, q, reqCtx, a2aproto.TaskStateFailed, "team task stream closed before terminal state")
 	}
 }
 
@@ -854,12 +854,12 @@ func (e *executor) resolveRunner() (AgentRunner, error) {
 	switch e.resourceKind {
 	case "agent":
 		return e.catalog.GetAgentService(e.name)
-	case "squad":
-		squad, err := e.catalog.GetSquadByName(e.name)
+	case "team":
+		team, err := e.catalog.GetTeamByName(e.name)
 		if err != nil {
 			return nil, err
 		}
-		lead, err := e.catalog.GetLeadAgentForSquad(squad.ID)
+		lead, err := e.catalog.GetLeadAgentForTeam(team.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -870,14 +870,14 @@ func (e *executor) resolveRunner() (AgentRunner, error) {
 }
 
 func (e *executor) Cancel(ctx context.Context, reqCtx *a2asrv.RequestContext, q eventqueue.Queue) error {
-	if e.resourceKind == "squad" {
+	if e.resourceKind == "team" {
 		asyncCatalog, ok := e.catalog.(AsyncTaskCatalog)
 		if !ok {
-			return writeFinalStatus(ctx, q, reqCtx, a2aproto.TaskStateFailed, "squad async task support is unavailable")
+			return writeFinalStatus(ctx, q, reqCtx, a2aproto.TaskStateFailed, "team async task support is unavailable")
 		}
 		internalTaskID := internalAsyncTaskID(reqCtx)
 		if internalTaskID == "" {
-			return writeFinalStatus(ctx, q, reqCtx, a2aproto.TaskStateFailed, "missing internal squad task id")
+			return writeFinalStatus(ctx, q, reqCtx, a2aproto.TaskStateFailed, "missing internal team task id")
 		}
 		task, err := asyncCatalog.CancelTask(ctx, internalTaskID)
 		if err != nil {
@@ -929,8 +929,8 @@ func newAsyncStatusEvent(reqCtx *a2asrv.RequestContext, task *agentpkg.AsyncTask
 	event.Final = final
 	if task != nil {
 		event.SetMeta(agentGoAsyncTaskIDMetaKey, task.ID)
-		if strings.TrimSpace(task.SquadID) != "" {
-			event.SetMeta("agentgo_squad_id", task.SquadID)
+		if strings.TrimSpace(task.TeamID) != "" {
+			event.SetMeta("agentgo_team_id", task.TeamID)
 		}
 		if strings.TrimSpace(task.CaptainName) != "" {
 			event.SetMeta("agentgo_captain_name", task.CaptainName)

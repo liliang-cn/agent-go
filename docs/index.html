@@ -11,13 +11,18 @@
     <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap"
+        rel="stylesheet">
 
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
 
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
 
         :root {
             --primary: #059669;
@@ -71,79 +76,311 @@
             transition: background 0.3s, color 0.3s;
         }
 
-        .container { max-width: 1100px; margin: 0 auto; padding: 0 1.5rem; }
+        .container {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 0 1.5rem;
+        }
 
         .header {
-            position: sticky; top: 0; z-index: 1000;
-            background: var(--bg-primary); backdrop-filter: blur(12px);
-            border-bottom: 1px solid var(--border); padding: 1rem 0;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            background: var(--bg-primary);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border);
+            padding: 1rem 0;
         }
 
-        .header-content { display: flex; align-items: center; justify-content: space-between; }
+        .header-content {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
 
-        .logo { display: flex; align-items: center; gap: 0.75rem; text-decoration: none; }
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            text-decoration: none;
+        }
+
         .logo-icon {
-            width: 2.5rem; height: 2.5rem;
+            width: 2.5rem;
+            height: 2.5rem;
             background: linear-gradient(135deg, var(--primary), var(--primary-light));
-            border-radius: 0.75rem; display: flex; align-items: center; justify-content: center; color: white;
+            border-radius: 0.75rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
         }
-        .logo-text { font-size: 1.5rem; font-weight: 800; color: var(--text-primary); }
 
-        .header-controls { display: flex; align-items: center; gap: 1.5rem; }
-        .control-btn { background: transparent; border: none; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; justify-content: center; }
-        .lang-switch { font-size: 0.8rem; font-weight: 700; cursor: pointer; color: var(--text-secondary); text-transform: uppercase; }
+        .logo-text {
+            font-size: 1.5rem;
+            font-weight: 800;
+            color: var(--text-primary);
+        }
 
-        .hero { padding: 8rem 0 4rem; text-align: center; }
+        .header-controls {
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+        }
+
+        .control-btn {
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .lang-switch {
+            font-size: 0.8rem;
+            font-weight: 700;
+            cursor: pointer;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+        }
+
+        .hero {
+            padding: 8rem 0 4rem;
+            text-align: center;
+        }
+
         .hero-badge {
-            display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1rem;
-            background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 9999px;
-            font-size: 0.85rem; font-weight: 700; color: var(--primary); margin-bottom: 2rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 9999px;
+            font-size: 0.85rem;
+            font-weight: 700;
+            color: var(--primary);
+            margin-bottom: 2rem;
         }
+
         .hero-title {
-            font-size: 3.5rem; font-weight: 800; margin-bottom: 1.5rem;
+            font-size: 3.5rem;
+            font-weight: 800;
+            margin-bottom: 1.5rem;
             background: linear-gradient(135deg, var(--primary), var(--accent));
-            -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; line-height: 1.1;
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            line-height: 1.1;
         }
-        .hero-subtitle { font-size: 1.25rem; color: var(--text-secondary); max-width: 700px; margin: 0 auto 3rem; }
 
-        .hero-buttons { display: flex; gap: 1rem; justify-content: center; }
-        .btn { padding: 0.8rem 2rem; border-radius: 0.75rem; text-decoration: none; font-weight: 700; transition: all 0.3s; display: inline-flex; align-items: center; gap: 0.5rem; }
-        .btn-primary { background: var(--primary); color: white; }
-        .btn-primary:hover { background: var(--primary-dark); transform: translateY(-2px); }
-        .btn-outline { border: 2px solid var(--border); color: var(--text-primary); }
+        .hero-subtitle {
+            font-size: 1.25rem;
+            color: var(--text-secondary);
+            max-width: 700px;
+            margin: 0 auto 3rem;
+        }
 
-        section { padding: 6rem 0; }
-        .section-header { text-align: center; margin-bottom: 4rem; }
-        .section-title { font-size: 2.5rem; font-weight: 800; margin-bottom: 1rem; }
+        .hero-buttons {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+        }
 
-        .features-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 2.5rem; }
-        .feature-card { padding: 2.5rem; background: var(--bg-secondary); border-radius: 1.5rem; border: 1px solid var(--border); transition: transform 0.3s; }
-        .feature-card:hover { transform: translateY(-5px); }
+        .btn {
+            padding: 0.8rem 2rem;
+            border-radius: 0.75rem;
+            text-decoration: none;
+            font-weight: 700;
+            transition: all 0.3s;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--primary-dark);
+            transform: translateY(-2px);
+        }
+
+        .btn-outline {
+            border: 2px solid var(--border);
+            color: var(--text-primary);
+        }
+
+        section {
+            padding: 6rem 0;
+        }
+
+        .section-header {
+            text-align: center;
+            margin-bottom: 4rem;
+        }
+
+        .section-title {
+            font-size: 2.5rem;
+            font-weight: 800;
+            margin-bottom: 1rem;
+        }
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 2.5rem;
+        }
+
+        .feature-card {
+            padding: 2.5rem;
+            background: var(--bg-secondary);
+            border-radius: 1.5rem;
+            border: 1px solid var(--border);
+            transition: transform 0.3s;
+        }
+
+        .feature-card:hover {
+            transform: translateY(-5px);
+        }
+
         .feature-icon {
-            width: 3.5rem; height: 3.5rem; background: var(--bg-primary); border-radius: 1rem;
-            display: flex; align-items: center; justify-content: center; color: var(--primary); margin-bottom: 1.5rem; box-shadow: var(--shadow);
+            width: 3.5rem;
+            height: 3.5rem;
+            background: var(--bg-primary);
+            border-radius: 1rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--primary);
+            margin-bottom: 1.5rem;
+            box-shadow: var(--shadow);
         }
-        .feature-title { font-size: 1.5rem; font-weight: 700; margin-bottom: 1rem; }
-        .feature-text { color: var(--text-secondary); font-size: 0.95rem; }
 
-        .examples-tabs { display: flex; gap: 1rem; justify-content: center; margin-bottom: 3rem; flex-wrap: wrap; }
-        .tab-button { padding: 0.8rem 2rem; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 0.75rem; font-weight: 700; cursor: pointer; color: var(--text-secondary); transition: all 0.3s; }
-        .tab-button.active { background: var(--primary); color: white; border-color: var(--primary); }
+        .feature-title {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+        }
 
-        .example-panel { display: none; }
-        .example-panel.active { display: block; }
-        .code-window { background: var(--code-bg); border-radius: 1rem; overflow: hidden; box-shadow: var(--shadow); }
-        .code-header { padding: 0.75rem 1rem; background: rgba(255, 255, 255, 0.05); display: flex; gap: 0.5rem; }
-        .dot { width: 12px; height: 12px; border-radius: 50%; }
-        .dot-red { background: #ff5f56; } .dot-yellow { background: #ffbd2e; } .dot-green { background: #27c93f; }
-        .code-content { padding: 2rem; font-family: 'JetBrains Mono', monospace; font-size: 0.9rem; color: var(--code-text); overflow-x: auto; }
+        .feature-text {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+        }
 
-        .footer { padding: 4rem 0; border-top: 1px solid var(--border); text-align: center; color: var(--text-secondary); }
-        .footer-links { display: flex; gap: 2rem; justify-content: center; margin-bottom: 2rem; }
-        .footer-link { color: var(--text-primary); text-decoration: none; font-weight: 600; }
+        .examples-tabs {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            margin-bottom: 3rem;
+            flex-wrap: wrap;
+        }
 
-        .badge-grid { display: flex; gap: 0.75rem; justify-content: center; flex-wrap: wrap; margin-top: 1.5rem; }
-        .badge { padding: 0.4rem 0.8rem; background: var(--bg-tertiary); border-radius: 0.5rem; font-size: 0.8rem; font-weight: 600; color: var(--text-secondary); }
+        .tab-button {
+            padding: 0.8rem 2rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 0.75rem;
+            font-weight: 700;
+            cursor: pointer;
+            color: var(--text-secondary);
+            transition: all 0.3s;
+        }
+
+        .tab-button.active {
+            background: var(--primary);
+            color: white;
+            border-color: var(--primary);
+        }
+
+        .example-panel {
+            display: none;
+        }
+
+        .example-panel.active {
+            display: block;
+        }
+
+        .code-window {
+            background: var(--code-bg);
+            border-radius: 1rem;
+            overflow: hidden;
+            box-shadow: var(--shadow);
+        }
+
+        .code-header {
+            padding: 0.75rem 1rem;
+            background: rgba(255, 255, 255, 0.05);
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+
+        .dot-red {
+            background: #ff5f56;
+        }
+
+        .dot-yellow {
+            background: #ffbd2e;
+        }
+
+        .dot-green {
+            background: #27c93f;
+        }
+
+        .code-content {
+            padding: 2rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.9rem;
+            color: var(--code-text);
+            overflow-x: auto;
+        }
+
+        .footer {
+            padding: 4rem 0;
+            border-top: 1px solid var(--border);
+            text-align: center;
+            color: var(--text-secondary);
+        }
+
+        .footer-links {
+            display: flex;
+            gap: 2rem;
+            justify-content: center;
+            margin-bottom: 2rem;
+        }
+
+        .footer-link {
+            color: var(--text-primary);
+            text-decoration: none;
+            font-weight: 600;
+        }
+
+        .badge-grid {
+            display: flex;
+            gap: 0.75rem;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-top: 1.5rem;
+        }
+
+        .badge {
+            padding: 0.4rem 0.8rem;
+            background: var(--bg-tertiary);
+            border-radius: 0.5rem;
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+        }
     </style>
 </head>
 
@@ -169,15 +406,17 @@
         <div class="container">
             <div class="hero-badge">
                 <i data-lucide="shield-check"></i>
-                <span data-en="100% Local · Multi-Pillar Architecture" data-cn="100% 本地运行 · 多维架构系统">100% Local · Multi-Pillar Architecture</span>
+                <span data-en="100% Local · Multi-Pillar Architecture" data-cn="100% 本地运行 · 多维架构系统">100% Local ·
+                    Multi-Pillar Architecture</span>
             </div>
             <h1 class="hero-title" data-en="Powerful RAG & Autonomous Agent" data-cn="强大的 RAG 与自主 Agent">
                 Powerful RAG & Autonomous Agent
             </h1>
             <p class="hero-subtitle"
-               data-en="A comprehensive intelligence framework for Go. Seamlessly combining Vector RAG, GraphRAG, MCP Tools, Skills, and Semantic Intent Routing."
-               data-cn="为 Go 打造的全面智能框架。无缝集成向量 RAG、知识图谱、MCP 工具、技能系统与语义意图路由。">
-                A comprehensive intelligence framework for Go. Seamlessly combining Vector RAG, GraphRAG, MCP Tools, Skills, and Semantic Intent Routing.
+                data-en="A comprehensive intelligence framework for Go. Seamlessly combining Vector RAG, GraphRAG, MCP Tools, Skills, and Semantic Intent Routing."
+                data-cn="为 Go 打造的全面智能框架。无缝集成向量 RAG、知识图谱、MCP 工具、技能系统与语义意图路由。">
+                A comprehensive intelligence framework for Go. Seamlessly combining Vector RAG, GraphRAG, MCP Tools,
+                Skills, and Semantic Intent Routing.
             </p>
             <div class="hero-buttons">
                 <a href="#examples" class="btn btn-primary">
@@ -192,7 +431,7 @@
                 <span class="badge">RAG</span>
                 <span class="badge">MCP</span>
                 <span class="badge">Skills</span>
-                <span class="badge">Squad</span>
+                <span class="badge">Team</span>
                 <span class="badge">LongRun</span>
                 <span class="badge">A2A</span>
                 <span class="badge">PTC</span>
@@ -209,43 +448,60 @@
                 <div class="feature-card">
                     <div class="feature-icon"><i data-lucide="database"></i></div>
                     <h3 class="feature-title" data-en="Hybrid RAG" data-cn="混合 RAG">Hybrid RAG</h3>
-                    <p class="feature-text" data-en="High-performance vector search powered by CortexDB. Supports file/vector/hybrid memory modes with automatic document ingestion." data-cn="基于 CortexDB 的高性能向量搜索。支持文件/向量/混合存储模式，自动文档摄取。">
-                        High-performance vector search powered by CortexDB. Supports file/vector/hybrid memory modes with automatic document ingestion.
+                    <p class="feature-text"
+                        data-en="High-performance vector search powered by CortexDB. Supports file/vector/hybrid memory modes with automatic document ingestion."
+                        data-cn="基于 CortexDB 的高性能向量搜索。支持文件/向量/混合存储模式，自动文档摄取。">
+                        High-performance vector search powered by CortexDB. Supports file/vector/hybrid memory modes
+                        with automatic document ingestion.
                     </p>
                 </div>
                 <div class="feature-card">
                     <div class="feature-icon"><i data-lucide="box"></i></div>
                     <h3 class="feature-title" data-en="MCP & Skills" data-cn="MCP 与技能">MCP & Skills</h3>
-                    <p class="feature-text" data-en="Native MCP server support with Claude-compatible Markdown skills for complex task execution and tool calling." data-cn="原生 MCP 服务器支持，Claude 兼容的 Markdown 技能系统，复杂任务执行与工具调用。">
-                        Native MCP server support with Claude-compatible Markdown skills for complex task execution and tool calling.
+                    <p class="feature-text"
+                        data-en="Native MCP server support with Claude-compatible Markdown skills for complex task execution and tool calling."
+                        data-cn="原生 MCP 服务器支持，Claude 兼容的 Markdown 技能系统，复杂任务执行与工具调用。">
+                        Native MCP server support with Claude-compatible Markdown skills for complex task execution and
+                        tool calling.
                     </p>
                 </div>
                 <div class="feature-card">
                     <div class="feature-icon"><i data-lucide="users"></i></div>
-                    <h3 class="feature-title" data-en="Squad & LongRun" data-cn="多 Agent 与自主运行">Squad & LongRun</h3>
-                    <p class="feature-text" data-en="Multi-agent squads coordinated by a Captain. LongRun for continuous autonomous agents with heartbeat scheduling." data-cn="多 Agent 团队由 Captain 协调。LongRun 支持心跳调度的连续自主 Agent 运行。">
-                        Multi-agent squads coordinated by a Captain. LongRun for continuous autonomous agents with heartbeat scheduling.
+                    <h3 class="feature-title" data-en="Team & LongRun" data-cn="多 Agent 与自主运行">Team & LongRun</h3>
+                    <p class="feature-text"
+                        data-en="Multi-agent teams coordinated by a Captain. LongRun for continuous autonomous agents with heartbeat scheduling."
+                        data-cn="多 Agent 团队由 Captain 协调。LongRun 支持心跳调度的连续自主 Agent 运行。">
+                        Multi-agent teams coordinated by a Captain. LongRun for continuous autonomous agents with
+                        heartbeat scheduling.
                     </p>
                 </div>
                 <div class="feature-card">
                     <div class="feature-icon"><i data-lucide="route"></i></div>
                     <h3 class="feature-title" data-en="Intent Routing" data-cn="意图路由">Intent Routing</h3>
-                    <p class="feature-text" data-en="Semantic router for lightning-fast intent recognition and precise tool dispatching." data-cn="语义路由器，毫秒级意图识别与精准工具分发。">
+                    <p class="feature-text"
+                        data-en="Semantic router for lightning-fast intent recognition and precise tool dispatching."
+                        data-cn="语义路由器，毫秒级意图识别与精准工具分发。">
                         Semantic router for lightning-fast intent recognition and precise tool dispatching.
                     </p>
                 </div>
                 <div class="feature-card">
                     <div class="feature-icon"><i data-lucide="plug"></i></div>
                     <h3 class="feature-title" data-en="PTC & A2A" data-cn="工具调用与 Agent 通信">PTC & A2A</h3>
-                    <p class="feature-text" data-en="Programmatic Tool Calling in sandbox. Agent-to-Agent protocol for distributed multi-agent systems." data-cn="沙箱中的编程式工具调用。Agent 间通信协议，支持分布式多 Agent 系统。">
-                        Programmatic Tool Calling in sandbox. Agent-to-Agent protocol for distributed multi-agent systems.
+                    <p class="feature-text"
+                        data-en="Programmatic Tool Calling in sandbox. Agent-to-Agent protocol for distributed multi-agent systems."
+                        data-cn="沙箱中的编程式工具调用。Agent 间通信协议，支持分布式多 Agent 系统。">
+                        Programmatic Tool Calling in sandbox. Agent-to-Agent protocol for distributed multi-agent
+                        systems.
                     </p>
                 </div>
                 <div class="feature-card">
                     <div class="feature-icon"><i data-lucide="brain"></i></div>
                     <h3 class="feature-title" data-en="Memory" data-cn="记忆系统">Memory</h3>
-                    <p class="feature-text" data-en="Hierarchical memory with session scope. Supports fact/pattern/context/preference types with automatic reflection." data-cn="分层记忆系统，支持会话作用域。支持 fact/pattern/context/preference 类型，自动反思机制。">
-                        Hierarchical memory with session scope. Supports fact/pattern/context/preference types with automatic reflection.
+                    <p class="feature-text"
+                        data-en="Hierarchical memory with session scope. Supports fact/pattern/context/preference types with automatic reflection."
+                        data-cn="分层记忆系统，支持会话作用域。支持 fact/pattern/context/preference 类型，自动反思机制。">
+                        Hierarchical memory with session scope. Supports fact/pattern/context/preference types with
+                        automatic reflection.
                     </p>
                 </div>
             </div>
@@ -257,8 +513,9 @@
             <div class="examples-tabs">
                 <button class="tab-button active" onclick="showExample('cli')" data-en="CLI" data-cn="命令行">CLI</button>
                 <button class="tab-button" onclick="showExample('agent')" data-en="Agent" data-cn="Agent">Agent</button>
-                <button class="tab-button" onclick="showExample('squad')" data-en="Squad" data-cn="多 Agent">Squad</button>
-                <button class="tab-button" onclick="showExample('longrun')" data-en="LongRun" data-cn="自主运行">LongRun</button>
+                <button class="tab-button" onclick="showExample('team')" data-en="Team" data-cn="多 Agent">Team</button>
+                <button class="tab-button" onclick="showExample('longrun')" data-en="LongRun"
+                    data-cn="自主运行">LongRun</button>
                 <button class="tab-button" onclick="showExample('rag')" data-en="RAG" data-cn="RAG">RAG</button>
             </div>
 
@@ -328,7 +585,7 @@ func main() {
                     </div>
                 </div>
 
-                <div id="squad-example" class="example-panel">
+                <div id="team-example" class="example-panel">
                     <div class="code-window">
                         <div class="code-header">
                             <div class="dot dot-red"></div>
@@ -341,9 +598,9 @@ func main() {
 import "github.com/liliang-cn/agent-go/v2/pkg/agent"
 
 func main() {
-    mgr, err := agent.NewSquad("~/.agentgo/data/agentgo.db").
+    mgr, err := agent.NewTeam("~/.agentgo/data/agentgo.db").
         WithAgentName("MyApp").
-        WithSquadName("Dev Team").
+        WithTeamName("Dev Team").
         Build()
 
     // Built-in agents: Captain, Assistant, Concierge, Operator, Archivist
@@ -471,4 +728,5 @@ func main() {
         switchLanguage(currentLang);
     </script>
 </body>
+
 </html>

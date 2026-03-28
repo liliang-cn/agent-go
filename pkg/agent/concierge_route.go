@@ -32,7 +32,7 @@ type builtInRouteResult struct {
 	OptimizerRaw    string
 }
 
-func (m *SquadManager) routeBuiltInRequest(ctx context.Context, prompt string, queryContext domain.MemoryQueryContext) (*builtInRouteResult, error) {
+func (m *TeamManager) routeBuiltInRequest(ctx context.Context, prompt string, queryContext domain.MemoryQueryContext) (*builtInRouteResult, error) {
 	return routeBuiltInRequestWithDispatcher(ctx, prompt, queryContext, func(ctx context.Context, agentName, instruction string, opts []RunOption) (string, error) {
 		return m.dispatchTaskWithOptions(ctx, agentName, instruction, "", opts)
 	})
@@ -48,7 +48,7 @@ func routeBuiltInRequestWithDispatcher(ctx context.Context, prompt string, query
 	}
 
 	runOptions := []RunOption{
-		WithInheritedMemoryScope(queryContext.AgentID, queryContext.SquadID, queryContext.UserID),
+		WithInheritedMemoryScope(queryContext.AgentID, queryContext.TeamID, queryContext.UserID),
 	}
 
 	// Always run IntentRouter. PromptOptimizer only runs when IntentRouter says it's needed.

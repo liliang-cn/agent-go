@@ -14,7 +14,7 @@ import (
 
 type fakeCatalog struct {
 	agents  map[string]*agentpkg.AgentModel
-	squads  map[string]*agentpkg.Squad
+	teams   map[string]*agentpkg.Team
 	runners map[string]AgentRunner
 	tasks   map[string]*agentpkg.AsyncTask
 }
@@ -50,34 +50,34 @@ func (f *fakeCatalog) GetAgentService(name string) (AgentRunner, error) {
 	return nil, http.ErrMissingFile
 }
 
-func (f *fakeCatalog) ListSquads() ([]*agentpkg.Squad, error) {
-	out := make([]*agentpkg.Squad, 0, len(f.squads))
-	for _, squad := range f.squads {
-		out = append(out, squad)
+func (f *fakeCatalog) ListTeams() ([]*agentpkg.Team, error) {
+	out := make([]*agentpkg.Team, 0, len(f.teams))
+	for _, team := range f.teams {
+		out = append(out, team)
 	}
 	return out, nil
 }
 
-func (f *fakeCatalog) GetSquadByName(name string) (*agentpkg.Squad, error) {
-	if squad, ok := f.squads[name]; ok {
-		return squad, nil
+func (f *fakeCatalog) GetTeamByName(name string) (*agentpkg.Team, error) {
+	if team, ok := f.teams[name]; ok {
+		return team, nil
 	}
 	return nil, http.ErrMissingFile
 }
 
-func (f *fakeCatalog) GetSquadByA2AID(a2aID string) (*agentpkg.Squad, error) {
-	for _, squad := range f.squads {
-		if squad != nil && squad.A2AID == a2aID {
-			return squad, nil
+func (f *fakeCatalog) GetTeamByA2AID(a2aID string) (*agentpkg.Team, error) {
+	for _, team := range f.teams {
+		if team != nil && team.A2AID == a2aID {
+			return team, nil
 		}
 	}
 	return nil, http.ErrMissingFile
 }
 
-func (f *fakeCatalog) GetLeadAgentForSquad(squadID string) (*agentpkg.AgentModel, error) {
-	for _, squad := range f.squads {
-		if squad != nil && squad.ID == squadID {
-			if agent, ok := f.agents[squad.Name+" Captain"]; ok {
+func (f *fakeCatalog) GetLeadAgentForTeam(teamID string) (*agentpkg.AgentModel, error) {
+	for _, team := range f.teams {
+		if team != nil && team.ID == teamID {
+			if agent, ok := f.agents[team.Name+" Captain"]; ok {
 				return agent, nil
 			}
 		}
@@ -85,35 +85,35 @@ func (f *fakeCatalog) GetLeadAgentForSquad(squadID string) (*agentpkg.AgentModel
 	return nil, http.ErrMissingFile
 }
 
-func (f *fakeCatalog) SubmitSquadTask(ctx context.Context, sessionID, squadID, prompt string, agentNames []string) (*agentpkg.AsyncTask, error) {
+func (f *fakeCatalog) SubmitTeamTask(ctx context.Context, sessionID, teamID, prompt string, agentNames []string) (*agentpkg.AsyncTask, error) {
 	if f.tasks == nil {
 		f.tasks = make(map[string]*agentpkg.AsyncTask)
 	}
-	var squad *agentpkg.Squad
-	for _, candidate := range f.squads {
-		if candidate != nil && (candidate.ID == squadID || candidate.A2AID == squadID || candidate.Name == squadID) {
-			squad = candidate
+	var team *agentpkg.Team
+	for _, candidate := range f.teams {
+		if candidate != nil && (candidate.ID == teamID || candidate.A2AID == teamID || candidate.Name == teamID) {
+			team = candidate
 			break
 		}
 	}
-	if squad == nil {
+	if team == nil {
 		return nil, http.ErrMissingFile
 	}
-	lead, err := f.GetLeadAgentForSquad(squad.ID)
+	lead, err := f.GetLeadAgentForTeam(team.ID)
 	if err != nil {
 		return nil, err
 	}
 	task := &agentpkg.AsyncTask{
-		ID:          "task-" + squad.ID,
+		ID:          "task-" + team.ID,
 		SessionID:   sessionID,
-		Kind:        agentpkg.AsyncTaskKindSquad,
+		Kind:        agentpkg.AsyncTaskKindTeam,
 		Status:      agentpkg.AsyncTaskStatusCompleted,
-		SquadID:     squad.ID,
-		SquadName:   squad.Name,
+		TeamID:      team.ID,
+		TeamName:    team.Name,
 		CaptainName: lead.Name,
 		Prompt:      prompt,
 		AckMessage:  "accepted",
-		ResultText:  "squad response",
+		ResultText:  "team response",
 	}
 	f.tasks[task.ID] = task
 	return task, nil
@@ -133,7 +133,7 @@ func (f *fakeCatalog) SubscribeTask(taskID string) (<-chan *agentpkg.TaskEvent, 
 	}
 	ch := make(chan *agentpkg.TaskEvent, 4)
 	ch <- &agentpkg.TaskEvent{TaskID: task.ID, Type: agentpkg.TaskEventTypeStarted, Message: "started"}
-	ch <- &agentpkg.TaskEvent{TaskID: task.ID, Type: agentpkg.TaskEventTypeRuntime, Runtime: &agentpkg.Event{Type: agentpkg.EventTypePartial, Content: "partial squad output"}}
+	ch <- &agentpkg.TaskEvent{TaskID: task.ID, Type: agentpkg.TaskEventTypeRuntime, Runtime: &agentpkg.Event{Type: agentpkg.EventTypePartial, Content: "partial team output"}}
 	ch <- &agentpkg.TaskEvent{TaskID: task.ID, Type: agentpkg.TaskEventTypeCompleted, Message: task.ResultText}
 	close(ch)
 	return ch, func() {}, nil
@@ -194,7 +194,7 @@ func TestServerListsOnlyStandaloneOptedInAgents(t *testing.T) {
 		agents: map[string]*agentpkg.AgentModel{
 			"Assistant": {Name: "Assistant", EnableA2A: true},
 			"Writer":    {Name: "Writer", EnableA2A: true},
-			"Captain":   {Name: "Captain", EnableA2A: true, Squads: []agentpkg.SquadMembership{{SquadID: "s1"}}},
+			"Captain":   {Name: "Captain", EnableA2A: true, Teams: []agentpkg.TeamMembership{{TeamID: "s1"}}},
 			"Hidden":    {Name: "Hidden", EnableA2A: false},
 		},
 	}, Config{Enabled: true, PublicBaseURL: "https://agentgo.example", PathPrefix: "/a2a", IncludeBuiltInAgents: true, IncludeCustomAgents: true})
@@ -331,37 +331,37 @@ func TestServerMapsAgentRuntimeEventsIntoArtifacts(t *testing.T) {
 	}
 }
 
-func TestServerBuildsSquadCard(t *testing.T) {
+func TestServerBuildsTeamCard(t *testing.T) {
 	server, err := NewServer(&fakeCatalog{
-		squads: map[string]*agentpkg.Squad{
-			"Docs Squad": {ID: "s1", Name: "Docs Squad", Description: "Coordinates docs work", EnableA2A: true},
+		teams: map[string]*agentpkg.Team{
+			"Docs Team": {ID: "s1", Name: "Docs Team", Description: "Coordinates docs work", EnableA2A: true},
 		},
 	}, Config{Enabled: true, PublicBaseURL: "https://agentgo.example", PathPrefix: "/a2a", IncludeBuiltInAgents: true, IncludeCustomAgents: true, AgentVersion: "vtest"})
 	if err != nil {
 		t.Fatalf("NewServer() failed: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/a2a/squads/Docs%20Squad/.well-known/agent-card.json", nil)
+	req := httptest.NewRequest(http.MethodGet, "/a2a/teams/Docs%20Team/.well-known/agent-card.json", nil)
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
-	if !strings.Contains(rec.Body.String(), "Docs Squad") {
-		t.Fatalf("expected squad card body, got %s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "Docs Team") {
+		t.Fatalf("expected team card body, got %s", rec.Body.String())
 	}
 }
 
-func TestServerInvokesA2ASquadViaCaptain(t *testing.T) {
+func TestServerInvokesA2ATeamViaCaptain(t *testing.T) {
 	server, err := NewServer(&fakeCatalog{
 		agents: map[string]*agentpkg.AgentModel{
-			"Docs Squad Captain": {Name: "Docs Squad Captain"},
+			"Docs Team Captain": {Name: "Docs Team Captain"},
 		},
-		squads: map[string]*agentpkg.Squad{
-			"Docs Squad": {ID: "s1", Name: "Docs Squad", Description: "Coordinates docs work", EnableA2A: true},
+		teams: map[string]*agentpkg.Team{
+			"Docs Team": {ID: "s1", Name: "Docs Team", Description: "Coordinates docs work", EnableA2A: true},
 		},
 		runners: map[string]AgentRunner{
-			"Docs Squad Captain": &fakeRunner{text: "squad response"},
+			"Docs Team Captain": &fakeRunner{text: "team response"},
 		},
 	}, Config{Enabled: true, PublicBaseURL: "https://agentgo.example", PathPrefix: "/a2a", IncludeBuiltInAgents: true, IncludeCustomAgents: true})
 	if err != nil {
@@ -383,13 +383,13 @@ func TestServerInvokesA2ASquadViaCaptain(t *testing.T) {
 		},
 	}
 	body, _ := json.Marshal(payload)
-	req := httptest.NewRequest(http.MethodPost, "/a2a/squads/Docs%20Squad/invoke", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/a2a/teams/Docs%20Team/invoke", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if !bytes.Contains(rec.Body.Bytes(), []byte("squad response")) {
-		t.Fatalf("expected invoke response to contain squad output, got %s", rec.Body.String())
+	if !bytes.Contains(rec.Body.Bytes(), []byte("team response")) {
+		t.Fatalf("expected invoke response to contain team output, got %s", rec.Body.String())
 	}
 }

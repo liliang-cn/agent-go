@@ -188,7 +188,7 @@ type RunConfig struct {
 	// Inherited memory scope lets a delegated run keep the caller's durable memory namespace
 	// without reusing the same session ID.
 	InheritedMemoryAgentID string
-	InheritedMemorySquadID string
+	InheritedMemoryTeamID string
 	InheritedMemoryUserID  string
 
 	// Stream enables streaming mode for real-time events
@@ -282,10 +282,10 @@ func WithSessionID(sessionID string) RunOption {
 }
 
 // WithInheritedMemoryScope carries the caller's memory scope into a delegated run.
-func WithInheritedMemoryScope(agentID, squadID, userID string) RunOption {
+func WithInheritedMemoryScope(agentID, teamID, userID string) RunOption {
 	return func(c *RunConfig) {
 		c.InheritedMemoryAgentID = agentID
-		c.InheritedMemorySquadID = squadID
+		c.InheritedMemoryTeamID = teamID
 		c.InheritedMemoryUserID = userID
 	}
 }

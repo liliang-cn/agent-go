@@ -29,7 +29,7 @@ type Config struct {
 	Cache   CacheConfig   `mapstructure:"cache"`
 	Tooling ToolingConfig `mapstructure:"tooling"`
 	Agent   AgentConfig   `mapstructure:"agent"`
-	Squad   SquadConfig   `mapstructure:"squad"`
+	Team    TeamConfig   `mapstructure:"team"`
 
 	// Internal storage configs (not exposed to user directly)
 	Internal struct {
@@ -42,8 +42,8 @@ type AgentConfig struct {
 	Name string `mapstructure:"name"`
 }
 
-// SquadConfig holds global squad settings.
-type SquadConfig struct {
+// TeamConfig holds global team settings.
+type TeamConfig struct {
 	Name string `mapstructure:"name"`
 }
 

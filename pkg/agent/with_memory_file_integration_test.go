@@ -521,7 +521,7 @@ func TestMemoryToolsUseInheritedScopeForBuiltInArchivist(t *testing.T) {
 
 	session := NewSession("session-archivist-scope")
 	session.SetContext(sessionContextMemoryAgentScope, "Concierge")
-	session.SetContext(sessionContextMemorySquadScope, "default-squad")
+	session.SetContext(sessionContextMemoryTeamScope, "default-team")
 
 	toolCtx := withCurrentSession(ctx, session)
 	toolCtx = withCurrentAgent(toolCtx, NewAgent("Archivist"))
@@ -846,7 +846,7 @@ func TestAgentWithMemoryStoresOrdinaryDialogueViaHeuristicFallback(t *testing.T)
 	}
 }
 
-func TestMemoryToolsAreHiddenInFileOnlyMode(t *testing.T) {
+func TestMemoryToolsAreExposedInFileOnlyMode(t *testing.T) {
 	ctx := context.Background()
 	home := t.TempDir()
 
@@ -860,8 +860,8 @@ func TestMemoryToolsAreHiddenInFileOnlyMode(t *testing.T) {
 	}
 	defer svc.Close()
 
-	if svc.toolRegistry.Has("memory_recall") || svc.toolRegistry.Has("memory_save") || svc.toolRegistry.Has("memory_update") || svc.toolRegistry.Has("memory_delete") {
-		t.Fatal("expected memory CRUD tools to be hidden in file-only mode")
+	if !svc.toolRegistry.Has("memory_save") {
+		t.Fatal("expected memory_save tool to be registered in file-only mode")
 	}
 
 	if _, err := svc.Chat(ctx, "remember: Alice likes tea"); err != nil {
@@ -873,6 +873,6 @@ func TestMemoryToolsAreHiddenInFileOnlyMode(t *testing.T) {
 		t.Fatalf("recall chat failed: %v", err)
 	}
 	if got := result.Text(); got != "You like tea." {
-		t.Fatalf("expected file-only mode to still recall memory via pre-injected context, got %q", got)
+		t.Fatalf("expected file-only mode to recall memory, got %q", got)
 	}
 }

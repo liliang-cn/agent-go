@@ -13,7 +13,7 @@ func TestAgentMessagingToolsDeliverMailboxMessages(t *testing.T) {
 		t.Fatalf("new store failed: %v", err)
 	}
 
-	manager := NewSquadManager(store)
+	manager := NewTeamManager(store)
 	manager.SetConfig(testAgentConfig(t.TempDir()))
 	if err := manager.SeedDefaultMembers(); err != nil {
 		t.Fatalf("seed default members failed: %v", err)
@@ -82,7 +82,7 @@ func TestBuiltServicePromptIncludesKnownAgentsCatalog(t *testing.T) {
 		t.Fatalf("new store failed: %v", err)
 	}
 
-	manager := NewSquadManager(store)
+	manager := NewTeamManager(store)
 	manager.SetConfig(testAgentConfig(t.TempDir()))
 	if err := manager.SeedDefaultMembers(); err != nil {
 		t.Fatalf("seed default members failed: %v", err)

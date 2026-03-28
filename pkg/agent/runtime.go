@@ -757,7 +757,7 @@ func (r *Runtime) saveToMemory(ctx context.Context, goal, result string) {
 		if err := r.svc.memoryService.StoreIfWorthwhile(ctx, &domain.MemoryStoreRequest{
 			SessionID:  r.session.GetID(),
 			AgentID:    queryContext.AgentID,
-			SquadID:    queryContext.SquadID,
+			TeamID:    queryContext.TeamID,
 			UserID:     queryContext.UserID,
 			TaskGoal:   goal,
 			TaskResult: result,

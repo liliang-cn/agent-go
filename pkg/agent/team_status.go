@@ -6,8 +6,8 @@ import (
 	"strings"
 )
 
-type SquadRuntimeStatus struct {
-	SquadID         string   `json:"squad_id"`
+type TeamRuntimeStatus struct {
+	TeamID          string   `json:"team_id"`
 	Name            string   `json:"name"`
 	Description     string   `json:"description"`
 	EnableA2A       bool     `json:"enable_a2a"`
@@ -22,27 +22,27 @@ type SquadRuntimeStatus struct {
 	QueuedTasks     int      `json:"queued_tasks"`
 }
 
-func (m *SquadManager) GetSquadStatus(squadID string) (*SquadRuntimeStatus, error) {
-	squadID = strings.TrimSpace(squadID)
-	if squadID == "" {
-		return nil, fmt.Errorf("squad id is required")
+func (m *TeamManager) GetTeamStatus(teamID string) (*TeamRuntimeStatus, error) {
+	teamID = strings.TrimSpace(teamID)
+	if teamID == "" {
+		return nil, fmt.Errorf("team id is required")
 	}
 
-	squad, err := m.store.GetTeam(squadID)
+	team, err := m.store.GetTeam(teamID)
 	if err != nil {
 		return nil, err
 	}
 
-	members, err := m.ListSquadAgentsForSquad(squadID)
+	members, err := m.ListTeamAgentsByTeam(teamID)
 	if err != nil {
 		return nil, err
 	}
 
-	status := &SquadRuntimeStatus{
-		SquadID:     squad.ID,
-		Name:        squad.Name,
-		Description: squad.Description,
-		EnableA2A:   squad.EnableA2A,
+	status := &TeamRuntimeStatus{
+		TeamID:      team.ID,
+		Name:        team.Name,
+		Description: team.Description,
+		EnableA2A:   team.EnableA2A,
 		Status:      "idle",
 	}
 
@@ -61,7 +61,7 @@ func (m *SquadManager) GetSquadStatus(squadID string) (*SquadRuntimeStatus, erro
 
 	m.queueMu.Lock()
 	for _, task := range m.sharedTasks {
-		if task.SquadID != squadID {
+		if task.TeamID != teamID {
 			continue
 		}
 		if _, ok := leadSet[task.CaptainName]; !ok {
@@ -93,22 +93,22 @@ func (m *SquadManager) GetSquadStatus(squadID string) (*SquadRuntimeStatus, erro
 	return status, nil
 }
 
-func (m *SquadManager) ListSquadStatuses() ([]*SquadRuntimeStatus, error) {
-	squads, err := m.ListSquads()
+func (m *TeamManager) ListTeamStatuses() ([]*TeamRuntimeStatus, error) {
+	teams, err := m.ListTeams()
 	if err != nil {
 		return nil, err
 	}
 
-	statuses := make([]*SquadRuntimeStatus, 0, len(squads))
-	for _, squad := range squads {
-		status, err := m.GetSquadStatus(squad.ID)
+	statuses := make([]*TeamRuntimeStatus, 0, len(teams))
+	for _, team := range teams {
+		status, err := m.GetTeamStatus(team.ID)
 		if err != nil {
 			return nil, err
 		}
 		statuses = append(statuses, status)
 	}
 
-	slices.SortFunc(statuses, func(a, b *SquadRuntimeStatus) int {
+	slices.SortFunc(statuses, func(a, b *TeamRuntimeStatus) int {
 		switch {
 		case a.Name < b.Name:
 			return -1

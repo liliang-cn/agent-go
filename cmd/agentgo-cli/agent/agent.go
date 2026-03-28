@@ -38,7 +38,7 @@ var AgentCmd = &cobra.Command{
 	Short: "Run agents and manage standalone agent profiles",
 	Long: `Run agent tasks, planning, and execution, or manage standalone agents.
 
-An agent can work independently, or it can join a squad with a captain or specialist role.`,
+An agent can work independently, or it can join a team with a captain or specialist role.`,
 }
 
 // runCmd runs an agent task
@@ -454,9 +454,9 @@ func init() {
 	agentA2AInvokeCmd.Flags().StringVar(&a2aPathPrefix, "path-prefix", "/a2a", "HTTP path prefix mounted by the A2A server")
 	agentA2AInvokeCmd.Flags().BoolVar(&a2aInvokeStream, "stream", false, "use A2A streaming invocation")
 
-	agentJoinCmd.Flags().StringVar(&agentUpdateRole, "role", "specialist", "role inside the squad: specialist or captain")
-	agentJoinCmd.Flags().StringVar(&agentUpdateSquadID, "squad-id", "", "target squad ID")
-	agentJoinCmd.Flags().StringVar(&agentUpdateSquadName, "squad", "", "target squad name")
+	agentJoinCmd.Flags().StringVar(&agentUpdateRole, "role", "specialist", "role inside the team: specialist or captain")
+	agentJoinCmd.Flags().StringVar(&agentUpdateTeamID, "team-id", "", "target team ID")
+	agentJoinCmd.Flags().StringVar(&agentUpdateTeamName, "team", "", "target team name")
 }
 
 // initAgentServices initializes RAG client and agent service

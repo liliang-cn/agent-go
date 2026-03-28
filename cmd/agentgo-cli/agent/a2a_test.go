@@ -96,7 +96,7 @@ func TestAgentUpdateWithA2AFlagTogglesExposure(t *testing.T) {
 
 type cliInvokeCatalog struct {
 	agents  map[string]*agent.AgentModel
-	squads  map[string]*agent.Squad
+	teams  map[string]*agent.Team
 	runners map[string]agenta2a.AgentRunner
 }
 
@@ -131,34 +131,34 @@ func (c cliInvokeCatalog) GetAgentService(name string) (agenta2a.AgentRunner, er
 	return nil, http.ErrMissingFile
 }
 
-func (c cliInvokeCatalog) ListSquads() ([]*agent.Squad, error) {
-	out := make([]*agent.Squad, 0, len(c.squads))
-	for _, squad := range c.squads {
-		out = append(out, squad)
+func (c cliInvokeCatalog) ListTeams() ([]*agent.Team, error) {
+	out := make([]*agent.Team, 0, len(c.teams))
+	for _, team := range c.teams {
+		out = append(out, team)
 	}
 	return out, nil
 }
 
-func (c cliInvokeCatalog) GetSquadByName(name string) (*agent.Squad, error) {
-	if squad, ok := c.squads[name]; ok {
-		return squad, nil
+func (c cliInvokeCatalog) GetTeamByName(name string) (*agent.Team, error) {
+	if team, ok := c.teams[name]; ok {
+		return team, nil
 	}
 	return nil, http.ErrMissingFile
 }
 
-func (c cliInvokeCatalog) GetSquadByA2AID(a2aID string) (*agent.Squad, error) {
-	for _, squad := range c.squads {
-		if squad != nil && squad.A2AID == a2aID {
-			return squad, nil
+func (c cliInvokeCatalog) GetTeamByA2AID(a2aID string) (*agent.Team, error) {
+	for _, team := range c.teams {
+		if team != nil && team.A2AID == a2aID {
+			return team, nil
 		}
 	}
 	return nil, http.ErrMissingFile
 }
 
-func (c cliInvokeCatalog) GetLeadAgentForSquad(squadID string) (*agent.AgentModel, error) {
-	for _, squad := range c.squads {
-		if squad != nil && squad.ID == squadID {
-			if model, ok := c.agents[squad.Name+" Captain"]; ok {
+func (c cliInvokeCatalog) GetLeadAgentForTeam(teamID string) (*agent.AgentModel, error) {
+	for _, team := range c.teams {
+		if team != nil && team.ID == teamID {
+			if model, ok := c.agents[team.Name+" Captain"]; ok {
 				return model, nil
 			}
 		}

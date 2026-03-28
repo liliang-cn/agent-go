@@ -22,10 +22,10 @@ func AgentInvokePath(prefix, a2aID string) string {
 	return fmt.Sprintf("%s/agents/%s/invoke", NormalizePathPrefix(prefix), url.PathEscape(strings.TrimSpace(a2aID)))
 }
 
-func SquadCardPath(prefix, a2aID string) string {
-	return fmt.Sprintf("%s/squads/%s/.well-known/agent-card.json", NormalizePathPrefix(prefix), url.PathEscape(strings.TrimSpace(a2aID)))
+func TeamCardPath(prefix, a2aID string) string {
+	return fmt.Sprintf("%s/teams/%s/.well-known/agent-card.json", NormalizePathPrefix(prefix), url.PathEscape(strings.TrimSpace(a2aID)))
 }
 
-func SquadInvokePath(prefix, a2aID string) string {
-	return fmt.Sprintf("%s/squads/%s/invoke", NormalizePathPrefix(prefix), url.PathEscape(strings.TrimSpace(a2aID)))
+func TeamInvokePath(prefix, a2aID string) string {
+	return fmt.Sprintf("%s/teams/%s/invoke", NormalizePathPrefix(prefix), url.PathEscape(strings.TrimSpace(a2aID)))
 }

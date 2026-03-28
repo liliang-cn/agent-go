@@ -44,7 +44,7 @@ func TestSeedDefaultMembersCreatesBuiltInsByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
 	}
-	manager := NewSquadManager(store)
+	manager := NewTeamManager(store)
 	if err := manager.SeedDefaultMembers(); err != nil {
 		t.Fatalf("seed default members failed: %v", err)
 	}
@@ -64,11 +64,11 @@ func TestSeedDefaultMembersCreatesBuiltInsByDefault(t *testing.T) {
 	if assistant.Kind != AgentKindAgent {
 		t.Fatalf("expected Assistant standalone kind, got %q", assistant.Kind)
 	}
-	if len(assistant.Squads) != 1 {
-		t.Fatalf("expected Assistant to be in default squad, got squads=%+v", assistant.Squads)
+	if len(assistant.Teams) != 1 {
+		t.Fatalf("expected Assistant to be in default team, got teams=%+v", assistant.Teams)
 	}
-	if assistant.Squads[0].Role != AgentKindSpecialist {
-		t.Fatalf("expected Assistant role specialist, got %q", assistant.Squads[0].Role)
+	if assistant.Teams[0].Role != AgentKindSpecialist {
+		t.Fatalf("expected Assistant role specialist, got %q", assistant.Teams[0].Role)
 	}
 
 	operator, err := manager.GetAgentByName("Operator")
@@ -78,11 +78,11 @@ func TestSeedDefaultMembersCreatesBuiltInsByDefault(t *testing.T) {
 	if operator.Kind != AgentKindAgent {
 		t.Fatalf("expected Operator standalone kind, got %q", operator.Kind)
 	}
-	if len(operator.Squads) != 1 {
-		t.Fatalf("expected Operator to be in default squad, got squads=%+v", operator.Squads)
+	if len(operator.Teams) != 1 {
+		t.Fatalf("expected Operator to be in default team, got teams=%+v", operator.Teams)
 	}
-	if operator.Squads[0].Role != AgentKindSpecialist {
-		t.Fatalf("expected Operator role specialist, got %q", operator.Squads[0].Role)
+	if operator.Teams[0].Role != AgentKindSpecialist {
+		t.Fatalf("expected Operator role specialist, got %q", operator.Teams[0].Role)
 	}
 	if operator.Description != "An execution-focused standalone operator for file work, environment checks, and runnable validation steps." {
 		t.Fatalf("unexpected Operator description: %q", operator.Description)
@@ -101,11 +101,11 @@ func TestSeedDefaultMembersCreatesBuiltInsByDefault(t *testing.T) {
 	if concierge.Kind != AgentKindAgent {
 		t.Fatalf("expected Concierge standalone kind, got %q", concierge.Kind)
 	}
-	if len(concierge.Squads) != 1 {
-		t.Fatalf("expected Concierge to be in default squad, got squads=%+v", concierge.Squads)
+	if len(concierge.Teams) != 1 {
+		t.Fatalf("expected Concierge to be in default team, got teams=%+v", concierge.Teams)
 	}
-	if concierge.Squads[0].Role != AgentKindSpecialist {
-		t.Fatalf("expected Concierge role specialist, got %q", concierge.Squads[0].Role)
+	if concierge.Teams[0].Role != AgentKindSpecialist {
+		t.Fatalf("expected Concierge role specialist, got %q", concierge.Teams[0].Role)
 	}
 	if concierge.Description != "Always-on user entry agent for intake, status checks, and dispatching work." {
 		t.Fatalf("unexpected Concierge description: %q", concierge.Description)
@@ -126,11 +126,11 @@ func TestSeedDefaultMembersCreatesBuiltInsByDefault(t *testing.T) {
 	if intentRouter.Kind != AgentKindAgent {
 		t.Fatalf("expected IntentRouter standalone kind, got %q", intentRouter.Kind)
 	}
-	if len(intentRouter.Squads) != 1 {
-		t.Fatalf("expected IntentRouter to be in default squad, got squads=%+v", intentRouter.Squads)
+	if len(intentRouter.Teams) != 1 {
+		t.Fatalf("expected IntentRouter to be in default team, got teams=%+v", intentRouter.Teams)
 	}
-	if intentRouter.Squads[0].Role != AgentKindSpecialist {
-		t.Fatalf("expected IntentRouter role specialist, got %q", intentRouter.Squads[0].Role)
+	if intentRouter.Teams[0].Role != AgentKindSpecialist {
+		t.Fatalf("expected IntentRouter role specialist, got %q", intentRouter.Teams[0].Role)
 	}
 	if intentRouter.Description != defaultIntentRouterAgentDescription {
 		t.Fatalf("unexpected IntentRouter description: %q", intentRouter.Description)
@@ -150,11 +150,11 @@ func TestSeedDefaultMembersCreatesBuiltInsByDefault(t *testing.T) {
 	if promptOptimizer.Kind != AgentKindAgent {
 		t.Fatalf("expected PromptOptimizer standalone kind, got %q", promptOptimizer.Kind)
 	}
-	if len(promptOptimizer.Squads) != 1 {
-		t.Fatalf("expected PromptOptimizer to be in default squad, got squads=%+v", promptOptimizer.Squads)
+	if len(promptOptimizer.Teams) != 1 {
+		t.Fatalf("expected PromptOptimizer to be in default team, got teams=%+v", promptOptimizer.Teams)
 	}
-	if promptOptimizer.Squads[0].Role != AgentKindSpecialist {
-		t.Fatalf("expected PromptOptimizer role specialist, got %q", promptOptimizer.Squads[0].Role)
+	if promptOptimizer.Teams[0].Role != AgentKindSpecialist {
+		t.Fatalf("expected PromptOptimizer role specialist, got %q", promptOptimizer.Teams[0].Role)
 	}
 	if promptOptimizer.Description != defaultPromptOptimizerAgentDescription {
 		t.Fatalf("unexpected PromptOptimizer description: %q", promptOptimizer.Description)
@@ -173,11 +173,11 @@ func TestSeedDefaultMembersCreatesBuiltInsByDefault(t *testing.T) {
 	if stakeholder.Kind != AgentKindAgent {
 		t.Fatalf("expected Stakeholder standalone kind, got %q", stakeholder.Kind)
 	}
-	if len(stakeholder.Squads) != 1 {
-		t.Fatalf("expected Stakeholder to be in default squad, got squads=%+v", stakeholder.Squads)
+	if len(stakeholder.Teams) != 1 {
+		t.Fatalf("expected Stakeholder to be in default team, got teams=%+v", stakeholder.Teams)
 	}
-	if stakeholder.Squads[0].Role != AgentKindSpecialist {
-		t.Fatalf("expected Stakeholder role specialist, got %q", stakeholder.Squads[0].Role)
+	if stakeholder.Teams[0].Role != AgentKindSpecialist {
+		t.Fatalf("expected Stakeholder role specialist, got %q", stakeholder.Teams[0].Role)
 	}
 	if stakeholder.Description != "Product/business representative for goals, scope, priorities, and acceptance criteria." {
 		t.Fatalf("unexpected Stakeholder description: %q", stakeholder.Description)
@@ -193,11 +193,11 @@ func TestSeedDefaultMembersCreatesBuiltInsByDefault(t *testing.T) {
 	}
 
 	if _, err := manager.GetMemberByName("Coder"); err == nil {
-		t.Fatal("expected default squad to not seed Coder")
+		t.Fatal("expected default team to not seed Coder")
 	}
 
 	if _, err := manager.GetMemberByName("FileSystemAgent"); err == nil {
-		t.Fatal("expected FileSystemAgent to be removed from the default squad")
+		t.Fatal("expected FileSystemAgent to be removed from the default team")
 	}
 }
 
@@ -206,7 +206,7 @@ func TestCreateMemberAppliesUsefulDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
 	}
-	manager := NewSquadManager(store)
+	manager := NewTeamManager(store)
 	if err := manager.SeedDefaultMembers(); err != nil {
 		t.Fatalf("seed default members failed: %v", err)
 	}
@@ -229,34 +229,34 @@ func TestCreateMemberAppliesUsefulDefaults(t *testing.T) {
 
 	if _, err := manager.CreateMember(context.Background(), &AgentModel{
 		Name:         "DocCaptain",
-		TeamID:       "docs-squad-test",
+		TeamID:       "docs-team-test",
 		Kind:         AgentKindCaptain,
 		Description:  "Leads documentation work.",
 		Instructions: "Coordinate documentation tasks.",
 	}); err == nil {
-		t.Fatalf("expected unknown squad creation to fail")
+		t.Fatalf("expected unknown team creation to fail")
 	}
 
-	squad, err := manager.CreateSquad(context.Background(), &Squad{
-		Name:        "Docs Squad",
-		Description: "Documentation squad.",
+	team, err := manager.CreateTeam(context.Background(), &Team{
+		Name:        "Docs Team",
+		Description: "Documentation team.",
 	})
 	if err != nil {
-		t.Fatalf("create squad failed: %v", err)
+		t.Fatalf("create team failed: %v", err)
 	}
 
 	docsMember, err := manager.CreateMember(context.Background(), &AgentModel{
 		Name:         "DocWriter",
-		TeamID:       squad.ID,
+		TeamID:       team.ID,
 		Kind:         AgentKindSpecialist,
 		Description:  "Writes documentation.",
 		Instructions: "Write documentation.",
 	})
 	if err != nil {
-		t.Fatalf("create specialist in new squad failed: %v", err)
+		t.Fatalf("create specialist in new team failed: %v", err)
 	}
 	if !docsMember.EnableMCP || !docsMember.EnableRAG || !docsMember.EnableMemory {
-		t.Fatalf("expected squad member defaults to enable MCP/RAG/Memory, got %+v", docsMember)
+		t.Fatalf("expected team member defaults to enable MCP/RAG/Memory, got %+v", docsMember)
 	}
 }
 
@@ -265,28 +265,28 @@ func TestCreateMemberCaptainConflictDoesNotLeaveStandaloneAgent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
 	}
-	manager := NewSquadManager(store)
+	manager := NewTeamManager(store)
 	if err := manager.SeedDefaultMembers(); err != nil {
 		t.Fatalf("seed default members failed: %v", err)
 	}
 
-	squad, err := manager.CreateSquad(context.Background(), &Squad{
-		Name:        "Docs Squad",
-		Description: "Documentation squad.",
+	team, err := manager.CreateTeam(context.Background(), &Team{
+		Name:        "Docs Team",
+		Description: "Documentation team.",
 	})
 	if err != nil {
-		t.Fatalf("create squad failed: %v", err)
+		t.Fatalf("create team failed: %v", err)
 	}
 
 	_, err = manager.CreateMember(context.Background(), &AgentModel{
 		Name:         "Docs PM",
-		TeamID:       squad.ID,
+		TeamID:       team.ID,
 		Kind:         AgentKindCaptain,
 		Description:  "duplicate lead",
 		Instructions: "duplicate lead",
 	})
 	if err == nil {
-		t.Fatal("expected duplicate squad captain creation to fail")
+		t.Fatal("expected duplicate team captain creation to fail")
 	}
 
 	if _, getErr := manager.GetAgentByName("Docs PM"); getErr == nil {
@@ -299,7 +299,7 @@ func TestCreateAgentCreatesStandaloneAgent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
 	}
-	manager := NewSquadManager(store)
+	manager := NewTeamManager(store)
 	if err := manager.SeedDefaultMembers(); err != nil {
 		t.Fatalf("seed default members failed: %v", err)
 	}
@@ -316,7 +316,7 @@ func TestCreateAgentCreatesStandaloneAgent(t *testing.T) {
 		t.Fatalf("expected standalone kind agent, got %q", model.Kind)
 	}
 	if model.TeamID != "" {
-		t.Fatalf("expected standalone agent to have no squad, got %q", model.TeamID)
+		t.Fatalf("expected standalone agent to have no team, got %q", model.TeamID)
 	}
 
 	members, err := manager.ListMembers()
@@ -325,7 +325,7 @@ func TestCreateAgentCreatesStandaloneAgent(t *testing.T) {
 	}
 	for _, member := range members {
 		if member.Name == "Writer" {
-			t.Fatalf("expected standalone agent to be excluded from squad members: %+v", member)
+			t.Fatalf("expected standalone agent to be excluded from team members: %+v", member)
 		}
 	}
 }
@@ -369,7 +369,7 @@ enabled = true
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
 	}
-	manager := NewSquadManager(store)
+	manager := NewTeamManager(store)
 	if err := manager.SeedDefaultMembers(); err != nil {
 		t.Fatalf("seed default members failed: %v", err)
 	}
@@ -437,12 +437,12 @@ enabled = true
 	}
 }
 
-func TestJoinAndLeaveSquadMovesStandaloneAgent(t *testing.T) {
+func TestJoinAndLeaveTeamMovesStandaloneAgent(t *testing.T) {
 	store, err := NewStore(filepath.Join(t.TempDir(), "agent.db"))
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
 	}
-	manager := NewSquadManager(store)
+	manager := NewTeamManager(store)
 	if err := manager.SeedDefaultMembers(); err != nil {
 		t.Fatalf("seed default members failed: %v", err)
 	}
@@ -456,12 +456,12 @@ func TestJoinAndLeaveSquadMovesStandaloneAgent(t *testing.T) {
 		t.Fatalf("create standalone agent failed: %v", err)
 	}
 
-	joined, err := manager.JoinSquad(context.Background(), writer.Name, defaultSquadID, AgentKindSpecialist)
+	joined, err := manager.JoinTeam(context.Background(), writer.Name, defaultTeamID, AgentKindSpecialist)
 	if err != nil {
-		t.Fatalf("join squad failed: %v", err)
+		t.Fatalf("join team failed: %v", err)
 	}
-	if joined.TeamID != defaultSquadID {
-		t.Fatalf("expected joined squad id %q, got %q", defaultSquadID, joined.TeamID)
+	if joined.TeamID != defaultTeamID {
+		t.Fatalf("expected joined team id %q, got %q", defaultTeamID, joined.TeamID)
 	}
 	if joined.Kind != AgentKindSpecialist {
 		t.Fatalf("expected joined kind specialist, got %q", joined.Kind)
@@ -470,18 +470,18 @@ func TestJoinAndLeaveSquadMovesStandaloneAgent(t *testing.T) {
 		t.Fatalf("expected joined agent to be loadable as member: %v", err)
 	}
 
-	left, err := manager.LeaveSquad(context.Background(), writer.Name)
+	left, err := manager.LeaveTeam(context.Background(), writer.Name)
 	if err != nil {
-		t.Fatalf("leave squad failed: %v", err)
+		t.Fatalf("leave team failed: %v", err)
 	}
 	if left.TeamID != "" {
-		t.Fatalf("expected agent to leave squad, got %q", left.TeamID)
+		t.Fatalf("expected agent to leave team, got %q", left.TeamID)
 	}
 	if left.Kind != AgentKindAgent {
 		t.Fatalf("expected standalone kind agent after leave, got %q", left.Kind)
 	}
 	if _, err := manager.GetMemberByName(writer.Name); err == nil {
-		t.Fatal("expected standalone agent to no longer be treated as squad member")
+		t.Fatal("expected standalone agent to no longer be treated as team member")
 	}
 }
 
@@ -490,12 +490,12 @@ func TestLastCaptainCannotLeaveOrBeDeleted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
 	}
-	manager := NewSquadManager(store)
+	manager := NewTeamManager(store)
 	if err := manager.SeedDefaultMembers(); err != nil {
 		t.Fatalf("seed default members failed: %v", err)
 	}
 
-	if _, err := manager.LeaveSquad(context.Background(), "Captain"); err == nil {
+	if _, err := manager.LeaveTeam(context.Background(), "Captain"); err == nil {
 		t.Fatal("expected last captain leave to fail")
 	}
 	if err := manager.DeleteAgent(context.Background(), "Captain"); err == nil {

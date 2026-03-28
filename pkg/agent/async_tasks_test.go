@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-func newTaskTestManager() *SquadManager {
-	return &SquadManager{
+func newTaskTestManager() *TeamManager {
+	return &TeamManager{
 		asyncTasks:   make(map[string]*AsyncTask),
 		sessionTasks: make(map[string][]string),
 		taskSubs:     make(map[string]map[chan *TaskEvent]struct{}),
@@ -58,10 +58,10 @@ func TestSubscribeTaskReceivesLiveRuntimeEvent(t *testing.T) {
 	task := &AsyncTask{
 		ID:        "task-live",
 		SessionID: "session-2",
-		Kind:      AsyncTaskKindSquad,
+		Kind:      AsyncTaskKindTeam,
 		Status:    AsyncTaskStatusRunning,
-		SquadID:   "squad-1",
-		SquadName: "AgentGo Squad",
+		TeamID:    "team-1",
+		TeamName:  "AgentGo Team",
 		CreatedAt: time.Now(),
 	}
 	manager.upsertAsyncTask(task)
@@ -102,7 +102,7 @@ func TestEnsureAsyncTaskForSharedTaskIndexesSession(t *testing.T) {
 	manager := newTaskTestManager()
 	shared := &SharedTask{
 		ID:          "shared-1",
-		SquadID:     "squad-1",
+		TeamID:      "team-1",
 		CaptainName: "Captain",
 		AgentNames:  []string{"Captain"},
 		Prompt:      "hello",
@@ -111,12 +111,12 @@ func TestEnsureAsyncTaskForSharedTaskIndexesSession(t *testing.T) {
 		CreatedAt:   time.Now(),
 	}
 
-	task := manager.ensureAsyncTaskForSharedTask(shared, "session-3", "AgentGo Squad")
+	task := manager.ensureAsyncTaskForSharedTask(shared, "session-3", "AgentGo Team")
 	if task == nil {
 		t.Fatal("expected async task")
 	}
-	if task.Kind != AsyncTaskKindSquad {
-		t.Fatalf("expected squad task, got %s", task.Kind)
+	if task.Kind != AsyncTaskKindTeam {
+		t.Fatalf("expected team task, got %s", task.Kind)
 	}
 	if task.SessionID != "session-3" {
 		t.Fatalf("expected session to be indexed, got %q", task.SessionID)

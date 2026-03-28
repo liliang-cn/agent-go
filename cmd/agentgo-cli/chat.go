@@ -93,7 +93,7 @@ func runChat(cmd *cobra.Command, args []string) error {
 
 	agentDBPath := chatCfg.AgentDBPath()
 
-	var agentManager *agent.SquadManager
+	var agentManager *agent.TeamManager
 	agentStore, storeErr := agent.NewStore(agentDBPath)
 	if storeErr == nil {
 		agentManager = agent.NewTeamManager(agentStore)
@@ -161,7 +161,7 @@ func runChat(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func buildChatConciergeService(chatCfg *config.Config, agentDBPath string, manager *agent.SquadManager) (*agent.Service, error) {
+func buildChatConciergeService(chatCfg *config.Config, agentDBPath string, manager *agent.TeamManager) (*agent.Service, error) {
 	if manager != nil && !chatNoMemory && !chatWithPTC && !chatCfg.GetMemoryStoreType().UsesVector() {
 		if svc, err := manager.GetAgentService(agent.BuiltInConciergeAgentName); err == nil {
 			svc.SetDebug(debug)
@@ -171,7 +171,7 @@ func buildChatConciergeService(chatCfg *config.Config, agentDBPath string, manag
 		}
 	}
 
-	systemPrompt := "You are Concierge, the always-on dispatch agent for AgentGo. Your only job is intake, routing, status inspection, and task dispatch. Do not do substantive work yourself unless the user is asking for dispatch metadata, agent or squad status, or task status. For almost every substantive user request, call route_builtin_request with the user's request. That tool runs PromptOptimizer and IntentRouter in parallel, then dispatches to the correct specialist. Do not manually claim that something was saved, recalled, verified, or executed unless a routing or status tool has already confirmed it. Keep replies concise, acknowledge queued work clearly, and never pretend background work is already finished."
+	systemPrompt := "You are Concierge, the always-on dispatch agent for AgentGo. Your only job is intake, routing, status inspection, and task dispatch. Do not do substantive work yourself unless the user is asking for dispatch metadata, agent or team status, or task status. For almost every substantive user request, call route_builtin_request with the user's request. That tool runs PromptOptimizer and IntentRouter in parallel, then dispatches to the correct specialist. Do not manually claim that something was saved, recalled, verified, or executed unless a routing or status tool has already confirmed it. Keep replies concise, acknowledge queued work clearly, and never pretend background work is already finished."
 	if manager != nil {
 		if model, err := manager.GetAgentByName(agent.BuiltInConciergeAgentName); err == nil && strings.TrimSpace(model.Instructions) != "" {
 			systemPrompt = strings.TrimSpace(model.Instructions)
@@ -375,7 +375,7 @@ func formatScopeChain(metadata map[string]interface{}) string {
 			}
 			appendIf("session", "session_id")
 			appendIf("agent", "agent_id")
-			appendIf("squad", "squad_id")
+			appendIf("team", "team_id")
 			appendIf("user", "user_id")
 			items = append(items, "global")
 		}
@@ -405,7 +405,7 @@ func progressCallback(event agent.ProgressEvent) {
 	}
 }
 
-func runInteractiveChat(ctx context.Context, svc *agent.Service, manager *agent.SquadManager) error {
+func runInteractiveChat(ctx context.Context, svc *agent.Service, manager *agent.TeamManager) error {
 	chatCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 

@@ -140,14 +140,14 @@ func (h *Handler) HandleAgentStream(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) HandleAgents(w http.ResponseWriter, r *http.Request) {
-	if h.squadManager == nil {
+	if h.teamManager == nil {
 		JSONError(w, "Agent manager unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
 	switch r.Method {
 	case http.MethodGet:
-		agents, err := h.squadManager.ListAgents()
+		agents, err := h.teamManager.ListAgents()
 		if err != nil {
 			JSONError(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -155,7 +155,7 @@ func (h *Handler) HandleAgents(w http.ResponseWriter, r *http.Request) {
 		JSONResponse(w, map[string]interface{}{"agents": agents})
 	case http.MethodPost:
 		var req struct {
-			SquadID               string   `json:"squad_id"`
+			TeamID                string   `json:"team_id"`
 			Name                  string   `json:"name"`
 			Kind                  string   `json:"kind"`
 			Description           string   `json:"description"`
@@ -180,9 +180,9 @@ func (h *Handler) HandleAgents(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		agentModel, err := h.squadManager.CreateAgent(r.Context(), &agent.AgentModel{
+		agentModel, err := h.teamManager.CreateAgent(r.Context(), &agent.AgentModel{
 			ID:                    uuid.New().String(),
-			TeamID:                strings.TrimSpace(req.SquadID),
+			TeamID:                strings.TrimSpace(req.TeamID),
 			Name:                  strings.TrimSpace(req.Name),
 			Kind:                  agent.AgentKind(strings.TrimSpace(req.Kind)),
 			Description:           strings.TrimSpace(req.Description),
@@ -232,7 +232,7 @@ func (h *Handler) HandleAgents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) HandleAgentOperation(w http.ResponseWriter, r *http.Request) {
-	if h.squadManager == nil {
+	if h.teamManager == nil {
 		JSONError(w, "Agent manager unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -265,7 +265,7 @@ func (h *Handler) HandleAgentOperation(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		events, err := h.squadManager.DispatchTaskStream(r.Context(), name, req.Instruction)
+		events, err := h.teamManager.DispatchTaskStream(r.Context(), name, req.Instruction)
 		if err != nil {
 			JSONError(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -333,7 +333,7 @@ func (h *Handler) HandleAgentOperation(w http.ResponseWriter, r *http.Request) {
 		}
 
 		start := time.Now()
-		result, err := h.squadManager.DispatchTask(r.Context(), name, req.Instruction)
+		result, err := h.teamManager.DispatchTask(r.Context(), name, req.Instruction)
 		if err != nil {
 			h.appendOpsLog(OpsLogEntry{
 				AgentName: name,
@@ -357,7 +357,7 @@ func (h *Handler) HandleAgentOperation(w http.ResponseWriter, r *http.Request) {
 				"instruction": req.Instruction,
 			},
 		})
-		agentModel, _ := h.squadManager.GetAgentByName(name)
+		agentModel, _ := h.teamManager.GetAgentByName(name)
 		JSONResponse(w, map[string]interface{}{
 			"success":     true,
 			"agent":       agentModel,
@@ -365,7 +365,7 @@ func (h *Handler) HandleAgentOperation(w http.ResponseWriter, r *http.Request) {
 			"duration_ms": duration,
 		})
 	case len(parts) == 1 && r.Method == http.MethodGet:
-		agentModel, err := h.squadManager.GetAgentByName(name)
+		agentModel, err := h.teamManager.GetAgentByName(name)
 		if err != nil {
 			JSONError(w, err.Error(), http.StatusNotFound)
 			return

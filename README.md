@@ -25,7 +25,7 @@ go get github.com/liliang-cn/agent-go
 | **PTC**       | LLM writes JavaScript; tools run in a Goja sandbox — cuts round-trips                                      |
 | **Streaming** | Token-by-token via channel; full event stream with tool call visibility                                    |
 | **Providers** | OpenAI, Anthropic, Azure, DeepSeek, Ollama — switchable at runtime                                         |
-| **Squads**    | Persistent captains + specialists, async team task queues, runtime status, and cross-process task tracking |
+| **Teams**     | Persistent captains + specialists, async team task queues, runtime status, and cross-process task tracking |
 | **Operator**  | Built-in execution agent with filesystem/web tools plus PTY and coding-agent session tooling               |
 
 ---
@@ -109,14 +109,14 @@ Key standalone patterns:
 - use `Stakeholder` for product/business framing
 - use `Concierge` for intake and orchestration
 
-### 8. Squad
+### 8. Team
 
-A Squad is the persistent team layer on top of agents.
+A Team is the persistent team layer on top of agents.
 
-- A squad has one `captain` and multiple `specialists`.
+- A team has one `captain` and multiple `specialists`.
 - The captain is still an agent, but with team-oriented orchestration rules.
 - Captains prefer async team work for implementation-heavy tasks.
-- Squad task state is persisted, so new CLI processes can inspect or continue work.
+- Team task state is persisted, so new CLI processes can inspect or continue work.
 
 Think of it as: `persistent multi-agent coordination with queueing and status`.
 
@@ -136,12 +136,12 @@ At a high level the APIs map to those concepts like this:
   - `WithSkills`, skill registration and invocation
 - **PTC**
   - `WithPTC`, `execute_javascript`, `callTool()`
-- **Squad**
-  - `CreateSquad`, `JoinSquad`, `DispatchTask`, `SubmitSquadTask`, `GetTask`
+- **Team**
+  - `CreateTeam`, `JoinTeam`, `DispatchTask`, `SubmitTeamTask`, `GetTask`
 
 The practical layering is:
 
-`LLM -> tools/PTC -> Agent -> Squad`
+`LLM -> tools/PTC -> Agent -> Team`
 
 with `RAG`, `Memory`, `MCP`, and `Skills` acting as capabilities that can be attached to an agent.
 
@@ -203,7 +203,7 @@ go run ./cmd/agentgo-cli chat --show-memory
 go run ./cmd/agentgo-cli chat --with-ptc
 ```
 
-Run squad workflows from the CLI:
+Run team workflows from the CLI:
 
 ```bash
 # Create a standalone agent
@@ -221,26 +221,26 @@ agentgo agent run --agent Scout "Summarize the current repo structure"
 agentgo agent show Concierge
 agentgo agent show Operator
 
-# Create a squad (a default captain is created automatically)
-agentgo squad add "Docs Squad" --description "Documentation and release notes"
+# Create a team (a default captain is created automatically)
+agentgo team add "Docs Team" --description "Documentation and release notes"
 
-# Join the standalone agent to a squad
-agentgo agent join Scout --squad "Docs Squad" --role specialist
+# Join the standalone agent to a team
+agentgo agent join Scout --team "Docs Team" --role specialist
 
 # Run a task through the default captain and a specialist
-agentgo squad go "@Captain @Scout summarize the UI/backend relationship and write workspace/ui_backend_overview.md"
+agentgo team go "@Captain @Scout summarize the UI/backend relationship and write workspace/ui_backend_overview.md"
 
 # Inspect runtime task state; follows while tasks are still running or queued
-agentgo squad status "Docs Squad"
+agentgo team status "Docs Team"
 
 # Run direct execution work through the built-in Operator
 agentgo agent run --agent Operator "Write workspace/operator_probe.txt with the text: OPERATOR_OK"
 
-# Leave the squad again
+# Leave the team again
 agentgo agent leave Scout
 
-# Delete the squad when you're done
-agentgo squad delete "Docs Squad"
+# Delete the team when you're done
+agentgo team delete "Docs Team"
 ```
 
 ---
@@ -428,7 +428,7 @@ results     := coordinator.WaitAll(ctx)
 AgentGo has three layers of agent concepts:
 
 - **Standalone agents**: long-lived named agents with their own role and tool budget
-- **Squads**: a persistent team with one `captain` and multiple `specialists`
+- **Teams**: a persistent team with one `captain` and multiple `specialists`
 - **Built-in agents**: system-provided standalone agents that are always available
 
 The default built-ins are:
@@ -451,7 +451,7 @@ agentgo agent show Stakeholder
 
 AgentGo now supports two delegation axes:
 
-- **Squad delegation**
+- **Team delegation**
   - `captain -> specialists`
   - supports synchronous dispatch and persisted async team tasks
 - **Built-in delegation**
@@ -503,9 +503,9 @@ This means a custom agent can keep its own role and capabilities, but still dele
 - general work to `Assistant`
 - product/business clarification to `Stakeholder`
 
-## Squad APIs
+## Team APIs
 
-AgentGo exposes a squad-oriented manager API for standalone agents and squad agents. A `captain` is just an agent role inside a squad.
+AgentGo exposes a team-oriented manager API for standalone agents and team agents. A `captain` is just an agent role inside a team.
 
 ```go
 store, err := agent.NewStore(filepath.Join(cfg.DataDir(), "agent.db"))
@@ -513,7 +513,7 @@ if err != nil {
     panic(err)
 }
 
-manager := agent.NewSquadManager(store)
+manager := agent.NewTeamManager(store)
 if err := manager.SeedDefaultMembers(); err != nil {
     panic(err)
 }
@@ -528,15 +528,15 @@ if err != nil {
     panic(err)
 }
 
-docsSquad, err := manager.CreateSquad(ctx, &agent.Squad{
-    Name:        "Docs Squad",
+docsTeam, err := manager.CreateTeam(ctx, &agent.Team{
+    Name:        "Docs Team",
     Description: "Documentation and release notes",
 })
 if err != nil {
     panic(err)
 }
 
-writer, err := manager.JoinSquad(ctx, scout.Name, docsSquad.ID, agent.AgentKindSpecialist)
+writer, err := manager.JoinTeam(ctx, scout.Name, docsTeam.ID, agent.AgentKindSpecialist)
 if err != nil {
     panic(err)
 }
@@ -550,37 +550,37 @@ fmt.Println(result)
 
 ### Captain Runtime Model
 
-- A custom squad created via `CreateSquad()` or `agentgo squad add` automatically gets a default captain.
-- The captain receives squad roster and role summaries in its system prompt.
+- A custom team created via `CreateTeam()` or `agentgo team add` automatically gets a default captain.
+- The captain receives team roster and role summaries in its system prompt.
 - Captains prefer async team work for implementation-heavy tasks.
-- Shared squad tasks are persisted and can be inspected from new CLI processes.
+- Shared team tasks are persisted and can be inspected from new CLI processes.
 - Captains do not use generic `delegate_to_subagent` by default.
 
-### Core Squad-Manager APIs
+### Core Team-Manager APIs
 
 - `CreateAgent`, `UpdateAgent`, `DeleteAgent`, `GetAgentByName`, `ListAgents`, `ListStandaloneAgents`
-- `JoinSquad`, `LeaveSquad`, `GetAgentService`
-- `CreateSquad`, `ListSquads`, `GetSquadByName`
-- `AddSquadAgent`, `CreateSquadAgent`, `ListSquadAgents`, `GetSquadAgentByName`
+- `JoinTeam`, `LeaveTeam`, `GetAgentService`
+- `CreateTeam`, `ListTeams`, `GetTeamByName`
+- `AddTeamAgent`, `CreateTeamAgent`, `ListTeamAgents`, `GetTeamAgentByName`
 - `AddCaptain`, `AddSpecialist`, `ListCaptains`, `ListSpecialists` (role-specific helpers)
 - `DispatchTask`, `DispatchTaskStream`
 - `EnqueueSharedTask`, `ListSharedTasks`
-- `SubmitAgentTask`, `SubmitSquadTask`, `GetTask`, `ListSessionTasks`
+- `SubmitAgentTask`, `SubmitTeamTask`, `GetTask`, `ListSessionTasks`
 
-### Squad Runtime / Status APIs
+### Team Runtime / Status APIs
 
 For runtime orchestration and monitoring:
 
-- `GetSquadStatus`, `ListSquadStatuses`
+- `GetTeamStatus`, `ListTeamStatuses`
 - `GetAgentStatus`, `ListAgentStatuses`
-- `GetLeadAgentForSquad`
+- `GetLeadAgentForTeam`
 - `SubscribeTask` for async task progress streams
 - `DispatchTaskStreamWithOptions`, `ChatWithMemberStream`, `ChatWithMemberStreamWithOptions`
 
 In practice, the API layers look like this:
 
 - **Standalone agent APIs**: create, run, inspect, update
-- **Squad APIs**: create squads, join agents, dispatch tasks, track async work
+- **Team APIs**: create teams, join agents, dispatch tasks, track async work
 - **Built-in delegation APIs**: let a custom agent explicitly call `Assistant`, `Operator`, or `Stakeholder`
 
 ---

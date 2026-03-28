@@ -25,8 +25,8 @@ func (h *Handler) HandleMultiAgentChat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if h.squadManager == nil {
-		JSONError(w, "Squad manager unavailable", http.StatusServiceUnavailable)
+	if h.teamManager == nil {
+		JSONError(w, "Team manager unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -59,7 +59,7 @@ func (h *Handler) HandleMultiAgentChat(w http.ResponseWriter, r *http.Request) {
 	if leadAgentName == "" {
 		leadAgentName = strings.TrimSpace(stringValue(raw["captain_name"]))
 	}
-	streamAISDKMultiAgentChat(w, r, chatID, leadAgentName, agentNames, cleanedPrompt, h.squadManager)
+	streamAISDKMultiAgentChat(w, r, chatID, leadAgentName, agentNames, cleanedPrompt, h.teamManager)
 }
 
 func extractAgentNames(v any) []string {
@@ -110,7 +110,7 @@ func parseMultiAgentPrompt(prompt string) ([]string, string) {
 	return names, strings.TrimSpace(cleaned)
 }
 
-func streamAISDKMultiAgentChat(w http.ResponseWriter, r *http.Request, chatID, leadAgentName string, agentNames []string, prompt string, manager *agent.SquadManager) {
+func streamAISDKMultiAgentChat(w http.ResponseWriter, r *http.Request, chatID, leadAgentName string, agentNames []string, prompt string, manager *agent.TeamManager) {
 	setSSEHeaders(w)
 	flusher, ok := w.(http.Flusher)
 	if !ok {

@@ -9,30 +9,30 @@ import (
 	"github.com/google/uuid"
 )
 
-func (m *SquadManager) ListAgents() ([]*AgentModel, error) {
+func (m *TeamManager) ListAgents() ([]*AgentModel, error) {
 	return m.store.ListAgentModels()
 }
 
-func (m *SquadManager) ListStandaloneAgents() ([]*AgentModel, error) {
+func (m *TeamManager) ListStandaloneAgents() ([]*AgentModel, error) {
 	agents, err := m.store.ListAgentModels()
 	if err != nil {
 		return nil, err
 	}
 	standalone := make([]*AgentModel, 0, len(agents))
 	for _, model := range agents {
-		if len(model.Squads) == 0 {
+		if len(model.Teams) == 0 {
 			standalone = append(standalone, model)
 		}
 	}
 	return standalone, nil
 }
 
-func (m *SquadManager) ListSquadAgentsForSquad(squadID string) ([]*AgentModel, error) {
-	squadID = strings.TrimSpace(squadID)
-	if squadID == "" {
-		return nil, fmt.Errorf("squad id is required")
+func (m *TeamManager) ListTeamAgentsByTeam(teamID string) ([]*AgentModel, error) {
+	teamID = strings.TrimSpace(teamID)
+	if teamID == "" {
+		return nil, fmt.Errorf("team id is required")
 	}
-	memberships, err := m.store.ListSquadMembershipsBySquad(squadID)
+	memberships, err := m.store.ListTeamMembershipsByTeam(teamID)
 	if err != nil {
 		return nil, err
 	}
@@ -47,8 +47,8 @@ func (m *SquadManager) ListSquadAgentsForSquad(squadID string) ([]*AgentModel, e
 	return agents, nil
 }
 
-func (m *SquadManager) GetLeadAgentForSquad(squadID string) (*AgentModel, error) {
-	agents, err := m.ListSquadAgentsForSquad(squadID)
+func (m *TeamManager) GetLeadAgentForTeam(teamID string) (*AgentModel, error) {
+	agents, err := m.ListTeamAgentsByTeam(teamID)
 	if err != nil {
 		return nil, err
 	}
@@ -57,29 +57,29 @@ func (m *SquadManager) GetLeadAgentForSquad(squadID string) (*AgentModel, error)
 			return model, nil
 		}
 	}
-	return nil, fmt.Errorf("squad %s has no lead agent", squadID)
+	return nil, fmt.Errorf("team %s has no lead agent", teamID)
 }
 
-func (m *SquadManager) GetAgentByName(name string) (*AgentModel, error) {
+func (m *TeamManager) GetAgentByName(name string) (*AgentModel, error) {
 	return m.store.GetAgentModelByName(strings.TrimSpace(name))
 }
 
-func (m *SquadManager) GetAgentByA2AID(a2aID string) (*AgentModel, error) {
+func (m *TeamManager) GetAgentByA2AID(a2aID string) (*AgentModel, error) {
 	return m.store.GetAgentModelByA2AID(strings.TrimSpace(a2aID))
 }
 
-func (m *SquadManager) GetAgentService(name string) (*Service, error) {
+func (m *TeamManager) GetAgentService(name string) (*Service, error) {
 	return m.getOrBuildService(strings.TrimSpace(name))
 }
 
-func (m *SquadManager) CreateAgent(ctx context.Context, model *AgentModel) (*AgentModel, error) {
+func (m *TeamManager) CreateAgent(ctx context.Context, model *AgentModel) (*AgentModel, error) {
 	if model == nil {
 		return nil, fmt.Errorf("agent model is required")
 	}
 
 	now := time.Now()
-	requestedSquadID := strings.TrimSpace(model.TeamID)
-	requestedRole, err := m.resolveRequestedSquadRole(requestedSquadID, model.Kind)
+	requestedTeamID := strings.TrimSpace(model.TeamID)
+	requestedRole, err := m.resolveRequestedTeamRole(requestedTeamID, model.Kind)
 	if err != nil {
 		return nil, err
 	}
@@ -131,29 +131,29 @@ func (m *SquadManager) CreateAgent(ctx context.Context, model *AgentModel) (*Age
 		return nil, err
 	}
 
-	if requestedSquadID != "" {
-		if err := m.store.SaveSquadMembership(&SquadMembership{
+	if requestedTeamID != "" {
+		if err := m.store.SaveTeamMembership(&TeamMembership{
 			AgentID: created.ID,
-			SquadID: requestedSquadID,
+			TeamID:  requestedTeamID,
 			Role:    requestedRole,
 		}); err != nil {
 			_ = m.store.DeleteAgentModel(created.ID)
 			return nil, err
 		}
 		m.clearCachedAgent(created.Name)
-		m.clearSquadCaptainCache(requestedSquadID)
-		return m.GetMemberByNameInSquad(created.Name, requestedSquadID)
+		m.clearTeamCaptainCache(requestedTeamID)
+		return m.GetMemberByNameInTeam(created.Name, requestedTeamID)
 	}
 
 	return created, nil
 }
 
-func (m *SquadManager) resolveRequestedSquadRole(squadID string, requestedRole AgentKind) (AgentKind, error) {
-	squadID = strings.TrimSpace(squadID)
-	if squadID == "" {
+func (m *TeamManager) resolveRequestedTeamRole(teamID string, requestedRole AgentKind) (AgentKind, error) {
+	teamID = strings.TrimSpace(teamID)
+	if teamID == "" {
 		return "", nil
 	}
-	if _, err := m.store.GetTeam(squadID); err != nil {
+	if _, err := m.store.GetTeam(teamID); err != nil {
 		return "", err
 	}
 
@@ -162,15 +162,15 @@ func (m *SquadManager) resolveRequestedSquadRole(squadID string, requestedRole A
 		role = AgentKindSpecialist
 	}
 	if role != AgentKindCaptain && role != AgentKindSpecialist {
-		return "", fmt.Errorf("invalid squad role %q", role)
+		return "", fmt.Errorf("invalid team role %q", role)
 	}
-	if err := m.ensureSingleLeadPerSquad("", squadID, role); err != nil {
+	if err := m.ensureSingleLeadPerTeam("", teamID, role); err != nil {
 		return "", err
 	}
 	return role, nil
 }
 
-func (m *SquadManager) UpdateAgent(_ context.Context, model *AgentModel) (*AgentModel, error) {
+func (m *TeamManager) UpdateAgent(_ context.Context, model *AgentModel) (*AgentModel, error) {
 	if model == nil {
 		return nil, fmt.Errorf("agent model is required")
 	}
@@ -228,13 +228,13 @@ func (m *SquadManager) UpdateAgent(_ context.Context, model *AgentModel) (*Agent
 	return m.store.GetAgentModel(current.ID)
 }
 
-func (m *SquadManager) DeleteAgent(_ context.Context, name string) error {
+func (m *TeamManager) DeleteAgent(_ context.Context, name string) error {
 	model, err := m.store.GetAgentModelByName(strings.TrimSpace(name))
 	if err != nil {
 		return err
 	}
-	for _, membership := range model.Squads {
-		if err := m.ensureLeadRemovalAllowed(model, membership.SquadID, membership.Role); err != nil {
+	for _, membership := range model.Teams {
+		if err := m.ensureLeadRemovalAllowed(model, membership.TeamID, membership.Role); err != nil {
 			return err
 		}
 	}
@@ -242,75 +242,75 @@ func (m *SquadManager) DeleteAgent(_ context.Context, name string) error {
 	return m.store.DeleteAgentModel(model.ID)
 }
 
-func (m *SquadManager) JoinSquad(_ context.Context, name, squadID string, role AgentKind) (*AgentModel, error) {
+func (m *TeamManager) JoinTeam(_ context.Context, name, teamID string, role AgentKind) (*AgentModel, error) {
 	model, err := m.store.GetAgentModelByName(strings.TrimSpace(name))
 	if err != nil {
 		return nil, err
 	}
-	squadID = strings.TrimSpace(squadID)
-	if squadID == "" {
-		return nil, fmt.Errorf("squad id is required")
+	teamID = strings.TrimSpace(teamID)
+	if teamID == "" {
+		return nil, fmt.Errorf("team id is required")
 	}
-	if _, err := m.store.GetTeam(squadID); err != nil {
+	if _, err := m.store.GetTeam(teamID); err != nil {
 		return nil, err
 	}
 	role = normalizeMembershipRole(role)
 	if role != AgentKindCaptain && role != AgentKindSpecialist {
-		return nil, fmt.Errorf("invalid squad role %q", role)
+		return nil, fmt.Errorf("invalid team role %q", role)
 	}
-	if err := m.ensureSingleLeadPerSquad(model.ID, squadID, role); err != nil {
+	if err := m.ensureSingleLeadPerTeam(model.ID, teamID, role); err != nil {
 		return nil, err
 	}
-	if err := m.store.SaveSquadMembership(&SquadMembership{
+	if err := m.store.SaveTeamMembership(&TeamMembership{
 		AgentID: model.ID,
-		SquadID: squadID,
+		TeamID:  teamID,
 		Role:    role,
 	}); err != nil {
 		return nil, err
 	}
 	m.clearCachedAgent(model.Name)
-	m.clearSquadCaptainCache(squadID)
-	return m.GetMemberByNameInSquad(model.Name, squadID)
+	m.clearTeamCaptainCache(teamID)
+	return m.GetMemberByNameInTeam(model.Name, teamID)
 }
 
-func (m *SquadManager) LeaveSquad(_ context.Context, name string, squadID ...string) (*AgentModel, error) {
+func (m *TeamManager) LeaveTeam(_ context.Context, name string, teamID ...string) (*AgentModel, error) {
 	model, err := m.store.GetAgentModelByName(strings.TrimSpace(name))
 	if err != nil {
 		return nil, err
 	}
-	if len(model.Squads) == 0 {
-		return nil, fmt.Errorf("agent '%s' is not in a squad", model.Name)
+	if len(model.Teams) == 0 {
+		return nil, fmt.Errorf("agent '%s' is not in a team", model.Name)
 	}
 
-	targetSquadID, targetRole, err := resolveLeaveTarget(model, squadID...)
+	targetTeamID, targetRole, err := resolveLeaveTarget(model, teamID...)
 	if err != nil {
 		return nil, err
 	}
-	if err := m.ensureLeadRemovalAllowed(model, targetSquadID, targetRole); err != nil {
+	if err := m.ensureLeadRemovalAllowed(model, targetTeamID, targetRole); err != nil {
 		return nil, err
 	}
-	if err := m.store.DeleteSquadMembership(model.ID, targetSquadID); err != nil {
+	if err := m.store.DeleteTeamMembership(model.ID, targetTeamID); err != nil {
 		return nil, err
 	}
 	m.clearCachedAgent(model.Name)
-	m.clearSquadCaptainCache(targetSquadID)
+	m.clearTeamCaptainCache(targetTeamID)
 	return m.store.GetAgentModel(model.ID)
 }
 
-func (m *SquadManager) DeleteSquad(_ context.Context, squadID string) error {
-	squadID = strings.TrimSpace(squadID)
-	if squadID == "" {
-		return fmt.Errorf("squad id is required")
+func (m *TeamManager) DeleteTeam(_ context.Context, teamID string) error {
+	teamID = strings.TrimSpace(teamID)
+	if teamID == "" {
+		return fmt.Errorf("team id is required")
 	}
-	if squadID == defaultSquadID {
-		return fmt.Errorf("cannot delete the built-in AgentGo Squad")
+	if teamID == defaultTeamID {
+		return fmt.Errorf("cannot delete the built-in AgentGo Team")
 	}
-	squad, err := m.store.GetTeam(squadID)
+	team, err := m.store.GetTeam(teamID)
 	if err != nil {
 		return err
 	}
 
-	memberships, err := m.store.ListSquadMembershipsBySquad(squadID)
+	memberships, err := m.store.ListTeamMembershipsByTeam(teamID)
 	if err != nil {
 		return err
 	}
@@ -320,44 +320,44 @@ func (m *SquadManager) DeleteSquad(_ context.Context, squadID string) error {
 			return getErr
 		}
 		m.clearCachedAgent(model.Name)
-		m.clearSquadCaptainCache(squadID)
-		if err := m.store.DeleteSquadMembership(membership.AgentID, squadID); err != nil {
+		m.clearTeamCaptainCache(teamID)
+		if err := m.store.DeleteTeamMembership(membership.AgentID, teamID); err != nil {
 			return err
 		}
-		remaining, remainingErr := m.store.ListSquadMembershipsByAgent(membership.AgentID)
+		remaining, remainingErr := m.store.ListTeamMembershipsByAgent(membership.AgentID)
 		if remainingErr != nil {
 			return remainingErr
 		}
-		if len(remaining) == 0 && isAutoGeneratedSquadLeadName(squad.Name, model.Name) {
+		if len(remaining) == 0 && isAutoGeneratedTeamLeadName(team.Name, model.Name) {
 			if err := m.store.DeleteAgentModel(model.ID); err != nil {
 				return err
 			}
 		}
 	}
-	return m.store.DeleteTeam(squadID)
+	return m.store.DeleteTeam(teamID)
 }
 
-func (m *SquadManager) ensureSingleLeadPerSquad(agentID, squadID string, role AgentKind) error {
+func (m *TeamManager) ensureSingleLeadPerTeam(agentID, teamID string, role AgentKind) error {
 	if role != AgentKindCaptain {
 		return nil
 	}
-	memberships, err := m.store.ListSquadMembershipsBySquad(squadID)
+	memberships, err := m.store.ListTeamMembershipsByTeam(teamID)
 	if err != nil {
 		return err
 	}
 	for _, membership := range memberships {
 		if membership.Role == AgentKindCaptain && membership.AgentID != agentID {
-			return fmt.Errorf("squad %s already has a lead agent", squadID)
+			return fmt.Errorf("team %s already has a lead agent", teamID)
 		}
 	}
 	return nil
 }
 
-func (m *SquadManager) ensureLeadRemovalAllowed(model *AgentModel, squadID string, role AgentKind) error {
-	if model == nil || role != AgentKindCaptain || strings.TrimSpace(squadID) == "" {
+func (m *TeamManager) ensureLeadRemovalAllowed(model *AgentModel, teamID string, role AgentKind) error {
+	if model == nil || role != AgentKindCaptain || strings.TrimSpace(teamID) == "" {
 		return nil
 	}
-	memberships, err := m.store.ListSquadMembershipsBySquad(squadID)
+	memberships, err := m.store.ListTeamMembershipsByTeam(teamID)
 	if err != nil {
 		return err
 	}
@@ -368,31 +368,31 @@ func (m *SquadManager) ensureLeadRemovalAllowed(model *AgentModel, squadID strin
 		}
 	}
 	if leadCount <= 1 {
-		return fmt.Errorf("squad %s must keep exactly one lead agent", squadID)
+		return fmt.Errorf("team %s must keep exactly one lead agent", teamID)
 	}
 	return nil
 }
 
-func resolveLeaveTarget(model *AgentModel, squadIDs ...string) (string, AgentKind, error) {
+func resolveLeaveTarget(model *AgentModel, teamIDs ...string) (string, AgentKind, error) {
 	requested := ""
-	if len(squadIDs) > 0 {
-		requested = strings.TrimSpace(squadIDs[0])
+	if len(teamIDs) > 0 {
+		requested = strings.TrimSpace(teamIDs[0])
 	}
 	if requested != "" {
-		for _, membership := range model.Squads {
-			if membership.SquadID == requested {
-				return membership.SquadID, membership.Role, nil
+		for _, membership := range model.Teams {
+			if membership.TeamID == requested {
+				return membership.TeamID, membership.Role, nil
 			}
 		}
-		return "", "", fmt.Errorf("agent '%s' is not in squad %s", model.Name, requested)
+		return "", "", fmt.Errorf("agent '%s' is not in team %s", model.Name, requested)
 	}
-	if len(model.Squads) == 1 {
-		return model.Squads[0].SquadID, model.Squads[0].Role, nil
+	if len(model.Teams) == 1 {
+		return model.Teams[0].TeamID, model.Teams[0].Role, nil
 	}
-	return "", "", fmt.Errorf("agent '%s' belongs to multiple squads; specify which squad to leave", model.Name)
+	return "", "", fmt.Errorf("agent '%s' belongs to multiple teams; specify which team to leave", model.Name)
 }
 
-func (m *SquadManager) clearCachedAgent(name string) {
+func (m *TeamManager) clearCachedAgent(name string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if cancel, exists := m.runningAgents[name]; exists {
@@ -402,12 +402,12 @@ func (m *SquadManager) clearCachedAgent(name string) {
 	delete(m.services, name)
 }
 
-func (m *SquadManager) clearSquadCaptainCache(squadID string) {
-	squadID = strings.TrimSpace(squadID)
-	if squadID == "" {
+func (m *TeamManager) clearTeamCaptainCache(teamID string) {
+	teamID = strings.TrimSpace(teamID)
+	if teamID == "" {
 		return
 	}
-	members, err := m.ListSquadAgentsForSquad(squadID)
+	members, err := m.ListTeamAgentsByTeam(teamID)
 	if err != nil {
 		return
 	}

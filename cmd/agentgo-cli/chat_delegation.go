@@ -9,7 +9,7 @@ import (
 	"github.com/liliang-cn/agent-go/v2/pkg/agent"
 )
 
-func runDelegatedTaskChainAsync(ctx context.Context, manager *agent.SquadManager, sessionID string, tasks []delegatedTask, follower *chatTaskFollower, background bool) error {
+func runDelegatedTaskChainAsync(ctx context.Context, manager *agent.TeamManager, sessionID string, tasks []delegatedTask, follower *chatTaskFollower, background bool) error {
 	if manager == nil {
 		return fmt.Errorf("agent manager is not initialized")
 	}
@@ -29,7 +29,7 @@ func runDelegatedTaskChainAsync(ctx context.Context, manager *agent.SquadManager
 	return executeDelegatedTaskChain(ctx, manager, sessionID, tasks, nil, true)
 }
 
-func executeDelegatedTaskChain(ctx context.Context, manager *agent.SquadManager, sessionID string, tasks []delegatedTask, follower *chatTaskFollower, render bool) error {
+func executeDelegatedTaskChain(ctx context.Context, manager *agent.TeamManager, sessionID string, tasks []delegatedTask, follower *chatTaskFollower, render bool) error {
 	var previousResult string
 
 	for idx, task := range tasks {
@@ -71,7 +71,7 @@ func executeDelegatedTaskChain(ctx context.Context, manager *agent.SquadManager,
 	return nil
 }
 
-func waitForAsyncTask(ctx context.Context, manager *agent.SquadManager, taskID string, render bool) (*agent.AsyncTask, error) {
+func waitForAsyncTask(ctx context.Context, manager *agent.TeamManager, taskID string, render bool) (*agent.AsyncTask, error) {
 	events, unsubscribe, err := manager.SubscribeTask(taskID)
 	if err != nil {
 		return nil, err

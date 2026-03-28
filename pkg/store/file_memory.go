@@ -433,7 +433,7 @@ func normalizeScopeType(scopeType domain.MemoryScopeType) domain.MemoryScopeType
 	case "":
 		return domain.MemoryScopeGlobal
 	case domain.MemoryScopeProject:
-		return domain.MemoryScopeSquad
+		return domain.MemoryScopeTeam
 	default:
 		return scopeType
 	}
@@ -451,10 +451,10 @@ func inferMemoryScope(scopeType domain.MemoryScopeType, scopeID, sessionID strin
 		return domain.MemoryScope{Type: domain.MemoryScopeSession, ID: strings.TrimPrefix(sessionID, "session:")}
 	case strings.HasPrefix(sessionID, "agent:"):
 		return domain.MemoryScope{Type: domain.MemoryScopeAgent, ID: strings.TrimPrefix(sessionID, "agent:")}
-	case strings.HasPrefix(sessionID, "squad:"):
-		return domain.MemoryScope{Type: domain.MemoryScopeSquad, ID: strings.TrimPrefix(sessionID, "squad:")}
+	case strings.HasPrefix(sessionID, "team:"):
+		return domain.MemoryScope{Type: domain.MemoryScopeTeam, ID: strings.TrimPrefix(sessionID, "team:")}
 	case strings.HasPrefix(sessionID, "project:"):
-		return domain.MemoryScope{Type: domain.MemoryScopeSquad, ID: strings.TrimPrefix(sessionID, "project:")}
+		return domain.MemoryScope{Type: domain.MemoryScopeTeam, ID: strings.TrimPrefix(sessionID, "project:")}
 	case strings.HasPrefix(sessionID, "user:"):
 		return domain.MemoryScope{Type: domain.MemoryScopeUser, ID: strings.TrimPrefix(sessionID, "user:")}
 	default:
@@ -964,8 +964,8 @@ func (s *FileMemoryStore) scopeViewPath(scope domain.MemoryScope) string {
 	switch scope.Type {
 	case domain.MemoryScopeGlobal:
 		return filepath.Join(s.viewsDir(), "global", "global_memory.md")
-	case domain.MemoryScopeSquad:
-		return filepath.Join(s.viewsDir(), "squads", sanitizeScopeID(scope.ID), "process_memory.md")
+	case domain.MemoryScopeTeam:
+		return filepath.Join(s.viewsDir(), "teams", sanitizeScopeID(scope.ID), "process_memory.md")
 	case domain.MemoryScopeAgent:
 		return filepath.Join(s.viewsDir(), "agents", sanitizeScopeID(scope.ID), "thread_memory.md")
 	case domain.MemoryScopeSession:
@@ -1453,8 +1453,8 @@ func scopeViewTitle(scope domain.MemoryScope) string {
 	switch scope.Type {
 	case domain.MemoryScopeGlobal:
 		return "Global Memory"
-	case domain.MemoryScopeSquad:
-		return fmt.Sprintf("Squad %s Process Memory", scope.ID)
+	case domain.MemoryScopeTeam:
+		return fmt.Sprintf("Team %s Process Memory", scope.ID)
 	case domain.MemoryScopeAgent:
 		return fmt.Sprintf("Agent %s Thread Memory", scope.ID)
 	case domain.MemoryScopeSession:

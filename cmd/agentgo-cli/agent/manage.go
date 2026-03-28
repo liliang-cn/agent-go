@@ -14,16 +14,16 @@ import (
 )
 
 var (
-	runAgentName         string
-	agentDescription     string
-	agentInstructions    string
-	agentProvider        string
-	agentModel           string
-	agentA2AEnabled      bool
-	agentUpdateName      string
-	agentUpdateRole      string
-	agentUpdateSquadID   string
-	agentUpdateSquadName string
+	runAgentName        string
+	agentDescription    string
+	agentInstructions   string
+	agentProvider       string
+	agentModel          string
+	agentA2AEnabled     bool
+	agentUpdateName     string
+	agentUpdateRole     string
+	agentUpdateTeamID   string
+	agentUpdateTeamName string
 )
 
 var agentListCmd = &cobra.Command{
@@ -51,24 +51,24 @@ var agentListCmd = &cobra.Command{
 			return nil
 		}
 
-		squads, err := manager.ListSquads()
+		teams, err := manager.ListTeams()
 		if err != nil {
 			return err
 		}
-		squadNames := make(map[string]string, len(squads))
-		for _, squad := range squads {
-			squadNames[squad.ID] = squad.Name
+		teamNames := make(map[string]string, len(teams))
+		for _, team := range teams {
+			teamNames[team.ID] = team.Name
 		}
 
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-		fmt.Fprintln(w, "NAME\tKIND\tSQUADS\tMODEL\tBUILT-IN\tA2A")
+		fmt.Fprintln(w, "NAME\tKIND\tTEAMS\tMODEL\tBUILT-IN\tA2A")
 		for _, model := range agents {
 			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
 				model.Name,
 				kindDisplay(model.Kind),
-				squadMembershipDisplay(model, squadNames),
+				teamMembershipDisplay(model, teamNames),
 				effectiveModelDisplay(model, displayCfg),
-				boolFlag(isBuiltInAgent(model, squadNames)),
+				boolFlag(isBuiltInAgent(model, teamNames)),
 				boolFlag(model.EnableA2A),
 			)
 		}
@@ -93,13 +93,13 @@ var agentShowCmd = &cobra.Command{
 				displayCfg = loaded
 			}
 		}
-		squads, err := manager.ListSquads()
+		teams, err := manager.ListTeams()
 		if err != nil {
 			return err
 		}
-		squadNames := make(map[string]string, len(squads))
-		for _, squad := range squads {
-			squadNames[squad.ID] = squad.Name
+		teamNames := make(map[string]string, len(teams))
+		for _, team := range teams {
+			teamNames[team.ID] = team.Name
 		}
 		model, err := manager.GetAgentByName(args[0])
 		if err != nil {
@@ -108,11 +108,11 @@ var agentShowCmd = &cobra.Command{
 
 		fmt.Printf("Name: %s\n", model.Name)
 		fmt.Printf("Base Kind: %s\n", kindDisplay(model.Kind))
-		fmt.Printf("Squads: %s\n", squadMembershipDisplay(model, squadNames))
+		fmt.Printf("Teams: %s\n", teamMembershipDisplay(model, teamNames))
 		fmt.Printf("Model: %s\n", effectiveModelDisplay(model, displayCfg))
 		fmt.Printf("Preferred Provider: %s\n", valueOrDash(strings.TrimSpace(model.PreferredProvider)))
 		fmt.Printf("Preferred Model: %s\n", valueOrDash(strings.TrimSpace(model.PreferredModel)))
-		fmt.Printf("Built-in: %s\n", boolFlag(isBuiltInAgent(model, squadNames)))
+		fmt.Printf("Built-in: %s\n", boolFlag(isBuiltInAgent(model, teamNames)))
 		fmt.Printf("Description: %s\n", valueOrDash(model.Description))
 		fmt.Printf("RAG: %s\n", enabledState(model.EnableRAG))
 		fmt.Printf("Memory: %s\n", enabledState(model.EnableMemory))
@@ -258,52 +258,52 @@ var agentDeleteCmd = &cobra.Command{
 
 var agentJoinCmd = &cobra.Command{
 	Use:   "join [name]",
-	Short: "Join an agent to a squad",
+	Short: "Join an agent to a team",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		manager, err := getManager()
 		if err != nil {
 			return err
 		}
-		squadID, err := resolveAgentSquadID(manager, strings.TrimSpace(agentUpdateSquadID), strings.TrimSpace(agentUpdateSquadName))
+		teamID, err := resolveAgentTeamID(manager, strings.TrimSpace(agentUpdateTeamID), strings.TrimSpace(agentUpdateTeamName))
 		if err != nil {
 			return err
 		}
-		if squadID == "" {
-			return fmt.Errorf("use --squad or --squad-id")
+		if teamID == "" {
+			return fmt.Errorf("use --team or --team-id")
 		}
 		role, err := normalizeAgentRole(strings.TrimSpace(agentUpdateRole))
 		if err != nil {
 			return err
 		}
-		model, err := manager.JoinSquad(context.Background(), args[0], squadID, role)
+		model, err := manager.JoinTeam(context.Background(), args[0], teamID, role)
 		if err != nil {
 			return err
 		}
-		fmt.Printf("Agent '%s' joined squad '%s' as %s.\n", model.Name, squadID, kindDisplay(model.Kind))
+		fmt.Printf("Agent '%s' joined team '%s' as %s.\n", model.Name, teamID, kindDisplay(model.Kind))
 		return nil
 	},
 }
 
 var agentLeaveCmd = &cobra.Command{
 	Use:   "leave [name]",
-	Short: "Remove an agent from its squad",
+	Short: "Remove an agent from its team",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		manager, err := getManager()
 		if err != nil {
 			return err
 		}
-		model, err := manager.LeaveSquad(context.Background(), args[0])
+		model, err := manager.LeaveTeam(context.Background(), args[0])
 		if err != nil {
 			return err
 		}
-		fmt.Printf("Agent '%s' left its squad.\n", model.Name)
+		fmt.Printf("Agent '%s' left its team.\n", model.Name)
 		return nil
 	},
 }
 
-func getManager() (*agent.SquadManager, error) {
+func getManager() (*agent.TeamManager, error) {
 	cfg := Cfg
 	if cfg == nil {
 		loaded, err := config.Load("")
@@ -316,7 +316,7 @@ func getManager() (*agent.SquadManager, error) {
 	if err != nil {
 		return nil, err
 	}
-	manager := agent.NewSquadManager(store)
+	manager := agent.NewTeamManager(store)
 	manager.SetConfig(cfg)
 	if err := manager.SeedDefaultMembers(); err != nil {
 		return nil, err
@@ -324,26 +324,26 @@ func getManager() (*agent.SquadManager, error) {
 	return manager, nil
 }
 
-func resolveAgentSquadID(manager *agent.SquadManager, squadID, squadName string) (string, error) {
-	if squadID != "" && squadName != "" {
-		return "", fmt.Errorf("use either --squad-id or --squad, not both")
+func resolveAgentTeamID(manager *agent.TeamManager, teamID, teamName string) (string, error) {
+	if teamID != "" && teamName != "" {
+		return "", fmt.Errorf("use either --team-id or --team, not both")
 	}
-	if squadID != "" {
-		return squadID, nil
+	if teamID != "" {
+		return teamID, nil
 	}
-	if squadName == "" {
+	if teamName == "" {
 		return "", nil
 	}
-	squads, err := manager.ListSquads()
+	teams, err := manager.ListTeams()
 	if err != nil {
 		return "", err
 	}
-	for _, squad := range squads {
-		if strings.EqualFold(strings.TrimSpace(squad.Name), squadName) {
-			return squad.ID, nil
+	for _, team := range teams {
+		if strings.EqualFold(strings.TrimSpace(team.Name), teamName) {
+			return team.ID, nil
 		}
 	}
-	return "", fmt.Errorf("unknown squad: %s", squadName)
+	return "", fmt.Errorf("unknown team: %s", teamName)
 }
 
 func formatTimestamp(ts time.Time) string {
@@ -374,33 +374,33 @@ func enabledState(v bool) string {
 	return "disabled"
 }
 
-func squadDisplay(squadID string, squadNames map[string]string) string {
-	squadID = strings.TrimSpace(squadID)
-	if squadID == "" {
+func teamDisplay(teamID string, teamNames map[string]string) string {
+	teamID = strings.TrimSpace(teamID)
+	if teamID == "" {
 		return "-"
 	}
-	if squadName := strings.TrimSpace(squadNames[squadID]); squadName != "" {
-		return squadName + " (" + squadID + ")"
+	if teamName := strings.TrimSpace(teamNames[teamID]); teamName != "" {
+		return teamName + " (" + teamID + ")"
 	}
-	return squadID
+	return teamID
 }
 
-func squadMembershipDisplay(model *agent.AgentModel, squadNames map[string]string) string {
-	if model == nil || len(model.Squads) == 0 {
+func teamMembershipDisplay(model *agent.AgentModel, teamNames map[string]string) string {
+	if model == nil || len(model.Teams) == 0 {
 		return "-"
 	}
-	items := make([]string, 0, len(model.Squads))
-	for _, membership := range model.Squads {
-		squadID := strings.TrimSpace(membership.SquadID)
-		if squadID == "" {
+	items := make([]string, 0, len(model.Teams))
+	for _, membership := range model.Teams {
+		teamID := strings.TrimSpace(membership.TeamID)
+		if teamID == "" {
 			continue
 		}
-		squadName := strings.TrimSpace(squadNames[squadID])
-		if squadName == "" {
-			squadName = squadID
+		teamName := strings.TrimSpace(teamNames[teamID])
+		if teamName == "" {
+			teamName = teamID
 		}
 		role := kindDisplay(membership.Role)
-		items = append(items, fmt.Sprintf("%s (%s, %s)", squadName, squadID, role))
+		items = append(items, fmt.Sprintf("%s (%s, %s)", teamName, teamID, role))
 	}
 	if len(items) == 0 {
 		return "-"
@@ -440,7 +440,7 @@ func effectiveModelDisplay(model *agent.AgentModel, cfg *config.Config) string {
 	return defaultProvider.ModelName + " (default)"
 }
 
-func isBuiltInAgent(model *agent.AgentModel, squadNames map[string]string) bool {
+func isBuiltInAgent(model *agent.AgentModel, teamNames map[string]string) bool {
 	if model == nil {
 		return false
 	}
@@ -448,26 +448,26 @@ func isBuiltInAgent(model *agent.AgentModel, squadNames map[string]string) bool 
 	case "agent-concierge-001", "agent-assistant-001", "agent-operator-001", "agent-captain-001", "agent-stakeholder-001", "agent-archivist-001", "agent-verifier-001":
 		return true
 	}
-	if strings.EqualFold(model.Name, "Concierge") && len(model.Squads) == 0 {
+	if strings.EqualFold(model.Name, "Concierge") && len(model.Teams) == 0 {
 		return true
 	}
-	if strings.EqualFold(model.Name, "Assistant") && len(model.Squads) == 0 {
+	if strings.EqualFold(model.Name, "Assistant") && len(model.Teams) == 0 {
 		return true
 	}
-	if strings.EqualFold(model.Name, "Operator") && len(model.Squads) == 0 {
+	if strings.EqualFold(model.Name, "Operator") && len(model.Teams) == 0 {
 		return true
 	}
-	if strings.EqualFold(model.Name, "Stakeholder") && len(model.Squads) == 0 {
+	if strings.EqualFold(model.Name, "Stakeholder") && len(model.Teams) == 0 {
 		return true
 	}
-	if strings.EqualFold(model.Name, "Archivist") && len(model.Squads) == 0 {
+	if strings.EqualFold(model.Name, "Archivist") && len(model.Teams) == 0 {
 		return true
 	}
-	if strings.EqualFold(model.Name, "Verifier") && len(model.Squads) == 0 {
+	if strings.EqualFold(model.Name, "Verifier") && len(model.Teams) == 0 {
 		return true
 	}
-	for _, membership := range model.Squads {
-		if membership.Role == agent.AgentKindCaptain && strings.EqualFold(model.Name, "Captain") && strings.TrimSpace(membership.SquadID) == "squad-default-001" {
+	for _, membership := range model.Teams {
+		if membership.Role == agent.AgentKindCaptain && strings.EqualFold(model.Name, "Captain") && strings.TrimSpace(membership.TeamID) == "team-default-001" {
 			return true
 		}
 	}

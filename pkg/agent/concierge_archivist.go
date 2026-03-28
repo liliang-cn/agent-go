@@ -11,7 +11,7 @@ const (
 	archivistVerifierPrefix = "VERIFIER_NEEDED:"
 )
 
-func (m *SquadManager) configureConciergeArchivistHook(concierge *Service) {
+func (m *TeamManager) configureConciergeArchivistHook(concierge *Service) {
 	m.ConfigureFollowUpAgentHook(concierge, FollowUpAgentPolicy{
 		HookDescription: "concierge_archivist_async_review",
 		AgentName:       ArchivistAgentName,

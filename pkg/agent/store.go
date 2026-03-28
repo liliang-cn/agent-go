@@ -264,9 +264,9 @@ func (s *Store) ListAgentModels() ([]*AgentModel, error) {
 	return result, nil
 }
 
-// SaveTeam/Squad saves or updates a squad
-func (s *Store) SaveTeam(team *Squad) error {
-	return s.agentGoDB.SaveSquad(&store.Squad{
+// SaveTeam saves or updates a team
+func (s *Store) SaveTeam(team *Team) error {
+	return s.agentGoDB.SaveTeam(&store.Team{
 		ID:          team.ID,
 		A2AID:       team.A2AID,
 		Name:        team.Name,
@@ -277,49 +277,49 @@ func (s *Store) SaveTeam(team *Squad) error {
 	})
 }
 
-func (s *Store) GetTeamByA2AID(a2aID string) (*Squad, error) {
-	sq, err := s.agentGoDB.GetSquadByA2AID(a2aID)
+func (s *Store) GetTeamByA2AID(a2aID string) (*Team, error) {
+	sq, err := s.agentGoDB.GetTeamByA2AID(a2aID)
 	if err != nil {
 		return nil, err
 	}
-	return convertToSquad(sq), nil
+	return convertToTeam(sq), nil
 }
 
 // GetTeam retrieves a team by ID
-func (s *Store) GetTeam(id string) (*Squad, error) {
-	sq, err := s.agentGoDB.GetSquad(id)
+func (s *Store) GetTeam(id string) (*Team, error) {
+	sq, err := s.agentGoDB.GetTeam(id)
 	if err != nil {
 		return nil, err
 	}
-	return convertToSquad(sq), nil
+	return convertToTeam(sq), nil
 }
 
 // GetTeamByName retrieves a team by name
-func (s *Store) GetTeamByName(name string) (*Squad, error) {
-	sq, err := s.agentGoDB.GetSquadByName(name)
+func (s *Store) GetTeamByName(name string) (*Team, error) {
+	sq, err := s.agentGoDB.GetTeamByName(name)
 	if err != nil {
 		return nil, err
 	}
-	return convertToSquad(sq), nil
+	return convertToTeam(sq), nil
 }
 
 // ListTeams retrieves all teams
-func (s *Store) ListTeams() ([]*Squad, error) {
-	squads, err := s.agentGoDB.ListSquads()
+func (s *Store) ListTeams() ([]*Team, error) {
+	teams, err := s.agentGoDB.ListTeams()
 	if err != nil {
 		return nil, err
 	}
 
-	result := make([]*Squad, len(squads))
-	for i, sq := range squads {
-		result[i] = convertToSquad(sq)
+	result := make([]*Team, len(teams))
+	for i, sq := range teams {
+		result[i] = convertToTeam(sq)
 	}
 	return result, nil
 }
 
-// DeleteTeam/Squad
+// DeleteTeam deletes a team
 func (s *Store) DeleteTeam(id string) error {
-	return s.agentGoDB.DeleteSquad(id)
+	return s.agentGoDB.DeleteTeam(id)
 }
 
 // DeleteAgentModel
@@ -359,8 +359,8 @@ func convertToAgentModel(a *store.AgentModel) *AgentModel {
 	}
 }
 
-func convertToSquad(sq *store.Squad) *Squad {
-	return &Squad{
+func convertToTeam(sq *store.Team) *Team {
+	return &Team{
 		ID:          sq.ID,
 		A2AID:       sq.A2AID,
 		Name:        sq.Name,

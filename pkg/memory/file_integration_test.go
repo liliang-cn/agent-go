@@ -93,7 +93,7 @@ func (s *scopedNavigatorTestLLM) StreamWithTools(ctx context.Context, messages [
 func (s *scopedNavigatorTestLLM) GenerateStructured(ctx context.Context, prompt string, schema interface{}, opts *domain.GenerationOptions) (*domain.StructuredResult, error) {
 	s.lastNavigatorPrompt = prompt
 	return &domain.StructuredResult{
-		Raw:   `{"ids":["squad-alpha-memory"],"reasoning":"Selected the squad-scoped memory from the higher-priority scope."}`,
+		Raw:   `{"ids":["team-alpha-memory"],"reasoning":"Selected the team-scoped memory from the higher-priority scope."}`,
 		Valid: true,
 	}, nil
 }
@@ -119,30 +119,30 @@ func TestFileMemoryIntegrationScopedNavigatorRetrieval(t *testing.T) {
 		Content:    "Global fallback memory",
 		Importance: 0.3,
 	}
-	squadMem := &domain.Memory{
-		ID:         "squad-alpha-memory",
+	teamMem := &domain.Memory{
+		ID:         "team-alpha-memory",
 		Type:       domain.MemoryTypeObservation,
-		Content:    "Squad alpha has already approved the deployment checklist.",
+		Content:    "Team alpha has already approved the deployment checklist.",
 		Importance: 0.9,
 	}
 	if err := memStore.Store(ctx, globalMem); err != nil {
 		t.Fatalf("store global memory failed: %v", err)
 	}
-	if err := memStore.StoreWithScope(ctx, squadMem, domain.MemoryScope{Type: domain.MemoryScopeSquad, ID: "alpha"}); err != nil {
-		t.Fatalf("store squad memory failed: %v", err)
+	if err := memStore.StoreWithScope(ctx, teamMem, domain.MemoryScope{Type: domain.MemoryScopeTeam, ID: "alpha"}); err != nil {
+		t.Fatalf("store team memory failed: %v", err)
 	}
 	if err := memStore.RebuildIndex(ctx); err != nil {
 		t.Fatalf("rebuild index failed: %v", err)
 	}
 
-	formatted, recalled, reasoning, err := service.RetrieveAndInjectWithContextAndLogic(ctx, "what is the deployment status for squad alpha?", domain.MemoryQueryContext{
-		SquadID: "alpha",
+	formatted, recalled, reasoning, err := service.RetrieveAndInjectWithContextAndLogic(ctx, "what is the deployment status for team alpha?", domain.MemoryQueryContext{
+		TeamID: "alpha",
 	})
 	if err != nil {
 		t.Fatalf("scoped retrieve and inject failed: %v", err)
 	}
-	if len(recalled) != 1 || recalled[0].ID != "squad-alpha-memory" {
-		t.Fatalf("expected squad-scoped memory, got %+v", recalled)
+	if len(recalled) != 1 || recalled[0].ID != "team-alpha-memory" {
+		t.Fatalf("expected team-scoped memory, got %+v", recalled)
 	}
 	if reasoning == "" {
 		t.Fatal("expected navigator reasoning to be returned")
@@ -150,7 +150,7 @@ func TestFileMemoryIntegrationScopedNavigatorRetrieval(t *testing.T) {
 	if formatted == "" {
 		t.Fatal("expected formatted memory context")
 	}
-	if llm.lastNavigatorPrompt == "" || !containsAll(llm.lastNavigatorPrompt, "## Scope: squad:alpha", "## Scope: global", "squad-alpha-memory") {
+	if llm.lastNavigatorPrompt == "" || !containsAll(llm.lastNavigatorPrompt, "## Scope: team:alpha", "## Scope: global", "team-alpha-memory") {
 		t.Fatalf("expected navigator prompt to include scoped indexes, got:\n%s", llm.lastNavigatorPrompt)
 	}
 }

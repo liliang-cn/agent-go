@@ -179,7 +179,7 @@ func TestBuildSystemPromptIncludesMemoryToolGuidanceWhenMemoryToolsCallable(t *t
 	}
 }
 
-func TestBuildSystemPromptOmitsMemoryToolGuidanceInFileOnlyMode(t *testing.T) {
+func TestBuildSystemPromptIncludesMemoryToolGuidanceInFileMode(t *testing.T) {
 	assistant := NewAgentWithConfig("Assistant", "assistant instructions", nil)
 	registry := NewToolRegistry()
 	registry.Register(domain.ToolDefinition{
@@ -205,8 +205,8 @@ func TestBuildSystemPromptOmitsMemoryToolGuidanceInFileOnlyMode(t *testing.T) {
 	}
 
 	got := svc.buildSystemPrompt(context.Background(), assistant)
-	if strings.Contains(got, "Memory tool usage:") {
-		t.Fatalf("expected file-only prompt to omit memory tool guidance, got %q", got)
+	if !strings.Contains(got, "memory_save") {
+		t.Fatalf("expected file-mode prompt to reference memory_save tool, got %q", got)
 	}
 }
 

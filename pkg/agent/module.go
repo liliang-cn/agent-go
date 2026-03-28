@@ -36,7 +36,7 @@ func normalizeModuleScope(scope domain.MemoryScope) domain.MemoryScope {
 		scope.Type = domain.MemoryScopeGlobal
 	}
 	if scope.Type == domain.MemoryScopeProject {
-		scope.Type = domain.MemoryScopeSquad
+		scope.Type = domain.MemoryScopeTeam
 	}
 	return scope
 }

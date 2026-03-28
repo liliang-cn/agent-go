@@ -33,10 +33,10 @@ func TestFileMemoryStoreCRUDAndSearch(t *testing.T) {
 		Importance: 0.4,
 		CreatedAt:  time.Now(),
 	}
-	squadMem := &domain.Memory{
-		ID:         "fact-squad-1",
+	teamMem := &domain.Memory{
+		ID:         "fact-team-1",
 		Type:       domain.MemoryTypeFact,
-		Content:    "Shared squad constraint",
+		Content:    "Shared team constraint",
 		Importance: 0.8,
 		CreatedAt:  time.Now(),
 	}
@@ -47,8 +47,8 @@ func TestFileMemoryStoreCRUDAndSearch(t *testing.T) {
 	if err := store.StoreWithScope(ctx, contextMem, domain.MemoryScope{Type: domain.MemoryScopeSession, ID: "session-1"}); err != nil {
 		t.Fatalf("store context failed: %v", err)
 	}
-	if err := store.StoreWithScope(ctx, squadMem, domain.MemoryScope{Type: domain.MemoryScopeSquad, ID: "alpha"}); err != nil {
-		t.Fatalf("store squad memory failed: %v", err)
+	if err := store.StoreWithScope(ctx, teamMem, domain.MemoryScope{Type: domain.MemoryScopeTeam, ID: "alpha"}); err != nil {
+		t.Fatalf("store team memory failed: %v", err)
 	}
 
 	got, err := store.Get(ctx, "fact-1")
@@ -84,9 +84,9 @@ func TestFileMemoryStoreCRUDAndSearch(t *testing.T) {
 		t.Fatalf("unexpected scope search result: %v len=%d", err, len(scopeHits))
 	}
 
-	squadHits, err := store.SearchByScope(ctx, nil, []domain.MemoryScope{{Type: domain.MemoryScopeSquad, ID: "alpha"}}, 10)
-	if err != nil || len(squadHits) != 1 || squadHits[0].Memory.ID != "fact-squad-1" {
-		t.Fatalf("unexpected squad scope search result: %v len=%d", err, len(squadHits))
+	teamHits, err := store.SearchByScope(ctx, nil, []domain.MemoryScope{{Type: domain.MemoryScopeTeam, ID: "alpha"}}, 10)
+	if err != nil || len(teamHits) != 1 || teamHits[0].Memory.ID != "fact-team-1" {
+		t.Fatalf("unexpected team scope search result: %v len=%d", err, len(teamHits))
 	}
 
 	if err := store.IncrementAccess(ctx, "fact-1"); err != nil {
@@ -149,7 +149,7 @@ func TestFileMemoryStoreIndexAndHelpers(t *testing.T) {
 		Type:       domain.MemoryTypeObservation,
 		Content:    "Observation content line one\nline two",
 		Importance: 0.7,
-		ScopeType:  domain.MemoryScopeSquad,
+		ScopeType:  domain.MemoryScopeTeam,
 		ScopeID:    "alpha",
 		CreatedAt:  time.Now(),
 	}
@@ -158,7 +158,7 @@ func TestFileMemoryStoreIndexAndHelpers(t *testing.T) {
 		Type:       domain.MemoryTypeFact,
 		Content:    "Fact content",
 		Importance: 0.9,
-		ScopeType:  domain.MemoryScopeSquad,
+		ScopeType:  domain.MemoryScopeTeam,
 		ScopeID:    "alpha",
 		CreatedAt:  time.Now(),
 	}
@@ -201,16 +201,16 @@ func TestFileMemoryStoreIndexAndHelpers(t *testing.T) {
 	if got := scopeToBankIDFile(domain.MemoryScope{Type: domain.MemoryScopeSession, ID: "abc"}); got != "abc" {
 		t.Fatalf("unexpected scoped bank id: %s", got)
 	}
-	if got := scopeToBankIDFile(domain.MemoryScope{Type: domain.MemoryScopeProject, ID: "alpha"}); got != "squad:alpha" {
+	if got := scopeToBankIDFile(domain.MemoryScope{Type: domain.MemoryScopeProject, ID: "alpha"}); got != "team:alpha" {
 		t.Fatalf("unexpected project compatibility bank id: %s", got)
 	}
 
-	scopeIndex, err := store.ReadScopeIndex(ctx, domain.MemoryScope{Type: domain.MemoryScopeSquad, ID: "alpha"})
+	scopeIndex, err := store.ReadScopeIndex(ctx, domain.MemoryScope{Type: domain.MemoryScopeTeam, ID: "alpha"})
 	if err != nil {
 		t.Fatalf("read scope index failed: %v", err)
 	}
 	if len(scopeIndex.Entries) != 2 {
-		t.Fatalf("expected 2 squad scope index entries, got %+v", scopeIndex.Entries)
+		t.Fatalf("expected 2 team scope index entries, got %+v", scopeIndex.Entries)
 	}
 	if scopeIndex.Entries[0].Type == "" {
 		t.Fatalf("expected scope index to preserve entry types, got %+v", scopeIndex.Entries[0])
@@ -277,8 +277,8 @@ Legacy project-scoped memory
 	if err != nil {
 		t.Fatalf("get legacy memory failed: %v", err)
 	}
-	if got.ScopeType != domain.MemoryScopeSquad || got.ScopeID != "legacy-alpha" {
-		t.Fatalf("expected project:* compatibility to map to squad scope, got %+v", got)
+	if got.ScopeType != domain.MemoryScopeTeam || got.ScopeID != "legacy-alpha" {
+		t.Fatalf("expected project:* compatibility to map to team scope, got %+v", got)
 	}
 	if got.SessionID != "project:legacy-alpha" {
 		t.Fatalf("expected legacy bank id to remain readable, got %q", got.SessionID)
@@ -297,18 +297,18 @@ func TestFileMemoryStoreScopeViewsAndArchive(t *testing.T) {
 		{
 			ID:         "obs-alpha",
 			Type:       domain.MemoryTypeObservation,
-			Content:    "Squad alpha observation",
+			Content:    "Team alpha observation",
 			Importance: 0.9,
-			ScopeType:  domain.MemoryScopeSquad,
+			ScopeType:  domain.MemoryScopeTeam,
 			ScopeID:    "alpha",
 			CreatedAt:  time.Now(),
 		},
 		{
 			ID:         "fact-alpha",
 			Type:       domain.MemoryTypeFact,
-			Content:    "Squad alpha fact",
+			Content:    "Team alpha fact",
 			Importance: 0.7,
-			ScopeType:  domain.MemoryScopeSquad,
+			ScopeType:  domain.MemoryScopeTeam,
 			ScopeID:    "alpha",
 			CreatedAt:  time.Now(),
 		},
@@ -319,7 +319,7 @@ func TestFileMemoryStoreScopeViewsAndArchive(t *testing.T) {
 		}
 	}
 
-	scope := domain.MemoryScope{Type: domain.MemoryScopeSquad, ID: "alpha"}
+	scope := domain.MemoryScope{Type: domain.MemoryScopeTeam, ID: "alpha"}
 	if err := store.BuildScopeView(ctx, scope); err != nil {
 		t.Fatalf("build scope view failed: %v", err)
 	}
@@ -330,7 +330,7 @@ func TestFileMemoryStoreScopeViewsAndArchive(t *testing.T) {
 		t.Fatalf("read scope view failed: %v", err)
 	}
 	viewContent := string(viewData)
-	if !strings.Contains(viewContent, "Squad alpha Process Memory") {
+	if !strings.Contains(viewContent, "Team alpha Process Memory") {
 		t.Fatalf("unexpected scope view title: %s", viewContent)
 	}
 	if !strings.Contains(viewContent, "[obs-alpha]") || !strings.Contains(viewContent, "[fact-alpha]") {
@@ -367,7 +367,7 @@ func TestFileMemoryStoreScopeViewsAndArchive(t *testing.T) {
 		t.Fatalf("expected active scope index to be empty after archive, got %+v", scopeIndex.Entries)
 	}
 
-	manifestFiles, err := filepath.Glob(filepath.Join(baseDir, "_archive", "manifests", "squad__alpha__*.md"))
+	manifestFiles, err := filepath.Glob(filepath.Join(baseDir, "_archive", "manifests", "team__alpha__*.md"))
 	if err != nil {
 		t.Fatalf("glob archive manifests failed: %v", err)
 	}
@@ -472,8 +472,8 @@ func TestApplyMemoryBoosts_ImportanceRanking(t *testing.T) {
 
 func TestApplyMemoryBoosts_TimeDecay(t *testing.T) {
 	now := time.Now()
-	recent := applyMemoryBoosts(1.0, 0.5, now.Add(-24*time.Hour), now)      // 1 day old
-	old := applyMemoryBoosts(1.0, 0.5, now.Add(-365*24*time.Hour), now)     // 1 year old
+	recent := applyMemoryBoosts(1.0, 0.5, now.Add(-24*time.Hour), now)        // 1 day old
+	old := applyMemoryBoosts(1.0, 0.5, now.Add(-365*24*time.Hour), now)       // 1 year old
 	veryOld := applyMemoryBoosts(1.0, 0.5, now.Add(-3*365*24*time.Hour), now) // 3 years old
 	if recent <= old {
 		t.Errorf("recent (%.3f) should outscore old (%.3f)", recent, old)

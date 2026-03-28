@@ -890,7 +890,7 @@ func parseLogicalBankID(bankID string) domain.MemoryScope {
 	parts := strings.SplitN(bankID, ":", 2)
 	if len(parts) == 1 {
 		switch normalizeScopeType(domain.MemoryScopeType(parts[0])) {
-		case domain.MemoryScopeGlobal, domain.MemoryScopeAgent, domain.MemoryScopeSquad, domain.MemoryScopeUser:
+		case domain.MemoryScopeGlobal, domain.MemoryScopeAgent, domain.MemoryScopeTeam, domain.MemoryScopeUser:
 			return domain.MemoryScope{Type: normalizeScopeType(domain.MemoryScopeType(parts[0]))}
 		default:
 			return domain.MemoryScope{Type: domain.MemoryScopeSession, ID: bankID}
@@ -930,8 +930,8 @@ func encodedUserIDForScope(scope domain.MemoryScope) string {
 		return "user:" + strings.TrimSpace(scope.ID)
 	case domain.MemoryScopeAgent:
 		return "agent:" + strings.TrimSpace(scope.ID)
-	case domain.MemoryScopeSquad:
-		return "squad:" + strings.TrimSpace(scope.ID)
+	case domain.MemoryScopeTeam:
+		return "team:" + strings.TrimSpace(scope.ID)
 	default:
 		return "scope:" + strings.TrimSpace(scope.ID)
 	}
@@ -963,8 +963,8 @@ func storedScope(metadata map[string]interface{}, bucketID, userID string, sessi
 		return domain.MemoryScope{Type: domain.MemoryScopeGlobal}
 	case strings.HasPrefix(userID, "agent:"):
 		return domain.MemoryScope{Type: domain.MemoryScopeAgent, ID: strings.TrimPrefix(userID, "agent:")}
-	case strings.HasPrefix(userID, "squad:"):
-		return domain.MemoryScope{Type: domain.MemoryScopeSquad, ID: strings.TrimPrefix(userID, "squad:")}
+	case strings.HasPrefix(userID, "team:"):
+		return domain.MemoryScope{Type: domain.MemoryScopeTeam, ID: strings.TrimPrefix(userID, "team:")}
 	case strings.HasPrefix(userID, "user:"):
 		return domain.MemoryScope{Type: domain.MemoryScopeUser, ID: strings.TrimPrefix(userID, "user:")}
 	default:

@@ -14,7 +14,7 @@ func ScopePriority(t domain.MemoryScopeType) int {
 		return 100
 	case domain.MemoryScopeAgent:
 		return 80
-	case domain.MemoryScopeSquad:
+	case domain.MemoryScopeTeam:
 		return 60
 	case domain.MemoryScopeProject:
 		return 60
@@ -28,7 +28,7 @@ func ScopePriority(t domain.MemoryScopeType) int {
 }
 
 // ToBankID converts scope to bank ID format.
-// Format: "global" or "agent:main" or "squad:alpha" or "session:uuid".
+// Format: "global" or "agent:main" or "team:alpha" or "session:uuid".
 func ToBankID(s domain.MemoryScope) string {
 	s = normalizeScope(s)
 	if s.Type == domain.MemoryScopeGlobal {
@@ -50,7 +50,7 @@ func ParseBankID(bankID string) domain.MemoryScope {
 	if len(parts) == 1 {
 		scopeType := normalizeScopeType(domain.MemoryScopeType(parts[0]))
 		switch scopeType {
-		case domain.MemoryScopeGlobal, domain.MemoryScopeAgent, domain.MemoryScopeSquad, domain.MemoryScopeProject, domain.MemoryScopeUser, domain.MemoryScopeSession:
+		case domain.MemoryScopeGlobal, domain.MemoryScopeAgent, domain.MemoryScopeTeam, domain.MemoryScopeProject, domain.MemoryScopeUser, domain.MemoryScopeSession:
 			return domain.MemoryScope{Type: scopeType}
 		default:
 			return domain.MemoryScope{Type: domain.MemoryScopeSession, ID: strings.TrimSpace(bankID)}
@@ -87,15 +87,15 @@ func AgentScope(agentID string) domain.MemoryScope {
 	return domain.MemoryScope{Type: domain.MemoryScopeAgent, ID: agentID}
 }
 
-// SquadScope returns a squad scope.
-func SquadScope(squadID string) domain.MemoryScope {
-	return domain.MemoryScope{Type: domain.MemoryScopeSquad, ID: squadID}
+// TeamScope returns a team scope.
+func TeamScope(teamID string) domain.MemoryScope {
+	return domain.MemoryScope{Type: domain.MemoryScopeTeam, ID: teamID}
 }
 
 // ProjectScope returns a project scope
 func ProjectScope(projectID string) domain.MemoryScope {
-	// Keep the legacy helper but normalize project-scoped memory to squad scope.
-	return SquadScope(projectID)
+	// Keep the legacy helper but normalize project-scoped memory to team scope.
+	return TeamScope(projectID)
 }
 
 // UserScope returns a user scope
@@ -113,8 +113,8 @@ func SessionScope(sessionID string) domain.MemoryScope {
 type ScopeChain []domain.MemoryScope
 
 // DefaultScopeChain returns the default scope chain for searching.
-// Order: Session > Agent > Squad/Project > User > Global.
-func DefaultScopeChain(sessionID, agentID, squadOrProjectID, userID string) ScopeChain {
+// Order: Session > Agent > Team/Project > User > Global.
+func DefaultScopeChain(sessionID, agentID, teamOrProjectID, userID string) ScopeChain {
 	var chain ScopeChain
 
 	if sessionID != "" {
@@ -123,8 +123,8 @@ func DefaultScopeChain(sessionID, agentID, squadOrProjectID, userID string) Scop
 	if agentID != "" {
 		chain = append(chain, AgentScope(agentID))
 	}
-	if squadOrProjectID != "" {
-		chain = append(chain, SquadScope(squadOrProjectID))
+	if teamOrProjectID != "" {
+		chain = append(chain, TeamScope(teamOrProjectID))
 	}
 	if userID != "" {
 		chain = append(chain, UserScope(userID))
@@ -160,7 +160,7 @@ func (c ScopeChain) ToSlice() []domain.MemoryScope {
 type ScopeWeightConfig struct {
 	SessionWeight float64
 	AgentWeight   float64
-	SquadWeight   float64
+	TeamWeight    float64
 	ProjectWeight float64
 	UserWeight    float64
 	GlobalWeight  float64
@@ -171,7 +171,7 @@ func DefaultScopeWeightConfig() *ScopeWeightConfig {
 	return &ScopeWeightConfig{
 		SessionWeight: 1.0,
 		AgentWeight:   0.9,
-		SquadWeight:   0.8,
+		TeamWeight:    0.8,
 		ProjectWeight: 0.8,
 		UserWeight:    0.7,
 		GlobalWeight:  0.6,
@@ -185,8 +185,8 @@ func (c *ScopeWeightConfig) GetWeight(scopeType domain.MemoryScopeType) float64 
 		return c.SessionWeight
 	case domain.MemoryScopeAgent:
 		return c.AgentWeight
-	case domain.MemoryScopeSquad:
-		return c.SquadWeight
+	case domain.MemoryScopeTeam:
+		return c.TeamWeight
 	case domain.MemoryScopeProject:
 		return c.ProjectWeight
 	case domain.MemoryScopeUser:
@@ -211,7 +211,7 @@ func normalizeScopeType(scopeType domain.MemoryScopeType) domain.MemoryScopeType
 	case "":
 		return domain.MemoryScopeGlobal
 	case domain.MemoryScopeProject:
-		return domain.MemoryScopeSquad
+		return domain.MemoryScopeTeam
 	default:
 		return scopeType
 	}

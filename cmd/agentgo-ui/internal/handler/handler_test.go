@@ -33,14 +33,14 @@ func testConfig(t *testing.T) *config.Config {
 	return cfg
 }
 
-func newTestManager(t *testing.T) *agent.SquadManager {
+func newTestManager(t *testing.T) *agent.TeamManager {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "agent.db")
 	store, err := agent.NewStore(dbPath)
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
 	}
-	manager := agent.NewSquadManager(store)
+	manager := agent.NewTeamManager(store)
 	if err := manager.SeedDefaultMembers(); err != nil {
 		t.Fatalf("seed agents failed: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestConfigHandlerGetAndPut(t *testing.T) {
 func TestHandleAgentsAndOperations(t *testing.T) {
 	cfg := testConfig(t)
 	manager := newTestManager(t)
-	h := &Handler{cfg: cfg, squadManager: manager, aiChatSessions: map[string]string{}, opsLogs: []OpsLogEntry{}}
+	h := &Handler{cfg: cfg, teamManager: manager, aiChatSessions: map[string]string{}, opsLogs: []OpsLogEntry{}}
 
 	t.Run("list agents", func(t *testing.T) {
 		rec := httptest.NewRecorder()

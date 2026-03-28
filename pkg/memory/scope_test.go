@@ -6,18 +6,18 @@ import (
 	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 )
 
-func TestScopeHelpersSquadCompatibility(t *testing.T) {
-	t.Run("Project helper normalizes to squad", func(t *testing.T) {
+func TestScopeHelpersTeamCompatibility(t *testing.T) {
+	t.Run("Project helper normalizes to team", func(t *testing.T) {
 		scope := ProjectScope("alpha")
-		if scope.Type != domain.MemoryScopeSquad || scope.ID != "alpha" {
-			t.Fatalf("expected project helper to normalize to squad scope, got %+v", scope)
+		if scope.Type != domain.MemoryScopeTeam || scope.ID != "alpha" {
+			t.Fatalf("expected project helper to normalize to team scope, got %+v", scope)
 		}
 	})
 
-	t.Run("ParseBankID maps project bank ids to squad scope", func(t *testing.T) {
+	t.Run("ParseBankID maps project bank ids to team scope", func(t *testing.T) {
 		scope := ParseBankID("project:alpha")
-		if scope.Type != domain.MemoryScopeSquad || scope.ID != "alpha" {
-			t.Fatalf("expected project bank id to map to squad scope, got %+v", scope)
+		if scope.Type != domain.MemoryScopeTeam || scope.ID != "alpha" {
+			t.Fatalf("expected project bank id to map to team scope, got %+v", scope)
 		}
 	})
 
@@ -28,14 +28,14 @@ func TestScopeHelpersSquadCompatibility(t *testing.T) {
 		}
 	})
 
-	t.Run("ToBankID writes canonical squad bank ids", func(t *testing.T) {
-		if got := ToBankID(domain.MemoryScope{Type: domain.MemoryScopeProject, ID: "alpha"}); got != "squad:alpha" {
-			t.Fatalf("expected canonical squad bank id, got %q", got)
+	t.Run("ToBankID writes canonical team bank ids", func(t *testing.T) {
+		if got := ToBankID(domain.MemoryScope{Type: domain.MemoryScopeProject, ID: "alpha"}); got != "team:alpha" {
+			t.Fatalf("expected canonical team bank id, got %q", got)
 		}
 	})
 }
 
-func TestDefaultScopeChainUsesSquadLayer(t *testing.T) {
+func TestDefaultScopeChainUsesTeamLayer(t *testing.T) {
 	chain := DefaultScopeChain("sess-1", "Assistant", "alpha", "user-1")
 	if len(chain) != 5 {
 		t.Fatalf("unexpected chain length: %d", len(chain))
@@ -47,8 +47,8 @@ func TestDefaultScopeChainUsesSquadLayer(t *testing.T) {
 	if chain[1].Type != domain.MemoryScopeAgent {
 		t.Fatalf("expected agent scope second, got %+v", chain[1])
 	}
-	if chain[2].Type != domain.MemoryScopeSquad || chain[2].ID != "alpha" {
-		t.Fatalf("expected squad scope third, got %+v", chain[2])
+	if chain[2].Type != domain.MemoryScopeTeam || chain[2].ID != "alpha" {
+		t.Fatalf("expected team scope third, got %+v", chain[2])
 	}
 	if chain[4].Type != domain.MemoryScopeGlobal {
 		t.Fatalf("expected global scope last, got %+v", chain[4])

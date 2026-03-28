@@ -10,7 +10,7 @@ import (
 	"github.com/liliang-cn/agent-go/v2/pkg/agent"
 )
 
-type SquadResponse struct {
+type TeamResponse struct {
 	ID          string              `json:"id"`
 	Name        string              `json:"name"`
 	Description string              `json:"description"`
@@ -21,33 +21,33 @@ type SquadResponse struct {
 	UpdatedAt   time.Time           `json:"updated_at"`
 }
 
-func (h *Handler) HandleSquads(w http.ResponseWriter, r *http.Request) {
-	if h.squadManager == nil {
-		JSONError(w, "Squad manager unavailable", http.StatusServiceUnavailable)
+func (h *Handler) HandleTeams(w http.ResponseWriter, r *http.Request) {
+	if h.teamManager == nil {
+		JSONError(w, "Team manager unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
 	switch r.Method {
 	case http.MethodGet:
-		squads, err := h.squadManager.ListSquads()
+		teams, err := h.teamManager.ListTeams()
 		if err != nil {
 			JSONError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
-		out := make([]SquadResponse, 0, len(squads))
-		for _, squad := range squads {
-			members, err := h.squadManager.ListSquadAgentsForSquad(squad.ID)
+		out := make([]TeamResponse, 0, len(teams))
+		for _, t := range teams {
+			members, err := h.teamManager.ListTeamAgentsByTeam(t.ID)
 			if err != nil {
 				JSONError(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-			resp := SquadResponse{
-				ID:          squad.ID,
-				Name:        squad.Name,
-				Description: squad.Description,
-				CreatedAt:   squad.CreatedAt,
-				UpdatedAt:   squad.UpdatedAt,
+			resp := TeamResponse{
+				ID:          t.ID,
+				Name:        t.Name,
+				Description: t.Description,
+				CreatedAt:   t.CreatedAt,
+				UpdatedAt:   t.UpdatedAt,
 				Members:     make([]*agent.AgentModel, 0, len(members)),
 			}
 			for _, member := range members {
@@ -60,7 +60,7 @@ func (h *Handler) HandleSquads(w http.ResponseWriter, r *http.Request) {
 			out = append(out, resp)
 		}
 
-		JSONResponse(w, map[string]any{"squads": out})
+		JSONResponse(w, map[string]any{"teams": out})
 	case http.MethodPost:
 		var req struct {
 			Name        string `json:"name"`
@@ -71,7 +71,7 @@ func (h *Handler) HandleSquads(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		squad, err := h.squadManager.CreateSquad(r.Context(), &agent.Squad{
+		team, err := h.teamManager.CreateTeam(r.Context(), &agent.Team{
 			ID:          uuid.New().String(),
 			Name:        strings.TrimSpace(req.Name),
 			Description: strings.TrimSpace(req.Description),
@@ -84,7 +84,7 @@ func (h *Handler) HandleSquads(w http.ResponseWriter, r *http.Request) {
 		}
 
 		w.WriteHeader(http.StatusCreated)
-		JSONResponse(w, squad)
+		JSONResponse(w, team)
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}

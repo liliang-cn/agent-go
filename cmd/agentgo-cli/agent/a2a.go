@@ -29,7 +29,7 @@ var (
 )
 
 type cliA2ACatalog struct {
-	manager *agent.SquadManager
+	manager *agent.TeamManager
 }
 
 func (c cliA2ACatalog) ListAgents() ([]*agent.AgentModel, error) {
@@ -48,20 +48,20 @@ func (c cliA2ACatalog) GetAgentService(name string) (agenta2a.AgentRunner, error
 	return c.manager.GetAgentService(name)
 }
 
-func (c cliA2ACatalog) ListSquads() ([]*agent.Squad, error) {
-	return c.manager.ListSquads()
+func (c cliA2ACatalog) ListTeams() ([]*agent.Team, error) {
+	return c.manager.ListTeams()
 }
 
-func (c cliA2ACatalog) GetSquadByName(name string) (*agent.Squad, error) {
-	return c.manager.GetSquadByName(name)
+func (c cliA2ACatalog) GetTeamByName(name string) (*agent.Team, error) {
+	return c.manager.GetTeamByName(name)
 }
 
-func (c cliA2ACatalog) GetSquadByA2AID(a2aID string) (*agent.Squad, error) {
-	return c.manager.GetSquadByA2AID(a2aID)
+func (c cliA2ACatalog) GetTeamByA2AID(a2aID string) (*agent.Team, error) {
+	return c.manager.GetTeamByA2AID(a2aID)
 }
 
-func (c cliA2ACatalog) GetLeadAgentForSquad(squadID string) (*agent.AgentModel, error) {
-	return c.manager.GetLeadAgentForSquad(squadID)
+func (c cliA2ACatalog) GetLeadAgentForTeam(teamID string) (*agent.AgentModel, error) {
+	return c.manager.GetLeadAgentForTeam(teamID)
 }
 
 var agentA2ACmd = &cobra.Command{
@@ -122,8 +122,8 @@ var agentA2AEnableCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if len(model.Squads) != 0 {
-			return fmt.Errorf("agent %q is not a standalone agent; squad A2A endpoints are not enabled yet", model.Name)
+		if len(model.Teams) != 0 {
+			return fmt.Errorf("agent %q is not a standalone agent; team A2A endpoints are not enabled yet", model.Name)
 		}
 		updated, err := manager.SetAgentA2AEnabled(context.Background(), model.Name, true)
 		if err != nil {

@@ -285,7 +285,7 @@ func (b *Builder) WithConfig(cfg *config.Config) *Builder {
 	return b
 }
 
-// WithAgentName sets the global agent name used in built-in prompts and squad names.
+// WithAgentName sets the global agent name used in built-in prompts and team names.
 // This overrides the agent.name field from config file or environment.
 // Must be called before Build() to take effect.
 func (b *Builder) WithAgentName(name string) *Builder {
@@ -902,36 +902,36 @@ func WithPTCMaxToolCalls(n int) PTCOption { return func(c *PTCConfig) { c.MaxToo
 func WithPTCTimeout(d time.Duration) PTCOption { return func(c *PTCConfig) { c.Timeout = d } }
 
 // ============================================================
-// SquadBuilder - chainable builder for SquadManager
+// TeamBuilder - chainable builder for TeamManager
 // ============================================================
 
-// SquadBuilder allows chainable SquadManager configuration.
-type SquadBuilder struct {
+// TeamBuilder allows chainable TeamManager configuration.
+type TeamBuilder struct {
 	store       *Store
 	dbPath      string
 	agentName   string
-	squadName   string
+	teamName    string
 	cfg         *config.Config
 	skipSeeding bool
 
-	svc      *SquadManager
+	svc      *TeamManager
 	buildErr error
 }
 
-// NewSquad creates a new squad builder.
-// Assign to (*SquadManager, error) to build - no explicit Build() needed!
+// NewTeam creates a new team builder.
+// Assign to (*TeamManager, error) to build - no explicit Build() needed!
 //
 // Example:
 //
-//	// Simple squad manager
-//	mgr, err := agent.NewSquad("~/.agentgo/data/agentgo.db")
+//	// Simple team manager
+//	mgr, err := agent.NewTeam("~/.agentgo/data/agentgo.db")
 //
 //	// Chainable configuration
-//	mgr, err := agent.NewSquad("~/.agentgo/data/agentgo.db").
+//	mgr, err := agent.NewTeam("~/.agentgo/data/agentgo.db").
 //		WithAgentName("MyApp").
-//		WithSquadName("My Team")
-func NewSquad(dbPathOrStore interface{}) *SquadBuilder {
-	b := &SquadBuilder{}
+//		WithTeamName("My Team")
+func NewTeam(dbPathOrStore interface{}) *TeamBuilder {
+	b := &TeamBuilder{}
 	switch v := dbPathOrStore.(type) {
 	case string:
 		b.dbPath = v
@@ -943,35 +943,35 @@ func NewSquad(dbPathOrStore interface{}) *SquadBuilder {
 	return b
 }
 
-// WithAgentName sets the global agent name used in built-in prompts and squad names.
+// WithAgentName sets the global agent name used in built-in prompts and team names.
 // This overrides the agent.name field from config file or environment.
 // Must be called before Build() to take effect during initialization.
-func (b *SquadBuilder) WithAgentName(name string) *SquadBuilder {
+func (b *TeamBuilder) WithAgentName(name string) *TeamBuilder {
 	b.agentName = name
 	return b
 }
 
-// WithSquadName sets the default squad name.
-// If not set, defaults to "<AgentName> Squad".
-func (b *SquadBuilder) WithSquadName(name string) *SquadBuilder {
-	b.squadName = name
+// WithTeamName sets the default team name.
+// If not set, defaults to "<AgentName> Team".
+func (b *TeamBuilder) WithTeamName(name string) *TeamBuilder {
+	b.teamName = name
 	return b
 }
 
 // WithConfig sets the agentgo config.
-func (b *SquadBuilder) WithConfig(cfg *config.Config) *SquadBuilder {
+func (b *TeamBuilder) WithConfig(cfg *config.Config) *TeamBuilder {
 	b.cfg = cfg
 	return b
 }
 
-// SkipSeeding skips seeding default built-in agents and squad.
-func (b *SquadBuilder) SkipSeeding() *SquadBuilder {
+// SkipSeeding skips seeding default built-in agents and team.
+func (b *TeamBuilder) SkipSeeding() *TeamBuilder {
 	b.skipSeeding = true
 	return b
 }
 
-// Build creates the SquadManager.
-func (b *SquadBuilder) Build() (*SquadManager, error) {
+// Build creates the TeamManager.
+func (b *TeamBuilder) Build() (*TeamManager, error) {
 	if b.buildErr != nil {
 		return nil, b.buildErr
 	}
@@ -993,7 +993,7 @@ func (b *SquadBuilder) Build() (*SquadManager, error) {
 		}
 	}
 
-	mgr := NewSquadManager(b.store)
+	mgr := NewTeamManager(b.store)
 
 	// Apply config
 	if b.cfg != nil {
@@ -1005,13 +1005,13 @@ func (b *SquadBuilder) Build() (*SquadManager, error) {
 		mgr.SetAgentName(b.agentName)
 	}
 
-	// Apply squad name override if set
-	if b.squadName != "" {
+	// Apply team name override if set
+	if b.teamName != "" {
 		mgr.mu.Lock()
 		if mgr.cfg == nil {
 			mgr.cfg = &config.Config{}
 		}
-		mgr.cfg.Squad.Name = b.squadName
+		mgr.cfg.Team.Name = b.teamName
 		mgr.mu.Unlock()
 	}
 
@@ -1027,12 +1027,12 @@ func (b *SquadBuilder) Build() (*SquadManager, error) {
 	return b.svc, b.buildErr
 }
 
-// Unpack allows direct assignment to (*SquadManager, error)
-func (b *SquadBuilder) Unpack() (*SquadManager, error) {
+// Unpack allows direct assignment to (*TeamManager, error)
+func (b *TeamBuilder) Unpack() (*TeamManager, error) {
 	return b.Build()
 }
 
-// Get builds and returns the SquadManager (alias for Build)
-func (b *SquadBuilder) Get() (*SquadManager, error) {
+// Get builds and returns the TeamManager (alias for Build)
+func (b *TeamBuilder) Get() (*TeamManager, error) {
 	return b.Build()
 }

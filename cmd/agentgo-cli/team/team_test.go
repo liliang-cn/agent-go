@@ -1,4 +1,4 @@
-package squad
+package team
 
 import (
 	"bytes"
@@ -60,11 +60,11 @@ func TestParseDelegatedTasksWithoutMentionReturnsNil(t *testing.T) {
 	}
 }
 
-func TestSquadCommandHasGoSubcommand(t *testing.T) {
-	if SquadCmd == nil {
-		t.Fatal("expected SquadCmd")
+func TestTeamCommandHasGoSubcommand(t *testing.T) {
+	if TeamCmd == nil {
+		t.Fatal("expected TeamCmd")
 	}
-	cmd, _, err := SquadCmd.Find([]string{"go"})
+	cmd, _, err := TeamCmd.Find([]string{"go"})
 	if err != nil {
 		t.Fatalf("expected go subcommand to be found: %v", err)
 	}
@@ -73,11 +73,11 @@ func TestSquadCommandHasGoSubcommand(t *testing.T) {
 	}
 }
 
-func TestSquadCommandHasAgentAddSubcommand(t *testing.T) {
-	if SquadCmd == nil {
-		t.Fatal("expected SquadCmd")
+func TestTeamCommandHasAgentAddSubcommand(t *testing.T) {
+	if TeamCmd == nil {
+		t.Fatal("expected TeamCmd")
 	}
-	cmd, _, err := SquadCmd.Find([]string{"agent", "add"})
+	cmd, _, err := TeamCmd.Find([]string{"agent", "add"})
 	if err != nil {
 		t.Fatalf("expected agent add subcommand to be found: %v", err)
 	}
@@ -86,11 +86,11 @@ func TestSquadCommandHasAgentAddSubcommand(t *testing.T) {
 	}
 }
 
-func TestSquadCommandKeepsMemberAlias(t *testing.T) {
-	if SquadCmd == nil {
-		t.Fatal("expected SquadCmd")
+func TestTeamCommandKeepsMemberAlias(t *testing.T) {
+	if TeamCmd == nil {
+		t.Fatal("expected TeamCmd")
 	}
-	cmd, _, err := SquadCmd.Find([]string{"member", "add"})
+	cmd, _, err := TeamCmd.Find([]string{"member", "add"})
 	if err != nil {
 		t.Fatalf("expected member alias to be found: %v", err)
 	}

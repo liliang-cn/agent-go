@@ -15,7 +15,7 @@ type AsyncTaskKind string
 
 const (
 	AsyncTaskKindAgent AsyncTaskKind = "agent"
-	AsyncTaskKindSquad AsyncTaskKind = "squad"
+	AsyncTaskKindTeam  AsyncTaskKind = "team"
 )
 
 type AsyncTaskStatus string
@@ -46,8 +46,8 @@ type AsyncTask struct {
 	SessionID   string          `json:"session_id,omitempty"`
 	Kind        AsyncTaskKind   `json:"kind"`
 	Status      AsyncTaskStatus `json:"status"`
-	SquadID     string          `json:"squad_id,omitempty"`
-	SquadName   string          `json:"squad_name,omitempty"`
+	TeamID      string          `json:"team_id,omitempty"`
+	TeamName    string          `json:"team_name,omitempty"`
 	CaptainName string          `json:"captain_name,omitempty"`
 	AgentName   string          `json:"agent_name,omitempty"`
 	AgentNames  []string        `json:"agent_names,omitempty"`
@@ -69,8 +69,8 @@ type TaskEvent struct {
 	Kind        AsyncTaskKind   `json:"kind"`
 	Status      AsyncTaskStatus `json:"status"`
 	Type        TaskEventType   `json:"type"`
-	SquadID     string          `json:"squad_id,omitempty"`
-	SquadName   string          `json:"squad_name,omitempty"`
+	TeamID      string          `json:"team_id,omitempty"`
+	TeamName    string          `json:"team_name,omitempty"`
 	CaptainName string          `json:"captain_name,omitempty"`
 	AgentName   string          `json:"agent_name,omitempty"`
 	Message     string          `json:"message,omitempty"`
@@ -78,7 +78,7 @@ type TaskEvent struct {
 	Timestamp   time.Time       `json:"timestamp"`
 }
 
-func (m *SquadManager) SubmitAgentTask(ctx context.Context, sessionID, agentName, prompt string) (*AsyncTask, error) {
+func (m *TeamManager) SubmitAgentTask(ctx context.Context, sessionID, agentName, prompt string) (*AsyncTask, error) {
 	agentName = strings.TrimSpace(agentName)
 	prompt = strings.TrimSpace(prompt)
 	if agentName == "" {
@@ -122,30 +122,30 @@ func (m *SquadManager) SubmitAgentTask(ctx context.Context, sessionID, agentName
 	return m.GetTask(task.ID)
 }
 
-func (m *SquadManager) SubmitSquadTask(ctx context.Context, sessionID, squadID, prompt string, agentNames []string) (*AsyncTask, error) {
-	squad, err := m.resolveSquadRef(strings.TrimSpace(squadID), "")
+func (m *TeamManager) SubmitTeamTask(ctx context.Context, sessionID, teamID, prompt string, agentNames []string) (*AsyncTask, error) {
+	team, err := m.resolveTeamRef(strings.TrimSpace(teamID), "")
 	if err != nil {
 		return nil, err
 	}
-	lead, err := m.GetLeadAgentForSquad(squad.ID)
-	if err != nil {
-		return nil, err
-	}
-
-	sharedTask, err := m.EnqueueSharedTaskForSquad(ctx, squad.ID, lead.Name, agentNames, prompt)
+	lead, err := m.GetLeadAgentForTeam(team.ID)
 	if err != nil {
 		return nil, err
 	}
 
-	task := m.ensureAsyncTaskForSharedTask(sharedTask, strings.TrimSpace(sessionID), squad.Name)
+	sharedTask, err := m.EnqueueSharedTaskForTeam(ctx, team.ID, lead.Name, agentNames, prompt)
+	if err != nil {
+		return nil, err
+	}
+
+	task := m.ensureAsyncTaskForSharedTask(sharedTask, strings.TrimSpace(sessionID), team.Name)
 	m.emitTaskEvent(task.ID, &TaskEvent{
 		TaskID:      task.ID,
 		SessionID:   task.SessionID,
 		Kind:        task.Kind,
 		Status:      task.Status,
 		Type:        TaskEventTypeCreated,
-		SquadID:     task.SquadID,
-		SquadName:   task.SquadName,
+		TeamID:      task.TeamID,
+		TeamName:    task.TeamName,
 		CaptainName: task.CaptainName,
 		AgentName:   task.CaptainName,
 		Message:     task.AckMessage,
@@ -155,7 +155,7 @@ func (m *SquadManager) SubmitSquadTask(ctx context.Context, sessionID, squadID, 
 	return m.GetTask(task.ID)
 }
 
-func (m *SquadManager) GetTask(taskID string) (*AsyncTask, error) {
+func (m *TeamManager) GetTask(taskID string) (*AsyncTask, error) {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
 		return nil, fmt.Errorf("task id is required")
@@ -170,7 +170,7 @@ func (m *SquadManager) GetTask(taskID string) (*AsyncTask, error) {
 	return cloneAsyncTask(task), nil
 }
 
-func (m *SquadManager) ListSessionTasks(sessionID string, limit int) []*AsyncTask {
+func (m *TeamManager) ListSessionTasks(sessionID string, limit int) []*AsyncTask {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
 		return nil
@@ -196,7 +196,7 @@ func (m *SquadManager) ListSessionTasks(sessionID string, limit int) []*AsyncTas
 	return out
 }
 
-func (m *SquadManager) SubscribeTask(taskID string) (<-chan *TaskEvent, func(), error) {
+func (m *TeamManager) SubscribeTask(taskID string) (<-chan *TaskEvent, func(), error) {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
 		return nil, nil, fmt.Errorf("task id is required")
@@ -247,7 +247,7 @@ func (m *SquadManager) SubscribeTask(taskID string) (<-chan *TaskEvent, func(), 
 	return ch, unsubscribe, nil
 }
 
-func (m *SquadManager) runAsyncAgentTask(ctx context.Context, taskID string) {
+func (m *TeamManager) runAsyncAgentTask(ctx context.Context, taskID string) {
 	task, err := m.GetTask(taskID)
 	if err != nil {
 		return
@@ -287,7 +287,7 @@ func (m *SquadManager) runAsyncAgentTask(ctx context.Context, taskID string) {
 	m.completeAsyncTask(task.ID, finalText, task.AgentName)
 }
 
-func (m *SquadManager) executeSharedTaskStream(ctx context.Context, task *SharedTask) {
+func (m *TeamManager) executeSharedTaskStream(ctx context.Context, task *SharedTask) {
 	type dispatchResult struct {
 		AgentName string
 		Text      string
@@ -306,11 +306,11 @@ func (m *SquadManager) executeSharedTaskStream(ctx context.Context, task *Shared
 		Kind:        asyncTask.Kind,
 		Status:      asyncTask.Status,
 		Type:        TaskEventTypeStarted,
-		SquadID:     asyncTask.SquadID,
-		SquadName:   asyncTask.SquadName,
+		TeamID:      asyncTask.TeamID,
+		TeamName:    asyncTask.TeamName,
 		CaptainName: asyncTask.CaptainName,
 		AgentName:   asyncTask.CaptainName,
-		Message:     fmt.Sprintf("%s started squad task.", asyncTask.CaptainName),
+		Message:     fmt.Sprintf("%s started team task.", asyncTask.CaptainName),
 		Timestamp:   startedAt,
 	}, false)
 
@@ -327,9 +327,9 @@ func (m *SquadManager) executeSharedTaskStream(ctx context.Context, task *Shared
 			instruction := task.Prompt
 			if strings.TrimSpace(agentName) != "" {
 				instruction = strings.TrimSpace(
-					"Assigned squad member: " + agentName + "\n" +
+					"Assigned team member: " + agentName + "\n" +
 						"You are responsible only for the work that fits your own role and the target agent label above.\n" +
-						"Do not complete work that belongs to other listed squad members.\n\n" +
+						"Do not complete work that belongs to other listed team members.\n\n" +
 						task.Prompt,
 				)
 			}
@@ -396,7 +396,7 @@ func (m *SquadManager) executeSharedTaskStream(ctx context.Context, task *Shared
 	m.completeAsyncTask(task.ID, strings.Join(resultTextParts, "\n\n"), task.CaptainName)
 }
 
-func (m *SquadManager) forwardRuntimeEvents(taskID string, events <-chan *Event) (string, error) {
+func (m *TeamManager) forwardRuntimeEvents(taskID string, events <-chan *Event) (string, error) {
 	var finalText string
 	for evt := range events {
 		runtimeEvt := cloneAgentEvent(evt)
@@ -422,7 +422,7 @@ func (m *SquadManager) forwardRuntimeEvents(taskID string, events <-chan *Event)
 	return finalText, nil
 }
 
-func (m *SquadManager) completeAsyncTask(taskID, finalText, agentName string) {
+func (m *TeamManager) completeAsyncTask(taskID, finalText, agentName string) {
 	if strings.EqualFold(strings.TrimSpace(agentName), ArchivistAgentName) {
 		if displayText, verifierPrompt, ok := parseArchivistVerifierEscalation(finalText); ok {
 			finalText = displayText
@@ -444,15 +444,15 @@ func (m *SquadManager) completeAsyncTask(taskID, finalText, agentName string) {
 		Kind:      task.Kind,
 		Status:    task.Status,
 		Type:      TaskEventTypeCompleted,
-		SquadID:   task.SquadID,
-		SquadName: task.SquadName,
+		TeamID:    task.TeamID,
+		TeamName:  task.TeamName,
 		AgentName: agentName,
 		Message:   task.ResultText,
 		Timestamp: finishedAt,
 	}, true)
 }
 
-func (m *SquadManager) taskSessionID(taskID string) string {
+func (m *TeamManager) taskSessionID(taskID string) string {
 	m.taskMu.RLock()
 	defer m.taskMu.RUnlock()
 	if task := m.asyncTasks[taskID]; task != nil {
@@ -461,7 +461,7 @@ func (m *SquadManager) taskSessionID(taskID string) string {
 	return ""
 }
 
-func (m *SquadManager) failAsyncTask(taskID, agentName string, err error) {
+func (m *TeamManager) failAsyncTask(taskID, agentName string, err error) {
 	finishedAt := time.Now()
 	task := m.updateAsyncTask(taskID, func(existing *AsyncTask) {
 		existing.Status = AsyncTaskStatusFailed
@@ -474,8 +474,8 @@ func (m *SquadManager) failAsyncTask(taskID, agentName string, err error) {
 		Kind:      task.Kind,
 		Status:    task.Status,
 		Type:      TaskEventTypeFailed,
-		SquadID:   task.SquadID,
-		SquadName: task.SquadName,
+		TeamID:    task.TeamID,
+		TeamName:  task.TeamName,
 		AgentName: agentName,
 		Message:   task.Error,
 		Timestamp: finishedAt,

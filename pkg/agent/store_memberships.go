@@ -9,7 +9,7 @@ import (
 	"github.com/liliang-cn/agent-go/v2/pkg/store"
 )
 
-func (s *Store) SaveSquadMembership(membership *SquadMembership) error {
+func (s *Store) SaveTeamMembership(membership *TeamMembership) error {
 	if membership == nil {
 		return fmt.Errorf("membership is required")
 	}
@@ -19,58 +19,58 @@ func (s *Store) SaveSquadMembership(membership *SquadMembership) error {
 	}
 	membership.UpdatedAt = time.Now()
 
-	return s.agentGoDB.SaveSquadMembership(&store.SquadMembership{
+	return s.agentGoDB.SaveTeamMembership(&store.TeamMembership{
 		AgentID:   membership.AgentID,
-		SquadID:   membership.SquadID,
+		TeamID:   membership.TeamID,
 		Role:      string(normalizeMembershipRole(membership.Role)),
 		CreatedAt: membership.CreatedAt,
 		UpdatedAt: membership.UpdatedAt,
 	})
 }
 
-func (s *Store) DeleteSquadMembership(agentID, squadID string) error {
-	return s.agentGoDB.DeleteSquadMembership(agentID, squadID)
+func (s *Store) DeleteTeamMembership(agentID, teamID string) error {
+	return s.agentGoDB.DeleteTeamMembership(agentID, teamID)
 }
 
-func (s *Store) DeleteMembershipsBySquad(squadID string) error {
-	return s.agentGoDB.DeleteMembershipsBySquad(squadID)
+func (s *Store) DeleteMembershipsByTeam(teamID string) error {
+	return s.agentGoDB.DeleteMembershipsByTeam(teamID)
 }
 
 func (s *Store) DeleteMembershipsByAgent(agentID string) error {
 	return s.agentGoDB.DeleteMembershipsByAgent(agentID)
 }
 
-func (s *Store) ListSquadMemberships() ([]SquadMembership, error) {
-	memberships, err := s.agentGoDB.ListSquadMemberships("", "")
+func (s *Store) ListTeamMemberships() ([]TeamMembership, error) {
+	memberships, err := s.agentGoDB.ListTeamMemberships("", "")
 	if err != nil {
 		return nil, err
 	}
-	return convertToSquadMemberships(memberships), nil
+	return convertToTeamMemberships(memberships), nil
 }
 
-func (s *Store) ListSquadMembershipsByAgent(agentID string) ([]SquadMembership, error) {
-	memberships, err := s.agentGoDB.ListSquadMemberships(agentID, "")
+func (s *Store) ListTeamMembershipsByAgent(agentID string) ([]TeamMembership, error) {
+	memberships, err := s.agentGoDB.ListTeamMemberships(agentID, "")
 	if err != nil {
 		return nil, err
 	}
-	return convertToSquadMemberships(memberships), nil
+	return convertToTeamMemberships(memberships), nil
 }
 
-func (s *Store) ListSquadMembershipsBySquad(squadID string) ([]SquadMembership, error) {
-	memberships, err := s.agentGoDB.ListSquadMemberships("", squadID)
+func (s *Store) ListTeamMembershipsByTeam(teamID string) ([]TeamMembership, error) {
+	memberships, err := s.agentGoDB.ListTeamMemberships("", teamID)
 	if err != nil {
 		return nil, err
 	}
-	return convertToSquadMemberships(memberships), nil
+	return convertToTeamMemberships(memberships), nil
 }
 
-func convertToSquadMemberships(memberships []*store.SquadMembership) []SquadMembership {
-	result := make([]SquadMembership, len(memberships))
+func convertToTeamMemberships(memberships []*store.TeamMembership) []TeamMembership {
+	result := make([]TeamMembership, len(memberships))
 	for i, m := range memberships {
-		result[i] = SquadMembership{
+		result[i] = TeamMembership{
 			AgentID:   m.AgentID,
-			SquadID:   m.SquadID,
-			SquadName: m.SquadName,
+			TeamID:   m.TeamID,
+			TeamName: m.TeamName,
 			Role:      normalizeMembershipRole(AgentKind(m.Role)),
 			CreatedAt: m.CreatedAt,
 			UpdatedAt: m.UpdatedAt,
@@ -83,15 +83,15 @@ func (s *Store) hydrateAgentMemberships(agent *AgentModel) error {
 	if agent == nil {
 		return nil
 	}
-	memberships, err := s.ListSquadMembershipsByAgent(agent.ID)
+	memberships, err := s.ListTeamMembershipsByAgent(agent.ID)
 	if err != nil {
 		return err
 	}
-	agent.Squads = append(agent.Squads[:0], memberships...)
+	agent.Teams = append(agent.Teams[:0], memberships...)
 	agent.TeamID = ""
 	if len(memberships) > 0 {
 		first := memberships[0]
-		agent.TeamID = first.SquadID
+		agent.TeamID = first.TeamID
 		agent.Kind = AgentKindAgent
 	}
 	if strings.TrimSpace(agent.TeamID) == "" && agent.Kind != AgentKindAgent {
@@ -111,18 +111,18 @@ func normalizeMembershipRole(role AgentKind) AgentKind {
 	}
 }
 
-func cloneAgentForMembership(model *AgentModel, membership SquadMembership) *AgentModel {
+func cloneAgentForMembership(model *AgentModel, membership TeamMembership) *AgentModel {
 	if model == nil {
 		return nil
 	}
 	cloned := *model
-	cloned.TeamID = membership.SquadID
+	cloned.TeamID = membership.TeamID
 	cloned.Kind = membership.Role
-	cloned.Squads = []SquadMembership{membership}
+	cloned.Teams = []TeamMembership{membership}
 	return &cloned
 }
 
-func hasMembershipRole(memberships []SquadMembership, role AgentKind) bool {
+func hasMembershipRole(memberships []TeamMembership, role AgentKind) bool {
 	for _, membership := range memberships {
 		if membership.Role == role {
 			return true
@@ -131,15 +131,15 @@ func hasMembershipRole(memberships []SquadMembership, role AgentKind) bool {
 	return false
 }
 
-func leadMemberships(memberships []SquadMembership) []SquadMembership {
-	out := make([]SquadMembership, 0, len(memberships))
+func leadMemberships(memberships []TeamMembership) []TeamMembership {
+	out := make([]TeamMembership, 0, len(memberships))
 	for _, membership := range memberships {
 		if membership.Role == AgentKindCaptain {
 			out = append(out, membership)
 		}
 	}
-	slices.SortFunc(out, func(a, b SquadMembership) int {
-		return strings.Compare(a.SquadID, b.SquadID)
+	slices.SortFunc(out, func(a, b TeamMembership) int {
+		return strings.Compare(a.TeamID, b.TeamID)
 	})
 	return out
 }

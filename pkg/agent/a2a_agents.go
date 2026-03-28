@@ -7,7 +7,7 @@ import (
 )
 
 // ListA2AAgents returns standalone agents explicitly opted in for A2A exposure.
-func (m *SquadManager) ListA2AAgents() ([]*AgentModel, error) {
+func (m *TeamManager) ListA2AAgents() ([]*AgentModel, error) {
 	agents, err := m.ListStandaloneAgents()
 	if err != nil {
 		return nil, err
@@ -22,7 +22,7 @@ func (m *SquadManager) ListA2AAgents() ([]*AgentModel, error) {
 }
 
 // SetAgentA2AEnabled explicitly toggles A2A exposure for one agent.
-func (m *SquadManager) SetAgentA2AEnabled(ctx context.Context, name string, enabled bool) (*AgentModel, error) {
+func (m *TeamManager) SetAgentA2AEnabled(ctx context.Context, name string, enabled bool) (*AgentModel, error) {
 	model, err := m.GetAgentByName(strings.TrimSpace(name))
 	if err != nil {
 		return nil, err
@@ -33,7 +33,7 @@ func (m *SquadManager) SetAgentA2AEnabled(ctx context.Context, name string, enab
 }
 
 // UpdateAgentA2A persists an AgentModel while preserving explicit EnableA2A state.
-func (m *SquadManager) UpdateAgentA2A(_ context.Context, model *AgentModel) (*AgentModel, error) {
+func (m *TeamManager) UpdateAgentA2A(_ context.Context, model *AgentModel) (*AgentModel, error) {
 	if model == nil {
 		return nil, nil
 	}

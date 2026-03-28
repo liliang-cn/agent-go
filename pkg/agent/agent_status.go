@@ -11,7 +11,7 @@ type AgentRuntimeStatus struct {
 	Kind              AgentKind         `json:"kind"`
 	Status            string            `json:"status"`
 	Description       string            `json:"description"`
-	Squads            []SquadMembership `json:"squads,omitempty"`
+	Teams             []TeamMembership `json:"teams,omitempty"`
 	RunningTaskCount  int               `json:"running_task_count"`
 	QueuedTaskCount   int               `json:"queued_task_count"`
 	PreferredProvider string            `json:"preferred_provider,omitempty"`
@@ -20,7 +20,7 @@ type AgentRuntimeStatus struct {
 	BuiltIn           bool              `json:"built_in"`
 }
 
-func (m *SquadManager) GetAgentStatus(name string) (*AgentRuntimeStatus, error) {
+func (m *TeamManager) GetAgentStatus(name string) (*AgentRuntimeStatus, error) {
 	model, err := m.store.GetAgentModelByName(strings.TrimSpace(name))
 	if err != nil {
 		return nil, err
@@ -32,7 +32,7 @@ func (m *SquadManager) GetAgentStatus(name string) (*AgentRuntimeStatus, error) 
 		Kind:              model.Kind,
 		Status:            "idle",
 		Description:       model.Description,
-		Squads:            append([]SquadMembership(nil), model.Squads...),
+		Teams:            append([]TeamMembership(nil), model.Teams...),
 		PreferredProvider: strings.TrimSpace(model.PreferredProvider),
 		PreferredModel:    strings.TrimSpace(model.PreferredModel),
 		ConfiguredModel:   strings.TrimSpace(model.Model),
@@ -82,7 +82,7 @@ func (m *SquadManager) GetAgentStatus(name string) (*AgentRuntimeStatus, error) 
 	return status, nil
 }
 
-func (m *SquadManager) ListAgentStatuses() ([]*AgentRuntimeStatus, error) {
+func (m *TeamManager) ListAgentStatuses() ([]*AgentRuntimeStatus, error) {
 	agents, err := m.ListAgents()
 	if err != nil {
 		return nil, err

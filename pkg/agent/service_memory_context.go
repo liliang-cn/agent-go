@@ -10,24 +10,24 @@ import (
 
 const (
 	sessionContextMemoryAgentScope = "memory.agent_scope_id"
-	sessionContextMemorySquadScope = "memory.squad_scope_id"
+	sessionContextMemoryTeamScope  = "memory.team_scope_id"
 	sessionContextMemoryUserScope  = "memory.user_scope_id"
 )
 
 // SetMemoryScope configures the higher-level memory scopes used during retrieval.
-func (s *Service) SetMemoryScope(agentID, squadID, userID string) {
+func (s *Service) SetMemoryScope(agentID, teamID, userID string) {
 	if s == nil {
 		return
 	}
 	s.memoryScopeAgentID = strings.TrimSpace(agentID)
-	s.memoryScopeSquadID = strings.TrimSpace(squadID)
+	s.memoryScopeTeamID = strings.TrimSpace(teamID)
 	s.memoryScopeUserID = strings.TrimSpace(userID)
 }
 
 func (s *Service) resolveMemoryQueryContext(session *Session) domain.MemoryQueryContext {
 	queryContext := domain.MemoryQueryContext{
 		AgentID: strings.TrimSpace(s.memoryScopeAgentID),
-		SquadID: strings.TrimSpace(s.memoryScopeSquadID),
+		TeamID:  strings.TrimSpace(s.memoryScopeTeamID),
 		UserID:  strings.TrimSpace(s.memoryScopeUserID),
 	}
 
@@ -37,8 +37,8 @@ func (s *Service) resolveMemoryQueryContext(session *Session) domain.MemoryQuery
 		if value, ok := session.GetContext(sessionContextMemoryAgentScope); ok {
 			queryContext.AgentID = firstNonEmpty(memoryContextString(value), queryContext.AgentID)
 		}
-		if value, ok := session.GetContext(sessionContextMemorySquadScope); ok {
-			queryContext.SquadID = firstNonEmpty(memoryContextString(value), queryContext.SquadID)
+		if value, ok := session.GetContext(sessionContextMemoryTeamScope); ok {
+			queryContext.TeamID = firstNonEmpty(memoryContextString(value), queryContext.TeamID)
 		}
 		if value, ok := session.GetContext(sessionContextMemoryUserScope); ok {
 			queryContext.UserID = firstNonEmpty(memoryContextString(value), queryContext.UserID)
@@ -78,8 +78,8 @@ func (s *Service) rememberMemoryQueryContext(session *Session, queryContext doma
 	if queryContext.AgentID != "" {
 		session.SetContext(sessionContextMemoryAgentScope, queryContext.AgentID)
 	}
-	if queryContext.SquadID != "" {
-		session.SetContext(sessionContextMemorySquadScope, queryContext.SquadID)
+	if queryContext.TeamID != "" {
+		session.SetContext(sessionContextMemoryTeamScope, queryContext.TeamID)
 	}
 	if queryContext.UserID != "" {
 		session.SetContext(sessionContextMemoryUserScope, queryContext.UserID)

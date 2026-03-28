@@ -101,7 +101,7 @@ func (h *Handler) HandleCollections(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleAISDKAgentChat(w http.ResponseWriter, r *http.Request, raw map[string]any, prompt string) {
-	if h.squadManager == nil {
+	if h.teamManager == nil {
 		JSONError(w, "Agent manager unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -111,7 +111,7 @@ func (h *Handler) handleAISDKAgentChat(w http.ResponseWriter, r *http.Request, r
 		agentName = "Captain"
 	}
 
-	events, err := h.squadManager.DispatchTaskStream(r.Context(), agentName, prompt)
+	events, err := h.teamManager.DispatchTaskStream(r.Context(), agentName, prompt)
 	if err != nil {
 		JSONError(w, err.Error(), http.StatusInternalServerError)
 		return

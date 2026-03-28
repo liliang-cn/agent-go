@@ -11,7 +11,7 @@ func TestConciergeBuiltInDelegationTargetsIntentRouterOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
 	}
-	manager := NewSquadManager(store)
+	manager := NewTeamManager(store)
 	if err := manager.SeedDefaultMembers(); err != nil {
 		t.Fatalf("seed default members failed: %v", err)
 	}
@@ -36,7 +36,7 @@ func TestIntentRouterBuiltInDelegationTargetsCoreSpecialists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
 	}
-	manager := NewSquadManager(store)
+	manager := NewTeamManager(store)
 	if err := manager.SeedDefaultMembers(); err != nil {
 		t.Fatalf("seed default members failed: %v", err)
 	}

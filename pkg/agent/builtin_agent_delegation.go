@@ -14,7 +14,7 @@ var coreDelegableBuiltInAgentNames = []string{
 	defaultVerifierAgentName,
 }
 
-func (m *SquadManager) registerBuiltInAgentDelegationTools(svc *Service, model *AgentModel) {
+func (m *TeamManager) registerBuiltInAgentDelegationTools(svc *Service, model *AgentModel) {
 	if svc == nil || model == nil {
 		return
 	}
@@ -76,7 +76,7 @@ func (m *SquadManager) registerBuiltInAgentDelegationTools(svc *Service, model *
 		}
 		queryContext := svc.resolveMemoryQueryContextFromContext(ctx)
 		runOptions := []RunOption{
-			WithInheritedMemoryScope(queryContext.AgentID, queryContext.SquadID, queryContext.UserID),
+			WithInheritedMemoryScope(queryContext.AgentID, queryContext.TeamID, queryContext.UserID),
 		}
 		result, err := m.dispatchTaskWithOptions(ctx, builtin.Name, prompt, "", runOptions)
 		if err != nil {
@@ -141,7 +141,7 @@ func (m *SquadManager) registerBuiltInAgentDelegationTools(svc *Service, model *
 	})
 }
 
-func (m *SquadManager) buildDelegableBuiltInAgentsContext(model *AgentModel) string {
+func (m *TeamManager) buildDelegableBuiltInAgentsContext(model *AgentModel) string {
 	if model == nil || isBuiltInAgentModel(model) {
 		return ""
 	}
@@ -182,7 +182,7 @@ func delegableBuiltInAgentNamesFor(model *AgentModel) []string {
 	return append([]string(nil), coreDelegableBuiltInAgentNames...)
 }
 
-func (m *SquadManager) listDelegableBuiltInAgentsFor(model *AgentModel) ([]*AgentModel, error) {
+func (m *TeamManager) listDelegableBuiltInAgentsFor(model *AgentModel) ([]*AgentModel, error) {
 	names := delegableBuiltInAgentNamesFor(model)
 	out := make([]*AgentModel, 0, len(names))
 	for _, name := range names {
@@ -198,7 +198,7 @@ func (m *SquadManager) listDelegableBuiltInAgentsFor(model *AgentModel) ([]*Agen
 	return out, nil
 }
 
-func (m *SquadManager) resolveDelegableBuiltInAgentFor(source *AgentModel, name string) (*AgentModel, error) {
+func (m *TeamManager) resolveDelegableBuiltInAgentFor(source *AgentModel, name string) (*AgentModel, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, fmt.Errorf("agent_name is required")

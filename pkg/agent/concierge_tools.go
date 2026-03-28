@@ -9,7 +9,7 @@ import (
 	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 )
 
-func (m *SquadManager) RegisterConciergeTools(concierge *Service) {
+func (m *TeamManager) RegisterConciergeTools(concierge *Service) {
 	if concierge == nil {
 		return
 	}
@@ -51,18 +51,18 @@ func (m *SquadManager) RegisterConciergeTools(concierge *Service) {
 		}, nil
 	})
 
-	register("list_squads", "List all squads with their current runtime status.", map[string]interface{}{
+	register("list_teams", "List all teams with their current runtime status.", map[string]interface{}{
 		"type":       "object",
 		"properties": map[string]interface{}{},
 	}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-		statuses, err := m.ListSquadStatuses()
+		statuses, err := m.ListTeamStatuses()
 		if err != nil {
 			return nil, err
 		}
 		out := make([]map[string]interface{}, 0, len(statuses))
 		for _, status := range statuses {
 			out = append(out, map[string]interface{}{
-				"squad_id":        status.SquadID,
+				"team_id":         status.TeamID,
 				"name":            status.Name,
 				"description":     status.Description,
 				"status":          status.Status,
@@ -76,18 +76,18 @@ func (m *SquadManager) RegisterConciergeTools(concierge *Service) {
 		return out, nil
 	})
 
-	register("get_squad_status", "Get the runtime status of one squad.", map[string]interface{}{
+	register("get_team_status", "Get the runtime status of one team.", map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
-			"squad_id":   map[string]interface{}{"type": "string"},
-			"squad_name": map[string]interface{}{"type": "string"},
+			"team_id":   map[string]interface{}{"type": "string"},
+			"team_name": map[string]interface{}{"type": "string"},
 		},
 	}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-		squad, err := m.resolveSquadRef(getStringArg(args, "squad_id"), getStringArg(args, "squad_name"))
+		team, err := m.resolveTeamRef(getStringArg(args, "team_id"), getStringArg(args, "team_name"))
 		if err != nil {
 			return nil, err
 		}
-		return m.GetSquadStatus(squad.ID)
+		return m.GetTeamStatus(team.ID)
 	})
 
 	register("list_agents", "List all known agents with their runtime status.", map[string]interface{}{
@@ -111,7 +111,7 @@ func (m *SquadManager) RegisterConciergeTools(concierge *Service) {
 				"configured_model":   status.ConfiguredModel,
 				"running_tasks":      status.RunningTaskCount,
 				"queued_tasks":       status.QueuedTaskCount,
-				"squads":             append([]SquadMembership(nil), status.Squads...),
+				"teams":              append([]TeamMembership(nil), status.Teams...),
 			})
 		}
 		return out, nil
@@ -134,7 +134,7 @@ func (m *SquadManager) RegisterConciergeTools(concierge *Service) {
 		return m.GetAgentStatus(agentName)
 	})
 
-	register("submit_agent_task", "Submit work to a standalone or squad agent and return immediately with a task id.", map[string]interface{}{
+	register("submit_agent_task", "Submit work to a standalone or team agent and return immediately with a task id.", map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
 			"agent_name": map[string]interface{}{
@@ -169,11 +169,11 @@ func (m *SquadManager) RegisterConciergeTools(concierge *Service) {
 		}, nil
 	})
 
-	register("submit_squad_task", "Queue a task for a squad and return an immediate acknowledgement.", map[string]interface{}{
+	register("submit_team_task", "Queue a task for a team and return an immediate acknowledgement.", map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
-			"squad_id":   map[string]interface{}{"type": "string"},
-			"squad_name": map[string]interface{}{"type": "string"},
+			"team_id":   map[string]interface{}{"type": "string"},
+			"team_name": map[string]interface{}{"type": "string"},
 			"prompt": map[string]interface{}{
 				"type":        "string",
 				"description": "The task prompt to queue.",
@@ -181,16 +181,16 @@ func (m *SquadManager) RegisterConciergeTools(concierge *Service) {
 			"agent_names": map[string]interface{}{
 				"type":        "array",
 				"items":       map[string]interface{}{"type": "string"},
-				"description": "Optional target agent names. Defaults to the squad captain.",
+				"description": "Optional target agent names. Defaults to the team captain.",
 			},
 		},
 		"required": []string{"prompt"},
 	}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-		squad, err := m.resolveSquadRef(getStringArg(args, "squad_id"), getStringArg(args, "squad_name"))
+		team, err := m.resolveTeamRef(getStringArg(args, "team_id"), getStringArg(args, "team_name"))
 		if err != nil {
 			return nil, err
 		}
-		lead, err := m.GetLeadAgentForSquad(squad.ID)
+		lead, err := m.GetLeadAgentForTeam(team.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -205,15 +205,15 @@ func (m *SquadManager) RegisterConciergeTools(concierge *Service) {
 			agentNames = []string{lead.Name}
 		}
 
-		task, err := m.SubmitSquadTask(ctx, concierge.CurrentSessionID(), squad.ID, prompt, agentNames)
+		task, err := m.SubmitTeamTask(ctx, concierge.CurrentSessionID(), team.ID, prompt, agentNames)
 		if err != nil {
 			return nil, err
 		}
 
 		return map[string]interface{}{
 			"task_id":      task.ID,
-			"squad_id":     task.SquadID,
-			"squad_name":   squad.Name,
+			"team_id":      task.TeamID,
+			"team_name":    team.Name,
 			"captain_name": task.CaptainName,
 			"agent_names":  append([]string(nil), task.AgentNames...),
 			"ack_message":  task.AckMessage,
@@ -226,7 +226,7 @@ func (m *SquadManager) RegisterConciergeTools(concierge *Service) {
 		"properties": map[string]interface{}{
 			"task_id": map[string]interface{}{
 				"type":        "string",
-				"description": "The task id returned by submit_agent_task or submit_squad_task.",
+				"description": "The task id returned by submit_agent_task or submit_team_task.",
 			},
 		},
 		"required": []string{"task_id"},
@@ -261,8 +261,8 @@ func (m *SquadManager) RegisterConciergeTools(concierge *Service) {
 				"status":      task.Status,
 				"agent_name":  task.AgentName,
 				"agent_names": append([]string(nil), task.AgentNames...),
-				"squad_id":    task.SquadID,
-				"squad_name":  task.SquadName,
+				"team_id":     task.TeamID,
+				"team_name":   task.TeamName,
 				"result_text": task.ResultText,
 				"error":       task.Error,
 				"created_at":  task.CreatedAt,
@@ -273,20 +273,20 @@ func (m *SquadManager) RegisterConciergeTools(concierge *Service) {
 		return out, nil
 	})
 
-	register("list_squad_tasks", "List recent tasks for a squad.", map[string]interface{}{
+	register("list_team_tasks", "List recent tasks for a team.", map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
-			"squad_id":   map[string]interface{}{"type": "string"},
-			"squad_name": map[string]interface{}{"type": "string"},
-			"limit":      map[string]interface{}{"type": "number"},
+			"team_id":   map[string]interface{}{"type": "string"},
+			"team_name": map[string]interface{}{"type": "string"},
+			"limit":     map[string]interface{}{"type": "number"},
 		},
 	}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-		squad, err := m.resolveSquadRef(getStringArg(args, "squad_id"), getStringArg(args, "squad_name"))
+		team, err := m.resolveTeamRef(getStringArg(args, "team_id"), getStringArg(args, "team_name"))
 		if err != nil {
 			return nil, err
 		}
 		limit := getIntArg(args, "limit", 10)
-		tasks := m.ListSharedTasksForSquad(squad.ID, time.Time{}, limit)
+		tasks := m.ListSharedTasksForTeam(team.ID, time.Time{}, limit)
 		out := make([]map[string]interface{}, 0, len(tasks))
 		for _, task := range tasks {
 			out = append(out, map[string]interface{}{
@@ -312,15 +312,15 @@ var conciergeBaseAllowedToolNames = map[string]struct{}{
 	"route_builtin_request": {},
 	"send_agent_message":    {},
 	"get_agent_messages":    {},
-	"list_squads":           {},
-	"get_squad_status":      {},
+	"list_teams":            {},
+	"get_team_status":       {},
 	"list_agents":           {},
 	"get_agent_status":      {},
 	"submit_agent_task":     {},
-	"submit_squad_task":     {},
+	"submit_team_task":      {},
 	"get_task_status":       {},
 	"list_session_tasks":    {},
-	"list_squad_tasks":      {},
+	"list_team_tasks":       {},
 }
 
 func configureConciergeService(concierge *Service) {
@@ -399,16 +399,16 @@ func configureCaptainService(captain *Service) {
 	}
 }
 
-func (m *SquadManager) resolveSquadRef(squadID, squadName string) (*Squad, error) {
-	squadID = strings.TrimSpace(squadID)
-	squadName = strings.TrimSpace(squadName)
+func (m *TeamManager) resolveTeamRef(teamID, teamName string) (*Team, error) {
+	teamID = strings.TrimSpace(teamID)
+	teamName = strings.TrimSpace(teamName)
 	switch {
-	case squadID != "":
-		return m.store.GetTeam(squadID)
-	case squadName != "":
-		return m.store.GetTeamByName(squadName)
+	case teamID != "":
+		return m.store.GetTeam(teamID)
+	case teamName != "":
+		return m.store.GetTeamByName(teamName)
 	default:
-		return m.store.GetTeam(defaultSquadID)
+		return m.store.GetTeam(defaultTeamID)
 	}
 }
 

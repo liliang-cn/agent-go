@@ -25,7 +25,7 @@ type Handler struct {
 	mcpService     *mcp.Service
 	memoryService  *memory.Service
 	agentService   *agent.Service
-	squadManager   *agent.SquadManager
+	teamManager   *agent.TeamManager
 	llm            domain.Generator
 	embedder       domain.Embedder
 	ConfigHandler  *ConfigHandler
@@ -39,7 +39,7 @@ type Handler struct {
 // New creates a new handler
 func New(cfg *config.Config, ragClient *rag.Client, skillsService *skills.Service,
 	mcpService *mcp.Service, memoryService *memory.Service,
-	agentService *agent.Service, squadManager *agent.SquadManager, llm domain.Generator, embedder domain.Embedder) *Handler {
+	agentService *agent.Service, teamManager *agent.TeamManager, llm domain.Generator, embedder domain.Embedder) *Handler {
 
 	configPath := resolveConfigPath(cfg)
 	configHandler := NewConfigHandler(cfg, configPath)
@@ -54,7 +54,7 @@ func New(cfg *config.Config, ragClient *rag.Client, skillsService *skills.Servic
 		mcpService:     mcpService,
 		memoryService:  memoryService,
 		agentService:   agentService,
-		squadManager:   squadManager,
+		teamManager:   teamManager,
 		llm:            llm,
 		embedder:       embedder,
 		aiChatSessions: make(map[string]string),

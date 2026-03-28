@@ -181,7 +181,7 @@ func (s *Service) RetrieveAndInjectWithContextAndLogic(ctx context.Context, quer
 	}
 
 	// 2. Vector Search (if embedder available)
-	scopes := DefaultScopeChain(queryContext.SessionID, queryContext.AgentID, queryContext.SquadID, queryContext.UserID)
+	scopes := DefaultScopeChain(queryContext.SessionID, queryContext.AgentID, queryContext.TeamID, queryContext.UserID)
 	var vectorResults []*domain.MemoryWithScore
 	if s.embedder != nil {
 		vector, err := s.embedder.Embed(ctx, query)
@@ -293,8 +293,8 @@ func (s *Service) StoreIfWorthwhile(ctx context.Context, req *domain.MemoryStore
 					"type": "object",
 					"properties": map[string]interface{}{
 						"type":             map[string]interface{}{"type": "string", "enum": []string{"fact", "skill", "pattern", "context", "preference"}},
-						"scope":            map[string]interface{}{"type": "string", "enum": []string{"session", "agent", "squad", "global"}},
-						"promote_to":       map[string]interface{}{"type": "string", "enum": []string{"session", "agent", "squad", "global"}},
+						"scope":            map[string]interface{}{"type": "string", "enum": []string{"session", "agent", "team", "global"}},
+						"promote_to":       map[string]interface{}{"type": "string", "enum": []string{"session", "agent", "team", "global"}},
 						"content":          map[string]interface{}{"type": "string"},
 						"importance":       map[string]interface{}{"type": "number"},
 						"scope_reason":     map[string]interface{}{"type": "string"},
@@ -703,18 +703,18 @@ func (s *Service) buildSummaryPrompt(req *domain.MemoryStoreRequest) string {
 Runtime scope context:
 - session_id: %s
 - agent_id: %s
-- squad_id: %s
+- team_id: %s
 - user_id: %s
 
 Scope rules:
 - Use "session" for transient context tied to the current conversation only.
 - Use "agent" for reusable preferences, skills, and patterns this agent should remember across sessions.
-- Use "squad" only when the memory is clearly shared task context, cross-agent coordination data, or squad-wide facts.
-- Use "global" only for stable cross-squad/system knowledge.
+- Use "team" only when the memory is clearly shared task context, cross-agent coordination data, or team-wide facts.
+- Use "global" only for stable cross-team/system knowledge.
 - The "scope" field should describe the natural owning scope for the memory item.
 - The optional "promote_to" field should only be used when the memory should be promoted to a higher shared scope than its natural owner.
-- Only promote to "squad" when the content is explicitly shared, cross-agent, process-level, or coordination-critical.
-- Only promote to "global" when the content is clearly stable and useful across squads or the whole system.
+- Only promote to "team" when the content is explicitly shared, cross-agent, process-level, or coordination-critical.
+- Only promote to "global" when the content is clearly stable and useful across teams or the whole system.
 - Include "scope_reason" when scope selection is non-obvious.
 - Include "promotion_reason" when you set "promote_to".
 
@@ -722,7 +722,7 @@ Interaction:
 Goal: %s
 Result: %s
 
-Task: Extract potential memories according to the schema.`, req.SessionID, req.AgentID, req.SquadID, req.UserID, req.TaskGoal, req.TaskResult)
+Task: Extract potential memories according to the schema.`, req.SessionID, req.AgentID, req.TeamID, req.UserID, req.TaskGoal, req.TaskResult)
 }
 
 func defaultMemoryScope(req *domain.MemoryStoreRequest, item domain.MemoryItem) domain.MemoryScope {
@@ -739,8 +739,8 @@ func defaultMemoryScope(req *domain.MemoryStoreRequest, item domain.MemoryItem) 
 			return SessionScope(req.SessionID)
 		}
 	case domain.MemoryTypeFact:
-		if isSharedSquadMemory(req, item) && req.SquadID != "" {
-			return SquadScope(req.SquadID)
+		if isSharedTeamMemory(req, item) && req.TeamID != "" {
+			return TeamScope(req.TeamID)
 		}
 		if req.SessionID != "" {
 			return SessionScope(req.SessionID)
@@ -750,8 +750,8 @@ func defaultMemoryScope(req *domain.MemoryStoreRequest, item domain.MemoryItem) 
 	if req.AgentID != "" {
 		return AgentScope(req.AgentID)
 	}
-	if req.SquadID != "" {
-		return SquadScope(req.SquadID)
+	if req.TeamID != "" {
+		return TeamScope(req.TeamID)
 	}
 	if req.UserID != "" {
 		return UserScope(req.UserID)
@@ -808,9 +808,9 @@ func resolveExplicitScopeHint(req *domain.MemoryStoreRequest, hint domain.Memory
 		if req.AgentID != "" {
 			return AgentScope(req.AgentID)
 		}
-	case domain.MemoryScopeSquad:
-		if req.SquadID != "" {
-			return SquadScope(req.SquadID)
+	case domain.MemoryScopeTeam:
+		if req.TeamID != "" {
+			return TeamScope(req.TeamID)
 		}
 	case domain.MemoryScopeUser:
 		if req.UserID != "" {
@@ -822,22 +822,22 @@ func resolveExplicitScopeHint(req *domain.MemoryStoreRequest, hint domain.Memory
 	return domain.MemoryScope{}
 }
 
-func isSharedSquadMemory(req *domain.MemoryStoreRequest, item domain.MemoryItem) bool {
-	if req == nil || strings.TrimSpace(req.SquadID) == "" {
+func isSharedTeamMemory(req *domain.MemoryStoreRequest, item domain.MemoryItem) bool {
+	if req == nil || strings.TrimSpace(req.TeamID) == "" {
 		return false
 	}
 	if req.Metadata != nil {
 		if shared, ok := req.Metadata["shared"].(bool); ok && shared {
 			return true
 		}
-		if scope, ok := req.Metadata["memory_scope"].(string); ok && strings.EqualFold(strings.TrimSpace(scope), "squad") {
+		if scope, ok := req.Metadata["memory_scope"].(string); ok && strings.EqualFold(strings.TrimSpace(scope), "team") {
 			return true
 		}
 	}
 
 	text := strings.ToLower(strings.Join(append([]string{item.Content}, append(item.Tags.Strings(), item.Entities.Strings()...)...), " "))
 	keywords := []string{
-		"shared", "cross-agent", "cross agent", "team", "squad", "captain", "specialist", "handoff", "roster",
+		"shared", "cross-agent", "cross agent", "team", "team", "captain", "specialist", "handoff", "roster",
 		"shared context", "coordination", "workspace", "repository", "api contract", "deployment", "schema",
 		"共享", "跨agent", "跨 agent", "团队", "小队", "协作", "交接",
 	}
@@ -1061,7 +1061,7 @@ func scopeHierarchyLevel(scopeType domain.MemoryScopeType) int {
 		return 1
 	case domain.MemoryScopeAgent:
 		return 2
-	case domain.MemoryScopeSquad:
+	case domain.MemoryScopeTeam:
 		return 3
 	case domain.MemoryScopeUser:
 		return 4

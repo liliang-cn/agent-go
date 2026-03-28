@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 )
 
-func (m *SquadManager) ensureAsyncTaskForSharedTask(task *SharedTask, sessionID, squadName string) *AsyncTask {
+func (m *TeamManager) ensureAsyncTaskForSharedTask(task *SharedTask, sessionID, teamName string) *AsyncTask {
 	if task == nil {
 		return nil
 	}
@@ -24,8 +24,8 @@ func (m *SquadManager) ensureAsyncTaskForSharedTask(task *SharedTask, sessionID,
 				current.SessionID = strings.TrimSpace(sessionID)
 				updated = true
 			}
-			if strings.TrimSpace(squadName) != "" && strings.TrimSpace(current.SquadName) == "" {
-				current.SquadName = strings.TrimSpace(squadName)
+			if strings.TrimSpace(teamName) != "" && strings.TrimSpace(current.TeamName) == "" {
+				current.TeamName = strings.TrimSpace(teamName)
 				updated = true
 			}
 		})
@@ -36,8 +36,8 @@ func (m *SquadManager) ensureAsyncTaskForSharedTask(task *SharedTask, sessionID,
 				stored.SessionID = strings.TrimSpace(sessionID)
 				sharedTaskUpdated = true
 			}
-			if strings.TrimSpace(squadName) != "" && strings.TrimSpace(stored.SquadName) == "" {
-				stored.SquadName = strings.TrimSpace(squadName)
+			if strings.TrimSpace(teamName) != "" && strings.TrimSpace(stored.TeamName) == "" {
+				stored.TeamName = strings.TrimSpace(teamName)
 				sharedTaskUpdated = true
 			}
 			if sharedTaskUpdated {
@@ -51,19 +51,19 @@ func (m *SquadManager) ensureAsyncTaskForSharedTask(task *SharedTask, sessionID,
 		return taskCopy
 	}
 
-	if strings.TrimSpace(squadName) == "" {
-		if squad, err := m.store.GetTeam(task.SquadID); err == nil {
-			squadName = squad.Name
+	if strings.TrimSpace(teamName) == "" {
+		if team, err := m.store.GetTeam(task.TeamID); err == nil {
+			teamName = team.Name
 		}
 	}
 
 	asyncTask := &AsyncTask{
 		ID:          task.ID,
 		SessionID:   strings.TrimSpace(sessionID),
-		Kind:        AsyncTaskKindSquad,
+		Kind:        AsyncTaskKindTeam,
 		Status:      asyncStatusFromSharedTask(task.Status),
-		SquadID:     task.SquadID,
-		SquadName:   strings.TrimSpace(squadName),
+		TeamID:      task.TeamID,
+		TeamName:    strings.TrimSpace(teamName),
 		CaptainName: task.CaptainName,
 		AgentNames:  append([]string(nil), task.AgentNames...),
 		Prompt:      task.Prompt,
@@ -79,8 +79,8 @@ func (m *SquadManager) ensureAsyncTaskForSharedTask(task *SharedTask, sessionID,
 		if asyncTask.SessionID != "" {
 			stored.SessionID = asyncTask.SessionID
 		}
-		if asyncTask.SquadName != "" {
-			stored.SquadName = asyncTask.SquadName
+		if asyncTask.TeamName != "" {
+			stored.TeamName = asyncTask.TeamName
 		}
 		_ = m.store.SaveSharedTask(stored)
 	}
@@ -88,7 +88,7 @@ func (m *SquadManager) ensureAsyncTaskForSharedTask(task *SharedTask, sessionID,
 	return asyncTask
 }
 
-func (m *SquadManager) upsertAsyncTask(task *AsyncTask) {
+func (m *TeamManager) upsertAsyncTask(task *AsyncTask) {
 	if task == nil {
 		return
 	}
@@ -101,7 +101,7 @@ func (m *SquadManager) upsertAsyncTask(task *AsyncTask) {
 	}
 }
 
-func (m *SquadManager) updateAsyncTask(taskID string, mutate func(*AsyncTask)) *AsyncTask {
+func (m *TeamManager) updateAsyncTask(taskID string, mutate func(*AsyncTask)) *AsyncTask {
 	m.taskMu.Lock()
 	defer m.taskMu.Unlock()
 
@@ -117,7 +117,7 @@ func (m *SquadManager) updateAsyncTask(taskID string, mutate func(*AsyncTask)) *
 	return cloneAsyncTask(task)
 }
 
-func (m *SquadManager) emitTaskEvent(taskID string, evt *TaskEvent, terminal bool) {
+func (m *TeamManager) emitTaskEvent(taskID string, evt *TaskEvent, terminal bool) {
 	if evt == nil {
 		return
 	}
@@ -136,11 +136,11 @@ func (m *SquadManager) emitTaskEvent(taskID string, evt *TaskEvent, terminal boo
 		if evt.Status == "" {
 			evt.Status = task.Status
 		}
-		if evt.SquadID == "" {
-			evt.SquadID = task.SquadID
+		if evt.TeamID == "" {
+			evt.TeamID = task.TeamID
 		}
-		if evt.SquadName == "" {
-			evt.SquadName = task.SquadName
+		if evt.TeamName == "" {
+			evt.TeamName = task.TeamName
 		}
 		if evt.CaptainName == "" {
 			evt.CaptainName = task.CaptainName
@@ -157,25 +157,25 @@ func (m *SquadManager) emitTaskEvent(taskID string, evt *TaskEvent, terminal boo
 	sendTaskEventToSubscribers(subs, evt, terminal)
 }
 
-func (m *SquadManager) setTaskCancel(taskID string, cancel context.CancelFunc) {
+func (m *TeamManager) setTaskCancel(taskID string, cancel context.CancelFunc) {
 	m.taskMu.Lock()
 	defer m.taskMu.Unlock()
 	m.taskCancels[taskID] = cancel
 }
 
-func (m *SquadManager) clearTaskCancel(taskID string) {
+func (m *TeamManager) clearTaskCancel(taskID string) {
 	m.taskMu.Lock()
 	defer m.taskMu.Unlock()
 	delete(m.taskCancels, taskID)
 }
 
-func (m *SquadManager) indexTaskSession(sessionID, taskID string) {
+func (m *TeamManager) indexTaskSession(sessionID, taskID string) {
 	m.taskMu.Lock()
 	defer m.taskMu.Unlock()
 	m.indexTaskSessionLocked(sessionID, taskID)
 }
 
-func (m *SquadManager) indexTaskSessionLocked(sessionID, taskID string) {
+func (m *TeamManager) indexTaskSessionLocked(sessionID, taskID string) {
 	for _, existing := range m.sessionTasks[sessionID] {
 		if existing == taskID {
 			return

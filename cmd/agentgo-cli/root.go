@@ -14,7 +14,7 @@ import (
 	"github.com/liliang-cn/agent-go/v2/cmd/agentgo-cli/ptc"
 	"github.com/liliang-cn/agent-go/v2/cmd/agentgo-cli/rag"
 	"github.com/liliang-cn/agent-go/v2/cmd/agentgo-cli/skills"
-	"github.com/liliang-cn/agent-go/v2/cmd/agentgo-cli/squad"
+	"github.com/liliang-cn/agent-go/v2/cmd/agentgo-cli/team"
 	"github.com/liliang-cn/agent-go/v2/pkg/config"
 	agentgolog "github.com/liliang-cn/agent-go/v2/pkg/log"
 	"github.com/liliang-cn/agent-go/v2/pkg/services"
@@ -130,7 +130,7 @@ func init() {
 	RootCmd.AddCommand(agent.AgentCmd)
 
 	// Add agent registry command
-	RootCmd.AddCommand(squad.SquadCmd)
+	RootCmd.AddCommand(team.TeamCmd)
 
 	// Add ACP command
 	RootCmd.AddCommand(acp.Cmd)

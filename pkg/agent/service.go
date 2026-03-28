@@ -59,7 +59,7 @@ type Service struct {
 	sessionMu          sync.RWMutex
 	memoryStoreType    string
 	memoryScopeAgentID string
-	memoryScopeSquadID string
+	memoryScopeTeamID string
 	memoryScopeUserID  string
 	memorySaveMu       sync.RWMutex
 	memorySavedInRun   bool
@@ -389,8 +389,8 @@ func (s *Service) RunStreamWithOptions(ctx context.Context, goal string, opts ..
 	if inherited := strings.TrimSpace(cfg.InheritedMemoryAgentID); inherited != "" {
 		session.SetContext(sessionContextMemoryAgentScope, inherited)
 	}
-	if inherited := strings.TrimSpace(cfg.InheritedMemorySquadID); inherited != "" {
-		session.SetContext(sessionContextMemorySquadScope, inherited)
+	if inherited := strings.TrimSpace(cfg.InheritedMemoryTeamID); inherited != "" {
+		session.SetContext(sessionContextMemoryTeamScope, inherited)
 	}
 	if inherited := strings.TrimSpace(cfg.InheritedMemoryUserID); inherited != "" {
 		session.SetContext(sessionContextMemoryUserScope, inherited)
@@ -461,8 +461,8 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 	if inherited := strings.TrimSpace(cfg.InheritedMemoryAgentID); inherited != "" {
 		session.SetContext(sessionContextMemoryAgentScope, inherited)
 	}
-	if inherited := strings.TrimSpace(cfg.InheritedMemorySquadID); inherited != "" {
-		session.SetContext(sessionContextMemorySquadScope, inherited)
+	if inherited := strings.TrimSpace(cfg.InheritedMemoryTeamID); inherited != "" {
+		session.SetContext(sessionContextMemoryTeamScope, inherited)
 	}
 	if inherited := strings.TrimSpace(cfg.InheritedMemoryUserID); inherited != "" {
 		session.SetContext(sessionContextMemoryUserScope, inherited)

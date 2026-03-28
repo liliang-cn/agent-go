@@ -7,7 +7,7 @@ import (
 
 const VerifierAgentName = "Verifier"
 
-func (m *SquadManager) configureConciergeVerifierHook(concierge *Service) {
+func (m *TeamManager) configureConciergeVerifierHook(concierge *Service) {
 	m.ConfigureFollowUpAgentHook(concierge, FollowUpAgentPolicy{
 		HookDescription: "concierge_verifier_async_review",
 		AgentName:       VerifierAgentName,

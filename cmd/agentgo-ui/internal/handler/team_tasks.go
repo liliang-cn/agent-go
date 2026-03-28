@@ -10,15 +10,15 @@ import (
 	"github.com/liliang-cn/agent-go/v2/pkg/agent"
 )
 
-func (h *Handler) HandleSquadTasks(w http.ResponseWriter, r *http.Request) {
-	if h.squadManager == nil {
-		JSONError(w, "Squad manager unavailable", http.StatusServiceUnavailable)
+func (h *Handler) HandleTeamTasks(w http.ResponseWriter, r *http.Request) {
+	if h.teamManager == nil {
+		JSONError(w, "Team manager unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
 	switch r.Method {
 	case http.MethodGet:
-		squadID := strings.TrimSpace(r.URL.Query().Get("squad_id"))
+		teamID := strings.TrimSpace(r.URL.Query().Get("team_id"))
 		leadAgentName := strings.TrimSpace(r.URL.Query().Get("lead_agent_name"))
 		if leadAgentName == "" {
 			leadAgentName = strings.TrimSpace(r.URL.Query().Get("captain_name"))
@@ -39,11 +39,11 @@ func (h *Handler) HandleSquadTasks(w http.ResponseWriter, r *http.Request) {
 		}
 
 		JSONResponse(w, map[string]any{
-			"tasks": mapSharedTasksForAPI(listSquadTasks(h.squadManager, squadID, leadAgentName, after, limit)),
+			"tasks": mapSharedTasksForAPI(listTeamTasks(h.teamManager, teamID, leadAgentName, after, limit)),
 		})
 	case http.MethodPost:
 		var req struct {
-			SquadID       string   `json:"squad_id"`
+			TeamID        string   `json:"team_id"`
 			LeadAgentName string   `json:"lead_agent_name"`
 			CaptainName   string   `json:"captain_name"`
 			Message       string   `json:"message"`
@@ -58,7 +58,7 @@ func (h *Handler) HandleSquadTasks(w http.ResponseWriter, r *http.Request) {
 		if leadAgentName == "" {
 			leadAgentName = strings.TrimSpace(req.CaptainName)
 		}
-		task, err := h.squadManager.EnqueueSharedTaskForSquad(r.Context(), strings.TrimSpace(req.SquadID), leadAgentName, req.AgentNames, strings.TrimSpace(req.Message))
+		task, err := h.teamManager.EnqueueSharedTaskForTeam(r.Context(), strings.TrimSpace(req.TeamID), leadAgentName, req.AgentNames, strings.TrimSpace(req.Message))
 		if err != nil {
 			JSONError(w, err.Error(), http.StatusBadRequest)
 			return
@@ -88,7 +88,7 @@ func mapSharedTaskForAPI(task *agent.SharedTask) map[string]any {
 	}
 	return map[string]any{
 		"id":              task.ID,
-		"squad_id":        task.SquadID,
+		"team_id":         task.TeamID,
 		"captain_name":    task.CaptainName,
 		"lead_agent_name": task.CaptainName,
 		"agent_names":     task.AgentNames,
@@ -104,9 +104,9 @@ func mapSharedTaskForAPI(task *agent.SharedTask) map[string]any {
 	}
 }
 
-func listSquadTasks(manager *agent.SquadManager, squadID, leadAgentName string, after time.Time, limit int) []*agent.SharedTask {
-	if strings.TrimSpace(squadID) != "" {
-		return manager.ListSharedTasksForSquad(strings.TrimSpace(squadID), after, limit)
+func listTeamTasks(manager *agent.TeamManager, teamID, leadAgentName string, after time.Time, limit int) []*agent.SharedTask {
+	if strings.TrimSpace(teamID) != "" {
+		return manager.ListSharedTasksForTeam(strings.TrimSpace(teamID), after, limit)
 	}
 	return manager.ListSharedTasks(strings.TrimSpace(leadAgentName), after, limit)
 }

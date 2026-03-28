@@ -139,9 +139,9 @@ func (s *AgentGoDB) initSchema() error {
 	_, _ = s.db.Exec(`ALTER TABLE agents ADD COLUMN a2a_id TEXT`)
 	_, _ = s.db.Exec(`ALTER TABLE agents ADD COLUMN enable_a2a BOOLEAN DEFAULT 0`)
 
-	// Teams/Squads table
+	// Teams table
 	_, err = s.db.Exec(`
-		CREATE TABLE IF NOT EXISTS squads (
+		CREATE TABLE IF NOT EXISTS teams (
 			id TEXT PRIMARY KEY,
 			a2a_id TEXT UNIQUE,
 			name TEXT UNIQUE NOT NULL,
@@ -152,29 +152,29 @@ func (s *AgentGoDB) initSchema() error {
 		)
 	`)
 	if err != nil {
-		return fmt.Errorf("failed to create squads table: %w", err)
+		return fmt.Errorf("failed to create teams table: %w", err)
 	}
-	_, _ = s.db.Exec(`ALTER TABLE squads ADD COLUMN a2a_id TEXT`)
-	_, _ = s.db.Exec(`ALTER TABLE squads ADD COLUMN enable_a2a BOOLEAN DEFAULT 0`)
+	_, _ = s.db.Exec(`ALTER TABLE teams ADD COLUMN a2a_id TEXT`)
+	_, _ = s.db.Exec(`ALTER TABLE teams ADD COLUMN enable_a2a BOOLEAN DEFAULT 0`)
 	if err := s.backfillA2AIDsLocked(); err != nil {
 		return fmt.Errorf("failed to backfill a2a ids: %w", err)
 	}
 
-	// Squad memberships
+	// Team memberships
 	_, err = s.db.Exec(`
-		CREATE TABLE IF NOT EXISTS squad_memberships (
+		CREATE TABLE IF NOT EXISTS team_memberships (
 			agent_id TEXT NOT NULL,
-			squad_id TEXT NOT NULL,
+			team_id TEXT NOT NULL,
 			role TEXT NOT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			PRIMARY KEY (agent_id, squad_id),
-			FOREIGN KEY (squad_id) REFERENCES squads(id) ON DELETE CASCADE,
+			PRIMARY KEY (agent_id, team_id),
+			FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE,
 			FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE
 		)
 	`)
 	if err != nil {
-		return fmt.Errorf("failed to create squad_memberships table: %w", err)
+		return fmt.Errorf("failed to create team_memberships table: %w", err)
 	}
 
 	// Chat sessions table - unified for all types (llm, rag, agent)
@@ -249,8 +249,8 @@ func (s *AgentGoDB) initSchema() error {
 		CREATE TABLE IF NOT EXISTS shared_tasks (
 			id TEXT PRIMARY KEY,
 			session_id TEXT,
-			squad_id TEXT NOT NULL,
-			squad_name TEXT,
+			team_id TEXT NOT NULL,
+			team_name TEXT,
 			captain_name TEXT NOT NULL,
 			agent_names TEXT NOT NULL,
 			prompt TEXT NOT NULL,
@@ -399,7 +399,7 @@ const (
 	ChatTypeLLM   = "llm"
 	ChatTypeRAG   = "rag"
 	ChatTypeAgent = "agent"
-	ChatTypeSquad = "squad"
+	ChatTypeTeam  = "team"
 )
 
 // ChatMessage represents a single message in a chat session
@@ -784,8 +784,8 @@ func (s *AgentGoDB) ListConfig() (map[string]string, error) {
 
 // ChatSession methods below
 
-// Squad represents a team/squad definition
-type Squad struct {
+// Team represents a team definition
+type Team struct {
 	ID          string    `json:"id"`
 	A2AID       string    `json:"a2a_id"`
 	Name        string    `json:"name"`
@@ -795,16 +795,16 @@ type Squad struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
-// SaveSquad saves or updates a squad
-func (s *AgentGoDB) SaveSquad(squad *Squad) error {
+// SaveTeam saves or updates a team
+func (s *AgentGoDB) SaveTeam(team *Team) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if strings.TrimSpace(squad.A2AID) == "" {
-		squad.A2AID = uuid.NewString()
+	if strings.TrimSpace(team.A2AID) == "" {
+		team.A2AID = uuid.NewString()
 	}
 
 	_, err := s.db.Exec(`
-		INSERT INTO squads (id, a2a_id, name, description, enable_a2a, created_at, updated_at)
+		INSERT INTO teams (id, a2a_id, name, description, enable_a2a, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			a2a_id = excluded.a2a_id,
@@ -812,88 +812,88 @@ func (s *AgentGoDB) SaveSquad(squad *Squad) error {
 			description = excluded.description,
 			enable_a2a = excluded.enable_a2a,
 			updated_at = CURRENT_TIMESTAMP
-	`, squad.ID, squad.A2AID, squad.Name, squad.Description, squad.EnableA2A, squad.CreatedAt, squad.UpdatedAt)
+	`, team.ID, team.A2AID, team.Name, team.Description, team.EnableA2A, team.CreatedAt, team.UpdatedAt)
 	return err
 }
 
-// GetSquad retrieves a squad by ID
-func (s *AgentGoDB) GetSquad(id string) (*Squad, error) {
+// GetTeam retrieves a team by ID
+func (s *AgentGoDB) GetTeam(id string) (*Team, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	squad := &Squad{}
+	team := &Team{}
 	err := s.db.QueryRow(`
 		SELECT id, a2a_id, name, description, enable_a2a, created_at, updated_at
-		FROM squads WHERE id = ?
-	`, id).Scan(&squad.ID, &squad.A2AID, &squad.Name, &squad.Description, &squad.EnableA2A, &squad.CreatedAt, &squad.UpdatedAt)
+		FROM teams WHERE id = ?
+	`, id).Scan(&team.ID, &team.A2AID, &team.Name, &team.Description, &team.EnableA2A, &team.CreatedAt, &team.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
-	return squad, nil
+	return team, nil
 }
 
-// GetSquadByName retrieves a squad by name
-func (s *AgentGoDB) GetSquadByName(name string) (*Squad, error) {
+// GetTeamByName retrieves a team by name
+func (s *AgentGoDB) GetTeamByName(name string) (*Team, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	squad := &Squad{}
+	team := &Team{}
 	err := s.db.QueryRow(`
 		SELECT id, a2a_id, name, description, enable_a2a, created_at, updated_at
-		FROM squads WHERE lower(name) = lower(?)
-	`, name).Scan(&squad.ID, &squad.A2AID, &squad.Name, &squad.Description, &squad.EnableA2A, &squad.CreatedAt, &squad.UpdatedAt)
+		FROM teams WHERE lower(name) = lower(?)
+	`, name).Scan(&team.ID, &team.A2AID, &team.Name, &team.Description, &team.EnableA2A, &team.CreatedAt, &team.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
-	return squad, nil
+	return team, nil
 }
 
-func (s *AgentGoDB) GetSquadByA2AID(a2aID string) (*Squad, error) {
+func (s *AgentGoDB) GetTeamByA2AID(a2aID string) (*Team, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	squad := &Squad{}
+	team := &Team{}
 	err := s.db.QueryRow(`
 		SELECT id, a2a_id, name, description, enable_a2a, created_at, updated_at
-		FROM squads WHERE a2a_id = ?
-	`, strings.TrimSpace(a2aID)).Scan(&squad.ID, &squad.A2AID, &squad.Name, &squad.Description, &squad.EnableA2A, &squad.CreatedAt, &squad.UpdatedAt)
+		FROM teams WHERE a2a_id = ?
+	`, strings.TrimSpace(a2aID)).Scan(&team.ID, &team.A2AID, &team.Name, &team.Description, &team.EnableA2A, &team.CreatedAt, &team.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
-	return squad, nil
+	return team, nil
 }
 
-// ListSquads retrieves all squads
-func (s *AgentGoDB) ListSquads() ([]*Squad, error) {
+// ListTeams retrieves all teams
+func (s *AgentGoDB) ListTeams() ([]*Team, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	rows, err := s.db.Query(`
 		SELECT id, a2a_id, name, description, enable_a2a, created_at, updated_at
-		FROM squads ORDER BY name ASC
+		FROM teams ORDER BY name ASC
 	`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var squads []*Squad
+	var teams []*Team
 	for rows.Next() {
-		squad := &Squad{}
-		if err := rows.Scan(&squad.ID, &squad.A2AID, &squad.Name, &squad.Description, &squad.EnableA2A, &squad.CreatedAt, &squad.UpdatedAt); err != nil {
+		team := &Team{}
+		if err := rows.Scan(&team.ID, &team.A2AID, &team.Name, &team.Description, &team.EnableA2A, &team.CreatedAt, &team.UpdatedAt); err != nil {
 			continue
 		}
-		squads = append(squads, squad)
+		teams = append(teams, team)
 	}
-	return squads, nil
+	return teams, nil
 }
 
-// DeleteSquad deletes a squad by ID
-func (s *AgentGoDB) DeleteSquad(id string) error {
+// DeleteTeam deletes a team by ID
+func (s *AgentGoDB) DeleteTeam(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	_, err := s.db.Exec(`DELETE FROM squads WHERE id = ?`, id)
+	_, err := s.db.Exec(`DELETE FROM teams WHERE id = ?`, id)
 	return err
 }
 
@@ -1065,7 +1065,7 @@ func (s *AgentGoDB) DeleteAgentModel(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, err := s.db.Exec(`DELETE FROM squad_memberships WHERE agent_id = ?`, id); err != nil {
+	if _, err := s.db.Exec(`DELETE FROM team_memberships WHERE agent_id = ?`, id); err != nil {
 		return err
 	}
 	_, err := s.db.Exec(`DELETE FROM agents WHERE id = ?`, id)
@@ -1093,63 +1093,63 @@ func (s *AgentGoDB) backfillA2AIDsLocked() error {
 		}
 	}
 
-	rows, err = s.db.Query(`SELECT id FROM squads WHERE a2a_id IS NULL OR trim(a2a_id) = ''`)
+	rows, err = s.db.Query(`SELECT id FROM teams WHERE a2a_id IS NULL OR trim(a2a_id) = ''`)
 	if err != nil {
 		return err
 	}
-	var squadIDs []string
+	var teamIDs []string
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
 			rows.Close()
 			return err
 		}
-		squadIDs = append(squadIDs, id)
+		teamIDs = append(teamIDs, id)
 	}
 	rows.Close()
-	for _, id := range squadIDs {
-		if _, err := s.db.Exec(`UPDATE squads SET a2a_id = ? WHERE id = ?`, uuid.NewString(), id); err != nil {
+	for _, id := range teamIDs {
+		if _, err := s.db.Exec(`UPDATE teams SET a2a_id = ? WHERE id = ?`, uuid.NewString(), id); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// SquadMembership represents an agent's membership in a squad
-type SquadMembership struct {
+// TeamMembership represents an agent's membership in a team
+type TeamMembership struct {
 	AgentID   string    `json:"agent_id"`
-	SquadID   string    `json:"squad_id"`
-	SquadName string    `json:"squad_name,omitempty"`
+	TeamID    string    `json:"team_id"`
+	TeamName  string    `json:"team_name,omitempty"`
 	Role      string    `json:"role"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// SaveSquadMembership saves or updates a squad membership
-func (s *AgentGoDB) SaveSquadMembership(m *SquadMembership) error {
+// SaveTeamMembership saves or updates a team membership
+func (s *AgentGoDB) SaveTeamMembership(m *TeamMembership) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	query := `
-		INSERT INTO squad_memberships (agent_id, squad_id, role, created_at, updated_at)
+		INSERT INTO team_memberships (agent_id, team_id, role, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?)
-		ON CONFLICT(agent_id, squad_id) DO UPDATE SET
+		ON CONFLICT(agent_id, team_id) DO UPDATE SET
 			role = excluded.role,
 			updated_at = excluded.updated_at
 	`
-	_, err := s.db.Exec(query, m.AgentID, m.SquadID, m.Role, m.CreatedAt, m.UpdatedAt)
+	_, err := s.db.Exec(query, m.AgentID, m.TeamID, m.Role, m.CreatedAt, m.UpdatedAt)
 	return err
 }
 
-// ListSquadMemberships retrieves memberships with optional filtering
-func (s *AgentGoDB) ListSquadMemberships(agentID, squadID string) ([]*SquadMembership, error) {
+// ListTeamMemberships retrieves memberships with optional filtering
+func (s *AgentGoDB) ListTeamMemberships(agentID, teamID string) ([]*TeamMembership, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	query := `
-		SELECT m.agent_id, m.squad_id, q.name as squad_name, m.role, m.created_at, m.updated_at
-		FROM squad_memberships m
-		JOIN squads q ON m.squad_id = q.id
+		SELECT m.agent_id, m.team_id, q.name as team_name, m.role, m.created_at, m.updated_at
+		FROM team_memberships m
+		JOIN teams q ON m.team_id = q.id
 		WHERE 1=1
 	`
 	args := []interface{}{}
@@ -1157,9 +1157,9 @@ func (s *AgentGoDB) ListSquadMemberships(agentID, squadID string) ([]*SquadMembe
 		query += " AND m.agent_id = ?"
 		args = append(args, agentID)
 	}
-	if squadID != "" {
-		query += " AND m.squad_id = ?"
-		args = append(args, squadID)
+	if teamID != "" {
+		query += " AND m.team_id = ?"
+		args = append(args, teamID)
 	}
 
 	rows, err := s.db.Query(query, args...)
@@ -1168,10 +1168,10 @@ func (s *AgentGoDB) ListSquadMemberships(agentID, squadID string) ([]*SquadMembe
 	}
 	defer rows.Close()
 
-	var result []*SquadMembership
+	var result []*TeamMembership
 	for rows.Next() {
-		var m SquadMembership
-		if err := rows.Scan(&m.AgentID, &m.SquadID, &m.SquadName, &m.Role, &m.CreatedAt, &m.UpdatedAt); err != nil {
+		var m TeamMembership
+		if err := rows.Scan(&m.AgentID, &m.TeamID, &m.TeamName, &m.Role, &m.CreatedAt, &m.UpdatedAt); err != nil {
 			continue
 		}
 		result = append(result, &m)
@@ -1179,19 +1179,19 @@ func (s *AgentGoDB) ListSquadMemberships(agentID, squadID string) ([]*SquadMembe
 	return result, nil
 }
 
-// DeleteSquadMembership deletes a specific membership
-func (s *AgentGoDB) DeleteSquadMembership(agentID, squadID string) error {
+// DeleteTeamMembership deletes a specific membership
+func (s *AgentGoDB) DeleteTeamMembership(agentID, teamID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, err := s.db.Exec("DELETE FROM squad_memberships WHERE agent_id = ? AND squad_id = ?", agentID, squadID)
+	_, err := s.db.Exec("DELETE FROM team_memberships WHERE agent_id = ? AND team_id = ?", agentID, teamID)
 	return err
 }
 
-// DeleteMembershipsBySquad deletes all memberships for a squad
-func (s *AgentGoDB) DeleteMembershipsBySquad(squadID string) error {
+// DeleteMembershipsByTeam deletes all memberships for a team
+func (s *AgentGoDB) DeleteMembershipsByTeam(teamID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, err := s.db.Exec("DELETE FROM squad_memberships WHERE squad_id = ?", squadID)
+	_, err := s.db.Exec("DELETE FROM team_memberships WHERE team_id = ?", teamID)
 	return err
 }
 
@@ -1199,8 +1199,8 @@ func (s *AgentGoDB) DeleteMembershipsBySquad(squadID string) error {
 type SharedTask struct {
 	ID          string     `json:"id"`
 	SessionID   string     `json:"session_id"`
-	SquadID     string     `json:"squad_id"`
-	SquadName   string     `json:"squad_name"`
+	TeamID      string     `json:"team_id"`
+	TeamName    string     `json:"team_name"`
 	CaptainName string     `json:"captain_name"`
 	AgentNames  []string   `json:"agent_names"`
 	Prompt      string     `json:"prompt"`
@@ -1223,14 +1223,14 @@ func (s *AgentGoDB) SaveSharedTask(task *SharedTask) error {
 
 	query := `
 		INSERT INTO shared_tasks (
-			id, session_id, squad_id, squad_name, captain_name, agent_names, prompt, ack_message,
+			id, session_id, team_id, team_name, captain_name, agent_names, prompt, ack_message,
 			status, queued_ahead, result_text, results, created_at, started_at, finished_at
 		)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			session_id = excluded.session_id,
-			squad_id = excluded.squad_id,
-			squad_name = excluded.squad_name,
+			team_id = excluded.team_id,
+			team_name = excluded.team_name,
 			captain_name = excluded.captain_name,
 			agent_names = excluded.agent_names,
 			prompt = excluded.prompt,
@@ -1244,7 +1244,7 @@ func (s *AgentGoDB) SaveSharedTask(task *SharedTask) error {
 			finished_at = excluded.finished_at
 	`
 	_, err := s.db.Exec(query,
-		task.ID, task.SessionID, task.SquadID, task.SquadName, task.CaptainName,
+		task.ID, task.SessionID, task.TeamID, task.TeamName, task.CaptainName,
 		string(agentNamesJSON), task.Prompt, task.AckMessage, task.Status,
 		task.QueuedAhead, task.ResultText, task.Results,
 		task.CreatedAt, task.StartedAt, task.FinishedAt,
@@ -1258,7 +1258,7 @@ func (s *AgentGoDB) ListSharedTasks() ([]*SharedTask, error) {
 	defer s.mu.RUnlock()
 
 	query := `
-		SELECT id, session_id, squad_id, squad_name, captain_name, agent_names, prompt, ack_message,
+		SELECT id, session_id, team_id, team_name, captain_name, agent_names, prompt, ack_message,
 		       status, queued_ahead, result_text, results, created_at, started_at, finished_at
 		FROM shared_tasks
 		ORDER BY created_at ASC
@@ -1274,7 +1274,7 @@ func (s *AgentGoDB) ListSharedTasks() ([]*SharedTask, error) {
 		var task SharedTask
 		var agentNamesJSON []byte
 		if err := rows.Scan(
-			&task.ID, &task.SessionID, &task.SquadID, &task.SquadName, &task.CaptainName,
+			&task.ID, &task.SessionID, &task.TeamID, &task.TeamName, &task.CaptainName,
 			&agentNamesJSON, &task.Prompt, &task.AckMessage, &task.Status,
 			&task.QueuedAhead, &task.ResultText, &task.Results,
 			&task.CreatedAt, &task.StartedAt, &task.FinishedAt,
@@ -1291,23 +1291,23 @@ func (s *AgentGoDB) ListSharedTasks() ([]*SharedTask, error) {
 func (s *AgentGoDB) DeleteMembershipsByAgent(agentID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, err := s.db.Exec("DELETE FROM squad_memberships WHERE agent_id = ?", agentID)
+	_, err := s.db.Exec("DELETE FROM team_memberships WHERE agent_id = ?", agentID)
 	return err
 }
 
 // MigrateAgentStore migrates data from the old agent store to AgentGoDB
 func (s *AgentGoDB) MigrateAgentStore(oldStore interface {
 	ListAgentModels() ([]*AgentModel, error)
-	ListSquads() ([]*Squad, error)
+	ListTeams() ([]*Team, error)
 }) error {
-	// Migrate squads
-	squads, err := oldStore.ListSquads()
+	// Migrate teams
+	teams, err := oldStore.ListTeams()
 	if err != nil {
-		return fmt.Errorf("failed to list squads from old store: %w", err)
+		return fmt.Errorf("failed to list teams from old store: %w", err)
 	}
-	for _, squad := range squads {
-		if err := s.SaveSquad(squad); err != nil {
-			return fmt.Errorf("failed to migrate squad %s: %w", squad.ID, err)
+	for _, team := range teams {
+		if err := s.SaveTeam(team); err != nil {
+			return fmt.Errorf("failed to migrate team %s: %w", team.ID, err)
 		}
 	}
 
@@ -1325,41 +1325,41 @@ func (s *AgentGoDB) MigrateAgentStore(oldStore interface {
 	return nil
 }
 
-// AddAgentToSquad adds an agent to a squad
-func (s *AgentGoDB) AddAgentToSquad(squadID, agentID, role string) error {
+// AddAgentToTeam adds an agent to a team
+func (s *AgentGoDB) AddAgentToTeam(teamID, agentID, role string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	_, err := s.db.Exec(`
-		INSERT INTO squad_memberships (squad_id, agent_id, role, created_at, updated_at)
+		INSERT INTO team_memberships (team_id, agent_id, role, created_at, updated_at)
 		VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-		ON CONFLICT(squad_id, agent_id) DO UPDATE SET
+		ON CONFLICT(team_id, agent_id) DO UPDATE SET
 			role = excluded.role,
 			updated_at = CURRENT_TIMESTAMP
-	`, squadID, agentID, role)
+	`, teamID, agentID, role)
 	return err
 }
 
-// RemoveAgentFromSquad removes an agent from a squad
-func (s *AgentGoDB) RemoveAgentFromSquad(squadID, agentID string) error {
+// RemoveAgentFromTeam removes an agent from a team
+func (s *AgentGoDB) RemoveAgentFromTeam(teamID, agentID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	_, err := s.db.Exec(`DELETE FROM squad_memberships WHERE squad_id = ? AND agent_id = ?`, squadID, agentID)
+	_, err := s.db.Exec(`DELETE FROM team_memberships WHERE team_id = ? AND agent_id = ?`, teamID, agentID)
 	return err
 }
 
-// GetSquadAgents retrieves all agents in a squad
-func (s *AgentGoDB) GetSquadAgents(squadID string) ([]*AgentModel, error) {
+// GetTeamAgents retrieves all agents in a team
+func (s *AgentGoDB) GetTeamAgents(teamID string) ([]*AgentModel, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	rows, err := s.db.Query(`
 		SELECT a.id, a.team_id, a.name, a.kind, a.description, a.instructions, a.model, a.preferred_provider, a.preferred_model, a.required_llm_capability, a.mcp_tools, a.skills, a.enable_rag, a.enable_memory, a.enable_ptc, a.enable_mcp, a.created_at, a.updated_at
 		FROM agents a
-		JOIN squad_memberships sm ON a.id = sm.agent_id
-		WHERE sm.squad_id = ?
-	`, squadID)
+		JOIN team_memberships sm ON a.id = sm.agent_id
+		WHERE sm.team_id = ?
+	`, teamID)
 	if err != nil {
 		return nil, err
 	}

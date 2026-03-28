@@ -19,8 +19,8 @@ import (
 	"github.com/liliang-cn/agent-go/v2/pkg/services"
 )
 
-// SquadManager handles the lifecycle, discovery, and execution routing for squad agents.
-type SquadManager struct {
+// TeamManager handles the lifecycle, discovery, and execution routing for team agents.
+type TeamManager struct {
 	store          *Store
 	cfg            *config.Config
 	runningAgents  map[string]context.CancelFunc // Tracks running agents if they are background loopers
@@ -41,9 +41,6 @@ type SquadManager struct {
 	agentMailboxes map[string]*agentMailbox
 }
 
-// TeamManager is kept as a compatibility alias for older call sites.
-type TeamManager = SquadManager
-
 type SharedTaskStatus string
 
 const (
@@ -51,25 +48,25 @@ const (
 	SharedTaskStatusRunning   SharedTaskStatus = "running"
 	SharedTaskStatusCompleted SharedTaskStatus = "completed"
 	SharedTaskStatusFailed    SharedTaskStatus = "failed"
-	defaultSquadID                             = "squad-default-001"
-	defaultSquadName                           = "AgentGo Squad"
-	legacyDefaultSquadName                     = "Default Squad"
-	defaultSquadDescription                    = "Default AgentGo squad."
+	defaultTeamID                              = "team-default-001"
+	defaultTeamName                            = "AgentGo Team"
+	legacyDefaultTeamName                      = "Default Team"
+	defaultTeamDescription                     = "Default AgentGo team."
 )
 
-// SharedTaskResult captures the outcome of one delegated squad agent call.
+// SharedTaskResult captures the outcome of one delegated team agent call.
 type SharedTaskResult struct {
 	AgentName string `json:"agent_name"`
 	Text      string `json:"text,omitempty"`
 	Error     string `json:"error,omitempty"`
 }
 
-// SharedTask is a queued squad task owned by one squad lead agent.
+// SharedTask is a queued team task owned by one team lead agent.
 type SharedTask struct {
 	ID          string             `json:"id"`
 	SessionID   string             `json:"session_id,omitempty"`
-	SquadID     string             `json:"squad_id"`
-	SquadName   string             `json:"squad_name,omitempty"`
+	TeamID      string             `json:"team_id"`
+	TeamName    string             `json:"team_name,omitempty"`
 	CaptainName string             `json:"captain_name"`
 	AgentNames  []string           `json:"agent_names"`
 	Prompt      string             `json:"prompt"`
@@ -83,12 +80,12 @@ type SharedTask struct {
 	FinishedAt  *time.Time         `json:"finished_at,omitempty"`
 }
 
-// SeedDefaultMembers seeds the built-in default squad and standalone agents.
-func (m *SquadManager) SeedDefaultMembers() error {
+// SeedDefaultMembers seeds the built-in default team and standalone agents.
+func (m *TeamManager) SeedDefaultMembers() error {
 	agentName := m.getAgentName()
-	squadName := m.getSquadName()
+	teamName := m.getTeamName()
 
-	if _, err := m.ensureDefaultSquad(); err != nil {
+	if _, err := m.ensureDefaultTeam(); err != nil {
 		return err
 	}
 
@@ -105,13 +102,13 @@ func (m *SquadManager) SeedDefaultMembers() error {
 		}
 	}
 
-	squads, err := m.store.ListTeams()
+	teams, err := m.store.ListTeams()
 	if err != nil {
 		return err
 	}
-	for _, squad := range squads {
-		if strings.EqualFold(strings.TrimSpace(squad.Name), "Default Team") {
-			if err := m.store.DeleteTeam(squad.ID); err != nil {
+	for _, team := range teams {
+		if strings.EqualFold(strings.TrimSpace(team.Name), "Default Team") {
+			if err := m.store.DeleteTeam(team.ID); err != nil {
 				return err
 			}
 		}
@@ -122,65 +119,65 @@ func (m *SquadManager) SeedDefaultMembers() error {
 			return err
 		}
 	}
-	if err := m.ensureDefaultSquadCaptain(ctx, agentName, squadName); err != nil {
+	if err := m.ensureDefaultTeamCaptain(ctx, agentName, teamName); err != nil {
 		return err
 	}
-	if err := m.ensureDefaultSquadConcierge(ctx, agentName, squadName); err != nil {
+	if err := m.ensureDefaultTeamConcierge(ctx, agentName, teamName); err != nil {
 		return err
 	}
-	if err := m.ensureDefaultSquadSpecialists(ctx, agentName); err != nil {
+	if err := m.ensureDefaultTeamSpecialists(ctx, agentName); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (m *SquadManager) ensureDefaultSquad() (*Squad, error) {
-	squadName := m.getSquadName()
-	squads, err := m.store.ListTeams()
+func (m *TeamManager) ensureDefaultTeam() (*Team, error) {
+	teamName := m.getTeamName()
+	teams, err := m.store.ListTeams()
 	if err != nil {
 		return nil, err
 	}
-	for _, squad := range squads {
-		if squad.ID == defaultSquadID || strings.EqualFold(squad.Name, squadName) || strings.EqualFold(squad.Name, legacyDefaultSquadName) {
+	for _, team := range teams {
+		if team.ID == defaultTeamID || strings.EqualFold(team.Name, teamName) || strings.EqualFold(team.Name, legacyDefaultTeamName) {
 			updated := false
-			if squad.ID != defaultSquadID {
-				squad.ID = defaultSquadID
+			if team.ID != defaultTeamID {
+				team.ID = defaultTeamID
 				updated = true
 			}
-			if !strings.EqualFold(squad.Name, squadName) {
-				squad.Name = squadName
+			if !strings.EqualFold(team.Name, teamName) {
+				team.Name = teamName
 				updated = true
 			}
-			if strings.TrimSpace(squad.Description) == "" || strings.EqualFold(strings.TrimSpace(squad.Description), "Default workspace squad.") {
-				squad.Description = fmt.Sprintf("Default %s squad.", m.getAgentName())
+			if strings.TrimSpace(team.Description) == "" || strings.EqualFold(strings.TrimSpace(team.Description), "Default workspace team.") {
+				team.Description = fmt.Sprintf("Default %s team.", m.getAgentName())
 				updated = true
 			}
 			if updated {
-				squad.UpdatedAt = time.Now()
-				if err := m.store.SaveTeam(squad); err != nil {
+				team.UpdatedAt = time.Now()
+				if err := m.store.SaveTeam(team); err != nil {
 					return nil, err
 				}
 			}
-			return squad, nil
+			return team, nil
 		}
 	}
 
-	squad := &Squad{
-		ID:          defaultSquadID,
-		Name:        squadName,
-		Description: fmt.Sprintf("Default %s squad.", m.getAgentName()),
+	team := &Team{
+		ID:          defaultTeamID,
+		Name:        teamName,
+		Description: fmt.Sprintf("Default %s team.", m.getAgentName()),
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}
-	if err := m.store.SaveTeam(squad); err != nil {
+	if err := m.store.SaveTeam(team); err != nil {
 		return nil, err
 	}
-	return squad, nil
+	return team, nil
 }
 
-// NewSquadManager creates a new squad manager based on a store.
-func NewSquadManager(s *Store) *SquadManager {
-	manager := &SquadManager{
+// NewTeamManager creates a new team manager based on a store.
+func NewTeamManager(s *Store) *TeamManager {
+	manager := &TeamManager{
 		store:          s,
 		runningAgents:  make(map[string]context.CancelFunc),
 		services:       make(map[string]*Service),
@@ -198,25 +195,20 @@ func NewSquadManager(s *Store) *SquadManager {
 	return manager
 }
 
-// NewTeamManager is kept as a compatibility alias for older call sites.
-func NewTeamManager(s *Store) *TeamManager {
-	return NewSquadManager(s)
-}
-
-func (m *SquadManager) SetConfig(cfg *config.Config) {
+func (m *TeamManager) SetConfig(cfg *config.Config) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.cfg = cfg
 }
 
-func (m *SquadManager) GetStore() *Store {
+func (m *TeamManager) GetStore() *Store {
 	return m.store
 }
 
-// SetAgentName sets the global agent name used in built-in prompts and squad names.
+// SetAgentName sets the global agent name used in built-in prompts and team names.
 // This overrides the agent.name field from config file or environment.
 // Call before SeedDefaultMembers for the names to take effect during initialization.
-func (m *SquadManager) SetAgentName(name string) {
+func (m *TeamManager) SetAgentName(name string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.cfg == nil {
@@ -225,7 +217,7 @@ func (m *SquadManager) SetAgentName(name string) {
 	m.cfg.Agent.Name = name
 }
 
-func (m *SquadManager) configuredAgentGoConfig() *config.Config {
+func (m *TeamManager) configuredAgentGoConfig() *config.Config {
 	m.mu.RLock()
 	cfg := m.cfg
 	m.mu.RUnlock()
@@ -239,36 +231,36 @@ func (m *SquadManager) configuredAgentGoConfig() *config.Config {
 	return loaded
 }
 
-func (m *SquadManager) getAgentName() string {
+func (m *TeamManager) getAgentName() string {
 	if cfg := m.configuredAgentGoConfig(); cfg != nil && cfg.Agent.Name != "" {
 		return cfg.Agent.Name
 	}
 	return "AgentGo"
 }
 
-func (m *SquadManager) getSquadName() string {
+func (m *TeamManager) getTeamName() string {
 	if cfg := m.configuredAgentGoConfig(); cfg != nil {
-		if cfg.Squad.Name != "" {
-			return cfg.Squad.Name
+		if cfg.Team.Name != "" {
+			return cfg.Team.Name
 		}
 		if cfg.Agent.Name != "" {
-			return cfg.Agent.Name + " Squad"
+			return cfg.Agent.Name + " Team"
 		}
 	}
-	return "AgentGo Squad"
+	return "AgentGo Team"
 }
 
-// EnqueueSharedTask queues a squad task under one squad lead agent and returns an immediate acknowledgement.
-func (m *SquadManager) EnqueueSharedTask(ctx context.Context, captainName string, agentNames []string, prompt string) (*SharedTask, error) {
-	return m.EnqueueSharedTaskForSquad(ctx, "", captainName, agentNames, prompt)
+// EnqueueSharedTask queues a team task under one team lead agent and returns an immediate acknowledgement.
+func (m *TeamManager) EnqueueSharedTask(ctx context.Context, captainName string, agentNames []string, prompt string) (*SharedTask, error) {
+	return m.EnqueueSharedTaskForTeam(ctx, "", captainName, agentNames, prompt)
 }
 
-// EnqueueSharedTaskForSquad queues a squad task for a specific squad and lead agent.
-func (m *SquadManager) EnqueueSharedTaskForSquad(ctx context.Context, squadID, captainName string, agentNames []string, prompt string) (*SharedTask, error) {
+// EnqueueSharedTaskForTeam queues a team task for a specific team and lead agent.
+func (m *TeamManager) EnqueueSharedTaskForTeam(ctx context.Context, teamID, captainName string, agentNames []string, prompt string) (*SharedTask, error) {
 	if strings.TrimSpace(prompt) == "" {
 		return nil, fmt.Errorf("message required")
 	}
-	squad, captain, err := m.resolveSharedTaskContext(strings.TrimSpace(squadID), strings.TrimSpace(captainName))
+	team, captain, err := m.resolveSharedTaskContext(strings.TrimSpace(teamID), strings.TrimSpace(captainName))
 	if err != nil {
 		return nil, err
 	}
@@ -278,20 +270,20 @@ func (m *SquadManager) EnqueueSharedTaskForSquad(ctx context.Context, squadID, c
 	}
 
 	for _, name := range agentNames {
-		member, memberErr := m.GetMemberByNameInSquad(name, squad.ID)
+		member, memberErr := m.GetMemberByNameInTeam(name, team.ID)
 		if memberErr != nil {
-			return nil, fmt.Errorf("cannot load squad agent %s: %w", name, memberErr)
+			return nil, fmt.Errorf("cannot load team agent %s: %w", name, memberErr)
 		}
 		if member.Kind == AgentKindCaptain && !strings.EqualFold(name, captain.Name) {
-			return nil, fmt.Errorf("%s is also a squad lead agent and cannot be delegated from %s", name, captain.Name)
+			return nil, fmt.Errorf("%s is also a team lead agent and cannot be delegated from %s", name, captain.Name)
 		}
 	}
 
 	now := time.Now()
 	task := &SharedTask{
 		ID:          uuid.New().String(),
-		SquadID:     squad.ID,
-		SquadName:   squad.Name,
+		TeamID:      team.ID,
+		TeamName:    team.Name,
 		CaptainName: captain.Name,
 		AgentNames:  append([]string(nil), agentNames...),
 		Prompt:      strings.TrimSpace(prompt),
@@ -300,24 +292,24 @@ func (m *SquadManager) EnqueueSharedTaskForSquad(ctx context.Context, squadID, c
 	}
 
 	m.queueMu.Lock()
-	queuedAhead := len(m.taskQueues[squad.ID])
-	if m.queueRunning[squad.ID] {
+	queuedAhead := len(m.taskQueues[team.ID])
+	if m.queueRunning[team.ID] {
 		queuedAhead++
 	}
 	task.QueuedAhead = queuedAhead
 	task.AckMessage = buildSharedTaskAck(captain.Name, queuedAhead)
 	m.sharedTasks[task.ID] = task
-	m.taskQueues[squad.ID] = append(m.taskQueues[squad.ID], task.ID)
-	shouldStartWorker := !m.queueRunning[squad.ID]
+	m.taskQueues[team.ID] = append(m.taskQueues[team.ID], task.ID)
+	shouldStartWorker := !m.queueRunning[team.ID]
 	if shouldStartWorker {
-		m.queueRunning[squad.ID] = true
+		m.queueRunning[team.ID] = true
 	}
 	m.queueMu.Unlock()
 
 	if err := m.store.SaveSharedTask(task); err != nil {
 		m.queueMu.Lock()
 		delete(m.sharedTasks, task.ID)
-		queue := m.taskQueues[squad.ID]
+		queue := m.taskQueues[team.ID]
 		filtered := make([]string, 0, len(queue))
 		for _, id := range queue {
 			if id != task.ID {
@@ -325,41 +317,41 @@ func (m *SquadManager) EnqueueSharedTaskForSquad(ctx context.Context, squadID, c
 			}
 		}
 		if len(filtered) == 0 {
-			delete(m.taskQueues, squad.ID)
+			delete(m.taskQueues, team.ID)
 			if shouldStartWorker {
-				delete(m.queueRunning, squad.ID)
+				delete(m.queueRunning, team.ID)
 			}
 		} else {
-			m.taskQueues[squad.ID] = filtered
+			m.taskQueues[team.ID] = filtered
 		}
 		m.queueMu.Unlock()
 		return nil, err
 	}
 
 	if shouldStartWorker {
-		go m.runSharedTaskQueue(context.WithoutCancel(ctx), squad.ID)
+		go m.runSharedTaskQueue(context.WithoutCancel(ctx), team.ID)
 	}
 
 	return cloneSharedTask(task), nil
 }
 
-// ListSharedTasks returns recent queued or completed squad tasks for one captain.
-func (m *SquadManager) ListSharedTasks(captainName string, since time.Time, limit int) []*SharedTask {
+// ListSharedTasks returns recent queued or completed team tasks for one captain.
+func (m *TeamManager) ListSharedTasks(captainName string, since time.Time, limit int) []*SharedTask {
 	return m.listSharedTasks("", captainName, since, limit)
 }
 
-// ListSharedTasksForSquad returns recent queued or completed squad tasks for one squad.
-func (m *SquadManager) ListSharedTasksForSquad(squadID string, since time.Time, limit int) []*SharedTask {
-	return m.listSharedTasks(squadID, "", since, limit)
+// ListSharedTasksForTeam returns recent queued or completed team tasks for one team.
+func (m *TeamManager) ListSharedTasksForTeam(teamID string, since time.Time, limit int) []*SharedTask {
+	return m.listSharedTasks(teamID, "", since, limit)
 }
 
-func (m *SquadManager) listSharedTasks(squadID, captainName string, since time.Time, limit int) []*SharedTask {
+func (m *TeamManager) listSharedTasks(teamID, captainName string, since time.Time, limit int) []*SharedTask {
 	m.queueMu.Lock()
 	defer m.queueMu.Unlock()
 
 	tasks := make([]*SharedTask, 0, len(m.sharedTasks))
 	for _, task := range m.sharedTasks {
-		if squadID != "" && !strings.EqualFold(task.SquadID, squadID) {
+		if teamID != "" && !strings.EqualFold(task.TeamID, teamID) {
 			continue
 		}
 		if captainName != "" && !strings.EqualFold(task.CaptainName, captainName) {
@@ -380,9 +372,9 @@ func (m *SquadManager) listSharedTasks(squadID, captainName string, since time.T
 	return tasks
 }
 
-func (m *SquadManager) runSharedTaskQueue(ctx context.Context, squadID string) {
+func (m *TeamManager) runSharedTaskQueue(ctx context.Context, teamID string) {
 	for {
-		task := m.nextQueuedTask(squadID)
+		task := m.nextQueuedTask(teamID)
 		if task == nil {
 			return
 		}
@@ -390,21 +382,21 @@ func (m *SquadManager) runSharedTaskQueue(ctx context.Context, squadID string) {
 	}
 }
 
-func (m *SquadManager) nextQueuedTask(squadID string) *SharedTask {
+func (m *TeamManager) nextQueuedTask(teamID string) *SharedTask {
 	m.queueMu.Lock()
 	defer m.queueMu.Unlock()
 
-	queue := m.taskQueues[squadID]
+	queue := m.taskQueues[teamID]
 	if len(queue) == 0 {
-		delete(m.queueRunning, squadID)
+		delete(m.queueRunning, teamID)
 		return nil
 	}
 
 	taskID := queue[0]
 	if len(queue) == 1 {
-		delete(m.taskQueues, squadID)
+		delete(m.taskQueues, teamID)
 	} else {
-		m.taskQueues[squadID] = queue[1:]
+		m.taskQueues[teamID] = queue[1:]
 	}
 
 	task := m.sharedTasks[taskID]
@@ -419,7 +411,7 @@ func (m *SquadManager) nextQueuedTask(squadID string) *SharedTask {
 	return cloneSharedTask(task)
 }
 
-func (m *SquadManager) executeSharedTask(ctx context.Context, task *SharedTask) {
+func (m *TeamManager) executeSharedTask(ctx context.Context, task *SharedTask) {
 	m.executeSharedTaskStream(ctx, task)
 }
 
@@ -430,7 +422,7 @@ func buildSharedTaskAck(captainName string, queuedAhead int) string {
 	return fmt.Sprintf("%s received that. Starting it now.", captainName)
 }
 
-func (m *SquadManager) restoreSharedTasks() {
+func (m *TeamManager) restoreSharedTasks() {
 	if m == nil || m.store == nil {
 		return
 	}
@@ -440,7 +432,7 @@ func (m *SquadManager) restoreSharedTasks() {
 		return
 	}
 
-	queuedBySquad := make(map[string][]*SharedTask)
+	queuedByTeam := make(map[string][]*SharedTask)
 	for _, task := range tasks {
 		if task == nil {
 			continue
@@ -453,17 +445,17 @@ func (m *SquadManager) restoreSharedTasks() {
 		}
 		m.sharedTasks[task.ID] = cloneSharedTask(task)
 		if task.Status == SharedTaskStatusQueued {
-			queuedBySquad[task.SquadID] = append(queuedBySquad[task.SquadID], cloneSharedTask(task))
+			queuedByTeam[task.TeamID] = append(queuedByTeam[task.TeamID], cloneSharedTask(task))
 		}
-		m.ensureAsyncTaskForSharedTask(task, task.SessionID, task.SquadName)
+		m.ensureAsyncTaskForSharedTask(task, task.SessionID, task.TeamName)
 	}
 
-	for squadID, squadTasks := range queuedBySquad {
-		slices.SortFunc(squadTasks, func(a, b *SharedTask) int {
+	for teamID, teamTasks := range queuedByTeam {
+		slices.SortFunc(teamTasks, func(a, b *SharedTask) int {
 			return a.CreatedAt.Compare(b.CreatedAt)
 		})
-		queue := make([]string, 0, len(squadTasks))
-		for idx, task := range squadTasks {
+		queue := make([]string, 0, len(teamTasks))
+		for idx, task := range teamTasks {
 			task.QueuedAhead = idx
 			if stored := m.sharedTasks[task.ID]; stored != nil {
 				stored.QueuedAhead = idx
@@ -474,9 +466,9 @@ func (m *SquadManager) restoreSharedTasks() {
 		if len(queue) == 0 {
 			continue
 		}
-		m.taskQueues[squadID] = queue
-		m.queueRunning[squadID] = true
-		go m.runSharedTaskQueue(context.Background(), squadID)
+		m.taskQueues[teamID] = queue
+		m.queueRunning[teamID] = true
+		go m.runSharedTaskQueue(context.Background(), teamID)
 	}
 }
 
@@ -498,82 +490,82 @@ func cloneSharedTask(task *SharedTask) *SharedTask {
 	return &cloned
 }
 
-// ListMembers returns all registered captains and specialists that belong to squads.
-func (m *SquadManager) ListMembers() ([]*AgentModel, error) {
+// ListMembers returns all registered captains and specialists that belong to teams.
+func (m *TeamManager) ListMembers() ([]*AgentModel, error) {
 	all, err := m.store.ListAgentModels()
 	if err != nil {
 		return nil, err
 	}
 	members := make([]*AgentModel, 0, len(all))
 	for _, model := range all {
-		for _, membership := range model.Squads {
+		for _, membership := range model.Teams {
 			members = append(members, cloneAgentForMembership(model, membership))
 		}
 	}
 	return members, nil
 }
 
-// CreateMember persists a new squad agent configuration.
-func (m *SquadManager) CreateMember(ctx context.Context, model *AgentModel) (*AgentModel, error) {
+// CreateMember persists a new team agent configuration.
+func (m *TeamManager) CreateMember(ctx context.Context, model *AgentModel) (*AgentModel, error) {
 	if model == nil {
 		return nil, fmt.Errorf("agent model is required")
 	}
-	squadID := strings.TrimSpace(model.TeamID)
-	if squadID == "" {
-		defaultSquad, err := m.ensureDefaultSquad()
+	teamID := strings.TrimSpace(model.TeamID)
+	if teamID == "" {
+		defaultTeam, err := m.ensureDefaultTeam()
 		if err != nil {
 			return nil, err
 		}
-		squadID = defaultSquad.ID
+		teamID = defaultTeam.ID
 	}
 	role := model.Kind
 	if role == "" || role == AgentKindAgent {
 		role = AgentKindSpecialist
 	}
-	model.TeamID = squadID
+	model.TeamID = teamID
 	model.Kind = role
 	return m.CreateAgent(ctx, model)
 }
 
-func (m *SquadManager) CreateSquad(_ context.Context, squad *Squad) (*Squad, error) {
-	if squad == nil {
-		return nil, fmt.Errorf("squad is required")
+func (m *TeamManager) CreateTeam(_ context.Context, team *Team) (*Team, error) {
+	if team == nil {
+		return nil, fmt.Errorf("team is required")
 	}
-	if strings.TrimSpace(squad.Name) == "" {
-		return nil, fmt.Errorf("squad name is required")
+	if strings.TrimSpace(team.Name) == "" {
+		return nil, fmt.Errorf("team name is required")
 	}
-	if strings.TrimSpace(squad.ID) == "" {
-		squad.ID = uuid.New().String()
+	if strings.TrimSpace(team.ID) == "" {
+		team.ID = uuid.New().String()
 	}
-	if strings.TrimSpace(squad.A2AID) == "" {
-		squad.A2AID = uuid.NewString()
+	if strings.TrimSpace(team.A2AID) == "" {
+		team.A2AID = uuid.NewString()
 	}
-	if strings.TrimSpace(squad.Description) == "" {
-		squad.Description = squad.Name
+	if strings.TrimSpace(team.Description) == "" {
+		team.Description = team.Name
 	}
 	now := time.Now()
-	if squad.CreatedAt.IsZero() {
-		squad.CreatedAt = now
+	if team.CreatedAt.IsZero() {
+		team.CreatedAt = now
 	}
-	squad.UpdatedAt = now
+	team.UpdatedAt = now
 
-	if err := m.store.SaveTeam(squad); err != nil {
+	if err := m.store.SaveTeam(team); err != nil {
 		return nil, err
 	}
 
-	leadAgentName := defaultSquadLeadName(squad.Name)
+	leadAgentName := defaultTeamLeadName(team.Name)
 	if existing, err := m.store.GetAgentModelByName(leadAgentName); err == nil {
-		if _, err := m.JoinSquad(context.Background(), existing.Name, squad.ID, AgentKindCaptain); err != nil {
+		if _, err := m.JoinTeam(context.Background(), existing.Name, team.ID, AgentKindCaptain); err != nil {
 			return nil, err
 		}
 	} else {
 		_, err := m.CreateMember(context.Background(), &AgentModel{
 			ID:           uuid.New().String(),
-			TeamID:       squad.ID,
+			TeamID:       team.ID,
 			Name:         leadAgentName,
 			Kind:         AgentKindCaptain,
-			Description:  fmt.Sprintf("Default captain agent for %s.", squad.Name),
-			Instructions: fmt.Sprintf("You are the captain agent for squad %s. Help directly when possible and coordinate specialists when useful.", squad.Name),
+			Description:  fmt.Sprintf("Default captain agent for %s.", team.Name),
+			Instructions: fmt.Sprintf("You are the captain agent for team %s. Help directly when possible and coordinate specialists when useful.", team.Name),
 			MCPTools:     defaultMemberMCPTools("Captain"),
 			EnableRAG:    true,
 			EnableMemory: true,
@@ -584,24 +576,24 @@ func (m *SquadManager) CreateSquad(_ context.Context, squad *Squad) (*Squad, err
 		}
 	}
 
-	return m.store.GetTeam(squad.ID)
+	return m.store.GetTeam(team.ID)
 }
 
-func (m *SquadManager) ListSquads() ([]*Squad, error) {
+func (m *TeamManager) ListTeams() ([]*Team, error) {
 	return m.store.ListTeams()
 }
 
-func (m *SquadManager) GetSquadByName(name string) (*Squad, error) {
+func (m *TeamManager) GetTeamByName(name string) (*Team, error) {
 	return m.store.GetTeamByName(strings.TrimSpace(name))
 }
 
-func (m *SquadManager) GetSquadByA2AID(a2aID string) (*Squad, error) {
+func (m *TeamManager) GetTeamByA2AID(a2aID string) (*Team, error) {
 	return m.store.GetTeamByA2AID(strings.TrimSpace(a2aID))
 }
 
-func (m *SquadManager) AddCaptain(ctx context.Context, squadID, name, description, instructions string) (*AgentModel, error) {
+func (m *TeamManager) AddCaptain(ctx context.Context, teamID, name, description, instructions string) (*AgentModel, error) {
 	return m.CreateMember(ctx, &AgentModel{
-		TeamID:       strings.TrimSpace(squadID),
+		TeamID:       strings.TrimSpace(teamID),
 		Name:         strings.TrimSpace(name),
 		Kind:         AgentKindCaptain,
 		Description:  strings.TrimSpace(description),
@@ -609,9 +601,9 @@ func (m *SquadManager) AddCaptain(ctx context.Context, squadID, name, descriptio
 	})
 }
 
-func (m *SquadManager) AddSpecialist(ctx context.Context, squadID, name, description, instructions string) (*AgentModel, error) {
+func (m *TeamManager) AddSpecialist(ctx context.Context, teamID, name, description, instructions string) (*AgentModel, error) {
 	return m.CreateMember(ctx, &AgentModel{
-		TeamID:       strings.TrimSpace(squadID),
+		TeamID:       strings.TrimSpace(teamID),
 		Name:         strings.TrimSpace(name),
 		Kind:         AgentKindSpecialist,
 		Description:  strings.TrimSpace(description),
@@ -619,7 +611,7 @@ func (m *SquadManager) AddSpecialist(ctx context.Context, squadID, name, descrip
 	})
 }
 
-func (m *SquadManager) ListCaptains() ([]*AgentModel, error) {
+func (m *TeamManager) ListCaptains() ([]*AgentModel, error) {
 	members, err := m.ListMembers()
 	if err != nil {
 		return nil, err
@@ -633,7 +625,7 @@ func (m *SquadManager) ListCaptains() ([]*AgentModel, error) {
 	return captains, nil
 }
 
-func (m *SquadManager) ListSpecialists() ([]*AgentModel, error) {
+func (m *TeamManager) ListSpecialists() ([]*AgentModel, error) {
 	members, err := m.ListMembers()
 	if err != nil {
 		return nil, err
@@ -647,50 +639,42 @@ func (m *SquadManager) ListSpecialists() ([]*AgentModel, error) {
 	return specialists, nil
 }
 
-func (m *SquadManager) CreateTeam(ctx context.Context, team *Team) (*Team, error) {
-	return m.CreateSquad(ctx, team)
-}
-
-func (m *SquadManager) ListTeams() ([]*Team, error) {
-	return m.ListSquads()
-}
-
-// GetMemberByName retrieves a persisted squad agent model by name.
-func (m *SquadManager) GetMemberByName(name string) (*AgentModel, error) {
+// GetMemberByName retrieves a persisted team agent model by name.
+func (m *TeamManager) GetMemberByName(name string) (*AgentModel, error) {
 	model, err := m.store.GetAgentModelByName(strings.TrimSpace(name))
 	if err != nil {
 		return nil, err
 	}
-	if len(model.Squads) == 0 {
-		return nil, fmt.Errorf("agent '%s' is not in a squad", model.Name)
+	if len(model.Teams) == 0 {
+		return nil, fmt.Errorf("agent '%s' is not in a team", model.Name)
 	}
-	if len(model.Squads) == 1 {
-		return cloneAgentForMembership(model, model.Squads[0]), nil
+	if len(model.Teams) == 1 {
+		return cloneAgentForMembership(model, model.Teams[0]), nil
 	}
-	for _, membership := range model.Squads {
-		if membership.SquadID == defaultSquadID {
+	for _, membership := range model.Teams {
+		if membership.TeamID == defaultTeamID {
 			return cloneAgentForMembership(model, membership), nil
 		}
 	}
-	return cloneAgentForMembership(model, model.Squads[0]), nil
+	return cloneAgentForMembership(model, model.Teams[0]), nil
 }
 
-func (m *SquadManager) GetMemberByNameInSquad(name, squadID string) (*AgentModel, error) {
+func (m *TeamManager) GetMemberByNameInTeam(name, teamID string) (*AgentModel, error) {
 	model, err := m.store.GetAgentModelByName(strings.TrimSpace(name))
 	if err != nil {
 		return nil, err
 	}
-	squadID = strings.TrimSpace(squadID)
-	for _, membership := range model.Squads {
-		if membership.SquadID == squadID {
+	teamID = strings.TrimSpace(teamID)
+	for _, membership := range model.Teams {
+		if membership.TeamID == teamID {
 			return cloneAgentForMembership(model, membership), nil
 		}
 	}
-	return nil, fmt.Errorf("agent '%s' is not in squad %s", model.Name, squadID)
+	return nil, fmt.Errorf("agent '%s' is not in team %s", model.Name, teamID)
 }
 
 // getOrBuildService returns a cached service or builds a new one for the agent model.
-func (m *SquadManager) getOrBuildService(name string) (*Service, error) {
+func (m *TeamManager) getOrBuildService(name string) (*Service, error) {
 	m.mu.RLock()
 	svc, exists := m.services[name]
 	m.mu.RUnlock()
@@ -724,13 +708,13 @@ func (m *SquadManager) getOrBuildService(name string) (*Service, error) {
 	}
 	if cfg != nil {
 		agentgoCfg = cfg
-		if len(model.Squads) > 0 {
+		if len(model.Teams) > 0 {
 			systemPrompt = m.buildTeamSystemPromptForModel(cfg, model) + "\n\n" + buildTeamMemberPrompt(model)
 		} else {
 			systemPrompt = buildStandaloneAgentPrompt(cfg, model)
 		}
 	} else {
-		if len(model.Squads) > 0 {
+		if len(model.Teams) > 0 {
 			systemPrompt = m.buildTeamSystemPromptForModel(nil, model) + "\n\n" + buildTeamMemberPrompt(model)
 		}
 	}
@@ -802,7 +786,7 @@ func (m *SquadManager) getOrBuildService(name string) (*Service, error) {
 		newSvc.agent.SetAllowedSkills([]string{}) // none allowed if empty
 	}
 
-	if hasMembershipRole(model.Squads, AgentKindCaptain) {
+	if hasMembershipRole(model.Teams, AgentKindCaptain) {
 		m.RegisterCaptainTools(newSvc)
 		configureCaptainService(newSvc)
 	}
@@ -818,31 +802,31 @@ func (m *SquadManager) getOrBuildService(name string) (*Service, error) {
 	if label := configuredModelLabel(model); label != "" {
 		newSvc.agent.SetModel(label)
 	}
-	newSvc.SetMemoryScope(model.Name, primaryMemorySquadID(model), "")
+	newSvc.SetMemoryScope(model.Name, primaryMemoryTeamID(model), "")
 
 	m.services[name] = newSvc
 
 	return newSvc, nil
 }
 
-func primaryMemorySquadID(model *AgentModel) string {
+func primaryMemoryTeamID(model *AgentModel) string {
 	if model == nil {
 		return ""
 	}
 	if teamID := strings.TrimSpace(model.TeamID); teamID != "" {
 		return teamID
 	}
-	for _, membership := range model.Squads {
-		if squadID := strings.TrimSpace(membership.SquadID); squadID != "" {
-			return squadID
+	for _, membership := range model.Teams {
+		if teamID := strings.TrimSpace(membership.TeamID); teamID != "" {
+			return teamID
 		}
 	}
 	return ""
 }
 
-func (m *SquadManager) buildTeamSystemPromptForModel(cfg *config.Config, model *AgentModel) string {
+func (m *TeamManager) buildTeamSystemPromptForModel(cfg *config.Config, model *AgentModel) string {
 	base := buildTeamSystemPrompt(cfg, model)
-	if model == nil || !hasMembershipRole(model.Squads, AgentKindCaptain) {
+	if model == nil || !hasMembershipRole(model.Teams, AgentKindCaptain) {
 		return base
 	}
 
@@ -853,7 +837,7 @@ func (m *SquadManager) buildTeamSystemPromptForModel(cfg *config.Config, model *
 	return strings.TrimSpace(base + "\n\n" + roster)
 }
 
-func (m *SquadManager) decorateDelegableBuiltInAgentPrompt(base string, model *AgentModel) string {
+func (m *TeamManager) decorateDelegableBuiltInAgentPrompt(base string, model *AgentModel) string {
 	base = strings.TrimSpace(base)
 	if model == nil || isBuiltInAgentModel(model) {
 		return base
@@ -868,7 +852,7 @@ func (m *SquadManager) decorateDelegableBuiltInAgentPrompt(base string, model *A
 	return strings.TrimSpace(base + "\n\n" + context)
 }
 
-func (m *SquadManager) decorateKnownAgentsPrompt(base string, model *AgentModel) string {
+func (m *TeamManager) decorateKnownAgentsPrompt(base string, model *AgentModel) string {
 	base = strings.TrimSpace(base)
 	context := strings.TrimSpace(m.buildKnownAgentsContext(model))
 	if context == "" {
@@ -882,10 +866,10 @@ func (m *SquadManager) decorateKnownAgentsPrompt(base string, model *AgentModel)
 
 func buildTeamSystemPrompt(cfg *config.Config, model *AgentModel) string {
 	agentName := "AgentGo"
-	squadName := "AgentGo Squad"
+	teamName := "AgentGo Team"
 	if cfg != nil && cfg.Agent.Name != "" {
 		agentName = cfg.Agent.Name
-		squadName = agentName + " Squad"
+		teamName = agentName + " Team"
 	}
 
 	workspace := ""
@@ -898,8 +882,8 @@ func buildTeamSystemPrompt(cfg *config.Config, model *AgentModel) string {
 	}
 
 	lines := []string{
-		fmt.Sprintf("You are working as part of a %s.", squadName),
-		"The squad shares one workspace and one project context.",
+		fmt.Sprintf("You are working as part of a %s.", teamName),
+		"The team shares one workspace and one project context.",
 	}
 	lines = append(lines, buildRuntimeContextLines()...)
 	if workspace != "" {
@@ -909,25 +893,25 @@ func buildTeamSystemPrompt(cfg *config.Config, model *AgentModel) string {
 		lines = append(lines, "- Active project root: "+projectRoot)
 		lines = append(lines, "- Stay inside the active project root unless the user explicitly asks for another location.")
 	}
-	if model != nil && hasMembershipRole(model.Squads, AgentKindCaptain) {
+	if model != nil && hasMembershipRole(model.Teams, AgentKindCaptain) {
 		lines = append(lines,
-			"- You are the captain for this squad.",
+			"- You are the captain for this team.",
 			"- Handle direct user requests when possible and delegate specialist work only when that improves the result.",
-			"- Prefer assigning multi-step or implementation-heavy work to named squad members via async team tasks instead of doing it yourself.",
+			"- Prefer assigning multi-step or implementation-heavy work to named team members via async team tasks instead of doing it yourself.",
 			"- Use async team task submission first for coding, file-writing, research, and verification work. Only use synchronous delegation when you truly need an immediate inline sub-result.",
-			"- Do not use generic sub-agent delegation; coordinate through the squad members listed below.",
+			"- Do not use generic sub-agent delegation; coordinate through the team members listed below.",
 		)
 	}
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
-func (m *SquadManager) buildCaptainRosterContext(model *AgentModel) string {
-	if model == nil || !hasMembershipRole(model.Squads, AgentKindCaptain) {
+func (m *TeamManager) buildCaptainRosterContext(model *AgentModel) string {
+	if model == nil || !hasMembershipRole(model.Teams, AgentKindCaptain) {
 		return ""
 	}
 
 	lines := []string{
-		"Captain responsibilities and squad roster:",
+		"Captain responsibilities and team roster:",
 		"- Your role: captain / team lead.",
 	}
 	if desc := strings.TrimSpace(model.Description); desc != "" {
@@ -937,22 +921,22 @@ func (m *SquadManager) buildCaptainRosterContext(model *AgentModel) string {
 		lines = append(lines, "- Your operating responsibilities: "+singleLinePromptText(instr))
 	}
 
-	for _, membership := range model.Squads {
+	for _, membership := range model.Teams {
 		if membership.Role != AgentKindCaptain {
 			continue
 		}
-		squadLabel := strings.TrimSpace(membership.SquadName)
-		if squadLabel == "" {
-			squadLabel = strings.TrimSpace(membership.SquadID)
+		teamLabel := strings.TrimSpace(membership.TeamName)
+		if teamLabel == "" {
+			teamLabel = strings.TrimSpace(membership.TeamID)
 		}
-		if squadLabel == "" {
-			squadLabel = "current squad"
+		if teamLabel == "" {
+			teamLabel = "current team"
 		}
 
-		lines = append(lines, "- Squad: "+squadLabel)
-		members, err := m.ListSquadAgentsForSquad(membership.SquadID)
+		lines = append(lines, "- Team: "+teamLabel)
+		members, err := m.ListTeamAgentsByTeam(membership.TeamID)
 		if err != nil {
-			lines = append(lines, "  - Unable to load squad members: "+err.Error())
+			lines = append(lines, "  - Unable to load team members: "+err.Error())
 			continue
 		}
 		slices.SortFunc(members, compareAgentModelsForRoster)
@@ -1058,8 +1042,8 @@ func buildTeamTaskEnvelope(cfg *config.Config, agentName, instruction string) st
 	}
 
 	lines := []string{
-		"Squad task context:",
-		"- Target squad agent: " + strings.TrimSpace(agentName),
+		"Team task context:",
+		"- Target team agent: " + strings.TrimSpace(agentName),
 	}
 	lines = append(lines, buildRuntimeContextLines()...)
 	if cfg != nil {
@@ -1150,7 +1134,7 @@ func defaultMemberMCPTools(name string) []string {
 	}
 }
 
-func (m *SquadManager) ensureAgentRunning(ctx context.Context, name string) error {
+func (m *TeamManager) ensureAgentRunning(ctx context.Context, name string) error {
 	_, err := m.store.GetAgentModelByName(name)
 	return err
 }
@@ -1230,13 +1214,13 @@ func isMeaningfulDispatchText(text string) bool {
 	return !isGeneric
 }
 
-// DispatchTask runs the task on the target squad agent service directly.
-func (m *SquadManager) DispatchTask(ctx context.Context, agentName string, instruction string) (string, error) {
+// DispatchTask runs the task on the target team agent service directly.
+func (m *TeamManager) DispatchTask(ctx context.Context, agentName string, instruction string) (string, error) {
 	return m.dispatchTaskWithOptions(ctx, agentName, instruction, "", nil)
 }
 
-// ChatWithMember runs a squad chat turn with persistent history scoped to one conversation key and squad agent.
-func (m *SquadManager) ChatWithMember(ctx context.Context, conversationKey, agentName string, instruction string) (string, error) {
+// ChatWithMember runs a team chat turn with persistent history scoped to one conversation key and team agent.
+func (m *TeamManager) ChatWithMember(ctx context.Context, conversationKey, agentName string, instruction string) (string, error) {
 	conversationKey = strings.TrimSpace(conversationKey)
 	if conversationKey == "" {
 		return m.DispatchTask(ctx, agentName, instruction)
@@ -1244,11 +1228,11 @@ func (m *SquadManager) ChatWithMember(ctx context.Context, conversationKey, agen
 	return m.dispatchTaskWithOptions(ctx, agentName, instruction, m.conversationSessionID(conversationKey, agentName), nil)
 }
 
-func (m *SquadManager) dispatchTask(ctx context.Context, agentName string, instruction string, sessionID string) (string, error) {
+func (m *TeamManager) dispatchTask(ctx context.Context, agentName string, instruction string, sessionID string) (string, error) {
 	return m.dispatchTaskWithOptions(ctx, agentName, instruction, sessionID, nil)
 }
 
-func (m *SquadManager) dispatchTaskWithOptions(ctx context.Context, agentName string, instruction string, sessionID string, extraOpts []RunOption) (string, error) {
+func (m *TeamManager) dispatchTaskWithOptions(ctx context.Context, agentName string, instruction string, sessionID string, extraOpts []RunOption) (string, error) {
 	if err := m.ensureAgentRunning(ctx, agentName); err != nil {
 		return "", fmt.Errorf("cannot start agent %s: %w", agentName, err)
 	}
@@ -1282,7 +1266,7 @@ func (m *SquadManager) dispatchTaskWithOptions(ctx context.Context, agentName st
 	return string(bz), nil
 }
 
-func (m *SquadManager) conversationSessionID(conversationKey, agentName string) string {
+func (m *TeamManager) conversationSessionID(conversationKey, agentName string) string {
 	key := strings.ToLower(strings.TrimSpace(conversationKey)) + "::" + strings.ToLower(strings.TrimSpace(agentName))
 
 	m.sessionMu.Lock()
@@ -1298,12 +1282,12 @@ func (m *SquadManager) conversationSessionID(conversationKey, agentName string) 
 }
 
 // DispatchTaskStream runs the task on the target agent and returns the raw event stream.
-func (m *SquadManager) DispatchTaskStream(ctx context.Context, agentName string, instruction string) (<-chan *Event, error) {
+func (m *TeamManager) DispatchTaskStream(ctx context.Context, agentName string, instruction string) (<-chan *Event, error) {
 	return m.dispatchTaskStream(ctx, agentName, instruction, "", nil)
 }
 
-// ChatWithMemberStream runs a squad chat turn with persistent history and returns the raw event stream.
-func (m *SquadManager) ChatWithMemberStream(ctx context.Context, conversationKey, agentName, instruction string) (<-chan *Event, error) {
+// ChatWithMemberStream runs a team chat turn with persistent history and returns the raw event stream.
+func (m *TeamManager) ChatWithMemberStream(ctx context.Context, conversationKey, agentName, instruction string) (<-chan *Event, error) {
 	conversationKey = strings.TrimSpace(conversationKey)
 	if conversationKey == "" {
 		return m.DispatchTaskStream(ctx, agentName, instruction)
@@ -1312,12 +1296,12 @@ func (m *SquadManager) ChatWithMemberStream(ctx context.Context, conversationKey
 }
 
 // DispatchTaskStreamWithOptions runs the task and returns the raw event stream with explicit run options.
-func (m *SquadManager) DispatchTaskStreamWithOptions(ctx context.Context, agentName string, instruction string, opts ...RunOption) (<-chan *Event, error) {
+func (m *TeamManager) DispatchTaskStreamWithOptions(ctx context.Context, agentName string, instruction string, opts ...RunOption) (<-chan *Event, error) {
 	return m.dispatchTaskStream(ctx, agentName, instruction, "", opts)
 }
 
-// ChatWithMemberStreamWithOptions runs a squad chat turn with persistent history and explicit run options.
-func (m *SquadManager) ChatWithMemberStreamWithOptions(ctx context.Context, conversationKey, agentName, instruction string, opts ...RunOption) (<-chan *Event, error) {
+// ChatWithMemberStreamWithOptions runs a team chat turn with persistent history and explicit run options.
+func (m *TeamManager) ChatWithMemberStreamWithOptions(ctx context.Context, conversationKey, agentName, instruction string, opts ...RunOption) (<-chan *Event, error) {
 	conversationKey = strings.TrimSpace(conversationKey)
 	if conversationKey == "" {
 		return m.DispatchTaskStreamWithOptions(ctx, agentName, instruction, opts...)
@@ -1325,7 +1309,7 @@ func (m *SquadManager) ChatWithMemberStreamWithOptions(ctx context.Context, conv
 	return m.dispatchTaskStream(ctx, agentName, instruction, m.conversationSessionID(conversationKey, agentName), opts)
 }
 
-func (m *SquadManager) dispatchTaskStream(ctx context.Context, agentName string, instruction string, sessionID string, extraOpts []RunOption) (<-chan *Event, error) {
+func (m *TeamManager) dispatchTaskStream(ctx context.Context, agentName string, instruction string, sessionID string, extraOpts []RunOption) (<-chan *Event, error) {
 	if err := m.ensureAgentRunning(ctx, agentName); err != nil {
 		return nil, fmt.Errorf("cannot start agent %s: %w", agentName, err)
 	}
@@ -1359,8 +1343,8 @@ func dispatchRunOptions(agentName string) []RunOption {
 	}
 }
 
-// RegisterCaptainTools adds the squad management tools to the frontdesk lead agent.
-func (m *SquadManager) RegisterCaptainTools(captain *Service) {
+// RegisterCaptainTools adds the team management tools to the frontdesk lead agent.
+func (m *TeamManager) RegisterCaptainTools(captain *Service) {
 	if captain == nil {
 		return
 	}
@@ -1404,14 +1388,14 @@ func (m *SquadManager) RegisterCaptainTools(captain *Service) {
 		Type: "function",
 		Function: domain.ToolFunction{
 			Name:        "submit_team_async",
-			Description: "Queue async work for one or more named squad members and return immediately with a task id. Prefer this for implementation, research, and verification work.",
+			Description: "Queue async work for one or more named team members and return immediately with a task id. Prefer this for implementation, research, and verification work.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"agent_names": map[string]interface{}{
 						"type":        "array",
 						"items":       map[string]interface{}{"type": "string"},
-						"description": "The squad member names that should handle the async work.",
+						"description": "The team member names that should handle the async work.",
 					},
 					"prompt": map[string]interface{}{
 						"type":        "string",
@@ -1423,7 +1407,7 @@ func (m *SquadManager) RegisterCaptainTools(captain *Service) {
 		},
 	}
 	register(submitAsyncDef.Function.Name, submitAsyncDef.Function.Description, submitAsyncDef.Function.Parameters, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-		lead, squad, err := m.resolveCaptainServiceContext(captain)
+		lead, team, err := m.resolveCaptainServiceContext(captain)
 		if err != nil {
 			return nil, err
 		}
@@ -1436,14 +1420,14 @@ func (m *SquadManager) RegisterCaptainTools(captain *Service) {
 			return nil, fmt.Errorf("agent_names is required")
 		}
 
-		task, err := m.SubmitSquadTask(ctx, captain.CurrentSessionID(), squad.ID, prompt, agentNames)
+		task, err := m.SubmitTeamTask(ctx, captain.CurrentSessionID(), team.ID, prompt, agentNames)
 		if err != nil {
 			return nil, err
 		}
 		return map[string]interface{}{
 			"task_id":      task.ID,
-			"squad_id":     task.SquadID,
-			"squad_name":   squad.Name,
+			"team_id":      task.TeamID,
+			"team_name":    team.Name,
 			"captain_name": lead.Name,
 			"agent_names":  append([]string(nil), task.AgentNames...),
 			"ack_message":  task.AckMessage,
@@ -1482,7 +1466,7 @@ func (m *SquadManager) RegisterCaptainTools(captain *Service) {
 		Type: "function",
 		Function: domain.ToolFunction{
 			Name:        "list_team_tasks",
-			Description: "List recent async tasks for the captain's current squad.",
+			Description: "List recent async tasks for the captain's current team.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -1495,12 +1479,12 @@ func (m *SquadManager) RegisterCaptainTools(captain *Service) {
 		},
 	}
 	register(listTasksDef.Function.Name, listTasksDef.Function.Description, listTasksDef.Function.Parameters, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-		_, squad, err := m.resolveCaptainServiceContext(captain)
+		_, team, err := m.resolveCaptainServiceContext(captain)
 		if err != nil {
 			return nil, err
 		}
 		limit := getIntArg(args, "limit", 10)
-		tasks := m.ListSharedTasksForSquad(squad.ID, time.Time{}, limit)
+		tasks := m.ListSharedTasksForTeam(team.ID, time.Time{}, limit)
 		out := make([]map[string]interface{}, 0, len(tasks))
 		for _, task := range tasks {
 			out = append(out, map[string]interface{}{
@@ -1524,13 +1508,13 @@ func (m *SquadManager) RegisterCaptainTools(captain *Service) {
 		Type: "function",
 		Function: domain.ToolFunction{
 			Name:        "delegate_task",
-			Description: "Synchronously delegate a short task to one squad agent and wait for the inline result. Prefer submit_team_async for longer implementation work.",
+			Description: "Synchronously delegate a short task to one team agent and wait for the inline result. Prefer submit_team_async for longer implementation work.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"agent_name": map[string]interface{}{
 						"type":        "string",
-						"description": "The name of the target squad agent.",
+						"description": "The name of the target team agent.",
 					},
 					"instruction": map[string]interface{}{
 						"type":        "string",
@@ -1549,11 +1533,11 @@ func (m *SquadManager) RegisterCaptainTools(captain *Service) {
 }
 
 // RegisterCommanderTools is kept as a compatibility alias for older call sites.
-func (m *SquadManager) RegisterCommanderTools(commander *Service) {
+func (m *TeamManager) RegisterCommanderTools(commander *Service) {
 	m.RegisterCaptainTools(commander)
 }
 
-func (m *SquadManager) resolveCaptainServiceContext(captain *Service) (*AgentModel, *Squad, error) {
+func (m *TeamManager) resolveCaptainServiceContext(captain *Service) (*AgentModel, *Team, error) {
 	if captain == nil || captain.agent == nil {
 		return nil, nil, fmt.Errorf("captain service is not initialized")
 	}
@@ -1561,14 +1545,14 @@ func (m *SquadManager) resolveCaptainServiceContext(captain *Service) (*AgentMod
 	if err != nil {
 		return nil, nil, err
 	}
-	for _, membership := range member.Squads {
+	for _, membership := range member.Teams {
 		if membership.Role == AgentKindCaptain {
-			squad, squadErr := m.store.GetTeam(membership.SquadID)
-			if squadErr != nil {
-				return nil, nil, squadErr
+			team, teamErr := m.store.GetTeam(membership.TeamID)
+			if teamErr != nil {
+				return nil, nil, teamErr
 			}
-			return member, squad, nil
+			return member, team, nil
 		}
 	}
-	return nil, nil, fmt.Errorf("%s is not a squad captain", captain.agent.Name())
+	return nil, nil, fmt.Errorf("%s is not a team captain", captain.agent.Name())
 }

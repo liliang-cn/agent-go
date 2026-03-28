@@ -19,7 +19,7 @@ type FollowUpAgentPolicy struct {
 	BuildSupplement func(HookData) (string, bool)
 }
 
-func (m *SquadManager) ConfigureFollowUpAgentHook(svc *Service, policy FollowUpAgentPolicy) {
+func (m *TeamManager) ConfigureFollowUpAgentHook(svc *Service, policy FollowUpAgentPolicy) {
 	if m == nil || svc == nil || svc.hooks == nil {
 		return
 	}
@@ -95,7 +95,7 @@ func asyncTaskHookResult(task *AsyncTask, policy FollowUpAgentPolicy) map[string
 	}
 }
 
-func (m *SquadManager) submitSyntheticFollowUpTask(sessionID, agentName, text string) *AsyncTask {
+func (m *TeamManager) submitSyntheticFollowUpTask(sessionID, agentName, text string) *AsyncTask {
 	text = strings.TrimSpace(text)
 	agentName = strings.TrimSpace(agentName)
 	if m == nil || text == "" || agentName == "" {

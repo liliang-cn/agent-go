@@ -12,19 +12,19 @@ import (
 	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 )
 
-func TestGetSquadStatusIdleByDefault(t *testing.T) {
+func TestGetTeamStatusIdleByDefault(t *testing.T) {
 	store, err := NewStore(filepath.Join(t.TempDir(), "agent.db"))
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
 	}
-	manager := NewSquadManager(store)
+	manager := NewTeamManager(store)
 	if err := manager.SeedDefaultMembers(); err != nil {
 		t.Fatalf("seed default members failed: %v", err)
 	}
 
-	status, err := manager.GetSquadStatus(defaultSquadID)
+	status, err := manager.GetTeamStatus(defaultTeamID)
 	if err != nil {
-		t.Fatalf("get squad status failed: %v", err)
+		t.Fatalf("get team status failed: %v", err)
 	}
 	if status.Status != "idle" {
 		t.Fatalf("expected idle status, got %q", status.Status)
@@ -34,12 +34,12 @@ func TestGetSquadStatusIdleByDefault(t *testing.T) {
 	}
 }
 
-func TestGetSquadStatusAggregatesRunningAndQueuedTasks(t *testing.T) {
+func TestGetTeamStatusAggregatesRunningAndQueuedTasks(t *testing.T) {
 	store, err := NewStore(filepath.Join(t.TempDir(), "agent.db"))
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
 	}
-	manager := NewSquadManager(store)
+	manager := NewTeamManager(store)
 	if err := manager.SeedDefaultMembers(); err != nil {
 		t.Fatalf("seed default members failed: %v", err)
 	}
@@ -47,22 +47,22 @@ func TestGetSquadStatusAggregatesRunningAndQueuedTasks(t *testing.T) {
 	manager.queueMu.Lock()
 	manager.sharedTasks["task-running"] = &SharedTask{
 		ID:          "task-running",
-		SquadID:     defaultSquadID,
+		TeamID:      defaultTeamID,
 		CaptainName: "Captain",
 		Status:      SharedTaskStatusRunning,
 	}
 	manager.sharedTasks["task-queued"] = &SharedTask{
 		ID:          "task-queued",
-		SquadID:     defaultSquadID,
+		TeamID:      defaultTeamID,
 		CaptainName: "Captain",
 		Status:      SharedTaskStatusQueued,
 	}
-	manager.queueRunning[defaultSquadID] = true
+	manager.queueRunning[defaultTeamID] = true
 	manager.queueMu.Unlock()
 
-	status, err := manager.GetSquadStatus(defaultSquadID)
+	status, err := manager.GetTeamStatus(defaultTeamID)
 	if err != nil {
-		t.Fatalf("get squad status failed: %v", err)
+		t.Fatalf("get team status failed: %v", err)
 	}
 	if status.Status != "running" {
 		t.Fatalf("expected running status, got %q", status.Status)
@@ -86,7 +86,7 @@ func TestGetAgentStatusIncludesConcierge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
 	}
-	manager := NewSquadManager(store)
+	manager := NewTeamManager(store)
 	if err := manager.SeedDefaultMembers(); err != nil {
 		t.Fatalf("seed default members failed: %v", err)
 	}
@@ -104,8 +104,8 @@ func TestGetAgentStatusIncludesConcierge(t *testing.T) {
 	if status.Status != "idle" {
 		t.Fatalf("expected idle concierge, got %q", status.Status)
 	}
-	if len(status.Squads) != 1 {
-		t.Fatalf("expected concierge to be in default squad, got squads=%+v", status.Squads)
+	if len(status.Teams) != 1 {
+		t.Fatalf("expected concierge to be in default team, got teams=%+v", status.Teams)
 	}
 }
 
@@ -114,13 +114,13 @@ func TestRegisterConciergeToolsExposesStatusAndSubmission(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
 	}
-	manager := NewSquadManager(store)
+	manager := NewTeamManager(store)
 	if err := manager.SeedDefaultMembers(); err != nil {
 		t.Fatalf("seed default members failed: %v", err)
 	}
 
 	manager.queueMu.Lock()
-	manager.queueRunning[defaultSquadID] = true
+	manager.queueRunning[defaultTeamID] = true
 	manager.queueMu.Unlock()
 
 	svc := &Service{
@@ -181,13 +181,13 @@ func TestRegisterConciergeToolsExposesStatusAndSubmission(t *testing.T) {
 		t.Fatal("expected submit_agent_task to be available on Concierge")
 	}
 
-	rawSquads, err := svc.toolRegistry.Call(context.Background(), "list_squads", map[string]interface{}{})
+	rawTeams, err := svc.toolRegistry.Call(context.Background(), "list_teams", map[string]interface{}{})
 	if err != nil {
-		t.Fatalf("list_squads failed: %v", err)
+		t.Fatalf("list_teams failed: %v", err)
 	}
-	squads, ok := rawSquads.([]map[string]interface{})
-	if !ok || len(squads) == 0 {
-		t.Fatalf("unexpected squad tool result: %#v", rawSquads)
+	teams, ok := rawTeams.([]map[string]interface{})
+	if !ok || len(teams) == 0 {
+		t.Fatalf("unexpected team tool result: %#v", rawTeams)
 	}
 
 	rawAgentStatus, err := svc.toolRegistry.Call(context.Background(), "get_agent_status", map[string]interface{}{
@@ -204,28 +204,28 @@ func TestRegisterConciergeToolsExposesStatusAndSubmission(t *testing.T) {
 		t.Fatalf("unexpected concierge status: %+v", agentStatus)
 	}
 
-	rawTask, err := svc.toolRegistry.Call(context.Background(), "submit_squad_task", map[string]interface{}{
-		"squad_name":  defaultSquadName,
+	rawTask, err := svc.toolRegistry.Call(context.Background(), "submit_team_task", map[string]interface{}{
+		"team_name":   defaultTeamName,
 		"prompt":      "prepare a short acknowledgement",
 		"agent_names": []interface{}{BuiltInCaptainAgentName},
 	})
 	if err != nil {
-		t.Fatalf("submit_squad_task failed: %v", err)
+		t.Fatalf("submit_team_task failed: %v", err)
 	}
 	taskInfo, ok := rawTask.(map[string]interface{})
 	if !ok {
-		t.Fatalf("unexpected submit_squad_task result: %#v", rawTask)
+		t.Fatalf("unexpected submit_team_task result: %#v", rawTask)
 	}
-	if taskInfo["squad_name"] != defaultSquadName {
-		t.Fatalf("unexpected squad task result: %#v", taskInfo)
+	if taskInfo["team_name"] != defaultTeamName {
+		t.Fatalf("unexpected team task result: %#v", taskInfo)
 	}
 	if taskInfo["status"] != AsyncTaskStatusQueued {
 		t.Fatalf("expected queued task, got %#v", taskInfo["status"])
 	}
 
-	tasks := manager.ListSharedTasksForSquad(defaultSquadID, time.Time{}, 10)
+	tasks := manager.ListSharedTasksForTeam(defaultTeamID, time.Time{}, 10)
 	if len(tasks) != 1 {
-		t.Fatalf("expected one queued squad task, got %+v", tasks)
+		t.Fatalf("expected one queued team task, got %+v", tasks)
 	}
 	if tasks[0].Prompt != "prepare a short acknowledgement" {
 		t.Fatalf("unexpected queued prompt: %+v", tasks[0])
@@ -237,7 +237,7 @@ func TestRegisterCaptainToolsPrefersTeamAsyncAndRemovesSubAgentDelegation(t *tes
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
 	}
-	manager := NewSquadManager(store)
+	manager := NewTeamManager(store)
 	if err := manager.SeedDefaultMembers(); err != nil {
 		t.Fatalf("seed default members failed: %v", err)
 	}
@@ -280,33 +280,33 @@ func TestRegisterCaptainToolsPrefersTeamAsyncAndRemovesSubAgentDelegation(t *tes
 	}
 }
 
-func TestSquadHelpersExposeSquadStyleAPI(t *testing.T) {
+func TestTeamHelpersExposeTeamStyleAPI(t *testing.T) {
 	store, err := NewStore(filepath.Join(t.TempDir(), "agent.db"))
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
 	}
-	manager := NewSquadManager(store)
+	manager := NewTeamManager(store)
 	if err := manager.SeedDefaultMembers(); err != nil {
 		t.Fatalf("seed default members failed: %v", err)
 	}
 
-	squad, err := manager.CreateSquad(context.Background(), &Squad{
-		Name:        "Docs Squad",
+	team, err := manager.CreateTeam(context.Background(), &Team{
+		Name:        "Docs Team",
 		Description: "Handles documentation tasks.",
 	})
 	if err != nil {
-		t.Fatalf("create squad failed: %v", err)
+		t.Fatalf("create team failed: %v", err)
 	}
 
-	loaded, err := manager.GetSquadByName("docs squad")
+	loaded, err := manager.GetTeamByName("docs team")
 	if err != nil {
-		t.Fatalf("get squad by name failed: %v", err)
+		t.Fatalf("get team by name failed: %v", err)
 	}
-	if loaded.ID != squad.ID {
-		t.Fatalf("expected same squad ID, got %s want %s", loaded.ID, squad.ID)
+	if loaded.ID != team.ID {
+		t.Fatalf("expected same team ID, got %s want %s", loaded.ID, team.ID)
 	}
 
-	if _, err := manager.AddSpecialist(context.Background(), squad.ID, "Writer", "Writes docs.", "Write docs."); err != nil {
+	if _, err := manager.AddSpecialist(context.Background(), team.ID, "Writer", "Writes docs.", "Write docs."); err != nil {
 		t.Fatalf("add specialist failed: %v", err)
 	}
 
@@ -331,12 +331,12 @@ func TestConversationSessionIDIsStablePerConversationAndMember(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
 	}
-	manager := NewSquadManager(store)
+	manager := NewTeamManager(store)
 
-	first := manager.conversationSessionID("squad-chat-1", "Captain")
-	second := manager.conversationSessionID("squad-chat-1", "Captain")
-	otherMember := manager.conversationSessionID("squad-chat-1", "Writer")
-	otherConversation := manager.conversationSessionID("squad-chat-2", "Captain")
+	first := manager.conversationSessionID("team-chat-1", "Captain")
+	second := manager.conversationSessionID("team-chat-1", "Captain")
+	otherMember := manager.conversationSessionID("team-chat-1", "Writer")
+	otherConversation := manager.conversationSessionID("team-chat-2", "Captain")
 
 	if first == "" {
 		t.Fatal("expected non-empty session id")
@@ -357,7 +357,7 @@ func TestEnqueueSharedTaskQueuesImmediately(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
 	}
-	manager := NewSquadManager(store)
+	manager := NewTeamManager(store)
 	if err := manager.SeedDefaultMembers(); err != nil {
 		t.Fatalf("seed default members failed: %v", err)
 	}
@@ -414,7 +414,7 @@ func TestBuildTeamMemberPrompt_IsAgentSpecific(t *testing.T) {
 		t.Fatalf("coder prompt should not include researcher repo-analysis rules: %s", coderPrompt)
 	}
 	if strings.Contains(coderPrompt, "Shared writable workspace") {
-		t.Fatalf("coder member prompt should not include squad workspace context: %s", coderPrompt)
+		t.Fatalf("coder member prompt should not include team workspace context: %s", coderPrompt)
 	}
 
 	captainPrompt := buildTeamMemberPrompt(&AgentModel{
@@ -440,21 +440,21 @@ func TestBuildTeamMemberPrompt_IsAgentSpecific(t *testing.T) {
 		t.Fatalf("captain prompt should not include coder file-writing rules: %s", captainPrompt)
 	}
 
-	teamPrompt := buildTeamSystemPrompt(cfg, &AgentModel{Name: "Captain", Squads: []SquadMembership{{SquadID: defaultSquadID, Role: AgentKindCaptain}}})
+	teamPrompt := buildTeamSystemPrompt(cfg, &AgentModel{Name: "Captain", Teams: []TeamMembership{{TeamID: defaultTeamID, Role: AgentKindCaptain}}})
 	if !strings.Contains(teamPrompt, "Shared writable workspace") {
-		t.Fatalf("squad prompt missing workspace context: %s", teamPrompt)
+		t.Fatalf("team prompt missing workspace context: %s", teamPrompt)
 	}
 	if !strings.Contains(teamPrompt, "Active project root") {
-		t.Fatalf("squad prompt missing project root context: %s", teamPrompt)
+		t.Fatalf("team prompt missing project root context: %s", teamPrompt)
 	}
 	if !strings.Contains(teamPrompt, "Runtime OS/arch: "+runtime.GOOS+"/"+runtime.GOARCH) {
-		t.Fatalf("squad prompt missing runtime context: %s", teamPrompt)
+		t.Fatalf("team prompt missing runtime context: %s", teamPrompt)
 	}
 	if !strings.Contains(teamPrompt, "Interactive shell: /bin/test-shell") {
-		t.Fatalf("squad prompt missing shell context: %s", teamPrompt)
+		t.Fatalf("team prompt missing shell context: %s", teamPrompt)
 	}
-	if !strings.Contains(teamPrompt, "captain for this squad") {
-		t.Fatalf("squad prompt missing captain guidance: %s", teamPrompt)
+	if !strings.Contains(teamPrompt, "captain for this team") {
+		t.Fatalf("team prompt missing captain guidance: %s", teamPrompt)
 	}
 }
 
@@ -463,40 +463,40 @@ func TestBuildTeamSystemPromptForCaptainIncludesRosterAndResponsibilities(t *tes
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
 	}
-	manager := NewSquadManager(store)
+	manager := NewTeamManager(store)
 	if err := manager.SeedDefaultMembers(); err != nil {
 		t.Fatalf("seed default members failed: %v", err)
 	}
 
-	squad, err := manager.CreateSquad(context.Background(), &Squad{
-		Name:        "Delivery Squad",
-		Description: "Delivery squad.",
+	team, err := manager.CreateTeam(context.Background(), &Team{
+		Name:        "Delivery Team",
+		Description: "Delivery team.",
 	})
 	if err != nil {
-		t.Fatalf("create squad failed: %v", err)
+		t.Fatalf("create team failed: %v", err)
 	}
 
-	captain, err := manager.GetLeadAgentForSquad(squad.ID)
+	captain, err := manager.GetLeadAgentForTeam(team.ID)
 	if err != nil {
 		t.Fatalf("get lead failed: %v", err)
 	}
 	updatedCaptain, err := manager.UpdateAgent(context.Background(), &AgentModel{
 		ID:           captain.ID,
 		Name:         captain.Name,
-		Description:  "Coordinate the squad and own delivery decisions.",
+		Description:  "Coordinate the team and own delivery decisions.",
 		Instructions: "Break work into specialist tracks, assign owners, and integrate outputs.",
 	})
 	if err != nil {
 		t.Fatalf("update captain failed: %v", err)
 	}
-	captain, err = manager.GetMemberByNameInSquad(updatedCaptain.Name, squad.ID)
+	captain, err = manager.GetMemberByNameInTeam(updatedCaptain.Name, team.ID)
 	if err != nil {
 		t.Fatalf("reload captain failed: %v", err)
 	}
 
 	if _, err := manager.CreateMember(context.Background(), &AgentModel{
 		Name:         "Delivery Frontend",
-		TeamID:       squad.ID,
+		TeamID:       team.ID,
 		Kind:         AgentKindSpecialist,
 		Description:  "Owns the web UI implementation.",
 		Instructions: "Build the browser UI and keep interaction flows simple.",
@@ -505,7 +505,7 @@ func TestBuildTeamSystemPromptForCaptainIncludesRosterAndResponsibilities(t *tes
 	}
 	if _, err := manager.CreateMember(context.Background(), &AgentModel{
 		Name:         "Delivery Backend",
-		TeamID:       squad.ID,
+		TeamID:       team.ID,
 		Kind:         AgentKindSpecialist,
 		Description:  "Owns the API and persistence layer.",
 		Instructions: "Implement APIs, persistence, and server-side integration details.",
@@ -515,10 +515,10 @@ func TestBuildTeamSystemPromptForCaptainIncludesRosterAndResponsibilities(t *tes
 	}
 
 	prompt := manager.buildTeamSystemPromptForModel(&config.Config{Home: t.TempDir()}, captain)
-	if !strings.Contains(prompt, "Captain responsibilities and squad roster:") {
+	if !strings.Contains(prompt, "Captain responsibilities and team roster:") {
 		t.Fatalf("expected captain roster header, got %s", prompt)
 	}
-	if !strings.Contains(prompt, "Your responsibility summary: Coordinate the squad and own delivery decisions.") {
+	if !strings.Contains(prompt, "Your responsibility summary: Coordinate the team and own delivery decisions.") {
 		t.Fatalf("expected captain responsibility summary, got %s", prompt)
 	}
 	if !strings.Contains(prompt, "Your operating responsibilities: Break work into specialist tracks, assign owners, and integrate outputs.") {
@@ -543,19 +543,19 @@ func TestCreateMemberClearsCaptainServiceCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
 	}
-	manager := NewSquadManager(store)
+	manager := NewTeamManager(store)
 	if err := manager.SeedDefaultMembers(); err != nil {
 		t.Fatalf("seed default members failed: %v", err)
 	}
 
-	squad, err := manager.CreateSquad(context.Background(), &Squad{
-		Name:        "Cache Squad",
-		Description: "Cache squad.",
+	team, err := manager.CreateTeam(context.Background(), &Team{
+		Name:        "Cache Team",
+		Description: "Cache team.",
 	})
 	if err != nil {
-		t.Fatalf("create squad failed: %v", err)
+		t.Fatalf("create team failed: %v", err)
 	}
-	captain, err := manager.GetLeadAgentForSquad(squad.ID)
+	captain, err := manager.GetLeadAgentForTeam(team.ID)
 	if err != nil {
 		t.Fatalf("get lead failed: %v", err)
 	}
@@ -566,7 +566,7 @@ func TestCreateMemberClearsCaptainServiceCache(t *testing.T) {
 
 	if _, err := manager.CreateMember(context.Background(), &AgentModel{
 		Name:         "Cache Specialist",
-		TeamID:       squad.ID,
+		TeamID:       team.ID,
 		Kind:         AgentKindSpecialist,
 		Description:  "Handles specialist work.",
 		Instructions: "Do specialist work.",
@@ -578,7 +578,7 @@ func TestCreateMemberClearsCaptainServiceCache(t *testing.T) {
 	_, exists := manager.services[captain.Name]
 	manager.mu.RUnlock()
 	if exists {
-		t.Fatal("expected captain service cache to be cleared after squad membership change")
+		t.Fatal("expected captain service cache to be cleared after team membership change")
 	}
 }
 
@@ -587,7 +587,7 @@ func TestPersistedSharedTasksRestoreAcrossManagerInstances(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
 	}
-	manager := NewSquadManager(store)
+	manager := NewTeamManager(store)
 	if err := manager.SeedDefaultMembers(); err != nil {
 		t.Fatalf("seed default members failed: %v", err)
 	}
@@ -595,11 +595,11 @@ func TestPersistedSharedTasksRestoreAcrossManagerInstances(t *testing.T) {
 	task := &SharedTask{
 		ID:          "shared-task-1",
 		SessionID:   "session-restore-1",
-		SquadID:     defaultSquadID,
-		SquadName:   defaultSquadName,
+		TeamID:      defaultTeamID,
+		TeamName:    defaultTeamName,
 		CaptainName: BuiltInCaptainAgentName,
 		AgentNames:  []string{BuiltInCaptainAgentName},
-		Prompt:      "review persisted squad work",
+		Prompt:      "review persisted team work",
 		AckMessage:  "Captain received that. Starting it now.",
 		Status:      SharedTaskStatusCompleted,
 		ResultText:  "done",
@@ -609,8 +609,8 @@ func TestPersistedSharedTasksRestoreAcrossManagerInstances(t *testing.T) {
 		t.Fatalf("save shared task failed: %v", err)
 	}
 
-	restored := NewSquadManager(store)
-	tasks := restored.ListSharedTasksForSquad(defaultSquadID, time.Time{}, 10)
+	restored := NewTeamManager(store)
+	tasks := restored.ListSharedTasksForTeam(defaultTeamID, time.Time{}, 10)
 	if len(tasks) != 1 {
 		t.Fatalf("expected restored shared task, got %+v", tasks)
 	}
@@ -657,11 +657,11 @@ func TestBuildTeamTaskEnvelope_ContainsSharedContext(t *testing.T) {
 	t.Setenv("SHELL", "/bin/test-shell")
 
 	envelope := buildTeamTaskEnvelope(cfg, "Assistant", "summarize the repo flow")
-	if !strings.Contains(envelope, "Squad task context:") {
-		t.Fatalf("missing squad task header: %s", envelope)
+	if !strings.Contains(envelope, "Team task context:") {
+		t.Fatalf("missing team task header: %s", envelope)
 	}
-	if !strings.Contains(envelope, "Target squad agent: Assistant") {
-		t.Fatalf("missing target squad agent: %s", envelope)
+	if !strings.Contains(envelope, "Target team agent: Assistant") {
+		t.Fatalf("missing target team agent: %s", envelope)
 	}
 	if !strings.Contains(envelope, "Shared writable workspace: /tmp/agentgo-test/workspace") {
 		t.Fatalf("missing workspace context: %s", envelope)

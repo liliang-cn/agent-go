@@ -1,4 +1,4 @@
-package squad
+package team
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 	"github.com/liliang-cn/agent-go/v2/pkg/agent"
 )
 
-func runSquadLiveDispatch(ctx context.Context, manager *agent.SquadManager, conversationKey, agentName, instruction string, debug bool) (string, error) {
+func runTeamLiveDispatch(ctx context.Context, manager *agent.TeamManager, conversationKey, agentName, instruction string, debug bool) (string, error) {
 
 	var (
 		events <-chan *agent.Event
@@ -33,12 +33,12 @@ func runSquadLiveDispatch(ctx context.Context, manager *agent.SquadManager, conv
 	}
 
 	if debug {
-		return renderSquadDebugEvents(events)
+		return renderTeamDebugEvents(events)
 	}
-	return renderSquadLiveEvents(events)
+	return renderTeamLiveEvents(events)
 }
 
-func renderSquadLiveEvents(events <-chan *agent.Event) (string, error) {
+func renderTeamLiveEvents(events <-chan *agent.Event) (string, error) {
 	var (
 		partial            strings.Builder
 		final              string

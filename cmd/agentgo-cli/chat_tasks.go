@@ -12,12 +12,12 @@ import (
 )
 
 type chatTaskFollower struct {
-	manager *agent.SquadManager
+	manager *agent.TeamManager
 	mu      sync.Mutex
 	seen    map[string]struct{}
 }
 
-func newChatTaskFollower(manager *agent.SquadManager) *chatTaskFollower {
+func newChatTaskFollower(manager *agent.TeamManager) *chatTaskFollower {
 	if manager == nil {
 		return nil
 	}

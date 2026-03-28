@@ -2,7 +2,7 @@ package agent
 
 import "strings"
 
-// normalizeTaskPrompt strips common routing and squad-envelope wrappers so
+// normalizeTaskPrompt strips common routing and team-envelope wrappers so
 // downstream intent recognition sees the actual user task.
 func normalizeTaskPrompt(prompt string) string {
 	current := strings.TrimSpace(prompt)

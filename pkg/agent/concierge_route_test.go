@@ -9,7 +9,7 @@ import (
 	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 )
 
-func TestRouteBuiltInRequestWithDispatcherUsesParallelPreprocessingAndArchivistMemorySavePrompt(t *testing.T) {
+func TestRouteBuiltInRequestDispatchesArchivistWithMemorySavePrefix(t *testing.T) {
 	t.Parallel()
 
 	var (
@@ -25,9 +25,7 @@ func TestRouteBuiltInRequestWithDispatcherUsesParallelPreprocessingAndArchivistM
 
 		switch agentName {
 		case defaultIntentRouterAgentName:
-			return "TARGET_AGENT: Archivist\nINTENT_TYPE: schedule_event\nREASON: schedule fact", nil
-		case defaultPromptOptimizerAgentName:
-			return optimizedPromptBeginMarker + "\n用户明天17:00去万达广场吃饭。\n" + optimizedPromptEndMarker, nil
+			return "TARGET_AGENT: Archivist\nINTENT_TYPE: schedule_event\nREASON: schedule fact\nNEEDS_OPTIMIZATION: no", nil
 		case defaultArchivistAgentName:
 			finalPrompt = prompt
 			return "已记住。", nil
@@ -36,9 +34,9 @@ func TestRouteBuiltInRequestWithDispatcherUsesParallelPreprocessingAndArchivistM
 		}
 	}
 
-	result, err := routeBuiltInRequestWithDispatcher(context.Background(), "用户请求：\"明天下午17：00去万达吃饭\"。请按最合适的内置专长处理该请求。", domain.MemoryQueryContext{
+	result, err := routeBuiltInRequestWithDispatcher(context.Background(), "明天下午17：00去万达吃饭", domain.MemoryQueryContext{
 		AgentID: "Concierge",
-		SquadID: defaultSquadID,
+		TeamID:  defaultTeamID,
 	}, dispatch)
 	if err != nil {
 		t.Fatalf("routeBuiltInRequestWithDispatcher failed: %v", err)
@@ -53,28 +51,85 @@ func TestRouteBuiltInRequestWithDispatcherUsesParallelPreprocessingAndArchivistM
 	if result.Result != "已记住。" {
 		t.Fatalf("unexpected final result: %+v", result)
 	}
-	if finalPrompt != "记住：用户明天17:00去万达广场吃饭。" {
-		t.Fatalf("expected explicit memory-save dispatch prompt, got %q", finalPrompt)
+	// Archivist memory_save prompts get "记住：" prefix
+	if finalPrompt != "记住：明天下午17：00去万达吃饭" {
+		t.Fatalf("expected memory-save dispatch prompt with prefix, got %q", finalPrompt)
 	}
 
 	mu.Lock()
 	defer mu.Unlock()
+	// Only 2 calls: IntentRouter + Archivist (no optimizer when NEEDS_OPTIMIZATION=no)
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 dispatch calls (router + archivist), got %+v", calls)
+	}
+}
+
+func TestRouteBuiltInRequestRunsOptimizerWhenNeeded(t *testing.T) {
+	t.Parallel()
+
+	var (
+		mu    sync.Mutex
+		calls []string
+	)
+
+	dispatch := func(ctx context.Context, agentName, prompt string, opts []RunOption) (string, error) {
+		mu.Lock()
+		calls = append(calls, agentName)
+		mu.Unlock()
+
+		switch agentName {
+		case defaultIntentRouterAgentName:
+			return "TARGET_AGENT: Assistant\nINTENT_TYPE: general_qa\nREASON: vague question\nNEEDS_OPTIMIZATION: yes", nil
+		case defaultPromptOptimizerAgentName:
+			return optimizedPromptBeginMarker + "\nWhat is the weather forecast for tomorrow?\n" + optimizedPromptEndMarker, nil
+		case defaultAssistantAgentName:
+			return "It will be sunny.", nil
+		default:
+			return "", fmt.Errorf("unexpected agent %s", agentName)
+		}
+	}
+
+	result, err := routeBuiltInRequestWithDispatcher(context.Background(), "明天天气怎么样", domain.MemoryQueryContext{
+		AgentID: "Concierge",
+		TeamID:  defaultTeamID,
+	}, dispatch)
+	if err != nil {
+		t.Fatalf("routeBuiltInRequestWithDispatcher failed: %v", err)
+	}
+
+	if result.TargetAgent != defaultAssistantAgentName {
+		t.Fatalf("expected Assistant target, got %s", result.TargetAgent)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	// 3 calls: IntentRouter + PromptOptimizer + Assistant
 	if len(calls) != 3 {
 		t.Fatalf("expected 3 dispatch calls, got %+v", calls)
-	}
-	if !containsStr(calls, defaultIntentRouterAgentName) || !containsStr(calls, defaultPromptOptimizerAgentName) || !containsStr(calls, defaultArchivistAgentName) {
-		t.Fatalf("expected route to use router, optimizer, and archivist, got %+v", calls)
 	}
 }
 
 func TestParseIntentRouterDecisionNormalizesTargetAgent(t *testing.T) {
 	t.Parallel()
 
-	decision := parseIntentRouterDecision("TARGET_AGENT: archivist\nINTENT_TYPE: memory_save\nREASON: durable fact")
+	decision := parseIntentRouterDecision("TARGET_AGENT: archivist\nINTENT_TYPE: memory_save\nREASON: durable fact\nNEEDS_OPTIMIZATION: no")
 	if decision.TargetAgent != defaultArchivistAgentName {
 		t.Fatalf("expected normalized Archivist target, got %+v", decision)
 	}
 	if decision.IntentType != "memory_save" {
 		t.Fatalf("unexpected intent type: %+v", decision)
 	}
+	if decision.NeedsOptimization {
+		t.Fatal("expected NeedsOptimization=false")
+	}
 }
+
+func TestParseIntentRouterDecisionParsesNeedsOptimization(t *testing.T) {
+	t.Parallel()
+
+	decision := parseIntentRouterDecision("TARGET_AGENT: Assistant\nINTENT_TYPE: general_qa\nREASON: test\nNEEDS_OPTIMIZATION: yes")
+	if !decision.NeedsOptimization {
+		t.Fatal("expected NeedsOptimization=true")
+	}
+}
+

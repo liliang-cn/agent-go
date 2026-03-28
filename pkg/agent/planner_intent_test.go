@@ -74,11 +74,11 @@ func TestIsExplicitMemorySaveIntentRejectsQuestionLikeGoal(t *testing.T) {
 	}
 }
 
-func TestExplicitMemorySaveHelpersHandleSquadEnvelope(t *testing.T) {
-	goal := "Squad task context:\n- Target squad agent: Archivist\n- Execute only the work described in the Task section below.\n\nTask:\n记住：用户明天17:00去万达广场吃饭。"
+func TestExplicitMemorySaveHelpersHandleTeamEnvelope(t *testing.T) {
+	goal := "Team task context:\n- Target team agent: Archivist\n- Execute only the work described in the Task section below.\n\nTask:\n记住：用户明天17:00去万达广场吃饭。"
 
 	if !isExplicitMemorySaveIntent(goal, nil) {
-		t.Fatal("expected squad envelope memory-save task to trigger explicit save path")
+		t.Fatal("expected team envelope memory-save task to trigger explicit save path")
 	}
 
 	got := extractExplicitMemorySaveContent(goal)

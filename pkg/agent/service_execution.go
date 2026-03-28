@@ -1011,7 +1011,7 @@ func (s *Service) finalizeExecution(ctx context.Context, session *Session, goal 
 		if err := s.memoryService.StoreIfWorthwhile(ctx, &domain.MemoryStoreRequest{
 			SessionID:  session.GetID(),
 			AgentID:    queryContext.AgentID,
-			SquadID:    queryContext.SquadID,
+			TeamID:     queryContext.TeamID,
 			UserID:     queryContext.UserID,
 			TaskGoal:   goal,
 			TaskResult: formatResultForContent(finalResult),
@@ -1042,14 +1042,14 @@ func (s *Service) finalizeExecution(ctx context.Context, session *Session, goal 
 			"memory_scope_chain": []string{
 				fmt.Sprintf("session:%s", strings.TrimSpace(queryContext.SessionID)),
 				fmt.Sprintf("agent:%s", strings.TrimSpace(queryContext.AgentID)),
-				fmt.Sprintf("squad:%s", strings.TrimSpace(queryContext.SquadID)),
+				fmt.Sprintf("team:%s", strings.TrimSpace(queryContext.TeamID)),
 				fmt.Sprintf("user:%s", strings.TrimSpace(queryContext.UserID)),
 				"global",
 			},
 			"memory_scope_context": map[string]interface{}{
 				"session_id": queryContext.SessionID,
 				"agent_id":   queryContext.AgentID,
-				"squad_id":   queryContext.SquadID,
+				"team_id":    queryContext.TeamID,
 				"user_id":    queryContext.UserID,
 			},
 		},

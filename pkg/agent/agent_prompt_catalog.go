@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-func (m *SquadManager) buildKnownAgentsContext(current *AgentModel) string {
+func (m *TeamManager) buildKnownAgentsContext(current *AgentModel) string {
 	if m == nil || m.store == nil {
 		return ""
 	}

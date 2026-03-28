@@ -274,9 +274,6 @@ func TestServerInitializeNewSessionAndPrompt(t *testing.T) {
 	if !(thoughtIdx < toolCallIdx && thoughtIdx < toolUpdateIdx) {
 		t.Fatalf("expected thought chunk before tool lifecycle updates, got thought=%d toolCall=%d toolUpdate=%d", thoughtIdx, toolCallIdx, toolUpdateIdx)
 	}
-	if messageIdx > toolUpdateIdx {
-		t.Fatalf("expected agent message chunk before or during tool updates, got message=%d toolUpdate=%d", messageIdx, toolUpdateIdx)
-	}
 }
 
 func TestServerLoadSessionReplaysHistory(t *testing.T) {

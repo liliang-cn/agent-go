@@ -1,11 +1,11 @@
 ---
 name: agentgo-pkg
-description: Use AgentGo as a Go library to build AI agents, RAG pipelines, and multi-agent squads. Use when writing Go code that needs AI agent capabilities, document ingestion, semantic search, or multi-agent orchestration.
+description: Use AgentGo as a Go library to build AI agents, RAG pipelines, and multi-agent teams. Use when writing Go code that needs AI agent capabilities, document ingestion, semantic search, or multi-agent orchestration.
 ---
 
 # AgentGo Package Guide
 
-AgentGo is a Go library for building AI applications with agents, RAG, memory, MCP tools, and multi-agent squads.
+AgentGo is a Go library for building AI applications with agents, RAG, memory, MCP tools, and multi-agent teams.
 
 ## CLI Usage
 
@@ -90,22 +90,22 @@ svc, err := agent.New("my-agent").
 
 ### Builder Methods
 
-| Method | Description |
-|--------|-------------|
-| `WithRAG(opts...)` | Enable RAG with optional embedding model |
-| `WithMemory(opts...)` | Enable memory (file/vector/hybrid) |
-| `WithMCP(paths...)` | Enable MCP tools from config files |
-| `WithRouter(opts...)` | Enable semantic routing |
-| `WithSkills(opts...)` | Enable skills system |
-| `WithPTC(opts...)` | Enable Programmatic Tool Calling |
-| `WithLLM(llm)` | Use custom LLM instead of global pool |
-| `WithEmbedder(embedder)` | Use custom embedder for RAG |
-| `WithSystemPrompt(prompt)` | Custom system prompt |
-| `WithDebug(on ...bool)` | Enable debug logging |
-| `WithProgressCallback(cb)` | Set progress callback |
-| `WithTool(tool)` | Register a tool |
-| `WithDBPath(path)` | Set database path |
-| `WithAgentName(name)` | Set brand name in prompts |
+| Method                     | Description                              |
+| -------------------------- | ---------------------------------------- |
+| `WithRAG(opts...)`         | Enable RAG with optional embedding model |
+| `WithMemory(opts...)`      | Enable memory (file/vector/hybrid)       |
+| `WithMCP(paths...)`        | Enable MCP tools from config files       |
+| `WithRouter(opts...)`      | Enable semantic routing                  |
+| `WithSkills(opts...)`      | Enable skills system                     |
+| `WithPTC(opts...)`         | Enable Programmatic Tool Calling         |
+| `WithLLM(llm)`             | Use custom LLM instead of global pool    |
+| `WithEmbedder(embedder)`   | Use custom embedder for RAG              |
+| `WithSystemPrompt(prompt)` | Custom system prompt                     |
+| `WithDebug(on ...bool)`    | Enable debug logging                     |
+| `WithProgressCallback(cb)` | Set progress callback                    |
+| `WithTool(tool)`           | Register a tool                          |
+| `WithDBPath(path)`         | Set database path                        |
+| `WithAgentName(name)`      | Set brand name in prompts                |
 
 ### Run Options
 
@@ -164,13 +164,13 @@ agent.WithMemoryBank(mission, directives)  // Long-term mission statement
 
 ---
 
-## Go API: Squad (Multi-Agent)
+## Go API: Team (Multi-Agent)
 
 ```go
-// Create squad manager
-mgr, err := agent.NewSquad(dbPath).
+// Create team manager
+mgr, err := agent.NewTeam(dbPath).
     WithAgentName("MyApp").
-    WithSquadName("Dev Team").
+    WithTeamName("Dev Team").
     Build()
 
 // Built-in agents
@@ -391,7 +391,7 @@ result, _ := client.SendText(ctx, "Hello agent")
 [agent]
 name = "MyApp"
 
-[squad]
+[team]
 name = "Dev Team"
 
 [llm]
@@ -424,7 +424,7 @@ enabled = true
 
 ```
 pkg/
-├── agent/       # Agent, Squad, LongRun, Builder pattern
+├── agent/       # Agent, Team, LongRun, Builder pattern
 ├── a2a/         # Agent-to-Agent protocol (server/client)
 ├── config/      # Configuration loading
 ├── domain/      # Core interfaces (Generator, MemoryStore, VectorStore, etc.)
@@ -442,11 +442,11 @@ pkg/
 
 ## Key Interfaces (pkg/domain)
 
-| Interface | Methods |
-|-----------|---------|
-| `Generator` | `Generate`, `Stream`, `GenerateWithTools`, `GenerateStructured` |
-| `Embedder` | `Embed`, `EmbedBatch` |
-| `MemoryStore` | `Store`, `Search`, `Get`, `Update`, `Delete`, `Reflect` |
-| `VectorStore` | `Store`, `Search`, `Delete`, `List`, `Reset` |
-| `Chunker` | `Split` |
-| `Processor` (RAG) | `Ingest`, `Query`, `ListDocuments`, `DeleteDocument` |
+| Interface         | Methods                                                         |
+| ----------------- | --------------------------------------------------------------- |
+| `Generator`       | `Generate`, `Stream`, `GenerateWithTools`, `GenerateStructured` |
+| `Embedder`        | `Embed`, `EmbedBatch`                                           |
+| `MemoryStore`     | `Store`, `Search`, `Get`, `Update`, `Delete`, `Reflect`         |
+| `VectorStore`     | `Store`, `Search`, `Delete`, `List`, `Reset`                    |
+| `Chunker`         | `Split`                                                         |
+| `Processor` (RAG) | `Ingest`, `Query`, `ListDocuments`, `DeleteDocument`            |

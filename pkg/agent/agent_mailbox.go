@@ -28,7 +28,7 @@ type agentMailboxDelivery struct {
 	acked   chan struct{}
 }
 
-func (m *SquadManager) ensureAgentMailbox(agentName string) *agentMailbox {
+func (m *TeamManager) ensureAgentMailbox(agentName string) *agentMailbox {
 	agentName = strings.TrimSpace(agentName)
 	if agentName == "" {
 		return nil
@@ -49,7 +49,7 @@ func (m *SquadManager) ensureAgentMailbox(agentName string) *agentMailbox {
 	return mailbox
 }
 
-func (m *SquadManager) runAgentMailbox(agentName string, mailbox *agentMailbox) {
+func (m *TeamManager) runAgentMailbox(agentName string, mailbox *agentMailbox) {
 	for delivery := range mailbox.inbox {
 		m.mailboxMu.Lock()
 		current := m.agentMailboxes[agentName]
@@ -63,7 +63,7 @@ func (m *SquadManager) runAgentMailbox(agentName string, mailbox *agentMailbox) 
 	}
 }
 
-func (m *SquadManager) SendAgentMessage(fromAgent, toAgent, content string, metadata map[string]interface{}) (*AgentMessage, error) {
+func (m *TeamManager) SendAgentMessage(fromAgent, toAgent, content string, metadata map[string]interface{}) (*AgentMessage, error) {
 	toAgent = strings.TrimSpace(toAgent)
 	content = strings.TrimSpace(content)
 	if toAgent == "" {
@@ -109,7 +109,7 @@ func (m *SquadManager) SendAgentMessage(fromAgent, toAgent, content string, meta
 	return cloneAgentMessage(message), nil
 }
 
-func (m *SquadManager) GetAgentMessages(agentName string, limit int, consume bool) ([]*AgentMessage, error) {
+func (m *TeamManager) GetAgentMessages(agentName string, limit int, consume bool) ([]*AgentMessage, error) {
 	agentName = strings.TrimSpace(agentName)
 	if agentName == "" {
 		return nil, fmt.Errorf("agent name is required")
@@ -149,7 +149,7 @@ func (m *SquadManager) GetAgentMessages(agentName string, limit int, consume boo
 	return selected, nil
 }
 
-func (m *SquadManager) registerAgentMessagingTools(svc *Service, model *AgentModel) {
+func (m *TeamManager) registerAgentMessagingTools(svc *Service, model *AgentModel) {
 	if svc == nil || model == nil {
 		return
 	}

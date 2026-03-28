@@ -158,7 +158,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 		memoryService = memory.NewService(memoryStore, llm, embedder, memory.DefaultConfig())
 	}
 
-	var squadManager *agent.SquadManager
+	var teamManager *agent.TeamManager
 
 	// Create Agent service using Builder
 	agentgolog.Infof("Creating agent service with Builder...")
@@ -182,24 +182,24 @@ func runServer(cmd *cobra.Command, args []string) error {
 	} else {
 		agentgolog.Infof("Agent service created successfully")
 
-		// Initialize SquadManager
+		// Initialize TeamManager
 		agentDBPath := cfg.AgentDBPath()
 		agentStore, storeErr := agent.NewStore(agentDBPath)
 		if storeErr != nil {
 			agentgolog.Warn("Failed to create agent store: %v", storeErr)
 		} else {
-			squadManager = agent.NewSquadManager(agentStore)
-			squadManager.SetConfig(cfg)
-			if err := squadManager.SeedDefaultMembers(); err != nil {
-				agentgolog.Warn("Failed to seed default squad members: %v", err)
+			teamManager = agent.NewTeamManager(agentStore)
+			teamManager.SetConfig(cfg)
+			if err := teamManager.SeedDefaultMembers(); err != nil {
+				agentgolog.Warn("Failed to seed default team members: %v", err)
 			}
-			squadManager.RegisterCaptainTools(agentService)
-			agentgolog.Infof("Squad manager and captain-agent tools initialized")
+			teamManager.RegisterCaptainTools(agentService)
+			agentgolog.Infof("Team manager and captain-agent tools initialized")
 		}
 	}
 
 	// Create handler
-	h := handler.New(cfg, ragClient, skillsService, mcpService, memoryService, agentService, squadManager, llm, embedder)
+	h := handler.New(cfg, ragClient, skillsService, mcpService, memoryService, agentService, teamManager, llm, embedder)
 
 	// Create API router
 	mux := http.NewServeMux()
@@ -214,8 +214,8 @@ func runServer(cmd *cobra.Command, args []string) error {
 	mux.HandleFunc("/api/chat/sessions", h.HandleChatSessions)
 	mux.HandleFunc("/api/chat/session/", h.HandleChatSessionMessages)
 	mux.HandleFunc("/api/chat/multi", h.HandleMultiAgentChat)
-	mux.HandleFunc("/api/squads/tasks", h.HandleSquadTasks)
-	mux.HandleFunc("/api/squads", h.HandleSquads)
+	mux.HandleFunc("/api/teams/tasks", h.HandleTeamTasks)
+	mux.HandleFunc("/api/teams", h.HandleTeams)
 	mux.HandleFunc("/api/ingest", h.HandleIngest)
 
 	// Skills endpoints

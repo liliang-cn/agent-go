@@ -8,7 +8,7 @@ import (
 )
 
 // ListTasks returns recent async tasks across all sessions.
-func (m *SquadManager) ListTasks(limit int) []*AsyncTask {
+func (m *TeamManager) ListTasks(limit int) []*AsyncTask {
 	m.taskMu.RLock()
 	out := make([]*AsyncTask, 0, len(m.asyncTasks))
 	for _, task := range m.asyncTasks {
@@ -29,7 +29,7 @@ func (m *SquadManager) ListTasks(limit int) []*AsyncTask {
 }
 
 // CancelTask cancels a running or queued async task.
-func (m *SquadManager) CancelTask(_ context.Context, taskID string) (*AsyncTask, error) {
+func (m *TeamManager) CancelTask(_ context.Context, taskID string) (*AsyncTask, error) {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
 		return nil, fmt.Errorf("task id is required")
@@ -65,8 +65,8 @@ func (m *SquadManager) CancelTask(_ context.Context, taskID string) (*AsyncTask,
 		Kind:        task.Kind,
 		Status:      task.Status,
 		Type:        TaskEventTypeCancelled,
-		SquadID:     task.SquadID,
-		SquadName:   task.SquadName,
+		TeamID:     task.TeamID,
+		TeamName:   task.TeamName,
 		CaptainName: task.CaptainName,
 		AgentName:   firstNonEmptyTaskAgent(task),
 		Message:     task.ResultText,

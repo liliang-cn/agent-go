@@ -67,7 +67,7 @@ type MemoryScopeType string
 const (
 	MemoryScopeGlobal  MemoryScopeType = "global"
 	MemoryScopeAgent   MemoryScopeType = "agent"
-	MemoryScopeSquad   MemoryScopeType = "squad"
+	MemoryScopeTeam    MemoryScopeType = "team"
 	MemoryScopeProject MemoryScopeType = "project"
 	MemoryScopeUser    MemoryScopeType = "user"
 	MemoryScopeSession MemoryScopeType = "session"
@@ -180,11 +180,11 @@ type MemoryRetrieveResult struct {
 }
 
 // MemoryQueryContext describes the runtime scope chain available to one memory lookup.
-// Session is the most local scope, followed by agent/thread, squad/process, user, and global.
+// Session is the most local scope, followed by agent/thread, team/process, user, and global.
 type MemoryQueryContext struct {
 	SessionID string `json:"session_id,omitempty"`
 	AgentID   string `json:"agent_id,omitempty"`
-	SquadID   string `json:"squad_id,omitempty"`
+	TeamID    string `json:"team_id,omitempty"`
 	UserID    string `json:"user_id,omitempty"`
 }
 
@@ -192,7 +192,7 @@ type MemoryQueryContext struct {
 type MemoryStoreRequest struct {
 	SessionID    string                 `json:"session_id"`
 	AgentID      string                 `json:"agent_id,omitempty"`
-	SquadID      string                 `json:"squad_id,omitempty"`
+	TeamID       string                 `json:"team_id,omitempty"`
 	UserID       string                 `json:"user_id,omitempty"`
 	TaskGoal     string                 `json:"task_goal"`
 	TaskResult   string                 `json:"task_result"`
