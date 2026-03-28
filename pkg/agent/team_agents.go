@@ -394,12 +394,13 @@ func resolveLeaveTarget(model *AgentModel, teamIDs ...string) (string, AgentKind
 
 func (m *TeamManager) clearCachedAgent(name string) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if cancel, exists := m.runningAgents[name]; exists {
 		cancel()
 		delete(m.runningAgents, name)
 	}
 	delete(m.services, name)
+	m.mu.Unlock()
+	m.stopBuiltInAgentRuntime(name)
 }
 
 func (m *TeamManager) clearTeamCaptainCache(teamID string) {

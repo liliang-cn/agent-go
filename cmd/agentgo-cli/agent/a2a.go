@@ -64,6 +64,22 @@ func (c cliA2ACatalog) GetLeadAgentForTeam(teamID string) (*agent.AgentModel, er
 	return c.manager.GetLeadAgentForTeam(teamID)
 }
 
+func (c cliA2ACatalog) SubmitTeamRequest(ctx context.Context, req *agent.TeamRequest) (*agent.TeamResponse, error) {
+	return c.manager.SubmitTeamRequest(ctx, req)
+}
+
+func (c cliA2ACatalog) GetTeamResponse(responseID string) (*agent.TeamResponse, error) {
+	return c.manager.GetTeamResponse(responseID)
+}
+
+func (c cliA2ACatalog) SubscribeTeamResponse(responseID string) (<-chan *agent.TeamResponseEvent, func(), error) {
+	return c.manager.SubscribeTeamResponse(responseID)
+}
+
+func (c cliA2ACatalog) CancelTeamResponse(ctx context.Context, responseID string) (*agent.TeamResponse, error) {
+	return c.manager.CancelTeamResponse(ctx, responseID)
+}
+
 var agentA2ACmd = &cobra.Command{
 	Use:   "a2a",
 	Short: "Manage optional A2A exposure for standalone agents",

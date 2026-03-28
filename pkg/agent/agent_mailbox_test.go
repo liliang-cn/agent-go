@@ -29,8 +29,13 @@ func TestAgentMessagingToolsDeliverMailboxMessages(t *testing.T) {
 	}
 
 	if _, err := concierge.toolRegistry.Call(context.Background(), "send_agent_message", map[string]interface{}{
-		"agent_name": defaultArchivistAgentName,
-		"message":    "Remember to normalize the saved schedule fact.",
+		"agent_name":   defaultArchivistAgentName,
+		"message_type": string(AgentMessageTypeRequest),
+		"priority":     string(AgentMessagePriorityHigh),
+		"message":      "Remember to normalize the saved schedule fact.",
+		"payload": map[string]interface{}{
+			"instruction": "normalize_schedule_fact",
+		},
 	}); err != nil {
 		t.Fatalf("send_agent_message failed: %v", err)
 	}
@@ -58,6 +63,12 @@ func TestAgentMessagingToolsDeliverMailboxMessages(t *testing.T) {
 	}
 	if got := messages[0]["content"]; got != "Remember to normalize the saved schedule fact." {
 		t.Fatalf("unexpected message content: %#v", messages[0])
+	}
+	if got := messages[0]["message_type"]; got != AgentMessageTypeRequest {
+		t.Fatalf("unexpected message type: %#v", messages[0])
+	}
+	if got := messages[0]["priority"]; got != AgentMessagePriorityHigh {
+		t.Fatalf("unexpected priority: %#v", messages[0])
 	}
 
 	raw, err = archivist.toolRegistry.Call(context.Background(), "get_agent_messages", map[string]interface{}{

@@ -21,24 +21,30 @@ import (
 
 // TeamManager handles the lifecycle, discovery, and execution routing for team agents.
 type TeamManager struct {
-	store          *Store
-	cfg            *config.Config
-	runningAgents  map[string]context.CancelFunc // Tracks running agents if they are background loopers
-	services       map[string]*Service           // Cached instantiated agent services
-	mu             sync.RWMutex
-	sessionMu      sync.Mutex
-	memberSessions map[string]string
-	queueMu        sync.Mutex
-	taskQueues     map[string][]string
-	sharedTasks    map[string]*SharedTask
-	queueRunning   map[string]bool
-	taskMu         sync.RWMutex
-	asyncTasks     map[string]*AsyncTask
-	sessionTasks   map[string][]string
-	taskSubs       map[string]map[chan *TaskEvent]struct{}
-	taskCancels    map[string]context.CancelFunc
-	mailboxMu      sync.RWMutex
-	agentMailboxes map[string]*agentMailbox
+	store                         *Store
+	cfg                           *config.Config
+	runningAgents                 map[string]context.CancelFunc // Tracks running agents if they are background loopers
+	services                      map[string]*Service           // Cached instantiated agent services
+	mu                            sync.RWMutex
+	runtimeMu                     sync.RWMutex
+	sessionMu                     sync.Mutex
+	memberSessions                map[string]string
+	queueMu                       sync.Mutex
+	taskQueues                    map[string][]string
+	sharedTasks                   map[string]*SharedTask
+	queueRunning                  map[string]bool
+	taskMu                        sync.RWMutex
+	asyncTasks                    map[string]*AsyncTask
+	sessionTasks                  map[string][]string
+	taskSubs                      map[string]map[chan *TaskEvent]struct{}
+	taskCancels                   map[string]context.CancelFunc
+	teamGatewayMu                 sync.RWMutex
+	teamRequests                  map[string]*TeamRequest
+	mailboxMu                     sync.RWMutex
+	agentMailboxes                map[string]*agentMailbox
+	builtInRuntimes               map[string]*builtInAgentRuntime
+	builtInDispatchOverride       builtInRuntimeDispatchFunc
+	builtInStreamDispatchOverride builtInRuntimeStreamDispatchFunc
 }
 
 type SharedTaskStatus string
@@ -128,7 +134,7 @@ func (m *TeamManager) SeedDefaultMembers() error {
 	if err := m.ensureDefaultTeamSpecialists(ctx, agentName); err != nil {
 		return err
 	}
-	return nil
+	return m.startBuiltInRuntimes(ctx)
 }
 
 func (m *TeamManager) ensureDefaultTeam() (*Team, error) {
@@ -178,18 +184,20 @@ func (m *TeamManager) ensureDefaultTeam() (*Team, error) {
 // NewTeamManager creates a new team manager based on a store.
 func NewTeamManager(s *Store) *TeamManager {
 	manager := &TeamManager{
-		store:          s,
-		runningAgents:  make(map[string]context.CancelFunc),
-		services:       make(map[string]*Service),
-		memberSessions: make(map[string]string),
-		taskQueues:     make(map[string][]string),
-		sharedTasks:    make(map[string]*SharedTask),
-		queueRunning:   make(map[string]bool),
-		asyncTasks:     make(map[string]*AsyncTask),
-		sessionTasks:   make(map[string][]string),
-		taskSubs:       make(map[string]map[chan *TaskEvent]struct{}),
-		taskCancels:    make(map[string]context.CancelFunc),
-		agentMailboxes: make(map[string]*agentMailbox),
+		store:           s,
+		runningAgents:   make(map[string]context.CancelFunc),
+		services:        make(map[string]*Service),
+		memberSessions:  make(map[string]string),
+		taskQueues:      make(map[string][]string),
+		sharedTasks:     make(map[string]*SharedTask),
+		queueRunning:    make(map[string]bool),
+		asyncTasks:      make(map[string]*AsyncTask),
+		sessionTasks:    make(map[string][]string),
+		taskSubs:        make(map[string]map[chan *TaskEvent]struct{}),
+		taskCancels:     make(map[string]context.CancelFunc),
+		teamRequests:    make(map[string]*TeamRequest),
+		agentMailboxes:  make(map[string]*agentMailbox),
+		builtInRuntimes: make(map[string]*builtInAgentRuntime),
 	}
 	manager.restoreSharedTasks()
 	return manager
@@ -694,6 +702,29 @@ func (m *TeamManager) getOrBuildService(name string) (*Service, error) {
 		return nil, err
 	}
 
+	newSvc, err := m.buildServiceForModel(model)
+	if err != nil {
+		return nil, err
+	}
+
+	m.services[name] = newSvc
+
+	return newSvc, nil
+}
+
+func (m *TeamManager) buildEphemeralService(name string) (*Service, error) {
+	model, err := m.store.GetAgentModelByName(strings.TrimSpace(name))
+	if err != nil {
+		return nil, err
+	}
+	return m.buildServiceForModel(model)
+}
+
+func (m *TeamManager) buildServiceForModel(model *AgentModel) (*Service, error) {
+	if model == nil {
+		return nil, fmt.Errorf("agent model is required")
+	}
+
 	var agentgoCfg *config.Config
 	builder := New(model.Name)
 	systemPrompt := strings.TrimSpace(model.Instructions)
@@ -803,8 +834,6 @@ func (m *TeamManager) getOrBuildService(name string) (*Service, error) {
 		newSvc.agent.SetModel(label)
 	}
 	newSvc.SetMemoryScope(model.Name, primaryMemoryTeamID(model), "")
-
-	m.services[name] = newSvc
 
 	return newSvc, nil
 }
@@ -1135,8 +1164,14 @@ func defaultMemberMCPTools(name string) []string {
 }
 
 func (m *TeamManager) ensureAgentRunning(ctx context.Context, name string) error {
-	_, err := m.store.GetAgentModelByName(name)
-	return err
+	model, err := m.store.GetAgentModelByName(name)
+	if err != nil {
+		return err
+	}
+	if isBuiltInAgentModel(model) {
+		return m.ensureBuiltInAgentRuntime(ctx, model.Name)
+	}
+	return nil
 }
 
 func extractDispatchText(res *ExecutionResult) string {
@@ -1237,23 +1272,17 @@ func (m *TeamManager) dispatchTaskWithOptions(ctx context.Context, agentName str
 		return "", fmt.Errorf("cannot start agent %s: %w", agentName, err)
 	}
 
-	svc, err := m.getOrBuildService(agentName)
-	if err != nil {
-		return "", fmt.Errorf("cannot dispatch to agent %s: %w", agentName, err)
-	}
+	wrappedInstruction, runOptions := m.prepareDispatchRequest(agentName, instruction, sessionID, extraOpts)
 
-	wrappedInstruction := instruction
-	if cfg := m.configuredAgentGoConfig(); cfg != nil {
-		wrappedInstruction = buildTeamTaskEnvelope(cfg, agentName, instruction)
+	var (
+		res *ExecutionResult
+		err error
+	)
+	if isBuiltInRuntimeAgentName(agentName) {
+		res, err = m.dispatchViaBuiltInRuntime(ctx, agentName, wrappedInstruction, runOptions)
+	} else {
+		res, err = m.executeDispatchSync(ctx, agentName, wrappedInstruction, runOptions)
 	}
-
-	runOptions := dispatchRunOptions(agentName)
-	if strings.TrimSpace(sessionID) != "" {
-		runOptions = append(runOptions, WithSessionID(sessionID))
-	}
-	runOptions = append(runOptions, extraOpts...)
-
-	res, err := svc.Run(ctx, wrappedInstruction, runOptions...)
 	if err != nil {
 		return "", err
 	}
@@ -1314,23 +1343,11 @@ func (m *TeamManager) dispatchTaskStream(ctx context.Context, agentName string, 
 		return nil, fmt.Errorf("cannot start agent %s: %w", agentName, err)
 	}
 
-	svc, err := m.getOrBuildService(agentName)
-	if err != nil {
-		return nil, fmt.Errorf("cannot dispatch to agent %s: %w", agentName, err)
+	wrappedInstruction, runOptions := m.prepareDispatchRequest(agentName, instruction, sessionID, extraOpts)
+	if isBuiltInRuntimeAgentName(agentName) {
+		return m.dispatchStreamViaBuiltInRuntime(ctx, agentName, wrappedInstruction, runOptions)
 	}
-
-	wrappedInstruction := instruction
-	if cfg := m.configuredAgentGoConfig(); cfg != nil {
-		wrappedInstruction = buildTeamTaskEnvelope(cfg, agentName, instruction)
-	}
-
-	runOptions := dispatchRunOptions(agentName)
-	if strings.TrimSpace(sessionID) != "" {
-		runOptions = append(runOptions, WithSessionID(sessionID))
-	}
-	runOptions = append(runOptions, extraOpts...)
-
-	return svc.RunStreamWithOptions(ctx, wrappedInstruction, runOptions...)
+	return m.executeDispatchStream(ctx, agentName, wrappedInstruction, runOptions)
 }
 
 func dispatchRunOptions(agentName string) []RunOption {

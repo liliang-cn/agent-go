@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 )
@@ -26,6 +27,8 @@ func TestRouteBuiltInRequestDispatchesArchivistWithMemorySavePrefix(t *testing.T
 		switch agentName {
 		case defaultIntentRouterAgentName:
 			return "TARGET_AGENT: Archivist\nINTENT_TYPE: schedule_event\nREASON: schedule fact\nNEEDS_OPTIMIZATION: no", nil
+		case defaultPromptOptimizerAgentName:
+			return optimizedPromptBeginMarker + "\n明天下午17：00去万达吃饭\n" + optimizedPromptEndMarker, nil
 		case defaultArchivistAgentName:
 			finalPrompt = prompt
 			return "已记住。", nil
@@ -58,9 +61,8 @@ func TestRouteBuiltInRequestDispatchesArchivistWithMemorySavePrefix(t *testing.T
 
 	mu.Lock()
 	defer mu.Unlock()
-	// Only 2 calls: IntentRouter + Archivist (no optimizer when NEEDS_OPTIMIZATION=no)
-	if len(calls) != 2 {
-		t.Fatalf("expected 2 dispatch calls (router + archivist), got %+v", calls)
+	if len(calls) != 3 {
+		t.Fatalf("expected 3 dispatch calls (router + optimizer + archivist), got %+v", calls)
 	}
 }
 
@@ -109,6 +111,49 @@ func TestRouteBuiltInRequestRunsOptimizerWhenNeeded(t *testing.T) {
 	}
 }
 
+func TestRouteBuiltInRequestStartsRouterAndOptimizerConcurrently(t *testing.T) {
+	t.Parallel()
+
+	routerStarted := make(chan struct{})
+	optimizerStarted := make(chan struct{})
+
+	dispatch := func(ctx context.Context, agentName, prompt string, opts []RunOption) (string, error) {
+		switch agentName {
+		case defaultIntentRouterAgentName:
+			close(routerStarted)
+			select {
+			case <-optimizerStarted:
+				return "TARGET_AGENT: Assistant\nINTENT_TYPE: general_qa\nREASON: parallel routing\nNEEDS_OPTIMIZATION: no", nil
+			case <-time.After(500 * time.Millisecond):
+				return "", fmt.Errorf("optimizer did not start before router finished")
+			}
+		case defaultPromptOptimizerAgentName:
+			close(optimizerStarted)
+			select {
+			case <-routerStarted:
+				return optimizedPromptBeginMarker + "\nparallel prompt\n" + optimizedPromptEndMarker, nil
+			case <-time.After(500 * time.Millisecond):
+				return "", fmt.Errorf("router did not start before optimizer finished")
+			}
+		case defaultAssistantAgentName:
+			return "ok", nil
+		default:
+			return "", fmt.Errorf("unexpected agent %s", agentName)
+		}
+	}
+
+	result, err := routeBuiltInRequestWithDispatcher(context.Background(), "帮我总结一下", domain.MemoryQueryContext{
+		AgentID: "Concierge",
+		TeamID:  defaultTeamID,
+	}, dispatch)
+	if err != nil {
+		t.Fatalf("routeBuiltInRequestWithDispatcher failed: %v", err)
+	}
+	if result.TargetAgent != defaultAssistantAgentName {
+		t.Fatalf("expected Assistant target, got %+v", result)
+	}
+}
+
 func TestParseIntentRouterDecisionNormalizesTargetAgent(t *testing.T) {
 	t.Parallel()
 
@@ -132,4 +177,3 @@ func TestParseIntentRouterDecisionParsesNeedsOptimization(t *testing.T) {
 		t.Fatal("expected NeedsOptimization=true")
 	}
 }
-

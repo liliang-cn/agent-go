@@ -248,4 +248,7 @@ func TestBuildSystemPromptIncludesAgentMessagingGuidanceWhenMessagingToolsCallab
 	if !strings.Contains(got, "`send_agent_message`") || !strings.Contains(got, "`get_agent_messages`") {
 		t.Fatalf("expected prompt to mention messaging tools explicitly, got %q", got)
 	}
+	if !strings.Contains(got, "request, response, event, error, cancel, progress") {
+		t.Fatalf("expected prompt to enumerate structured message types, got %q", got)
+	}
 }

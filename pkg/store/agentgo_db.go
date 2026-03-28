@@ -91,6 +91,14 @@ func isSQLiteLockedError(err error) bool {
 	return strings.Contains(msg, "database is locked") || strings.Contains(msg, "database table is locked")
 }
 
+func isSQLiteDuplicateColumnError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "duplicate column name")
+}
+
 // initSchema creates all necessary tables
 func (s *AgentGoDB) initSchema() error {
 	s.mu.Lock()
@@ -267,6 +275,9 @@ func (s *AgentGoDB) initSchema() error {
 	if err != nil {
 		return fmt.Errorf("failed to create shared_tasks table: %w", err)
 	}
+	if err := s.migrateSharedTasksSchemaLocked(); err != nil {
+		return fmt.Errorf("failed to migrate shared_tasks table: %w", err)
+	}
 
 	// Chat session messages table (for granular message history)
 	_, err = s.db.Exec(`
@@ -324,6 +335,76 @@ func (s *AgentGoDB) initSchema() error {
 	}
 
 	return nil
+}
+
+func (s *AgentGoDB) migrateSharedTasksSchemaLocked() error {
+	columns, err := s.tableColumnSetLocked("shared_tasks")
+	if err != nil {
+		return err
+	}
+	if len(columns) == 0 {
+		return nil
+	}
+	if err := s.migrateSharedTasksColumnLocked(columns, "squad_id", "team_id"); err != nil {
+		return err
+	}
+	columns, err = s.tableColumnSetLocked("shared_tasks")
+	if err != nil {
+		return err
+	}
+	if err := s.migrateSharedTasksColumnLocked(columns, "squad_name", "team_name"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *AgentGoDB) migrateSharedTasksColumnLocked(columns map[string]bool, legacyColumn, currentColumn string) error {
+	if columns[currentColumn] || !columns[legacyColumn] {
+		return nil
+	}
+	renameSQL := fmt.Sprintf("ALTER TABLE shared_tasks RENAME COLUMN %s TO %s", legacyColumn, currentColumn)
+	if _, err := s.db.Exec(renameSQL); err == nil {
+		return nil
+	}
+
+	addSQL := fmt.Sprintf("ALTER TABLE shared_tasks ADD COLUMN %s TEXT", currentColumn)
+	if _, err := s.db.Exec(addSQL); err != nil && !isSQLiteDuplicateColumnError(err) {
+		return fmt.Errorf("add %s to shared_tasks: %w", currentColumn, err)
+	}
+
+	copySQL := fmt.Sprintf("UPDATE shared_tasks SET %s = %s WHERE %s IS NULL OR %s = ''", currentColumn, legacyColumn, currentColumn, currentColumn)
+	if _, err := s.db.Exec(copySQL); err != nil {
+		return fmt.Errorf("backfill %s from %s in shared_tasks: %w", currentColumn, legacyColumn, err)
+	}
+	return nil
+}
+
+func (s *AgentGoDB) tableColumnSetLocked(tableName string) (map[string]bool, error) {
+	rows, err := s.db.Query(fmt.Sprintf("PRAGMA table_info(%s)", tableName))
+	if err != nil {
+		return nil, fmt.Errorf("inspect %s columns: %w", tableName, err)
+	}
+	defer rows.Close()
+
+	columns := make(map[string]bool)
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			ctype      string
+			notNull    int
+			defaultV   sql.NullString
+			primaryKey int
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notNull, &defaultV, &primaryKey); err != nil {
+			return nil, fmt.Errorf("scan %s column info: %w", tableName, err)
+		}
+		columns[strings.TrimSpace(name)] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate %s column info: %w", tableName, err)
+	}
+	return columns, nil
 }
 
 // GetDB returns the underlying sql.DB.

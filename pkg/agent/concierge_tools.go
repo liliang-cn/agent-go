@@ -101,17 +101,26 @@ func (m *TeamManager) RegisterConciergeTools(concierge *Service) {
 		out := make([]map[string]interface{}, 0, len(statuses))
 		for _, status := range statuses {
 			out = append(out, map[string]interface{}{
-				"agent_id":           status.AgentID,
-				"name":               status.Name,
-				"kind":               status.Kind,
-				"status":             status.Status,
-				"built_in":           status.BuiltIn,
-				"preferred_provider": status.PreferredProvider,
-				"preferred_model":    status.PreferredModel,
-				"configured_model":   status.ConfiguredModel,
-				"running_tasks":      status.RunningTaskCount,
-				"queued_tasks":       status.QueuedTaskCount,
-				"teams":              append([]TeamMembership(nil), status.Teams...),
+				"agent_id":            status.AgentID,
+				"name":                status.Name,
+				"kind":                status.Kind,
+				"status":              status.Status,
+				"built_in":            status.BuiltIn,
+				"preferred_provider":  status.PreferredProvider,
+				"preferred_model":     status.PreferredModel,
+				"configured_model":    status.ConfiguredModel,
+				"runtime_mode":        status.RuntimeMode,
+				"worker_count":        status.WorkerCount,
+				"active_workers":      status.ActiveWorkers,
+				"queue_depth":         status.QueueDepth,
+				"processed_messages":  status.ProcessedMessages,
+				"last_message_type":   status.LastMessageType,
+				"last_correlation_id": status.LastCorrelationID,
+				"last_error":          status.LastError,
+				"last_active_at":      status.LastActiveAt,
+				"running_tasks":       status.RunningTaskCount,
+				"queued_tasks":        status.QueuedTaskCount,
+				"teams":               append([]TeamMembership(nil), status.Teams...),
 			})
 		}
 		return out, nil

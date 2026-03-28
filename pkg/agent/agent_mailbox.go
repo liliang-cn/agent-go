@@ -4,19 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
-
-	"github.com/google/uuid"
 )
-
-type AgentMessage struct {
-	ID        string                 `json:"id"`
-	FromAgent string                 `json:"from_agent"`
-	ToAgent   string                 `json:"to_agent"`
-	Content   string                 `json:"content"`
-	Metadata  map[string]interface{} `json:"metadata,omitempty"`
-	CreatedAt time.Time              `json:"created_at"`
-}
 
 type agentMailbox struct {
 	inbox    chan agentMailboxDelivery
@@ -64,30 +52,22 @@ func (m *TeamManager) runAgentMailbox(agentName string, mailbox *agentMailbox) {
 }
 
 func (m *TeamManager) SendAgentMessage(fromAgent, toAgent, content string, metadata map[string]interface{}) (*AgentMessage, error) {
-	toAgent = strings.TrimSpace(toAgent)
-	content = strings.TrimSpace(content)
-	if toAgent == "" {
-		return nil, fmt.Errorf("target agent is required")
+	message := newAgentProtocolMessage(fromAgent, toAgent, AgentMessageTypeEvent, content, nil, metadata)
+	return m.SendStructuredAgentMessage(message)
+}
+
+func (m *TeamManager) SendStructuredAgentMessage(message *AgentMessage) (*AgentMessage, error) {
+	message = normalizeAgentMessage(message)
+	if err := validateAgentMessage(message); err != nil {
+		return nil, err
 	}
-	if content == "" {
-		return nil, fmt.Errorf("message content is required")
-	}
-	if _, err := m.GetAgentByName(toAgent); err != nil {
+	if _, err := m.GetAgentByName(message.ToAgent); err != nil {
 		return nil, err
 	}
 
-	message := &AgentMessage{
-		ID:        uuid.NewString(),
-		FromAgent: firstNonEmpty(strings.TrimSpace(fromAgent), "System"),
-		ToAgent:   toAgent,
-		Content:   content,
-		Metadata:  cloneAgentMessageMetadata(metadata),
-		CreatedAt: time.Now(),
-	}
-
-	mailbox := m.ensureAgentMailbox(toAgent)
+	mailbox := m.ensureAgentMailbox(message.ToAgent)
 	if mailbox == nil {
-		return nil, fmt.Errorf("mailbox unavailable for %s", toAgent)
+		return nil, fmt.Errorf("mailbox unavailable for %s", message.ToAgent)
 	}
 
 	delivery := agentMailboxDelivery{
@@ -100,7 +80,7 @@ func (m *TeamManager) SendAgentMessage(fromAgent, toAgent, content string, metad
 		<-delivery.acked
 	default:
 		m.mailboxMu.Lock()
-		if current := m.agentMailboxes[toAgent]; current != nil {
+		if current := m.agentMailboxes[message.ToAgent]; current != nil {
 			current.messages = append(current.messages, cloneAgentMessage(message))
 		}
 		m.mailboxMu.Unlock()
@@ -161,27 +141,47 @@ func (m *TeamManager) registerAgentMessagingTools(svc *Service, model *AgentMode
 		svc.AddTool(name, description, parameters, handler)
 	}
 
-	register("send_agent_message", "Send a short built-in message to another agent's mailbox for asynchronous coordination.", map[string]interface{}{
+	register("send_agent_message", "Send a structured built-in message to another agent's mailbox for asynchronous coordination.", map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
 			"agent_name": map[string]interface{}{
 				"type":        "string",
 				"description": "The target agent name.",
 			},
+			"message_type": map[string]interface{}{
+				"type":        "string",
+				"description": "Structured message type: " + agentMessageProtocolSummary() + ".",
+			},
+			"correlation_id": map[string]interface{}{
+				"type":        "string",
+				"description": "Correlation id shared across related request/response/progress messages.",
+			},
+			"reply_to": map[string]interface{}{
+				"type":        "string",
+				"description": "Original message id this message is replying to.",
+			},
+			"priority": map[string]interface{}{
+				"type":        "string",
+				"description": "Priority: low, normal, high, urgent.",
+			},
 			"message": map[string]interface{}{
 				"type":        "string",
-				"description": "The short coordination message to send.",
+				"description": "Human-readable message summary.",
+			},
+			"payload": map[string]interface{}{
+				"type":        "object",
+				"description": "Structured payload for the receiving agent.",
+			},
+			"metadata": map[string]interface{}{
+				"type":        "object",
+				"description": "Optional transport metadata for tracing or workflow hints.",
 			},
 		},
-		"required": []string{"agent_name", "message"},
+		"required": []string{"agent_name"},
 	}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		targetAgent := getStringArg(args, "agent_name")
-		message := getStringArg(args, "message")
 		if targetAgent == "" {
 			return nil, fmt.Errorf("agent_name is required")
-		}
-		if message == "" {
-			return nil, fmt.Errorf("message is required")
 		}
 
 		sourceAgent := strings.TrimSpace(model.Name)
@@ -189,20 +189,39 @@ func (m *TeamManager) registerAgentMessagingTools(svc *Service, model *AgentMode
 			sourceAgent = strings.TrimSpace(current.Name())
 		}
 
-		sent, err := m.SendAgentMessage(sourceAgent, targetAgent, message, nil)
+		payload, _ := args["payload"].(map[string]interface{})
+		metadata, _ := args["metadata"].(map[string]interface{})
+		sent, err := m.SendStructuredAgentMessage(&AgentMessage{
+			FromAgent:     sourceAgent,
+			ToAgent:       targetAgent,
+			MessageType:   AgentMessageType(getStringArg(args, "message_type")),
+			CorrelationID: getStringArg(args, "correlation_id"),
+			ReplyTo:       getStringArg(args, "reply_to"),
+			Priority:      AgentMessagePriority(getStringArg(args, "priority")),
+			Content:       getStringArg(args, "message"),
+			Payload:       cloneAgentMessagePayload(payload),
+			Metadata:      cloneAgentMessageMetadata(metadata),
+		})
 		if err != nil {
 			return nil, err
 		}
 		return map[string]interface{}{
-			"message_id": sent.ID,
-			"from_agent": sent.FromAgent,
-			"to_agent":   sent.ToAgent,
-			"content":    sent.Content,
-			"created_at": sent.CreatedAt,
+			"id":               sent.ID,
+			"protocol_version": sent.ProtocolVersion,
+			"from_agent":       sent.FromAgent,
+			"to_agent":         sent.ToAgent,
+			"message_type":     sent.MessageType,
+			"correlation_id":   sent.CorrelationID,
+			"reply_to":         sent.ReplyTo,
+			"priority":         sent.Priority,
+			"content":          sent.Content,
+			"payload":          cloneAgentMessagePayload(sent.Payload),
+			"metadata":         cloneAgentMessageMetadata(sent.Metadata),
+			"created_at":       sent.CreatedAt,
 		}, nil
 	})
 
-	register("get_agent_messages", "Read pending mailbox messages that other agents sent to you.", map[string]interface{}{
+	register("get_agent_messages", "Read pending structured mailbox messages that other agents sent to you.", map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
 			"limit": map[string]interface{}{
@@ -233,12 +252,18 @@ func (m *TeamManager) registerAgentMessagingTools(svc *Service, model *AgentMode
 		out := make([]map[string]interface{}, 0, len(messages))
 		for _, msg := range messages {
 			out = append(out, map[string]interface{}{
-				"id":         msg.ID,
-				"from_agent": msg.FromAgent,
-				"to_agent":   msg.ToAgent,
-				"content":    msg.Content,
-				"metadata":   cloneAgentMessageMetadata(msg.Metadata),
-				"created_at": msg.CreatedAt,
+				"id":               msg.ID,
+				"protocol_version": msg.ProtocolVersion,
+				"from_agent":       msg.FromAgent,
+				"to_agent":         msg.ToAgent,
+				"message_type":     msg.MessageType,
+				"correlation_id":   msg.CorrelationID,
+				"reply_to":         msg.ReplyTo,
+				"priority":         msg.Priority,
+				"content":          msg.Content,
+				"payload":          cloneAgentMessagePayload(msg.Payload),
+				"metadata":         cloneAgentMessageMetadata(msg.Metadata),
+				"created_at":       msg.CreatedAt,
 			})
 		}
 		return out, nil
@@ -250,8 +275,20 @@ func cloneAgentMessage(msg *AgentMessage) *AgentMessage {
 		return nil
 	}
 	cloned := *msg
+	cloned.Payload = cloneAgentMessagePayload(msg.Payload)
 	cloned.Metadata = cloneAgentMessageMetadata(msg.Metadata)
 	return &cloned
+}
+
+func cloneAgentMessagePayload(payload map[string]interface{}) map[string]interface{} {
+	if len(payload) == 0 {
+		return nil
+	}
+	cloned := make(map[string]interface{}, len(payload))
+	for key, value := range payload {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 func cloneAgentMessageMetadata(metadata map[string]interface{}) map[string]interface{} {

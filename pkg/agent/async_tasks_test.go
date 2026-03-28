@@ -12,6 +12,7 @@ func newTaskTestManager() *TeamManager {
 		sessionTasks: make(map[string][]string),
 		taskSubs:     make(map[string]map[chan *TaskEvent]struct{}),
 		taskCancels:  make(map[string]context.CancelFunc),
+		teamRequests: make(map[string]*TeamRequest),
 	}
 }
 

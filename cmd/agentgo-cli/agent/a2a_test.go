@@ -96,7 +96,7 @@ func TestAgentUpdateWithA2AFlagTogglesExposure(t *testing.T) {
 
 type cliInvokeCatalog struct {
 	agents  map[string]*agent.AgentModel
-	teams  map[string]*agent.Team
+	teams   map[string]*agent.Team
 	runners map[string]agenta2a.AgentRunner
 }
 
@@ -164,6 +164,83 @@ func (c cliInvokeCatalog) GetLeadAgentForTeam(teamID string) (*agent.AgentModel,
 		}
 	}
 	return nil, http.ErrMissingFile
+}
+
+func (c cliInvokeCatalog) SubmitTeamRequest(ctx context.Context, req *agent.TeamRequest) (*agent.TeamResponse, error) {
+	for _, team := range c.teams {
+		if team != nil && (team.ID == req.TeamID || team.Name == req.TeamName) {
+			return &agent.TeamResponse{
+				ProtocolVersion: agent.TeamGatewayProtocolVersion,
+				ID:              "team-response-" + team.ID,
+				RequestID:       req.ID,
+				SessionID:       req.SessionID,
+				TeamID:          team.ID,
+				TeamName:        team.Name,
+				Status:          agent.TeamResponseStatusCompleted,
+				ResultText:      "team response",
+			}, nil
+		}
+	}
+	return nil, http.ErrMissingFile
+}
+
+func (c cliInvokeCatalog) GetTeamResponse(responseID string) (*agent.TeamResponse, error) {
+	for _, team := range c.teams {
+		if team == nil {
+			continue
+		}
+		if responseID == "team-response-"+team.ID {
+			return &agent.TeamResponse{
+				ProtocolVersion: agent.TeamGatewayProtocolVersion,
+				ID:              responseID,
+				TeamID:          team.ID,
+				TeamName:        team.Name,
+				Status:          agent.TeamResponseStatusCompleted,
+				ResultText:      "team response",
+			}, nil
+		}
+	}
+	return nil, http.ErrMissingFile
+}
+
+func (c cliInvokeCatalog) SubscribeTeamResponse(responseID string) (<-chan *agent.TeamResponseEvent, func(), error) {
+	resp, err := c.GetTeamResponse(responseID)
+	if err != nil {
+		return nil, nil, err
+	}
+	ch := make(chan *agent.TeamResponseEvent, 2)
+	ch <- &agent.TeamResponseEvent{
+		ProtocolVersion: agent.TeamGatewayProtocolVersion,
+		ID:              "evt-progress",
+		ResponseID:      resp.ID,
+		TeamID:          resp.TeamID,
+		TeamName:        resp.TeamName,
+		Type:            agent.TeamResponseEventTypeProgress,
+		Status:          agent.TeamResponseStatusRunning,
+		Runtime:         &agent.Event{Type: agent.EventTypePartial, Content: resp.ResultText},
+	}
+	ch <- &agent.TeamResponseEvent{
+		ProtocolVersion: agent.TeamGatewayProtocolVersion,
+		ID:              "evt-complete",
+		ResponseID:      resp.ID,
+		TeamID:          resp.TeamID,
+		TeamName:        resp.TeamName,
+		Type:            agent.TeamResponseEventTypeCompleted,
+		Status:          resp.Status,
+		Message:         resp.ResultText,
+	}
+	close(ch)
+	return ch, func() {}, nil
+}
+
+func (c cliInvokeCatalog) CancelTeamResponse(ctx context.Context, responseID string) (*agent.TeamResponse, error) {
+	resp, err := c.GetTeamResponse(responseID)
+	if err != nil {
+		return nil, err
+	}
+	resp.Status = agent.TeamResponseStatusCancelled
+	resp.ResultText = "Task canceled."
+	return resp, nil
 }
 
 type cliInvokeRunner struct {

@@ -16,7 +16,7 @@ type fakeCatalog struct {
 	agents  map[string]*agentpkg.AgentModel
 	teams   map[string]*agentpkg.Team
 	runners map[string]AgentRunner
-	tasks   map[string]*agentpkg.AsyncTask
+	tasks   map[string]*agentpkg.TeamResponse
 }
 
 func (f *fakeCatalog) ListAgents() ([]*agentpkg.AgentModel, error) {
@@ -85,13 +85,13 @@ func (f *fakeCatalog) GetLeadAgentForTeam(teamID string) (*agentpkg.AgentModel, 
 	return nil, http.ErrMissingFile
 }
 
-func (f *fakeCatalog) SubmitTeamTask(ctx context.Context, sessionID, teamID, prompt string, agentNames []string) (*agentpkg.AsyncTask, error) {
+func (f *fakeCatalog) SubmitTeamRequest(ctx context.Context, req *agentpkg.TeamRequest) (*agentpkg.TeamResponse, error) {
 	if f.tasks == nil {
-		f.tasks = make(map[string]*agentpkg.AsyncTask)
+		f.tasks = make(map[string]*agentpkg.TeamResponse)
 	}
 	var team *agentpkg.Team
 	for _, candidate := range f.teams {
-		if candidate != nil && (candidate.ID == teamID || candidate.A2AID == teamID || candidate.Name == teamID) {
+		if candidate != nil && (candidate.ID == req.TeamID || candidate.A2AID == req.TeamID || candidate.Name == req.TeamID || candidate.Name == req.TeamName) {
 			team = candidate
 			break
 		}
@@ -103,58 +103,86 @@ func (f *fakeCatalog) SubmitTeamTask(ctx context.Context, sessionID, teamID, pro
 	if err != nil {
 		return nil, err
 	}
-	task := &agentpkg.AsyncTask{
-		ID:          "task-" + team.ID,
-		SessionID:   sessionID,
-		Kind:        agentpkg.AsyncTaskKindTeam,
-		Status:      agentpkg.AsyncTaskStatusCompleted,
-		TeamID:      team.ID,
-		TeamName:    team.Name,
-		CaptainName: lead.Name,
-		Prompt:      prompt,
-		AckMessage:  "accepted",
-		ResultText:  "team response",
+	task := &agentpkg.TeamResponse{
+		ProtocolVersion: agentpkg.TeamGatewayProtocolVersion,
+		ID:              "team-response-" + team.ID,
+		RequestID:       req.ID,
+		SessionID:       req.SessionID,
+		TeamID:          team.ID,
+		TeamName:        team.Name,
+		CaptainName:     lead.Name,
+		AgentNames:      append([]string(nil), req.AgentNames...),
+		Prompt:          req.Prompt,
+		Status:          agentpkg.TeamResponseStatusCompleted,
+		AckMessage:      "accepted",
+		ResultText:      "team response",
+		CreatedAt:       req.RequestedAt,
 	}
 	f.tasks[task.ID] = task
 	return task, nil
 }
 
-func (f *fakeCatalog) GetTask(taskID string) (*agentpkg.AsyncTask, error) {
+func (f *fakeCatalog) GetTeamResponse(taskID string) (*agentpkg.TeamResponse, error) {
 	if task, ok := f.tasks[taskID]; ok {
 		return task, nil
 	}
 	return nil, http.ErrMissingFile
 }
 
-func (f *fakeCatalog) SubscribeTask(taskID string) (<-chan *agentpkg.TaskEvent, func(), error) {
-	task, err := f.GetTask(taskID)
+func (f *fakeCatalog) SubscribeTeamResponse(taskID string) (<-chan *agentpkg.TeamResponseEvent, func(), error) {
+	task, err := f.GetTeamResponse(taskID)
 	if err != nil {
 		return nil, nil, err
 	}
-	ch := make(chan *agentpkg.TaskEvent, 4)
-	ch <- &agentpkg.TaskEvent{TaskID: task.ID, Type: agentpkg.TaskEventTypeStarted, Message: "started"}
-	ch <- &agentpkg.TaskEvent{TaskID: task.ID, Type: agentpkg.TaskEventTypeRuntime, Runtime: &agentpkg.Event{Type: agentpkg.EventTypePartial, Content: "partial team output"}}
-	ch <- &agentpkg.TaskEvent{TaskID: task.ID, Type: agentpkg.TaskEventTypeCompleted, Message: task.ResultText}
+	ch := make(chan *agentpkg.TeamResponseEvent, 4)
+	ch <- &agentpkg.TeamResponseEvent{
+		ID:              "evt-started",
+		ProtocolVersion: agentpkg.TeamGatewayProtocolVersion,
+		ResponseID:      task.ID,
+		RequestID:       task.RequestID,
+		TeamID:          task.TeamID,
+		TeamName:        task.TeamName,
+		CaptainName:     task.CaptainName,
+		Type:            agentpkg.TeamResponseEventTypeStarted,
+		Status:          agentpkg.TeamResponseStatusRunning,
+		Message:         "started",
+	}
+	ch <- &agentpkg.TeamResponseEvent{
+		ID:              "evt-progress",
+		ProtocolVersion: agentpkg.TeamGatewayProtocolVersion,
+		ResponseID:      task.ID,
+		RequestID:       task.RequestID,
+		TeamID:          task.TeamID,
+		TeamName:        task.TeamName,
+		CaptainName:     task.CaptainName,
+		Type:            agentpkg.TeamResponseEventTypeProgress,
+		Status:          agentpkg.TeamResponseStatusRunning,
+		Runtime:         &agentpkg.Event{Type: agentpkg.EventTypePartial, Content: "partial team output"},
+	}
+	ch <- &agentpkg.TeamResponseEvent{
+		ID:              "evt-completed",
+		ProtocolVersion: agentpkg.TeamGatewayProtocolVersion,
+		ResponseID:      task.ID,
+		RequestID:       task.RequestID,
+		TeamID:          task.TeamID,
+		TeamName:        task.TeamName,
+		CaptainName:     task.CaptainName,
+		Type:            agentpkg.TeamResponseEventTypeCompleted,
+		Status:          agentpkg.TeamResponseStatusCompleted,
+		Message:         task.ResultText,
+	}
 	close(ch)
 	return ch, func() {}, nil
 }
 
-func (f *fakeCatalog) CancelTask(ctx context.Context, taskID string) (*agentpkg.AsyncTask, error) {
-	task, err := f.GetTask(taskID)
+func (f *fakeCatalog) CancelTeamResponse(ctx context.Context, taskID string) (*agentpkg.TeamResponse, error) {
+	task, err := f.GetTeamResponse(taskID)
 	if err != nil {
 		return nil, err
 	}
-	task.Status = agentpkg.AsyncTaskStatusCancelled
+	task.Status = agentpkg.TeamResponseStatusCancelled
 	task.ResultText = "Task canceled."
 	return task, nil
-}
-
-func (f *fakeCatalog) ListTasks(limit int) []*agentpkg.AsyncTask {
-	out := make([]*agentpkg.AsyncTask, 0, len(f.tasks))
-	for _, task := range f.tasks {
-		out = append(out, task)
-	}
-	return out
 }
 
 type fakeRunner struct {

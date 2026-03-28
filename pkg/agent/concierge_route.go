@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 )
@@ -51,8 +52,27 @@ func routeBuiltInRequestWithDispatcher(ctx context.Context, prompt string, query
 		WithInheritedMemoryScope(queryContext.AgentID, queryContext.TeamID, queryContext.UserID),
 	}
 
-	// Always run IntentRouter. PromptOptimizer only runs when IntentRouter says it's needed.
-	routerRaw, routerErr := dispatch(ctx, defaultIntentRouterAgentName, buildIntentRouterTaskPrompt(prompt), runOptions)
+	var (
+		routerRaw    string
+		routerErr    error
+		optimizerRaw string
+		optimizerErr error
+	)
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		routerRaw, routerErr = dispatch(ctx, defaultIntentRouterAgentName, buildIntentRouterTaskPrompt(prompt), runOptions)
+	}()
+
+	go func() {
+		defer wg.Done()
+		optimizerRaw, optimizerErr = dispatch(ctx, defaultPromptOptimizerAgentName, buildPromptOptimizerTaskPrompt(prompt), runOptions)
+	}()
+
+	wg.Wait()
 
 	decision := parseIntentRouterDecision(routerRaw)
 	if decision.TargetAgent == "" {
@@ -63,9 +83,7 @@ func routeBuiltInRequestWithDispatcher(ctx context.Context, prompt string, query
 	}
 
 	optimizedPrompt := prompt
-	var optimizerRaw string
-	if decision.NeedsOptimization {
-		optimizerRaw, _ = dispatch(ctx, defaultPromptOptimizerAgentName, buildPromptOptimizerTaskPrompt(prompt), runOptions)
+	if decision.NeedsOptimization && optimizerErr == nil {
 		if parsed := parseOptimizedPrompt(optimizerRaw, ""); parsed != "" {
 			optimizedPrompt = parsed
 		}

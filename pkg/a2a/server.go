@@ -9,6 +9,7 @@ import (
 	"path"
 	"strings"
 	"sync"
+	"time"
 
 	a2aproto "github.com/a2aproject/a2a-go/a2a"
 	a2asrv "github.com/a2aproject/a2a-go/a2asrv"
@@ -30,14 +31,6 @@ type AgentCatalog interface {
 	GetTeamByName(name string) (*agentpkg.Team, error)
 	GetTeamByA2AID(a2aID string) (*agentpkg.Team, error)
 	GetLeadAgentForTeam(teamID string) (*agentpkg.AgentModel, error)
-}
-
-type AsyncTaskCatalog interface {
-	SubmitTeamTask(ctx context.Context, sessionID, teamID, prompt string, agentNames []string) (*agentpkg.AsyncTask, error)
-	GetTask(taskID string) (*agentpkg.AsyncTask, error)
-	SubscribeTask(taskID string) (<-chan *agentpkg.TaskEvent, func(), error)
-	CancelTask(ctx context.Context, taskID string) (*agentpkg.AsyncTask, error)
-	ListTasks(limit int) []*agentpkg.AsyncTask
 }
 
 type Config struct {
@@ -729,9 +722,9 @@ func (e *executor) Execute(ctx context.Context, reqCtx *a2asrv.RequestContext, q
 }
 
 func (e *executor) executeTeamTask(ctx context.Context, reqCtx *a2asrv.RequestContext, q eventqueue.Queue, prompt string) error {
-	asyncCatalog, ok := e.catalog.(AsyncTaskCatalog)
+	teamGateway, ok := e.catalog.(agentpkg.TeamGateway)
 	if !ok {
-		return writeFinalStatus(ctx, q, reqCtx, a2aproto.TaskStateFailed, "team async task support is unavailable")
+		return writeFinalStatus(ctx, q, reqCtx, a2aproto.TaskStateFailed, "team gateway support is unavailable")
 	}
 
 	team, err := e.catalog.GetTeamByName(e.name)
@@ -739,16 +732,29 @@ func (e *executor) executeTeamTask(ctx context.Context, reqCtx *a2asrv.RequestCo
 		return writeFinalStatus(ctx, q, reqCtx, a2aproto.TaskStateFailed, err.Error())
 	}
 
-	submitted, err := asyncCatalog.SubmitTeamTask(ctx, string(reqCtx.TaskID), team.ID, prompt, nil)
+	submitted, err := teamGateway.SubmitTeamRequest(ctx, &agentpkg.TeamRequest{
+		ID:              string(reqCtx.TaskID),
+		SessionID:       string(reqCtx.TaskID),
+		TeamID:          team.ID,
+		TeamName:        team.Name,
+		Prompt:          prompt,
+		RequestedAt:     time.Now(),
+		ProtocolVersion: agentpkg.TeamGatewayProtocolVersion,
+		Metadata: map[string]any{
+			"transport":     "a2a",
+			"a2a_task_id":   string(reqCtx.TaskID),
+			"resource_name": e.name,
+		},
+	})
 	if err != nil {
 		return writeFinalStatus(ctx, q, reqCtx, a2aproto.TaskStateFailed, err.Error())
 	}
 
-	if err := q.Write(ctx, newAsyncStatusEvent(reqCtx, submitted, a2aproto.TaskStateSubmitted, false, submitted.AckMessage)); err != nil {
+	if err := q.Write(ctx, newTeamStatusEvent(reqCtx, submitted, a2aproto.TaskStateSubmitted, false, submitted.AckMessage)); err != nil {
 		return err
 	}
 
-	events, unsubscribe, err := asyncCatalog.SubscribeTask(submitted.ID)
+	events, unsubscribe, err := teamGateway.SubscribeTeamResponse(submitted.ID)
 	if err != nil {
 		return writeFinalStatus(ctx, q, reqCtx, a2aproto.TaskStateFailed, err.Error())
 	}
@@ -760,11 +766,15 @@ func (e *executor) executeTeamTask(ctx context.Context, reqCtx *a2asrv.RequestCo
 			continue
 		}
 		switch evt.Type {
-		case agentpkg.TaskEventTypeStarted:
-			if err := q.Write(ctx, newAsyncStatusEvent(reqCtx, submitted, a2aproto.TaskStateWorking, false, evt.Message)); err != nil {
+		case agentpkg.TeamResponseEventTypeCreated, agentpkg.TeamResponseEventTypeQueued:
+			if err := q.Write(ctx, newTeamStatusEvent(reqCtx, submitted, a2aproto.TaskStateSubmitted, false, evt.Message)); err != nil {
 				return err
 			}
-		case agentpkg.TaskEventTypeRuntime:
+		case agentpkg.TeamResponseEventTypeStarted:
+			if err := q.Write(ctx, newTeamStatusEvent(reqCtx, submitted, a2aproto.TaskStateWorking, false, evt.Message)); err != nil {
+				return err
+			}
+		case agentpkg.TeamResponseEventTypeRuntime, agentpkg.TeamResponseEventTypeProgress:
 			if evt.Runtime != nil {
 				switch evt.Runtime.Type {
 				case agentpkg.EventTypeThinking, agentpkg.EventTypeToolCall, agentpkg.EventTypeToolResult:
@@ -797,7 +807,7 @@ func (e *executor) executeTeamTask(ctx context.Context, reqCtx *a2asrv.RequestCo
 					}
 				}
 			}
-			text := extractAsyncRuntimeText(evt)
+			text := extractTeamRuntimeText(evt)
 			if strings.TrimSpace(text) == "" {
 				continue
 			}
@@ -811,7 +821,7 @@ func (e *executor) executeTeamTask(ctx context.Context, reqCtx *a2asrv.RequestCo
 			if err := q.Write(ctx, artifact); err != nil {
 				return err
 			}
-		case agentpkg.TaskEventTypeCompleted:
+		case agentpkg.TeamResponseEventTypeCompleted:
 			if text := strings.TrimSpace(evt.Message); text != "" {
 				var artifact *a2aproto.TaskArtifactUpdateEvent
 				if artifactID == "" {
@@ -823,28 +833,28 @@ func (e *executor) executeTeamTask(ctx context.Context, reqCtx *a2asrv.RequestCo
 					return err
 				}
 			}
-			if err := q.Write(ctx, newAsyncStatusEvent(reqCtx, submitted, a2aproto.TaskStateCompleted, true, evt.Message)); err != nil {
+			if err := q.Write(ctx, newTeamStatusEvent(reqCtx, submitted, a2aproto.TaskStateCompleted, true, evt.Message)); err != nil {
 				return err
 			}
 			return nil
-		case agentpkg.TaskEventTypeFailed:
-			return q.Write(ctx, newAsyncStatusEvent(reqCtx, submitted, a2aproto.TaskStateFailed, true, evt.Message))
-		case agentpkg.TaskEventTypeCancelled:
-			return q.Write(ctx, newAsyncStatusEvent(reqCtx, submitted, a2aproto.TaskStateCanceled, true, evt.Message))
+		case agentpkg.TeamResponseEventTypeFailed:
+			return q.Write(ctx, newTeamStatusEvent(reqCtx, submitted, a2aproto.TaskStateFailed, true, evt.Message))
+		case agentpkg.TeamResponseEventTypeCancelled:
+			return q.Write(ctx, newTeamStatusEvent(reqCtx, submitted, a2aproto.TaskStateCanceled, true, evt.Message))
 		}
 	}
 
-	latest, err := asyncCatalog.GetTask(submitted.ID)
+	latest, err := teamGateway.GetTeamResponse(submitted.ID)
 	if err != nil {
 		return writeFinalStatus(ctx, q, reqCtx, a2aproto.TaskStateFailed, "team task ended without terminal event")
 	}
 	switch latest.Status {
-	case agentpkg.AsyncTaskStatusCompleted:
-		return q.Write(ctx, newAsyncStatusEvent(reqCtx, latest, a2aproto.TaskStateCompleted, true, latest.ResultText))
-	case agentpkg.AsyncTaskStatusFailed:
-		return q.Write(ctx, newAsyncStatusEvent(reqCtx, latest, a2aproto.TaskStateFailed, true, firstNonEmptyText(latest.Error, latest.ResultText)))
-	case agentpkg.AsyncTaskStatusCancelled:
-		return q.Write(ctx, newAsyncStatusEvent(reqCtx, latest, a2aproto.TaskStateCanceled, true, latest.ResultText))
+	case agentpkg.TeamResponseStatusCompleted:
+		return q.Write(ctx, newTeamStatusEvent(reqCtx, latest, a2aproto.TaskStateCompleted, true, latest.ResultText))
+	case agentpkg.TeamResponseStatusFailed:
+		return q.Write(ctx, newTeamStatusEvent(reqCtx, latest, a2aproto.TaskStateFailed, true, firstNonEmptyText(latest.Error, latest.ResultText)))
+	case agentpkg.TeamResponseStatusCancelled:
+		return q.Write(ctx, newTeamStatusEvent(reqCtx, latest, a2aproto.TaskStateCanceled, true, latest.ResultText))
 	default:
 		return writeFinalStatus(ctx, q, reqCtx, a2aproto.TaskStateFailed, "team task stream closed before terminal state")
 	}
@@ -871,19 +881,19 @@ func (e *executor) resolveRunner() (AgentRunner, error) {
 
 func (e *executor) Cancel(ctx context.Context, reqCtx *a2asrv.RequestContext, q eventqueue.Queue) error {
 	if e.resourceKind == "team" {
-		asyncCatalog, ok := e.catalog.(AsyncTaskCatalog)
+		teamGateway, ok := e.catalog.(agentpkg.TeamGateway)
 		if !ok {
-			return writeFinalStatus(ctx, q, reqCtx, a2aproto.TaskStateFailed, "team async task support is unavailable")
+			return writeFinalStatus(ctx, q, reqCtx, a2aproto.TaskStateFailed, "team gateway support is unavailable")
 		}
-		internalTaskID := internalAsyncTaskID(reqCtx)
-		if internalTaskID == "" {
-			return writeFinalStatus(ctx, q, reqCtx, a2aproto.TaskStateFailed, "missing internal team task id")
+		internalResponseID := internalTeamResponseID(reqCtx)
+		if internalResponseID == "" {
+			return writeFinalStatus(ctx, q, reqCtx, a2aproto.TaskStateFailed, "missing internal team response id")
 		}
-		task, err := asyncCatalog.CancelTask(ctx, internalTaskID)
+		task, err := teamGateway.CancelTeamResponse(ctx, internalResponseID)
 		if err != nil {
 			return writeFinalStatus(ctx, q, reqCtx, a2aproto.TaskStateFailed, err.Error())
 		}
-		return q.Write(ctx, newAsyncStatusEvent(reqCtx, task, a2aproto.TaskStateCanceled, true, task.ResultText))
+		return q.Write(ctx, newTeamStatusEvent(reqCtx, task, a2aproto.TaskStateCanceled, true, task.ResultText))
 	}
 	return writeFinalStatus(ctx, q, reqCtx, a2aproto.TaskStateCanceled, "Task canceled.")
 }
@@ -918,9 +928,9 @@ func promptFromMessage(message *a2aproto.Message) string {
 	return strings.Join(parts, "\n\n")
 }
 
-const agentGoAsyncTaskIDMetaKey = "agentgo_async_task_id"
+const agentGoTeamResponseIDMetaKey = "agentgo_team_response_id"
 
-func newAsyncStatusEvent(reqCtx *a2asrv.RequestContext, task *agentpkg.AsyncTask, state a2aproto.TaskState, final bool, text string) *a2aproto.TaskStatusUpdateEvent {
+func newTeamStatusEvent(reqCtx *a2asrv.RequestContext, task *agentpkg.TeamResponse, state a2aproto.TaskState, final bool, text string) *a2aproto.TaskStatusUpdateEvent {
 	var msg *a2aproto.Message
 	if strings.TrimSpace(text) != "" {
 		msg = a2aproto.NewMessageForTask(a2aproto.MessageRoleAgent, reqCtx, a2aproto.TextPart{Text: strings.TrimSpace(text)})
@@ -928,22 +938,25 @@ func newAsyncStatusEvent(reqCtx *a2asrv.RequestContext, task *agentpkg.AsyncTask
 	event := a2aproto.NewStatusUpdateEvent(reqCtx, state, msg)
 	event.Final = final
 	if task != nil {
-		event.SetMeta(agentGoAsyncTaskIDMetaKey, task.ID)
+		event.SetMeta(agentGoTeamResponseIDMetaKey, task.ID)
 		if strings.TrimSpace(task.TeamID) != "" {
 			event.SetMeta("agentgo_team_id", task.TeamID)
 		}
 		if strings.TrimSpace(task.CaptainName) != "" {
 			event.SetMeta("agentgo_captain_name", task.CaptainName)
 		}
+		if strings.TrimSpace(task.RequestID) != "" {
+			event.SetMeta("agentgo_team_request_id", task.RequestID)
+		}
 	}
 	return event
 }
 
-func internalAsyncTaskID(reqCtx *a2asrv.RequestContext) string {
+func internalTeamResponseID(reqCtx *a2asrv.RequestContext) string {
 	if reqCtx == nil || reqCtx.StoredTask == nil || reqCtx.StoredTask.Metadata == nil {
 		return ""
 	}
-	if raw, ok := reqCtx.StoredTask.Metadata[agentGoAsyncTaskIDMetaKey]; ok {
+	if raw, ok := reqCtx.StoredTask.Metadata[agentGoTeamResponseIDMetaKey]; ok {
 		if value, ok := raw.(string); ok {
 			return strings.TrimSpace(value)
 		}
@@ -951,7 +964,7 @@ func internalAsyncTaskID(reqCtx *a2asrv.RequestContext) string {
 	return ""
 }
 
-func extractAsyncRuntimeText(evt *agentpkg.TaskEvent) string {
+func extractTeamRuntimeText(evt *agentpkg.TeamResponseEvent) string {
 	if evt == nil || evt.Runtime == nil {
 		return ""
 	}

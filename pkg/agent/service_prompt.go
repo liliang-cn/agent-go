@@ -220,10 +220,11 @@ func (s *Service) buildAgentMessagingPromptNote(ctx context.Context, agent *Agen
 
 	lines := []string{"Inter-agent messaging:"}
 	if hasSend {
-		lines = append(lines, "- Use `send_agent_message` to hand off short facts, findings, or requests to another named agent without blocking on an inline response.")
+		lines = append(lines, "- Use `send_agent_message` to send structured mailbox messages to another named agent without blocking on an inline response.")
+		lines = append(lines, "- Supported `message_type` values: "+agentMessageProtocolSummary()+". Use `payload` for structured data, `correlation_id` to tie related work together, and `reply_to` when answering a prior request.")
 	}
 	if hasRead {
-		lines = append(lines, "- Use `get_agent_messages` to read pending mailbox items sent to you by other agents before you answer or continue a multi-agent workflow.")
+		lines = append(lines, "- Use `get_agent_messages` to read pending structured mailbox items sent to you by other agents before you answer or continue a multi-agent workflow.")
 	}
 	return strings.Join(lines, "\n")
 }
