@@ -282,7 +282,7 @@ func (t *TrackedRAGProcessor) RegisterMCPTools(mcpService interface{}) error {
 func (t *TrackedRAGProcessor) calculateTokenUsage(ragQuery *RAGQueryRecord, req domain.QueryRequest, response domain.QueryResponse) {
 	// Get model name from configuration or use default
 	// TODO: This should come from the actual LLM service configuration
-	model := "qwen3:4b" // Default from agentgo.toml
+	model := "qwen3:4b" // Default fallback when no provider metadata is available
 
 	// Build input context: query + retrieved chunks
 	inputText := req.Query
@@ -312,7 +312,7 @@ func (t *TrackedRAGProcessor) calculateTokenUsage(ragQuery *RAGQueryRecord, req 
 // calculateTokenUsageStreaming calculates token usage for streaming queries
 func (t *TrackedRAGProcessor) calculateTokenUsageStreaming(ragQuery *RAGQueryRecord, req domain.QueryRequest) {
 	// Get model name from configuration or use default
-	model := "qwen3:4b" // Default from agentgo.toml
+	model := "qwen3:4b" // Default fallback when no provider metadata is available
 
 	// For streaming queries, we only have the query and response
 	// We can't access the retrieved chunks, so we estimate based on typical RAG context

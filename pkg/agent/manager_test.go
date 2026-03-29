@@ -2,10 +2,12 @@ package agent
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/liliang-cn/agent-go/v2/pkg/config"
+	"github.com/liliang-cn/agent-go/v2/pkg/store"
 )
 
 func TestSanitizeDispatchText(t *testing.T) {
@@ -332,37 +334,30 @@ func TestCreateAgentCreatesStandaloneAgent(t *testing.T) {
 
 func TestCustomStandaloneAgentCanDelegateBuiltInAgents(t *testing.T) {
 	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "agentgo.toml")
-	if err := os.WriteFile(configPath, []byte(`
-home = "`+tmpDir+`"
+	t.Setenv("AGENTGO_HOME", tmpDir)
 
-[llm]
-enabled = true
-strategy = "round_robin"
-
-[[llm.providers]]
-name = "local"
-base_url = "http://localhost:8080"
-key = "test"
-model_name = "gpt-test"
-max_concurrency = 1
-capability = 1
-
-[rag]
-enabled = false
-
-[mcp]
-enabled = true
-`), 0o644); err != nil {
-		t.Fatalf("write config failed: %v", err)
-	}
-	oldWd, err := os.Getwd()
+	cfg, err := config.Load()
 	if err != nil {
-		t.Fatalf("getwd failed: %v", err)
+		t.Fatalf("load config failed: %v", err)
 	}
-	defer func() { _ = os.Chdir(oldWd) }()
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatalf("chdir failed: %v", err)
+	db, err := store.NewAgentGoDB(cfg.AgentDBPath())
+	if err != nil {
+		t.Fatalf("new agentgo db failed: %v", err)
+	}
+	defer db.Close()
+	if err := db.SaveConfig("llm.strategy", "round_robin"); err != nil {
+		t.Fatalf("save llm.strategy failed: %v", err)
+	}
+	if err := db.SaveProvider(&store.LLMProvider{
+		Name:           "local",
+		BaseURL:        "http://localhost:8080",
+		Key:            "test",
+		ModelName:      "gpt-test",
+		MaxConcurrency: 1,
+		Capability:     1,
+		Enabled:        true,
+	}); err != nil {
+		t.Fatalf("save provider failed: %v", err)
 	}
 
 	store, err := NewStore(filepath.Join(tmpDir, "agent.db"))

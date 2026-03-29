@@ -22,7 +22,6 @@ import (
 )
 
 var (
-	cfgFile string
 	verbose bool
 	debug   bool
 	quiet   bool
@@ -38,16 +37,15 @@ var RootCmd = &cobra.Command{
   • RAG    - Hybrid retrieval using Vector search and Knowledge Graphs
   • LLM    - Unified API for Ollama, OpenAI, DeepSeek, and more
   • MCP    - Standardized tool integration via Model Context Protocol
-  • Skills - Expert capabilities via Claude-compatible markdown skills
+ • Skills - Expert capabilities via Claude-compatible markdown skills
   • Status - Real-time monitoring of provider health and system status`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		// Skip config loading for commands that don't need existing config
-		if cmd.Name() == "version" || cmd.Name() == "init" {
+		if cmd.Name() == "version" {
 			return nil
 		}
 
 		var err error
-		Cfg, err = config.Load(cfgFile)
+		Cfg, err = config.Load()
 		if err != nil {
 			return fmt.Errorf("failed to load configuration: %w", err)
 		}
@@ -113,7 +111,6 @@ var versionCmd = &cobra.Command{
 }
 
 func init() {
-	RootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "configuration file path (default: ./agentgo.toml or ~/.agentgo/config/agentgo.toml)")
 	RootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose logging output")
 	RootCmd.PersistentFlags().BoolVarP(&debug, "debug", "d", false, "enable debug logging")
 	RootCmd.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "quiet mode")

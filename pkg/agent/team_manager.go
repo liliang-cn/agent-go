@@ -214,7 +214,7 @@ func (m *TeamManager) GetStore() *Store {
 }
 
 // SetAgentName sets the global agent name used in built-in prompts and team names.
-// This overrides the agent.name field from config file or environment.
+// This overrides the agent.name field from runtime config or environment.
 // Call before SeedDefaultMembers for the names to take effect during initialization.
 func (m *TeamManager) SetAgentName(name string) {
 	m.mu.Lock()
@@ -232,7 +232,7 @@ func (m *TeamManager) configuredAgentGoConfig() *config.Config {
 	if cfg != nil {
 		return cfg
 	}
-	loaded, err := config.Load("")
+	loaded, err := config.Load()
 	if err != nil {
 		return nil
 	}
@@ -732,7 +732,7 @@ func (m *TeamManager) buildServiceForModel(model *AgentModel) (*Service, error) 
 	cfg := m.cfg
 	if cfg == nil {
 		var loadErr error
-		cfg, loadErr = config.Load("")
+		cfg, loadErr = config.Load()
 		if loadErr != nil {
 			cfg = nil
 		}

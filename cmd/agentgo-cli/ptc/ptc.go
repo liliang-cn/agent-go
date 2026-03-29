@@ -40,49 +40,42 @@ func createRouterWithServices(ctx context.Context) *ptc.AgentGoRouter {
 
 	var opts []ptc.RouterOption
 
-	// Inject MCP service if enabled
-	if Cfg.MCP.Enabled {
-		mcpManager := mcp.NewMCPToolManager(&Cfg.MCP)
-		succeeded, _ := mcpManager.StartWithFailures(ctx)
-		if len(succeeded) > 0 {
-			// Convert MCP tools to PTC ToolInfo
-			var mcpToolInfos []ptc.ToolInfo
-			for name, tool := range mcpManager.ListTools() {
-				mcpToolInfos = append(mcpToolInfos, ptc.ToolInfo{
-					Name:        name,
-					Description: tool.Description(),
-					Parameters:  tool.Schema(),
-					Category:    "mcp",
-				})
-			}
-			opts = append(opts, ptc.WithMCPService(&mcpExecutorAdapter{manager: mcpManager}), ptc.WithMCPToolInfos(mcpToolInfos))
+	// Inject MCP service.
+	mcpManager := mcp.NewMCPToolManager(&Cfg.MCP)
+	succeeded, _ := mcpManager.StartWithFailures(ctx)
+	if len(succeeded) > 0 {
+		var mcpToolInfos []ptc.ToolInfo
+		for name, tool := range mcpManager.ListTools() {
+			mcpToolInfos = append(mcpToolInfos, ptc.ToolInfo{
+				Name:        name,
+				Description: tool.Description(),
+				Parameters:  tool.Schema(),
+				Category:    "mcp",
+			})
 		}
+		opts = append(opts, ptc.WithMCPService(&mcpExecutorAdapter{manager: mcpManager}), ptc.WithMCPToolInfos(mcpToolInfos))
 	}
 
-	// Inject Skills service if enabled
-	if Cfg.Skills.Enabled {
-		skillCfg := &skills.Config{
-			Enabled:      true,
-			Paths:        Cfg.Skills.Paths,
-			AutoLoad:     true,
-			CacheEnabled: true,
-		}
-		skillsService, err := skills.NewService(skillCfg)
-		if err == nil {
-			skillsService.LoadAll(ctx)
+	// Inject Skills service.
+	skillCfg := &skills.Config{
+		Enabled:      true,
+		Paths:        Cfg.SkillsPaths(),
+		AutoLoad:     true,
+		CacheEnabled: true,
+	}
+	skillsService, err := skills.NewService(skillCfg)
+	if err == nil {
+		skillsService.LoadAll(ctx)
 
-			// Convert Skills to PTC ToolInfo
-			skillList, _ := skillsService.ListSkills(ctx, skills.SkillFilter{})
-			var skillToolInfos []ptc.ToolInfo
-			for _, s := range skillList {
-				skillToolInfos = append(skillToolInfos, ptc.ToolInfo{
-					Name:        "skill_" + s.ID,
-					Description: s.Description,
-					Category:    "skill",
-				})
-			}
-			opts = append(opts, ptc.WithSkillsService(&skillsExecutorAdapter{service: skillsService}), ptc.WithSkillToolInfos(skillToolInfos))
+		var skillToolInfos []ptc.ToolInfo
+		for _, s := range mustListSkills(ctx, skillsService) {
+			skillToolInfos = append(skillToolInfos, ptc.ToolInfo{
+				Name:        "skill_" + s.ID,
+				Description: s.Description,
+				Category:    "skill",
+			})
 		}
+		opts = append(opts, ptc.WithSkillsService(&skillsExecutorAdapter{service: skillsService}), ptc.WithSkillToolInfos(skillToolInfos))
 	}
 
 	return ptc.NewAgentGoRouter(opts...)
@@ -121,6 +114,11 @@ func (a *skillsExecutorAdapter) ListSkillInfos(ctx context.Context) []ptc.ToolIn
 		})
 	}
 	return infos
+}
+
+func mustListSkills(ctx context.Context, svc *skills.Service) []*skills.Skill {
+	skillList, _ := svc.ListSkills(ctx, skills.SkillFilter{})
+	return skillList
 }
 
 // RAGProcessorAdapter adapts domain.Processor to ptc router

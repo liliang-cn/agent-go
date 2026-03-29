@@ -12,8 +12,8 @@ import (
 func main() {
 	ctx := context.Background()
 
-	// 1. Load configuration (from agentgo.toml or environment)
-	cfg, err := config.Load("")
+	// 1. Load runtime configuration (from AGENTGO_HOME + agentgo.db)
+	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}

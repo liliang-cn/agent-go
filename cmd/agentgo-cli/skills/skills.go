@@ -35,7 +35,7 @@ func initializeSkills(cmd *cobra.Command) error {
 		if ragCfg != nil {
 			// Use multi-path from global config
 			skillCfg = &skills.Config{
-				Enabled:                ragCfg.Skills.Enabled,
+				Enabled:                true,
 				Paths:                  ragCfg.SkillsPaths(),
 				AutoLoad:               ragCfg.Skills.AutoLoad,
 				CacheEnabled:           true,
@@ -171,7 +171,7 @@ var listCmd = &cobra.Command{
 
 		if len(allSkills) == 0 {
 			fmt.Println("No skills loaded. Use 'agentgo skills load' to load skills.")
-			fmt.Println("\nSearch paths (configure in agentgo.toml or use --paths):")
+			fmt.Println("\nSearch paths (loaded from defaults, DB paths, or --paths):")
 			ragCfg := rag.GetConfig()
 			if ragCfg != nil {
 				for _, p := range ragCfg.SkillsPaths() {

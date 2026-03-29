@@ -30,8 +30,8 @@ import (
 func main() {
 	ctx := context.Background()
 
-	// ── 1. 初始化 LLM（从 agentgo.toml 读取，使用 ollama qwen3.5:latest） ────────
-	agentgoCfg, err := config.Load("")
+	// ── 1. 初始化 LLM（从 AGENTGO_HOME + agentgo.db 读取） ────────
+	agentgoCfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("加载配置失败: %v", err)
 	}
@@ -45,7 +45,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("获取 LLM 失败（请确认 Ollama 已启动且 qwen3.5:latest 已拉取）: %v", err)
 	}
-	fmt.Println("✅ LLM 已就绪（来自 agentgo.toml）")
+	fmt.Println("✅ LLM 已就绪（来自 agentgo.db）")
 
 	// ── 2. 初始化 FileMemoryStore ──────────────────────────────────────────────
 	memDir := filepath.Join(os.TempDir(), "agentgo-cognitive-demo")

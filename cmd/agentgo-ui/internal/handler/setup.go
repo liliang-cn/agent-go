@@ -3,18 +3,13 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
-	"os"
-	"path/filepath"
-	"time"
+	"strconv"
 
 	"github.com/liliang-cn/agent-go/v2/pkg/config"
-	"github.com/liliang-cn/agent-go/v2/pkg/pool"
-	toml "github.com/pelletier/go-toml/v2"
 )
 
 type SetupHandler struct {
-	cfg        *config.Config
-	configPath string
+	cfg *config.Config
 }
 
 type SetupProvider struct {
@@ -29,12 +24,10 @@ type SetupProvider struct {
 
 type SetupState struct {
 	Initialized      bool            `json:"initialized"`
-	ConfigPath       string          `json:"configPath"`
 	Home             string          `json:"home"`
 	WorkingDirectory string          `json:"workingDirectory"`
 	ServerHost       string          `json:"serverHost"`
 	ServerPort       int             `json:"serverPort"`
-	MCPEnabled       bool            `json:"mcpEnabled"`
 	SkillsPaths      []string        `json:"skillsPaths"`
 	MemoryStoreType  string          `json:"memoryStoreType"`
 	Providers        []SetupProvider `json:"providers"`
@@ -44,13 +37,12 @@ type ApplySetupRequest struct {
 	Home            string        `json:"home"`
 	ServerHost      string        `json:"serverHost"`
 	ServerPort      int           `json:"serverPort"`
-	MCPEnabled      bool          `json:"mcpEnabled"`
 	MemoryStoreType string        `json:"memoryStoreType"`
 	Provider        SetupProvider `json:"provider"`
 }
 
-func NewSetupHandler(cfg *config.Config, configPath string) *SetupHandler {
-	return &SetupHandler{cfg: cfg, configPath: configPath}
+func NewSetupHandler(cfg *config.Config) *SetupHandler {
+	return &SetupHandler{cfg: cfg}
 }
 
 func (h *SetupHandler) HandleSetup(w http.ResponseWriter, r *http.Request) {
@@ -65,12 +57,14 @@ func (h *SetupHandler) HandleSetup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *SetupHandler) snapshot() SetupState {
+	_ = h.cfg.LoadDBBackedRuntime()
 	providers := make([]SetupProvider, 0, len(h.cfg.LLM.Providers))
 	for _, p := range h.cfg.LLM.Providers {
 		providers = append(providers, SetupProvider{
 			Name:           p.Name,
 			BaseURL:        p.BaseURL,
 			ModelName:      p.ModelName,
+			EmbeddingModel: h.cfg.RAG.EmbeddingModel,
 			MaxConcurrency: p.MaxConcurrency,
 			Capability:     p.Capability,
 		})
@@ -78,12 +72,10 @@ func (h *SetupHandler) snapshot() SetupState {
 
 	return SetupState{
 		Initialized:      h.isInitialized(),
-		ConfigPath:       h.configPath,
 		Home:             h.cfg.Home,
 		WorkingDirectory: h.cfg.WorkspaceDir(),
 		ServerHost:       h.cfg.Server.Host,
 		ServerPort:       h.cfg.Server.Port,
-		MCPEnabled:       h.cfg.MCP.Enabled,
 		SkillsPaths:      h.cfg.SkillsPaths(),
 		MemoryStoreType:  h.cfg.GetMemoryStoreType().String(),
 		Providers:        providers,
@@ -91,20 +83,7 @@ func (h *SetupHandler) snapshot() SetupState {
 }
 
 func (h *SetupHandler) isInitialized() bool {
-	content, err := os.ReadFile(h.configPath)
-	if err != nil || len(content) == 0 {
-		return false
-	}
-	var data map[string]interface{}
-	if err := toml.Unmarshal(content, &data); err != nil {
-		return false
-	}
-	setup, ok := data["setup"].(map[string]interface{})
-	if !ok {
-		return false
-	}
-	completed, _ := setup["completed"].(bool)
-	return completed
+	return runtimeInitialized(h.cfg)
 }
 
 func (h *SetupHandler) apply(w http.ResponseWriter, r *http.Request) {
@@ -117,30 +96,30 @@ func (h *SetupHandler) apply(w http.ResponseWriter, r *http.Request) {
 	h.cfg.Home = req.Home
 	h.cfg.Server.Host = req.ServerHost
 	h.cfg.Server.Port = req.ServerPort
-	h.cfg.MCP.Enabled = req.MCPEnabled
 	if err := h.cfg.SetMemoryStoreTypeString(req.MemoryStoreType); err != nil {
 		JSONError(w, "Invalid memory store type: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	// 极简 RAG 设置
-	h.cfg.RAG.Enabled = req.Provider.EmbeddingModel != ""
-	h.cfg.RAG.EmbeddingModel = req.Provider.EmbeddingModel
-
 	h.cfg.ApplyHomeLayout()
-	h.cfg.LLM.Enabled = true
-	h.cfg.LLM.Strategy = pool.StrategyRoundRobin
-	h.cfg.LLM.Providers = []pool.Provider{{
-		Name:           req.Provider.Name,
-		BaseURL:        req.Provider.BaseURL,
-		Key:            req.Provider.APIKey,
-		ModelName:      req.Provider.ModelName,
-		MaxConcurrency: req.Provider.MaxConcurrency,
-		Capability:     req.Provider.Capability,
-	}}
-
-	if err := h.saveSetupConfig(req); err != nil {
-		JSONError(w, "Failed to save setup: "+err.Error(), http.StatusInternalServerError)
+	if err := saveDBConfigValue(h.cfg, "server.host", h.cfg.Server.Host); err != nil {
+		JSONError(w, "Failed to save server host: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := saveDBConfigValue(h.cfg, "server.port", strconv.Itoa(h.cfg.Server.Port)); err != nil {
+		JSONError(w, "Failed to save server port: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := saveDBConfigValue(h.cfg, "memory.store_type", h.cfg.GetMemoryStoreType().String()); err != nil {
+		JSONError(w, "Failed to save memory store type: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := saveSetupProviderState(h.cfg, req.Provider); err != nil {
+		JSONError(w, "Failed to save setup providers: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := h.cfg.LoadDBBackedRuntime(); err != nil {
+		JSONError(w, "Failed to reload runtime config: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -149,73 +128,4 @@ func (h *SetupHandler) apply(w http.ResponseWriter, r *http.Request) {
 		"requiresRestart": true,
 		"setup":           h.snapshot(),
 	})
-}
-
-func (h *SetupHandler) saveSetupConfig(req ApplySetupRequest) error {
-	dir := filepath.Dir(h.configPath)
-	_ = os.MkdirAll(dir, 0755)
-
-	data := map[string]interface{}{}
-	if content, err := os.ReadFile(h.configPath); err == nil && len(content) > 0 {
-		_ = toml.Unmarshal(content, &data)
-	}
-
-	data["home"] = h.cfg.Home
-	setNested(data, []string{"server", "host"}, h.cfg.Server.Host)
-	setNested(data, []string{"server", "port"}, h.cfg.Server.Port)
-	setNested(data, []string{"mcp", "enabled"}, h.cfg.MCP.Enabled)
-	setNested(data, []string{"memory", "store_type"}, h.cfg.GetMemoryStoreType().String())
-
-	// 极简 RAG TOML
-	setNested(data, []string{"rag", "enabled"}, h.cfg.RAG.Enabled)
-	setNested(data, []string{"rag", "embedding_model"}, h.cfg.RAG.EmbeddingModel)
-
-	// 清理旧路径（由系统自动推导）
-	deleteNested(data, []string{"rag", "storage"})
-	deleteNested(data, []string{"rag", "embedding"})
-	deleteNested(data, []string{"memory", "memory_path"})
-	deleteNested(data, []string{"cache", "path"})
-
-	setNested(data, []string{"llm", "enabled"}, true)
-	setNested(data, []string{"llm", "providers"}, []map[string]interface{}{{
-		"name":            req.Provider.Name,
-		"base_url":        req.Provider.BaseURL,
-		"key":             req.Provider.APIKey,
-		"model_name":      req.Provider.ModelName,
-		"max_concurrency": req.Provider.MaxConcurrency,
-		"capability":      req.Provider.Capability,
-	}})
-
-	setNested(data, []string{"setup", "completed"}, true)
-	setNested(data, []string{"setup", "updated_at"}, time.Now().Format(time.RFC3339))
-
-	content, err := toml.Marshal(data)
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(h.configPath, content, 0644)
-}
-
-func setNested(m map[string]interface{}, keys []string, value interface{}) {
-	for i := 0; i < len(keys)-1; i++ {
-		key := keys[i]
-		if _, ok := m[key]; !ok {
-			m[key] = make(map[string]interface{})
-		}
-		m = m[key].(map[string]interface{})
-	}
-	m[keys[len(keys)-1]] = value
-}
-
-func deleteNested(m map[string]interface{}, keys []string) {
-	for i := 0; i < len(keys)-1; i++ {
-		key := keys[i]
-		if next, ok := m[key].(map[string]interface{}); ok {
-			m = next
-		} else {
-			return
-		}
-	}
-	delete(m, keys[len(keys)-1])
 }

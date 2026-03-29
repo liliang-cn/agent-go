@@ -27,7 +27,7 @@ func main() {
 	fmt.Println("=== AgentGo Quickstart ===")
 	fmt.Println()
 
-	// Create an agent - configuration is loaded from ~/.agentgo/config/agentgo.toml
+	// Create an agent - runtime configuration is loaded from AGENTGO_HOME + agentgo.db
 	svc, err := agent.New("quickstart").Build()
 	if err != nil {
 		log.Fatalf("Failed to create agent: %v", err)

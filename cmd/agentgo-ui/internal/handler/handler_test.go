@@ -10,6 +10,7 @@ import (
 
 	"github.com/liliang-cn/agent-go/v2/pkg/agent"
 	"github.com/liliang-cn/agent-go/v2/pkg/config"
+	"github.com/liliang-cn/agent-go/v2/pkg/store"
 )
 
 func testConfig(t *testing.T) *config.Config {
@@ -49,8 +50,7 @@ func newTestManager(t *testing.T) *agent.TeamManager {
 
 func TestConfigHandlerGetAndPut(t *testing.T) {
 	cfg := testConfig(t)
-	configPath := filepath.Join(t.TempDir(), "config", "agentgo.toml")
-	handler := NewConfigHandler(cfg, configPath)
+	handler := NewConfigHandler(cfg)
 
 	// Test GET
 	getReq := httptest.NewRequest(http.MethodGet, "/api/config", nil)
@@ -69,12 +69,10 @@ func TestConfigHandlerGetAndPut(t *testing.T) {
 	}
 
 	// Test PUT
-	enabled := true
 	port := 9000
 	reqBody := UpdateConfigRequest{
 		Debug:      boolPtr(false),
 		ServerPort: &port,
-		RAGEnabled: &enabled,
 	}
 	body, _ := json.Marshal(reqBody)
 	putReq := httptest.NewRequest(http.MethodPut, "/api/config", bytes.NewReader(body))
@@ -85,6 +83,75 @@ func TestConfigHandlerGetAndPut(t *testing.T) {
 	}
 	if cfg.Server.Port != 9000 {
 		t.Fatalf("expected config mutation, got %+v", cfg)
+	}
+	db, err := store.NewAgentGoDB(cfg.AgentDBPath())
+	if err != nil {
+		t.Fatalf("new agentgo db failed: %v", err)
+	}
+	defer db.Close()
+	serverPort, err := db.GetConfig("server.port")
+	if err != nil {
+		t.Fatalf("get server.port failed: %v", err)
+	}
+	if serverPort != "9000" {
+		t.Fatalf("expected persisted server port 9000, got %q", serverPort)
+	}
+}
+
+func TestSetupHandlerPersistsProvidersToDB(t *testing.T) {
+	cfg := testConfig(t)
+	handler := NewSetupHandler(cfg)
+
+	body := []byte(`{
+		"home": "` + cfg.Home + `",
+		"serverHost": "127.0.0.1",
+		"serverPort": 7127,
+		"memoryStoreType": "file",
+		"provider": {
+			"name": "openai_local",
+			"baseUrl": "http://llm.example/v1",
+			"apiKey": "secret",
+			"modelName": "gpt-test",
+			"embeddingModel": "text-embedding-test",
+			"maxConcurrency": 4,
+			"capability": 5
+		}
+	}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/setup", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	handler.HandleSetup(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	db, err := store.NewAgentGoDB(cfg.AgentDBPath())
+	if err != nil {
+		t.Fatalf("new agentgo db failed: %v", err)
+	}
+	defer db.Close()
+
+	provider, err := db.GetProvider("openai_local")
+	if err != nil {
+		t.Fatalf("get llm provider failed: %v", err)
+	}
+	if provider.ModelName != "gpt-test" {
+		t.Fatalf("expected llm model gpt-test, got %q", provider.ModelName)
+	}
+
+	embeddingProvider, err := db.GetEmbeddingProvider("openai_local")
+	if err != nil {
+		t.Fatalf("get embedding provider failed: %v", err)
+	}
+	if embeddingProvider.ModelName != "text-embedding-test" {
+		t.Fatalf("expected embedding model text-embedding-test, got %q", embeddingProvider.ModelName)
+	}
+
+	embeddingModel, err := db.GetConfig("rag.embedding_model")
+	if err != nil {
+		t.Fatalf("get rag.embedding_model failed: %v", err)
+	}
+	if embeddingModel != "text-embedding-test" {
+		t.Fatalf("expected rag.embedding_model text-embedding-test, got %q", embeddingModel)
 	}
 }
 

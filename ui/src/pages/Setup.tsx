@@ -9,9 +9,9 @@ function derivePath(home: string, relative: string) {
 }
 
 function deriveMemoryPath(home: string, memoryStoreType: string) {
-  const ragPath = derivePath(home, 'data/agentgo.db')
-  if (memoryStoreType === 'vector') {
-    return ragPath
+  const cortexPath = derivePath(home, 'data/cortex.db')
+  if (memoryStoreType === 'cortex') {
+    return cortexPath
   }
   return derivePath(home, 'data/memories')
 }
@@ -28,7 +28,6 @@ export function Setup() {
   const [home, setHome] = useState('')
   const [serverHost, setServerHost] = useState('127.0.0.1')
   const [serverPort, setServerPort] = useState('7127')
-  const [mcpEnabled, setMcpEnabled] = useState(true)
   const [memoryStoreType, setMemoryStoreType] = useState('file')
   const [providerName, setProviderName] = useState('local')
   const [providerBaseUrl, setProviderBaseUrl] = useState('http://127.0.0.1:11434/v1')
@@ -44,7 +43,6 @@ export function Setup() {
     setHome(data.home || '')
     setServerHost(data.serverHost || '127.0.0.1')
     setServerPort(String(data.serverPort || 7127))
-    setMcpEnabled(data.mcpEnabled)
     setMemoryStoreType(data.memoryStoreType || 'file')
     setProviderName(firstProvider?.name || 'local')
     setProviderBaseUrl(firstProvider?.baseUrl || 'http://127.0.0.1:11434/v1')
@@ -55,7 +53,7 @@ export function Setup() {
   }, [data])
 
   const derivedWorkspace = useMemo(() => derivePath(home, 'workspace'), [home])
-  const derivedRagDb = useMemo(() => derivePath(home, 'data/agentgo.db'), [home])
+  const derivedRagDb = useMemo(() => derivePath(home, 'data/cortex.db'), [home])
   const derivedMemoryPath = useMemo(() => deriveMemoryPath(home, memoryStoreType), [home, memoryStoreType])
   const reviewItems = useMemo(
     () => [
@@ -63,12 +61,11 @@ export function Setup() {
       [t('workingDirectory'), derivedWorkspace],
       [t('serverHost'), serverHost],
       [t('serverPort'), serverPort],
-      [t('mcp'), mcpEnabled ? t('enabled') : t('disabled')],
       [t('ragDatabasePath'), derivedRagDb || '-'],
       [t('memoryStoreType'), memoryStoreType || '-'],
       [t('memoryPath'), derivedMemoryPath || '-'],
     ],
-    [t, home, derivedWorkspace, serverHost, serverPort, mcpEnabled, derivedRagDb, memoryStoreType, derivedMemoryPath],
+    [t, home, derivedWorkspace, serverHost, serverPort, derivedRagDb, memoryStoreType, derivedMemoryPath],
   )
 
   const providerItems = useMemo(
@@ -88,7 +85,6 @@ export function Setup() {
       home,
       serverHost,
       serverPort: Number(serverPort),
-      mcpEnabled,
       memoryStoreType,
       provider: {
         name: providerName,
@@ -218,10 +214,9 @@ export function Setup() {
 
           {step === 2 && (
             <div className="space-y-4" data-testid="setup-features">
-              <label className="flex items-center gap-3 rounded-[20px] bg-sky-50 px-4 py-3 text-slate-700">
-                <input type="checkbox" checked={mcpEnabled} onChange={(e) => setMcpEnabled(e.target.checked)} />
-                {t('mcp')}
-              </label>
+              <div className="rounded-[20px] border border-sky-100 bg-sky-50 px-4 py-3 text-sm text-slate-600">
+                {t('pathsDerivedFromHome')}
+              </div>
               <div className="grid gap-4 md:grid-cols-2">
                 <label className="space-y-2">
                   <span className="text-sm font-medium text-slate-700">{t('memoryStoreType')}</span>

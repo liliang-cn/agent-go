@@ -215,3 +215,12 @@ func TestBuildWebSearchPromptNoteSkipsIntentRouter(t *testing.T) {
 		t.Fatalf("expected intent router to skip web search note, got %q", note)
 	}
 }
+
+func TestCollectAvailableToolsDoesNotExposeLegacyLLMTool(t *testing.T) {
+	tools := collectAvailableTools(nil, nil, nil)
+	for _, tool := range tools {
+		if tool.Function.Name == "llm" {
+			t.Fatalf("did not expect legacy llm tool to be exposed")
+		}
+	}
+}

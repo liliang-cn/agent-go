@@ -669,12 +669,11 @@ export const api = {
 };
 
 export interface Config {
-  configPath: string;
   home: string;
   debug: boolean;
   serverHost: string;
   serverPort: number;
-  mcpEnabled: boolean;
+  agentDbPath: string;
   mcpAllowedDirs: string[];
   mcpServersPath: string;
   skillsPaths: string[];
@@ -690,7 +689,7 @@ export interface UpdateConfigRequest {
   debug?: boolean;
   serverHost?: string;
   serverPort?: number;
-  mcpEnabled?: boolean;
+  ragEmbeddingModel?: string;
   memoryStoreType?: string;
 }
 
@@ -706,17 +705,12 @@ export interface SetupProvider {
 
 export interface SetupState {
   initialized: boolean;
-  configPath: string;
   home: string;
   workingDirectory: string;
   serverHost: string;
   serverPort: number;
-  mcpEnabled: boolean;
-  mcpAllowedDirs: string[];
   skillsPaths: string[];
-  ragDbPath: string;
   memoryStoreType: string;
-  memoryPath: string;
   providers: SetupProvider[];
 }
 
@@ -724,7 +718,6 @@ export interface ApplySetupRequest {
   home: string;
   serverHost: string;
   serverPort: number;
-  mcpEnabled: boolean;
   memoryStoreType: string;
   provider: SetupProvider;
 }

@@ -228,6 +228,34 @@ func (m *TeamManager) UpdateAgent(_ context.Context, model *AgentModel) (*AgentM
 	return m.store.GetAgentModel(current.ID)
 }
 
+// SetAgentLLMPreference updates an agent's preferred provider/model selection.
+func (m *TeamManager) SetAgentLLMPreference(_ context.Context, name, provider, model string) (*AgentModel, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, fmt.Errorf("agent name is required")
+	}
+
+	current, err := m.store.GetAgentModelByName(name)
+	if err != nil {
+		return nil, err
+	}
+
+	current.PreferredProvider = strings.TrimSpace(provider)
+	current.PreferredModel = strings.TrimSpace(model)
+	current.UpdatedAt = time.Now()
+
+	if err := m.store.SaveAgentModel(current); err != nil {
+		return nil, err
+	}
+	m.clearCachedAgent(current.Name)
+	return m.store.GetAgentModel(current.ID)
+}
+
+// ClearAgentLLMPreference removes an agent's explicit provider/model preference.
+func (m *TeamManager) ClearAgentLLMPreference(ctx context.Context, name string) (*AgentModel, error) {
+	return m.SetAgentLLMPreference(ctx, name, "", "")
+}
+
 func (m *TeamManager) DeleteAgent(_ context.Context, name string) error {
 	model, err := m.store.GetAgentModelByName(strings.TrimSpace(name))
 	if err != nil {

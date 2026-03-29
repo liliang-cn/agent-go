@@ -27,8 +27,7 @@ var (
 	llmFlagEmbeddingModel string
 
 	// flags for config set
-	llmFlagStrategy    string
-	llmFlagPoolEnabled bool
+	llmFlagStrategy string
 )
 
 // llmCmd represents the LLM command group
@@ -124,7 +123,7 @@ var llmListCmd = &cobra.Command{
 		}
 
 		fmt.Printf("\nLLM Strategy: %s\n", cfg.Strategy)
-		fmt.Printf("Embedding Pool: enabled=%v strategy=%s providers=%d\n", embCfg.Enabled, embCfg.Strategy, len(embProviders))
+		fmt.Printf("Embedding Pool: strategy=%s providers=%d\n", embCfg.Strategy, len(embProviders))
 		if len(embProviders) > 0 {
 			fmt.Println("\nEmbedding Providers:")
 			fmt.Printf("%-20s %-10s %-40s %-35s %-12s %-5s\n",
@@ -255,7 +254,7 @@ var llmDeleteCmd = &cobra.Command{
 // llmConfigCmd groups pool-level config commands.
 var llmConfigCmd = &cobra.Command{
 	Use:   "config",
-	Short: "Manage LLM pool configuration (strategy, enabled)",
+	Short: "Manage LLM pool configuration",
 }
 
 var llmConfigShowCmd = &cobra.Command{
@@ -275,14 +274,13 @@ var llmConfigShowCmd = &cobra.Command{
 			embeddingModel = "-"
 		}
 		fmt.Printf("strategy:        %s\n", cfg.Strategy)
-		fmt.Printf("enabled:         %v\n", cfg.Enabled)
 		fmt.Printf("embedding_model: %s\n", embeddingModel)
 		return nil
 	},
 }
 
 var llmConfigSetCmd = &cobra.Command{
-	Use:   "set [--strategy <s>] [--enabled <bool>] [--embedding-model <model>]",
+	Use:   "set [--strategy <s>] [--embedding-model <model>]",
 	Short: "Update LLM pool configuration",
 	Long: `Persist pool-level settings to the database.
 Changes take effect on the next restart.
@@ -305,9 +303,6 @@ embedding providers are configured.`,
 		if cmd.Flags().Changed("strategy") {
 			current.Strategy = pool.SelectionStrategy(llmFlagStrategy)
 		}
-		if cmd.Flags().Changed("enabled") {
-			current.Enabled = llmFlagPoolEnabled
-		}
 		if cmd.Flags().Changed("embedding-model") {
 			current.EmbeddingModel = llmFlagEmbeddingModel
 		}
@@ -320,7 +315,6 @@ embedding providers are configured.`,
 			embeddingModel = "-"
 		}
 		fmt.Printf("strategy:        %s\n", current.Strategy)
-		fmt.Printf("enabled:         %v\n", current.Enabled)
 		fmt.Printf("embedding_model: %s\n", embeddingModel)
 		fmt.Println("Saved. Restart to apply.")
 		return nil
@@ -485,7 +479,6 @@ func init() {
 
 	// config set flags
 	llmConfigSetCmd.Flags().StringVar(&llmFlagStrategy, "strategy", "", "Selection strategy (round_robin|random|least_load|capability|failover)")
-	llmConfigSetCmd.Flags().BoolVar(&llmFlagPoolEnabled, "enabled", true, "Enable or disable the LLM pool")
 	llmConfigSetCmd.Flags().StringVar(&llmFlagEmbeddingModel, "embedding-model", "", "Fallback embedding model used when no dedicated embedding providers exist")
 
 	// chat flags

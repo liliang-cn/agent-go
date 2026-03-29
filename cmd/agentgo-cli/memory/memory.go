@@ -12,7 +12,7 @@ import (
 	"github.com/liliang-cn/agent-go/v2/pkg/config"
 	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 	"github.com/liliang-cn/agent-go/v2/pkg/memory"
-	"github.com/liliang-cn/agent-go/v2/pkg/providers"
+	"github.com/liliang-cn/agent-go/v2/pkg/services"
 	"github.com/liliang-cn/agent-go/v2/pkg/store"
 	"github.com/spf13/cobra"
 )
@@ -44,6 +44,7 @@ Memory types:
 	cmd.AddCommand(newUpdateCommand(opts))
 	cmd.AddCommand(newListCommand(opts))
 	cmd.AddCommand(newDeleteCommand(opts))
+	cmd.AddCommand(newClearCommand(opts))
 	cmd.AddCommand(newRebuildCommand(opts))
 
 	return cmd
@@ -320,6 +321,42 @@ func newDeleteCommand(opts *CommandOptions) *cobra.Command {
 	return cmd
 }
 
+func newClearCommand(opts *CommandOptions) *cobra.Command {
+	var confirm bool
+
+	cmd := &cobra.Command{
+		Use:   "clear",
+		Short: "Delete all memories",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := createMemoryService(opts)
+			if err != nil {
+				return err
+			}
+
+			if !confirm {
+				fmt.Print("Are you sure you want to delete all memories? (y/N): ")
+				var response string
+				fmt.Scanln(&response)
+				if response != "y" && response != "Y" {
+					fmt.Println("Cancelled.")
+					return nil
+				}
+			}
+
+			if err := svc.Clear(cmd.Context()); err != nil {
+				return fmt.Errorf("clear failed: %w", err)
+			}
+
+			fmt.Println("All memories cleared successfully.")
+			return nil
+		},
+	}
+
+	cmd.Flags().BoolVarP(&confirm, "yes", "y", false, "Skip confirmation")
+	return cmd
+}
+
 // createMemoryService creates a memory service with default settings
 func createMemoryService(opts *CommandOptions) (*memory.Service, error) {
 	var memStore domain.MemoryStore
@@ -330,7 +367,7 @@ func createMemoryService(opts *CommandOptions) (*memory.Service, error) {
 	storeType := config.MemoryStoreTypeFile
 
 	if path != "" && (strings.HasSuffix(path, ".db") || strings.HasSuffix(path, ".sqlite")) {
-		storeType = config.MemoryStoreTypeVector
+		storeType = config.MemoryStoreTypeCortex
 	} else if Cfg != nil {
 		if path == "" {
 			path = Cfg.MemoryPrimaryPath()
@@ -346,72 +383,31 @@ func createMemoryService(opts *CommandOptions) (*memory.Service, error) {
 	var embedder domain.Embedder
 	var llm domain.Generator
 	if Cfg != nil {
-		factory := providers.NewFactory()
-
-		if Cfg.RAG.Enabled {
-			switch {
-			case len(Cfg.RAG.Embedding.Providers) > 0:
-				prov := Cfg.RAG.Embedding.Providers[0]
-				provConfig := &domain.OpenAIProviderConfig{
-					BaseProviderConfig: domain.BaseProviderConfig{Timeout: 30},
-					BaseURL:            prov.BaseURL,
-					APIKey:             prov.Key,
-					EmbeddingModel:     prov.ModelName,
-				}
-				embedder, _ = factory.CreateEmbedderProvider(context.Background(), provConfig)
-			case len(Cfg.LLM.Providers) > 0:
-				prov := Cfg.LLM.Providers[0]
-				embeddingModel := Cfg.RAG.EmbeddingModel
-				if embeddingModel == "" {
-					embeddingModel = prov.ModelName
-				}
-				provConfig := &domain.OpenAIProviderConfig{
-					BaseProviderConfig: domain.BaseProviderConfig{Timeout: 30},
-					BaseURL:            prov.BaseURL,
-					APIKey:             prov.Key,
-					EmbeddingModel:     embeddingModel,
-				}
-				embedder, _ = factory.CreateEmbedderProvider(context.Background(), provConfig)
+		poolService := services.GetGlobalPoolService()
+		if !poolService.IsInitialized() {
+			if initErr := poolService.Initialize(context.Background(), Cfg); initErr != nil {
+				return nil, fmt.Errorf("failed to initialize pool service: %w", initErr)
 			}
 		}
 
-		if Cfg.LLM.Enabled && len(Cfg.LLM.Providers) > 0 {
-			llmProv := Cfg.LLM.Providers[0]
-			llmConfig := &domain.OpenAIProviderConfig{
-				BaseProviderConfig: domain.BaseProviderConfig{Timeout: 60},
-				BaseURL:            llmProv.BaseURL,
-				APIKey:             llmProv.Key,
-				LLMModel:           llmProv.ModelName,
+		if client, clientErr := poolService.GetLLM(); clientErr == nil {
+			poolService.ReleaseLLM(client)
+			llm, _ = poolService.GetLLMService()
+		}
+
+		if Cfg.RAG.Enabled {
+			if client, clientErr := poolService.GetEmbedding(); clientErr == nil {
+				poolService.ReleaseEmbedding(client)
+				embedder, _ = poolService.GetEmbeddingService(context.Background())
 			}
-			llm, _ = factory.CreateLLMProvider(context.Background(), llmConfig)
 		}
 	}
 
-	var shadowStore domain.MemoryStore
 	switch storeType {
-	case config.MemoryStoreTypeVector:
-		vectorPath := path
-		if Cfg != nil && opts.DBPath == "" {
-			vectorPath = Cfg.MemoryVectorDBPath()
-		}
-		memStore, err = store.NewMemoryStore(vectorPath)
+	case config.MemoryStoreTypeCortex:
+		memStore, err = store.NewCortexMemoryStore(path)
 		if err == nil {
 			_ = memStore.InitSchema(context.Background())
-		}
-	case config.MemoryStoreTypeHybrid:
-		fileStore, ferr := store.NewFileMemoryStore(path)
-		if ferr != nil {
-			return nil, fmt.Errorf("failed to create file memory store: %w", ferr)
-		}
-		if llm != nil {
-			fileStore.WithLLM(llm)
-		}
-		memStore = fileStore
-		if Cfg != nil {
-			if sqliteStore, serr := store.NewMemoryStore(Cfg.MemoryVectorDBPath()); serr == nil {
-				_ = sqliteStore.InitSchema(context.Background())
-				shadowStore = sqliteStore
-			}
 		}
 	default:
 		memStore, err = store.NewFileMemoryStore(path)
@@ -423,10 +419,6 @@ func createMemoryService(opts *CommandOptions) (*memory.Service, error) {
 
 	memCfg := memory.DefaultConfig()
 	memSvc = memory.NewService(memStore, llm, embedder, memCfg)
-
-	if shadowStore != nil {
-		memSvc.SetShadowIndex(shadowStore)
-	}
 
 	return memSvc, nil
 }

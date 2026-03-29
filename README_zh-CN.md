@@ -580,89 +580,61 @@ result, _ := svc.Execute(ctx, plan.ID)
 
 ## 配置与存储
 
-配置文件：`agentgo.toml`（自动发现路径：`./` → `~/.agentgo/` → `~/.agentgo/config/`）
+运行时目录布局由 `AGENTGO_HOME` 决定，默认是 `~/.agentgo`。
+结构化运行时配置存放在 `data/agentgo.db`。
 
 ### 目录结构（默认 `home = ~/.agentgo`）
 
 ```
 ~/.agentgo/
-├── agentgo.toml              ← 配置文件
-├── mcpServers.json        ← MCP 服务器定义
+├── mcpServers.json           ← MCP 服务器定义
 ├── data/
-│   ├── agentgo.db            ← RAG 向量库（sqlite-vec）；memory.store_type=vector 时共用
-│   ├── agent.db           ← Agent 会话 + 执行计划
-│   └── memories/          ← Memory 文件存储（每个 session 一个 JSON）
-├── skills/                ← SKILL.md 技能文件
-├── intents/               ← Intent 意图文件
-└── workspace/             ← Agent 工作目录
+│   ├── agentgo.db            ← 控制面：providers、运行时配置、agent/team 元数据
+│   ├── cortex.db             ← 大脑存储：memory、vector、graph、knowledge
+│   └── memories/             ← 文件型记忆存储（Markdown + YAML frontmatter）
+├── skills/                  ← SKILL.md 技能文件
+├── intents/                 ← Intent 意图文件
+└── workspace/               ← Agent 工作目录
 ```
 
 ### SQLite 文件说明
 
-| 文件                  | 默认路径                        | 用途                                                                     |
-| --------------------- | ------------------------------- | ------------------------------------------------------------------------ |
-| `agentgo.db`          | `$home/data/agentgo.db`         | RAG 文档 + 向量索引；`memory.store_type=vector` 时同时作为 Memory 向量库 |
-| `agent.db`            | `$home/data/agent.db`           | Agent 会话消息历史和执行计划                                             |
-| `history.db` _(可选)_ | 通过 `WithHistoryDBPath()` 指定 | 详细工具调用日志，仅在 `WithStoreHistory(true)` 时创建                   |
+| 文件                  | 默认路径                        | 用途                                                     |
+| --------------------- | ------------------------------- | -------------------------------------------------------- |
+| `agentgo.db`          | `$home/data/agentgo.db`         | 运行时配置、providers、MCP/skills 路径、agent/team 元数据 |
+| `cortex.db`           | `$home/data/cortex.db`          | 大脑存储：memory、vector、graph、knowledge               |
+| `history.db` _(可选)_ | 通过 `WithHistoryDBPath()` 指定 | 详细工具调用日志，仅在 `WithStoreHistory(true)` 时创建   |
 
 ### Memory 存储类型
 
-| `store_type`    | 存储方式                         | 是否需要 Embedder |
-| --------------- | -------------------------------- | ----------------- |
-| `file` _(默认)_ | `data/memories/{session}.json`   | 否                |
-| `vector`        | `data/agentgo.db`（共用）        | 是                |
-| `hybrid`        | 文件为主 + `agentgo.db` 影子索引 | 是                |
+| `store_type`    | 存储方式                                                        | 是否需要 Embedder |
+| --------------- | --------------------------------------------------------------- | ----------------- |
+| `file` _(默认)_ | `data/memories/entities/*.md` 和 `data/memories/streams/*.md` | 否                |
+| `cortex`        | `data/cortex.db`                                                | 否                |
 
-### 核心配置字段
+### 运行时设置
 
-```toml
-home = "~/.agentgo"             # 所有相对路径的基准目录
-
-[memory]
-store_type  = "file"         # file | vector | hybrid
-
-[chunker]
-chunk_size = 512
-overlap    = 64
-method     = "sentence"
-
-[skills]
-enabled   = true
-auto_load = true
-
-[mcp]
-servers = ["~/.agentgo/mcpServers.json"]
-```
-
-AgentGo 会根据 `home` 自动派生运行期存储布局：
+AgentGo 会根据 `AGENTGO_HOME` 自动派生运行期存储布局：
 
 - 工作区：`$home/workspace`
 - MCP 文件系统白名单：`$home/workspace`
-- RAG 数据库：`$home/data/agentgo.db`
-- 记忆存储：`$home/data/memories`，当 `memory.store_type = "vector"` 时改为 `$home/data/agentgo.db`
+- 大脑数据库：`$home/data/cortex.db`
+- 记忆存储：`$home/data/memories`，当 `memory.store_type = "cortex"` 时改为 `$home/data/cortex.db`
 - 缓存目录：`$home/data/cache`
 
-完整带注释的配置参见 [`references/CONFIG.md`](references/CONFIG.md)。
+其余结构化运行时设置保存在 `agentgo.db`，包括：
+
+- LLM providers 和 pool strategy
+- embedding providers 和 `rag.embedding_model`
+- MCP 配置路径
+- skills 加载路径
+- 每个 agent 的 preferred provider/model
 
 ---
 
 ## Provider 配置
 
-`agentgo.toml` 自动发现路径：`./`、`~/.agentgo/`、`~/.agentgo/config/`
-
-```toml
-[[llm_pool.providers]]
-name     = "openai"
-provider = "openai"
-api_key  = "sk-..."
-model    = "gpt-4o"
-
-[[llm_pool.providers]]
-name     = "local"
-provider = "ollama"
-base_url = "http://localhost:11434"
-model    = "qwen2.5:14b"
-```
+Providers 存放在 `agentgo.db` 中，通过 CLI/UI/runtime API 管理。
 
 支持：OpenAI · Anthropic · Azure OpenAI · DeepSeek · Ollama（本地）
 

@@ -120,7 +120,7 @@ func runMCPChat(cmd *cobra.Command, args []string) error {
 
 	if Cfg == nil {
 		var err error
-		Cfg, err = config.Load("")
+		Cfg, err = config.Load()
 		if err != nil {
 			return fmt.Errorf("failed to load config: %w", err)
 		}
@@ -285,14 +285,10 @@ func runMCPChat(cmd *cobra.Command, args []string) error {
 func runMCPList(cmd *cobra.Command, args []string) error {
 	if Cfg == nil {
 		var err error
-		Cfg, err = config.Load("")
+		Cfg, err = config.Load()
 		if err != nil {
 			return fmt.Errorf("failed to load config: %w", err)
 		}
-	}
-
-	if !Cfg.MCP.Enabled {
-		return fmt.Errorf("MCP is disabled in configuration")
 	}
 
 	toolManager := mcp.NewMCPToolManager(&Cfg.MCP)
@@ -375,14 +371,10 @@ func runMCPList(cmd *cobra.Command, args []string) error {
 func runMCPCall(cmd *cobra.Command, args []string) error {
 	if Cfg == nil {
 		var err error
-		Cfg, err = config.Load("")
+		Cfg, err = config.Load()
 		if err != nil {
 			return fmt.Errorf("failed to load config: %w", err)
 		}
-	}
-
-	if !Cfg.MCP.Enabled {
-		return fmt.Errorf("MCP is disabled in configuration")
 	}
 
 	toolName := args[0]

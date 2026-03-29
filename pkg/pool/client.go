@@ -220,9 +220,11 @@ func buildPoolGenerateWithToolsRequest(modelName string, messages []domain.Messa
 			apiToolCalls := make([]map[string]interface{}, len(msg.ToolCalls))
 			for j, tc := range msg.ToolCalls {
 				argsBytes, _ := json.Marshal(tc.Function.Arguments)
+				normalizedID := domain.NormalizeToolCallID(tc.ID)
 				apiToolCalls[j] = map[string]interface{}{
-					"id":   domain.NormalizeToolCallID(tc.ID),
-					"type": tc.Type,
+					"id":      normalizedID,
+					"call_id": normalizedID,
+					"type":    tc.Type,
 					"function": map[string]interface{}{
 						"name":      tc.Function.Name,
 						"arguments": string(argsBytes),
@@ -232,7 +234,9 @@ func buildPoolGenerateWithToolsRequest(modelName string, messages []domain.Messa
 			apiMessages[i]["tool_calls"] = apiToolCalls
 		}
 		if msg.ToolCallID != "" {
-			apiMessages[i]["tool_call_id"] = domain.NormalizeToolCallID(msg.ToolCallID)
+			normalizedID := domain.NormalizeToolCallID(msg.ToolCallID)
+			apiMessages[i]["tool_call_id"] = normalizedID
+			apiMessages[i]["call_id"] = normalizedID
 		}
 		if msg.ReasoningContent != "" {
 			apiMessages[i]["reasoning_content"] = msg.ReasoningContent

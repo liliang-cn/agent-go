@@ -73,14 +73,10 @@ func init() {
 func runMCPConvert(cmd *cobra.Command, args []string) error {
 	if Cfg == nil {
 		var err error
-		Cfg, err = config.Load("")
+		Cfg, err = config.Load()
 		if err != nil {
 			return fmt.Errorf("failed to load config: %w", err)
 		}
-	}
-
-	if !Cfg.MCP.Enabled {
-		return fmt.Errorf("MCP is disabled in configuration")
 	}
 
 	ctx := context.Background()
@@ -109,11 +105,23 @@ func runMCPConvert(cmd *cobra.Command, args []string) error {
 
 	// Get LLM API key from pool config if using LLM
 	if convertUseLLM {
-		// Get the first provider from pool for credentials
-		if len(Cfg.LLM.Providers) > 0 {
-			provider := Cfg.LLM.Providers[0]
-			convCfg.LLMAPIKey = provider.Key
-			convCfg.LLMBaseURL = provider.BaseURL
+		providers, listErr := poolService.ListProviders()
+		if listErr != nil {
+			return fmt.Errorf("failed to list llm providers: %w", listErr)
+		}
+		for _, provider := range providers {
+			if provider == nil || !provider.Enabled {
+				continue
+			}
+			if convertLLMModel == "" || provider.ModelName == convertLLMModel {
+				convCfg.LLMAPIKey = provider.Key
+				convCfg.LLMBaseURL = provider.BaseURL
+				break
+			}
+			if convCfg.LLMBaseURL == "" {
+				convCfg.LLMAPIKey = provider.Key
+				convCfg.LLMBaseURL = provider.BaseURL
+			}
 		}
 	}
 
@@ -180,14 +188,10 @@ func runMCPConvert(cmd *cobra.Command, args []string) error {
 func runMCPDiscover(cmd *cobra.Command, args []string) error {
 	if Cfg == nil {
 		var err error
-		Cfg, err = config.Load("")
+		Cfg, err = config.Load()
 		if err != nil {
 			return fmt.Errorf("failed to load config: %w", err)
 		}
-	}
-
-	if !Cfg.MCP.Enabled {
-		return fmt.Errorf("MCP is disabled in configuration")
 	}
 
 	ctx := context.Background()

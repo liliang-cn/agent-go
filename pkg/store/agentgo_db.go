@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 	_ "modernc.org/sqlite"
 )
 
@@ -485,8 +486,12 @@ const (
 
 // ChatMessage represents a single message in a chat session
 type ChatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role             string            `json:"role"`
+	Content          string            `json:"content"`
+	ReasoningContent string            `json:"reasoning_content,omitempty"`
+	ToolCalls        []domain.ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID       string            `json:"tool_call_id,omitempty"`
+	ResponseID       string            `json:"response_id,omitempty"`
 }
 
 // ChatSession represents a unified chat session

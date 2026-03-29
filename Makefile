@@ -1,7 +1,7 @@
 .PHONY: help build agentgo-cli agentgo-ui ui-build sync-ui-dist ui-dev ui-api-dev ui-web-dev ui-deps test check clean deps coverage-core
 
 CORE_COVERAGE_PKGS := ./pkg/config ./pkg/cache ./cmd/agentgo-ui/internal/handler ./pkg/prompt ./pkg/ptc/runtime/goja ./pkg/ptc/store ./pkg/rag/embedder ./pkg/scheduler/executors
-UI_RUNNER := $(shell if command -v fnm >/dev/null 2>&1; then printf 'fnm exec --using=22'; else printf 'env'; fi)
+UI_RUNNER := $(shell if command -v fnm >/dev/null 2>&1; then printf 'fnm exec --using=24'; else printf 'env'; fi)
 
 GIT_TAG := $(shell git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
 LDFLAGS := -ldflags="-X 'main.version=$(GIT_TAG)'"

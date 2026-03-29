@@ -11,7 +11,7 @@ import (
 
 	"github.com/liliang-cn/agent-go/v2/pkg/mcp"
 	"github.com/liliang-cn/agent-go/v2/pkg/pool"
-	"github.com/spf13/viper"
+	"github.com/liliang-cn/agent-go/v2/pkg/store"
 )
 
 var configLoadMu sync.Mutex
@@ -29,7 +29,7 @@ type Config struct {
 	Cache   CacheConfig   `mapstructure:"cache"`
 	Tooling ToolingConfig `mapstructure:"tooling"`
 	Agent   AgentConfig   `mapstructure:"agent"`
-	Team    TeamConfig   `mapstructure:"team"`
+	Team    TeamConfig    `mapstructure:"team"`
 
 	// Internal storage configs (not exposed to user directly)
 	Internal struct {
@@ -55,14 +55,12 @@ type ServerConfig struct {
 }
 
 type LLMConfig struct {
-	Enabled   bool                   `mapstructure:"enabled"`
 	Strategy  pool.SelectionStrategy `mapstructure:"strategy"`
 	Providers []pool.Provider        `mapstructure:"providers"`
 }
 
 // EmbeddingConfig holds dedicated embedding provider settings.
 type EmbeddingConfig struct {
-	Enabled   bool                   `mapstructure:"enabled"`
 	Strategy  pool.SelectionStrategy `mapstructure:"strategy"`
 	Providers []pool.Provider        `mapstructure:"providers"`
 }
@@ -85,7 +83,6 @@ type CortexdbConfig struct {
 }
 
 type SkillsConfig struct {
-	Enabled               bool     `mapstructure:"enabled"`
 	Paths                 []string `mapstructure:"paths"`
 	AutoLoad              bool     `mapstructure:"auto_load"`
 	AllowCommandInjection bool     `mapstructure:"allow_command_injection"`
@@ -145,10 +142,25 @@ func (c *Config) ApplyHomeLayout() {
 	}
 
 	// 4. MCP
+	defaultMCP := mcp.DefaultConfig()
+	c.MCP.Enabled = true
+	c.MCP.LogLevel = defaultMCP.LogLevel
+	c.MCP.DefaultTimeout = defaultMCP.DefaultTimeout
+	c.MCP.MaxConcurrentRequests = defaultMCP.MaxConcurrentRequests
+	c.MCP.HealthCheckInterval = defaultMCP.HealthCheckInterval
+	c.MCP.Servers = nil
+	c.MCP.ServersConfigPath = ""
+	c.MCP.FilesystemIgnore = append([]string(nil), defaultMCP.FilesystemIgnore...)
 	c.MCP.FilesystemDirs = []string{c.WorkspaceDir()}
 	c.resolveMCPServerPaths()
 
-	// 5. 确保目录结构
+	// 5. Skills
+	c.Skills.Paths = nil
+	c.Skills.AutoLoad = true
+	c.Skills.AllowCommandInjection = false
+	c.Skills.RequireConfirmation = true
+
+	// 6. 确保目录结构
 	c.ensureLayout()
 }
 
@@ -163,11 +175,9 @@ func (c *Config) ensureLayout() {
 
 // --- 加载逻辑 ---
 
-func Load(configPath string) (*Config, error) {
+func Load() (*Config, error) {
 	configLoadMu.Lock()
 	defer configLoadMu.Unlock()
-
-	vp := viper.New()
 
 	// 1. 确定 AGENTGO_HOME
 	home := os.Getenv("AGENTGO_HOME")
@@ -176,67 +186,43 @@ func Load(configPath string) (*Config, error) {
 	}
 	home = expandHomePath(home)
 
-	// 2. 配置文件查找
-	if configPath != "" {
-		vp.SetConfigFile(configPath)
-	} else {
-		vp.SetConfigName("agentgo")
-		vp.SetConfigType("toml")
-		vp.AddConfigPath(".")
-		vp.AddConfigPath(home)
-		vp.AddConfigPath(filepath.Join(home, "config"))
-	}
-
-	setDefaults(vp)
-	bindEnvVars(vp)
-
-	if err := vp.ReadInConfig(); err != nil && configPath != "" {
-		return nil, err
-	}
-	config := &Config{}
-	if err := vp.Unmarshal(config); err != nil {
-		return nil, err
-	}
-
-	if config.Home == "" {
-		config.Home = home
-	}
+	config := defaultConfig(home)
 	config.ApplyHomeLayout()
-
-	// 处理 Provider 特殊解析
-	if vp.IsSet("llm.providers") {
-		var llm struct{ Providers []interface{} }
-		vp.UnmarshalKey("llm", &llm)
-		unmarshalProviders(llm.Providers, &config.LLM.Providers)
-	}
-	if vp.IsSet("rag.embedding.providers") {
-		var emb struct{ Providers []interface{} }
-		vp.UnmarshalKey("rag.embedding", &emb)
-		unmarshalProviders(emb.Providers, &config.RAG.Embedding.Providers)
+	if err := config.LoadDBBackedRuntime(); err != nil {
+		return nil, err
 	}
 
 	return config, nil
 }
 
-func setDefaults(vp *viper.Viper) {
-	vp.SetDefault("server.port", 7127)
-	vp.SetDefault("server.host", "0.0.0.0")
-	vp.SetDefault("llm.enabled", true)
-	vp.SetDefault("llm.strategy", "round_robin")
-	vp.SetDefault("rag.enabled", false)
-	vp.SetDefault("skills.enabled", true)
-	vp.SetDefault("memory.store_type", string(MemoryStoreTypeFile))
-	vp.SetDefault("cache.store_type", "memory")
-	vp.SetDefault("tooling.enable_search_tools", true)
-	vp.SetDefault("tooling.web_search.mode", "mcp")
-	vp.SetDefault("agent.name", "AgentGo")
-}
-
-func bindEnvVars(vp *viper.Viper) {
-	vp.SetEnvPrefix("AGENTGO")
-	vp.AutomaticEnv()
-	vp.BindEnv("home", "AGENTGO_HOME")
-	vp.BindEnv("debug", "DEBUG")
+func defaultConfig(home string) *Config {
+	cfg := &Config{
+		Home:  home,
+		Debug: GetEnvOrDefaultBool("DEBUG", false),
+		Server: ServerConfig{
+			Port: 7127,
+			Host: "0.0.0.0",
+		},
+		RAG: RAGConfig{
+			Enabled: false,
+		},
+		Memory: MemoryConfig{
+			StoreType: MemoryStoreTypeFile,
+		},
+		Cache: CacheConfig{
+			StoreType: "memory",
+		},
+		Tooling: ToolingConfig{
+			EnableSearchTools: true,
+			WebSearch: WebSearchConfig{
+				Mode: "mcp",
+			},
+		},
+		Agent: AgentConfig{
+			Name: "AgentGo",
+		},
+	}
+	return cfg
 }
 
 // --- 工具函数 ---
@@ -263,9 +249,164 @@ func ensureParentDir(path string) {
 	_ = os.MkdirAll(filepath.Dir(path), 0755)
 }
 
-func unmarshalProviders(raw interface{}, target *[]pool.Provider) {
-	data, _ := json.Marshal(raw)
-	_ = json.Unmarshal(data, target)
+func (c *Config) resetDBBackedRuntime() {
+	c.LLM = LLMConfig{}
+	c.Debug = GetEnvOrDefaultBool("DEBUG", false)
+	c.Server.Host = "0.0.0.0"
+	c.Server.Port = 7127
+	c.RAG.Enabled = false
+	c.RAG.EmbeddingModel = ""
+	c.RAG.Embedding = EmbeddingConfig{}
+	c.Memory.StoreType = MemoryStoreTypeFile
+	c.MCP.Servers = nil
+	c.Skills.Paths = nil
+}
+
+// LoadDBBackedRuntime refreshes runtime settings from agentgo.db.
+func (c *Config) LoadDBBackedRuntime() error {
+	db, err := store.NewAgentGoDB(c.AgentDBPath())
+	if err != nil {
+		return fmt.Errorf("open agentgo db: %w", err)
+	}
+	defer db.Close()
+
+	return c.LoadDBBackedRuntimeFrom(db)
+}
+
+// LoadDBBackedRuntimeFrom refreshes LLM and embedding runtime settings using an existing AgentGoDB handle.
+func (c *Config) LoadDBBackedRuntimeFrom(db *store.AgentGoDB) error {
+	if db == nil {
+		return fmt.Errorf("agentgo db is required")
+	}
+
+	c.resetDBBackedRuntime()
+
+	debugValue, err := ensureDBConfigValue(db, "debug", boolString(c.Debug))
+	if err != nil {
+		return err
+	}
+	serverHost, err := ensureDBConfigValue(db, "server.host", c.Server.Host)
+	if err != nil {
+		return err
+	}
+	serverPort, err := ensureDBConfigValue(db, "server.port", strconv.Itoa(c.Server.Port))
+	if err != nil {
+		return err
+	}
+	memoryStoreType, err := ensureDBConfigValue(db, "memory.store_type", string(c.Memory.StoreType))
+	if err != nil {
+		return err
+	}
+	c.Debug = debugValue == "true"
+	c.Server.Host = strings.TrimSpace(serverHost)
+	if c.Server.Host == "" {
+		c.Server.Host = "0.0.0.0"
+	}
+	if parsedPort, parseErr := strconv.Atoi(serverPort); parseErr == nil && parsedPort > 0 {
+		c.Server.Port = parsedPort
+	}
+	if setErr := c.SetMemoryStoreTypeString(memoryStoreType); setErr == nil {
+		c.applyMemoryLayout()
+	}
+
+	llmStrategy, err := ensureDBConfigValue(db, "llm.strategy", string(pool.StrategyRoundRobin))
+	if err != nil {
+		return err
+	}
+	llmProviders, err := db.ListProviders()
+	if err != nil {
+		return fmt.Errorf("list llm providers: %w", err)
+	}
+	c.LLM.Strategy = pool.SelectionStrategy(llmStrategy)
+	c.LLM.Providers = enabledLLMProviders(llmProviders)
+
+	embeddingStrategy, err := ensureDBConfigValue(db, "embedding.strategy", string(pool.StrategyRoundRobin))
+	if err != nil {
+		return err
+	}
+	embeddingProviders, err := db.ListEmbeddingProviders()
+	if err != nil {
+		return fmt.Errorf("list embedding providers: %w", err)
+	}
+	embeddingModel, err := db.GetConfig("rag.embedding_model")
+	if err != nil {
+		embeddingModel = ""
+		for _, provider := range embeddingProviders {
+			if provider != nil && provider.Enabled {
+				embeddingModel = strings.TrimSpace(provider.ModelName)
+				if embeddingModel != "" {
+					if saveErr := db.SaveConfig("rag.embedding_model", embeddingModel); saveErr != nil {
+						return fmt.Errorf("backfill rag.embedding_model: %w", saveErr)
+					}
+				}
+				break
+			}
+		}
+	}
+	c.RAG.EmbeddingModel = embeddingModel
+	c.RAG.Enabled = strings.TrimSpace(embeddingModel) != ""
+	c.RAG.Embedding.Strategy = pool.SelectionStrategy(embeddingStrategy)
+	c.RAG.Embedding.Providers = enabledEmbeddingProviders(embeddingProviders)
+
+	if paths, err := dbConfigStringSlice(db, "skills.paths"); err == nil {
+		c.Skills.Paths = paths
+	}
+	if paths, err := dbConfigStringSlice(db, "mcp.paths"); err == nil {
+		c.MCP.Servers = paths
+		c.resolveMCPServerPaths()
+	}
+
+	return nil
+}
+
+func ensureDBConfigValue(db *store.AgentGoDB, key, fallback string) (string, error) {
+	value, err := db.GetConfig(key)
+	if err == nil {
+		return value, nil
+	}
+	if err := db.SaveConfig(key, fallback); err != nil {
+		return "", fmt.Errorf("save default config %s: %w", key, err)
+	}
+	return fallback, nil
+}
+
+func enabledLLMProviders(providers []*store.LLMProvider) []pool.Provider {
+	result := make([]pool.Provider, 0, len(providers))
+	for _, provider := range providers {
+		if provider != nil && provider.Enabled {
+			result = append(result, store.ToPoolProvider(provider))
+		}
+	}
+	return result
+}
+
+func enabledEmbeddingProviders(providers []*store.EmbeddingProvider) []pool.Provider {
+	result := make([]pool.Provider, 0, len(providers))
+	for _, provider := range providers {
+		if provider != nil && provider.Enabled {
+			result = append(result, store.ToPoolEmbeddingProvider(provider))
+		}
+	}
+	return result
+}
+
+func dbConfigStringSlice(db *store.AgentGoDB, key string) ([]string, error) {
+	value, err := db.GetConfig(key)
+	if err != nil {
+		return nil, err
+	}
+	var items []string
+	if err := json.Unmarshal([]byte(value), &items); err != nil {
+		return nil, fmt.Errorf("decode %s: %w", key, err)
+	}
+	return items, nil
+}
+
+func boolString(v bool) string {
+	if v {
+		return "true"
+	}
+	return "false"
 }
 
 func (c *Config) Validate() error {

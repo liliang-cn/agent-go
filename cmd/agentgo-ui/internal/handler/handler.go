@@ -3,8 +3,6 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
-	"os"
-	"path/filepath"
 	"sync"
 
 	"github.com/liliang-cn/agent-go/v2/pkg/agent"
@@ -25,7 +23,7 @@ type Handler struct {
 	mcpService     *mcp.Service
 	memoryService  *memory.Service
 	agentService   *agent.Service
-	teamManager   *agent.TeamManager
+	teamManager    *agent.TeamManager
 	llm            domain.Generator
 	embedder       domain.Embedder
 	ConfigHandler  *ConfigHandler
@@ -40,10 +38,8 @@ type Handler struct {
 func New(cfg *config.Config, ragClient *rag.Client, skillsService *skills.Service,
 	mcpService *mcp.Service, memoryService *memory.Service,
 	agentService *agent.Service, teamManager *agent.TeamManager, llm domain.Generator, embedder domain.Embedder) *Handler {
-
-	configPath := resolveConfigPath(cfg)
-	configHandler := NewConfigHandler(cfg, configPath)
-	setupHandler := NewSetupHandler(cfg, configPath)
+	configHandler := NewConfigHandler(cfg)
+	setupHandler := NewSetupHandler(cfg)
 
 	return &Handler{
 		cfg:            cfg,
@@ -54,7 +50,7 @@ func New(cfg *config.Config, ragClient *rag.Client, skillsService *skills.Servic
 		mcpService:     mcpService,
 		memoryService:  memoryService,
 		agentService:   agentService,
-		teamManager:   teamManager,
+		teamManager:    teamManager,
 		llm:            llm,
 		embedder:       embedder,
 		aiChatSessions: make(map[string]string),
@@ -122,9 +118,8 @@ func (h *Handler) HandleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// MCP info
-	mcpEnabled := h.cfg.MCP.Enabled
 	var mcpInfo map[string]interface{}
-	if mcpEnabled && h.mcpService != nil {
+	if h.mcpService != nil {
 		servers := h.mcpService.ListServers()
 		toolCount := 0
 		for _, s := range servers {
@@ -141,9 +136,8 @@ func (h *Handler) HandleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Skills info
-	skillsEnabled := h.skillsService != nil
 	var skillsInfo map[string]interface{}
-	if skillsEnabled {
+	if h.skillsService != nil {
 		list, _ := h.skillsService.ListSkills(r.Context(), skills.SkillFilter{})
 		skillsInfo = map[string]interface{}{
 			"enabled": true,
@@ -275,29 +269,4 @@ func (h *Handler) HandleStatus(w http.ResponseWriter, r *http.Request) {
 		"memory":    memoryInfo,
 		"agent":     agentInfo,
 	})
-}
-
-func resolveConfigPath(cfg *config.Config) string {
-	candidates := []string{
-		filepath.Join(".", "agentgo.toml"),
-		filepath.Join(cfg.Home, "agentgo.toml"),
-		filepath.Join(cfg.Home, "config", "agentgo.toml"),
-	}
-
-	for _, candidate := range candidates {
-		if _, err := os.Stat(candidate); err == nil {
-			abs, absErr := filepath.Abs(candidate)
-			if absErr == nil {
-				return abs
-			}
-			return candidate
-		}
-	}
-
-	fallback := filepath.Join(cfg.Home, "agentgo.toml")
-	abs, err := filepath.Abs(fallback)
-	if err == nil {
-		return abs
-	}
-	return fallback
 }

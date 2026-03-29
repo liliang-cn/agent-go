@@ -56,6 +56,10 @@ func (promptTestMemoryService) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+func (promptTestMemoryService) Clear(ctx context.Context) error {
+	return nil
+}
+
 func (promptTestMemoryService) ConfigureBank(ctx context.Context, sessionID string, cfg *domain.MemoryBankConfig) error {
 	return nil
 }
@@ -162,7 +166,7 @@ func TestBuildSystemPromptIncludesMemoryToolGuidanceWhenMemoryToolsCallable(t *t
 		promptManager:   prompt.NewManager(),
 		toolRegistry:    registry,
 		memoryService:   promptTestMemoryService{},
-		memoryStoreType: "vector",
+		memoryStoreType: "cortex",
 		cfg: &config.Config{
 			Tooling: config.ToolingConfig{
 				WebSearch: config.WebSearchConfig{Mode: "auto"},

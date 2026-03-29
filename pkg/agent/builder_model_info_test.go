@@ -76,23 +76,31 @@ func TestResolveServiceModelInfoFallsBackToConfig(t *testing.T) {
 	}
 }
 
-func TestBuildMemoryServiceKeepsHybridStoreWithoutEmbedder(t *testing.T) {
+func TestBuildMemoryServiceKeepsCortexStoreWithoutEmbedder(t *testing.T) {
 	home := t.TempDir()
 	cfg := testAgentConfig(home)
-	if err := cfg.SetMemoryStoreTypeString("hybrid"); err != nil {
+	if err := cfg.SetMemoryStoreTypeString("cortex"); err != nil {
 		t.Fatalf("SetMemoryStoreTypeString() error = %v", err)
 	}
 
-	builder := New("memory-agent").WithConfig(cfg).WithMemory(WithMemoryStoreType("hybrid"))
+	builder := New("memory-agent").WithConfig(cfg).WithMemory(WithMemoryStoreType("cortex"))
 
 	memSvc, storeType, err := builder.buildMemoryService(cfg, nil, nil)
 	if err != nil {
 		t.Fatalf("buildMemoryService() error = %v", err)
 	}
-	if storeType != "hybrid" {
-		t.Fatalf("buildMemoryService() storeType = %q, want hybrid", storeType)
+	if storeType != "cortex" {
+		t.Fatalf("buildMemoryService() storeType = %q, want cortex", storeType)
 	}
 	if _, ok := memSvc.(*memorypkg.Service); !ok {
 		t.Fatalf("buildMemoryService() returned %T, want *memory.Service", memSvc)
+	}
+}
+
+func TestBuildMemoryServiceRejectsVectorStoreType(t *testing.T) {
+	home := t.TempDir()
+	cfg := testAgentConfig(home)
+	if err := cfg.SetMemoryStoreTypeString("vector"); err == nil {
+		t.Fatal("expected vector store type to be rejected")
 	}
 }

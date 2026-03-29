@@ -36,7 +36,7 @@ var agentListCmd = &cobra.Command{
 		}
 		displayCfg := Cfg
 		if displayCfg == nil {
-			loaded, loadErr := config.Load("")
+			loaded, loadErr := config.Load()
 			if loadErr == nil {
 				displayCfg = loaded
 			}
@@ -88,7 +88,7 @@ var agentShowCmd = &cobra.Command{
 		}
 		displayCfg := Cfg
 		if displayCfg == nil {
-			loaded, loadErr := config.Load("")
+			loaded, loadErr := config.Load()
 			if loadErr == nil {
 				displayCfg = loaded
 			}
@@ -306,7 +306,7 @@ var agentLeaveCmd = &cobra.Command{
 func getManager() (*agent.TeamManager, error) {
 	cfg := Cfg
 	if cfg == nil {
-		loaded, err := config.Load("")
+		loaded, err := config.Load()
 		if err != nil {
 			return nil, err
 		}

@@ -400,10 +400,6 @@ func truncateText(text string, maxLen int) string {
 }
 
 func processMCPQuery(cmd *cobra.Command, args []string) error {
-	if !Cfg.MCP.Enabled {
-		return fmt.Errorf("MCP is disabled in configuration")
-	}
-
 	// Get the query
 	var query string
 	if len(args) == 0 {
@@ -758,7 +754,7 @@ func init() {
 	queryCmd.Flags().BoolVarP(&interactive, "interactive", "i", false, "interactive mode")
 	queryCmd.Flags().StringVar(&queryFile, "file", "", "batch query from file")
 	queryCmd.Flags().StringSliceVar(&filterBy, "filter", []string{}, "filter by metadata (key=value format, can be used multiple times)")
-	queryCmd.Flags().BoolVar(&enableTools, "tools", false, "enable tool calling capabilities (overrides config file setting)")
+	queryCmd.Flags().BoolVar(&enableTools, "tools", false, "enable tool calling capabilities (overrides runtime setting)")
 	queryCmd.Flags().StringSliceVar(&allowedTools, "allowed-tools", []string{}, "comma-separated list of allowed tools (empty means all enabled tools)")
 	queryCmd.Flags().IntVar(&maxToolCalls, "max-tool-calls", 5, "maximum number of tool calls per query")
 	queryCmd.Flags().BoolVar(&useMCP, "mcp", false, "use MCP tools for query processing")

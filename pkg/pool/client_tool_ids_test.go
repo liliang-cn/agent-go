@@ -41,7 +41,13 @@ func TestBuildPoolGenerateWithToolsRequestNormalizesToolCallIDs(t *testing.T) {
 	if toolCalls[0]["id"] != "fc_call_old_1" {
 		t.Fatalf("expected normalized assistant tool call id, got %#v", toolCalls[0]["id"])
 	}
+	if toolCalls[0]["call_id"] != "fc_call_old_1" {
+		t.Fatalf("expected call_id alias for assistant tool call, got %#v", toolCalls[0]["call_id"])
+	}
 	if messages[1]["tool_call_id"] != "fc_call_old_1" {
 		t.Fatalf("expected normalized tool message id, got %#v", messages[1]["tool_call_id"])
+	}
+	if messages[1]["call_id"] != "fc_call_old_1" {
+		t.Fatalf("expected call_id alias for tool message, got %#v", messages[1]["call_id"])
 	}
 }

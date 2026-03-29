@@ -74,8 +74,8 @@ func NewClient(cfg *config.Config, embedder domain.Embedder, llm domain.Generato
 	// Initialize MCP service
 	// MCP service configuration
 	mcpConfig := &mcp.Config{
+		Enabled:           true,
 		ServersConfigPath: cfg.MCP.ServersConfigPath,
-		Enabled:           cfg.MCP.Enabled,
 	}
 
 	var mcpService *mcp.Service

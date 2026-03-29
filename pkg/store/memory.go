@@ -93,6 +93,13 @@ func NewMemoryStore(dbPath string) (*MemoryStore, error) {
 	return &MemoryStore{db: db, store: sqliteStore}, nil
 }
 
+// NewCortexMemoryStore creates a memory store explicitly branded as the
+// cortexdb-backed memory backend. It currently shares the same implementation
+// as NewMemoryStore, but gives agent-go a stable named backend to target.
+func NewCortexMemoryStore(dbPath string) (*MemoryStore, error) {
+	return NewMemoryStore(dbPath)
+}
+
 // Store saves a new memory using cortexdb memory buckets.
 func (s *MemoryStore) Store(ctx context.Context, memory *domain.Memory) error {
 	scope := resolveMemoryScope(memory)
@@ -346,6 +353,13 @@ func (s *MemoryStore) Delete(ctx context.Context, id string) error {
 	}
 
 	return s.cleanupEmptyBucket(ctx, row.BucketID)
+}
+
+func (s *MemoryStore) Clear(ctx context.Context) error {
+	if err := s.execWithRetry(ctx, `DELETE FROM messages WHERE session_id LIKE ?`, memoryBucketPrefix+"%"); err != nil {
+		return err
+	}
+	return s.execWithRetry(ctx, `DELETE FROM sessions WHERE id LIKE ?`, memoryBucketPrefix+"%")
 }
 
 func (s *MemoryStore) DeleteBySession(ctx context.Context, sessionID string) error {
@@ -1128,7 +1142,6 @@ func cosineSimilarity(a, b []float32) float64 {
 	}
 	return dot / (math.Sqrt(normA) * math.Sqrt(normB))
 }
-
 
 func toFloat32(v []float64) []float32 {
 	if len(v) == 0 {

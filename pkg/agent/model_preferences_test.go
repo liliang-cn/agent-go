@@ -73,3 +73,42 @@ func TestCreateAgentStoresPreferredProviderAndModel(t *testing.T) {
 		t.Fatalf("expected preferred model gpt-oss, got %q", loaded.PreferredModel)
 	}
 }
+
+func TestSetAndClearAgentLLMPreference(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "agent.db"))
+	if err != nil {
+		t.Fatalf("new store failed: %v", err)
+	}
+	manager := NewTeamManager(store)
+	if err := manager.SeedDefaultMembers(); err != nil {
+		t.Fatalf("seed default members failed: %v", err)
+	}
+
+	created, err := manager.CreateAgent(context.Background(), &AgentModel{
+		Name:         "Planner",
+		Description:  "Plans work.",
+		Instructions: "Plan carefully.",
+	})
+	if err != nil {
+		t.Fatalf("create agent failed: %v", err)
+	}
+
+	updated, err := manager.SetAgentLLMPreference(context.Background(), created.Name, "openai_local", "gpt-5.4")
+	if err != nil {
+		t.Fatalf("set agent llm preference failed: %v", err)
+	}
+	if updated.PreferredProvider != "openai_local" {
+		t.Fatalf("expected preferred provider openai_local, got %q", updated.PreferredProvider)
+	}
+	if updated.PreferredModel != "gpt-5.4" {
+		t.Fatalf("expected preferred model gpt-5.4, got %q", updated.PreferredModel)
+	}
+
+	cleared, err := manager.ClearAgentLLMPreference(context.Background(), created.Name)
+	if err != nil {
+		t.Fatalf("clear agent llm preference failed: %v", err)
+	}
+	if cleared.PreferredProvider != "" || cleared.PreferredModel != "" {
+		t.Fatalf("expected preferences to be cleared, got provider=%q model=%q", cleared.PreferredProvider, cleared.PreferredModel)
+	}
+}

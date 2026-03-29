@@ -164,7 +164,7 @@ var deleteCmd = &cobra.Command{
 }
 
 func getManager() (*agent.TeamManager, error) {
-	cfg, err := config.Load("")
+	cfg, err := config.Load()
 	if err != nil {
 		return nil, err
 	}

@@ -100,8 +100,12 @@ func (s *Store) SaveSession(session *Session) error {
 	messages := make([]store.ChatMessage, len(session.Messages))
 	for i, m := range session.Messages {
 		messages[i] = store.ChatMessage{
-			Role:    m.Role,
-			Content: m.Content,
+			Role:             m.Role,
+			Content:          m.Content,
+			ReasoningContent: m.ReasoningContent,
+			ToolCalls:        m.ToolCalls,
+			ToolCallID:       m.ToolCallID,
+			ResponseID:       m.ResponseID,
 		}
 	}
 
@@ -138,8 +142,12 @@ func (s *Store) GetSession(id string) (*Session, error) {
 	session.Messages = make([]domain.Message, len(sess.Messages))
 	for i, m := range sess.Messages {
 		session.Messages[i] = domain.Message{
-			Role:    m.Role,
-			Content: m.Content,
+			Role:             m.Role,
+			Content:          m.Content,
+			ReasoningContent: m.ReasoningContent,
+			ToolCalls:        m.ToolCalls,
+			ToolCallID:       m.ToolCallID,
+			ResponseID:       m.ResponseID,
 		}
 	}
 
@@ -168,8 +176,12 @@ func (s *Store) ListSessions(limit int) ([]*Session, error) {
 		session.Messages = make([]domain.Message, len(sess.Messages))
 		for j, m := range sess.Messages {
 			session.Messages[j] = domain.Message{
-				Role:    m.Role,
-				Content: m.Content,
+				Role:             m.Role,
+				Content:          m.Content,
+				ReasoningContent: m.ReasoningContent,
+				ToolCalls:        m.ToolCalls,
+				ToolCallID:       m.ToolCallID,
+				ResponseID:       m.ResponseID,
 			}
 		}
 		result[i] = session

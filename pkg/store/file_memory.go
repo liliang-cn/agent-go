@@ -591,6 +591,25 @@ func (s *FileMemoryStore) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+func (s *FileMemoryStore) Clear(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, dir := range []string{"streams", "entities", "_index", "_views"} {
+		if err := os.RemoveAll(filepath.Join(s.baseDir, dir)); err != nil {
+			return err
+		}
+	}
+	for _, dir := range []string{"streams", "entities"} {
+		if err := os.MkdirAll(filepath.Join(s.baseDir, dir), 0755); err != nil {
+			return err
+		}
+	}
+
+	s.indexDirty = true
+	return nil
+}
+
 func (s *FileMemoryStore) DeleteBySession(ctx context.Context, sessionID string) error {
 	all, _, _ := s.List(ctx, 1000, 0)
 	for _, m := range all {

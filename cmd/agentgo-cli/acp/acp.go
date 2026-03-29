@@ -167,7 +167,6 @@ func prepareSessionConfig(base *config.Config, sessionCfg acpserver.SessionConfi
 		return nil, nil, fmt.Errorf("write ACP MCP server config: %w", err)
 	}
 
-	cfgCopy.MCP.Enabled = true
 	cfgCopy.MCP.Servers = append(cfgCopy.MCP.Servers, tmpFile)
 
 	return &cfgCopy, func() error { return os.Remove(tmpFile) }, nil

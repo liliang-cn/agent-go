@@ -14,7 +14,7 @@ import (
 const ExampleHomeEnv = "AGENTGO_EXAMPLE_HOME"
 
 func NewManager(exampleName string) (*agent.TeamManager, *config.Config, error) {
-	cfg, err := config.Load("")
+	cfg, err := config.Load()
 	if err != nil {
 		return nil, nil, fmt.Errorf("load config: %w", err)
 	}

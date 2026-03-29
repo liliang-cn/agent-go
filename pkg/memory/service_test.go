@@ -96,6 +96,11 @@ func (m *MockMemoryStore) Delete(ctx context.Context, id string) error {
 	return args.Error(0)
 }
 
+func (m *MockMemoryStore) Clear(ctx context.Context) error {
+	args := m.Called(ctx)
+	return args.Error(0)
+}
+
 func (m *MockMemoryStore) DeleteBySession(ctx context.Context, sessionID string) error {
 	args := m.Called(ctx, sessionID)
 	return args.Error(0)
@@ -693,4 +698,18 @@ func TestService_StoreIfWorthwhile(t *testing.T) {
 		isolatedEmbedder.AssertExpectations(t)
 		isolatedStore.AssertExpectations(t)
 	})
+}
+
+func TestService_Clear(t *testing.T) {
+	ctx := context.Background()
+	store := new(MockMemoryStore)
+
+	service := NewService(store, nil, nil, DefaultConfig())
+	store.On("Clear", ctx).Return(nil).Once()
+
+	if err := service.Clear(ctx); err != nil {
+		t.Fatalf("Clear() error = %v", err)
+	}
+
+	store.AssertExpectations(t)
 }

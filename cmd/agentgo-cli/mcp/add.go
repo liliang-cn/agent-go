@@ -104,7 +104,7 @@ func init() {
 func runMCPAdd(cmd *cobra.Command, args []string) error {
 	if Cfg == nil {
 		var err error
-		Cfg, err = config.Load("")
+		Cfg, err = config.Load()
 		if err != nil {
 			return fmt.Errorf("failed to load config: %w", err)
 		}
@@ -184,7 +184,7 @@ func runMCPAdd(cmd *cobra.Command, args []string) error {
 func runMCPAddJSON(cmd *cobra.Command, args []string) error {
 	if Cfg == nil {
 		var err error
-		Cfg, err = config.Load("")
+		Cfg, err = config.Load()
 		if err != nil {
 			return fmt.Errorf("failed to load config: %w", err)
 		}
@@ -273,7 +273,7 @@ func runMCPAddJSON(cmd *cobra.Command, args []string) error {
 func runMCPRemove(cmd *cobra.Command, args []string) error {
 	if Cfg == nil {
 		var err error
-		Cfg, err = config.Load("")
+		Cfg, err = config.Load()
 		if err != nil {
 			return fmt.Errorf("failed to load config: %w", err)
 		}

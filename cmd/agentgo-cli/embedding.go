@@ -19,7 +19,6 @@ var (
 	embFlagMaxConcurrency int
 	embFlagEnabled        bool
 	embFlagStrategy       string
-	embFlagPoolEnabled    bool
 )
 
 var embeddingCmd = &cobra.Command{
@@ -166,7 +165,7 @@ var embeddingDeleteCmd = &cobra.Command{
 
 var embeddingConfigCmd = &cobra.Command{
 	Use:   "config",
-	Short: "Manage embedding pool configuration (strategy, enabled)",
+	Short: "Manage embedding pool configuration",
 }
 
 var embeddingConfigShowCmd = &cobra.Command{
@@ -182,13 +181,12 @@ var embeddingConfigShowCmd = &cobra.Command{
 			return err
 		}
 		fmt.Printf("strategy: %s\n", cfg.Strategy)
-		fmt.Printf("enabled:  %v\n", cfg.Enabled)
 		return nil
 	},
 }
 
 var embeddingConfigSetCmd = &cobra.Command{
-	Use:   "set [--strategy <s>] [--enabled <bool>]",
+	Use:   "set [--strategy <s>]",
 	Short: "Update embedding pool configuration",
 	Long: `Persist embedding pool-level settings to the database.
 Changes take effect on the next restart.
@@ -208,15 +206,11 @@ Valid strategies: round_robin, random, least_load, capability, failover`,
 		if cmd.Flags().Changed("strategy") {
 			current.Strategy = pool.SelectionStrategy(embFlagStrategy)
 		}
-		if cmd.Flags().Changed("enabled") {
-			current.Enabled = embFlagPoolEnabled
-		}
 
 		if err := svc.SaveEmbeddingPoolConfig(*current); err != nil {
 			return fmt.Errorf("failed to save config: %w", err)
 		}
 		fmt.Printf("strategy: %s\n", current.Strategy)
-		fmt.Printf("enabled:  %v\n", current.Enabled)
 		fmt.Println("Saved. Restart to apply.")
 		return nil
 	},
@@ -250,5 +244,4 @@ func init() {
 
 	// config set flags
 	embeddingConfigSetCmd.Flags().StringVar(&embFlagStrategy, "strategy", "", "Selection strategy (round_robin|random|least_load|capability|failover)")
-	embeddingConfigSetCmd.Flags().BoolVar(&embFlagPoolEnabled, "enabled", true, "Enable or disable the embedding pool")
 }

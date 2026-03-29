@@ -9,6 +9,7 @@ import (
 
 	"github.com/liliang-cn/agent-go/v2/pkg/config"
 	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	agentgolog "github.com/liliang-cn/agent-go/v2/pkg/log"
 	"github.com/liliang-cn/agent-go/v2/pkg/mcp"
 	"github.com/liliang-cn/agent-go/v2/pkg/memory"
 	"github.com/liliang-cn/agent-go/v2/pkg/ptc"
@@ -62,7 +63,7 @@ type MCPConfig struct {
 type MemoryConfig struct {
 	Enabled          bool     `json:"enabled"`
 	MemoryPath       string   `json:"memory_path,omitempty"`
-	StoreType        string   `json:"store_type,omitempty"`        // "file", "vector", "hybrid"
+	StoreType        string   `json:"store_type,omitempty"`        // "file", "cortex"
 	ReflectThreshold int      `json:"reflect_threshold,omitempty"` // auto-reflect after N new facts (0 = disabled)
 	Mission          string   `json:"mission,omitempty"`           // MemoryBank mission statement
 	Directives       []string `json:"directives,omitempty"`        // MemoryBank hard directives
@@ -168,7 +169,7 @@ func (b *Builder) WithMCP(opts ...MCPOption) *Builder {
 // WithMemory enables memory service
 func (b *Builder) WithMemory(opts ...MemoryOption) *Builder {
 	b.enableMemory = true
-	cfg := MemoryConfig{} // defaults come from config file, not here
+	cfg := MemoryConfig{} // defaults come from runtime config, not here
 	for _, opt := range opts {
 		opt(&cfg)
 	}
@@ -286,7 +287,7 @@ func (b *Builder) WithConfig(cfg *config.Config) *Builder {
 }
 
 // WithAgentName sets the global agent name used in built-in prompts and team names.
-// This overrides the agent.name field from config file or environment.
+// This overrides the agent.name field from runtime config or environment.
 // Must be called before Build() to take effect.
 func (b *Builder) WithAgentName(name string) *Builder {
 	if b.agentgoCfg == nil {
@@ -297,7 +298,7 @@ func (b *Builder) WithAgentName(name string) *Builder {
 }
 
 // WithLLM sets a custom LLM service for the agent.
-// This overrides the default LLM from the global pool configured in agentgo.toml.
+// This overrides the default LLM from the global pool configured in agentgo.db.
 //
 // The provided LLM must implement the domain.Generator interface.
 //
@@ -384,7 +385,7 @@ func (b *Builder) build() (*Service, error) {
 	agentgoCfg := b.agentgoCfg
 	var err error
 	if agentgoCfg == nil {
-		agentgoCfg, err = config.Load("")
+		agentgoCfg, err = config.Load()
 		if err != nil {
 			return nil, fmt.Errorf("failed to load config: %w", err)
 		}
@@ -665,7 +666,6 @@ func resolveServiceModelInfo(llmSvc domain.Generator, cfg *config.Config) (strin
 
 func (b *Builder) buildMemoryService(agentgoCfg *config.Config, embedSvc domain.Embedder, llmSvc domain.Generator) (domain.MemoryService, string, error) {
 	var memStore domain.MemoryStore
-	var shadowStore domain.MemoryStore
 	var err error
 
 	storeType := config.NormalizeMemoryStoreType(b.memoryCfg.StoreType)
@@ -678,15 +678,11 @@ func (b *Builder) buildMemoryService(agentgoCfg *config.Config, embedSvc domain.
 		memPath = agentgoCfg.MemoryPrimaryPath()
 	}
 
-	// Warn if vector-only requested but no embedder (hybrid still works via text search)
-	if storeType == config.MemoryStoreTypeVector && embedSvc == nil {
-		log.Printf("[WARN] Memory store type 'vector' requires embedding model, but none available. Falling back to 'file'.")
-		storeType = config.MemoryStoreTypeFile
-	}
-
 	memPath = normalizeFileMemoryPath(storeType, memPath, agentgoCfg)
 
-	log.Printf("[DEBUG] Memory: storeType=%s, memPath=%s, embedSvc=%v", storeType, memPath, embedSvc != nil)
+	if agentgolog.IsDebug() {
+		log.Printf("[DEBUG] Memory: storeType=%s, memPath=%s, embedSvc=%v", storeType, memPath, embedSvc != nil)
+	}
 
 	switch storeType {
 	case config.MemoryStoreTypeFile:
@@ -694,27 +690,13 @@ func (b *Builder) buildMemoryService(agentgoCfg *config.Config, embedSvc domain.
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to create file memory store: %w", err)
 		}
-	case config.MemoryStoreTypeVector:
-		memStore, err = store.NewMemoryStore(agentgoCfg.MemoryVectorDBPath())
+	case config.MemoryStoreTypeCortex:
+		memStore, err = store.NewCortexMemoryStore(memPath)
 		if err != nil {
-			return nil, "", fmt.Errorf("failed to create vector memory store: %w", err)
+			return nil, "", fmt.Errorf("failed to create cortex memory store: %w", err)
 		}
 		if err := memStore.InitSchema(context.Background()); err != nil {
-			return nil, "", fmt.Errorf("failed to init memory schema: %w", err)
-		}
-	case config.MemoryStoreTypeHybrid:
-		fileStore, ferr := store.NewFileMemoryStore(memPath)
-		if ferr != nil {
-			return nil, "", fmt.Errorf("failed to create file memory store: %w", ferr)
-		}
-		// Wire LLM for Reflect() and IndexNavigator on the truth layer
-		if llmSvc != nil {
-			fileStore.WithLLM(llmSvc)
-		}
-		memStore = fileStore
-		if sqliteStore, serr := store.NewMemoryStore(agentgoCfg.MemoryVectorDBPath()); serr == nil {
-			_ = sqliteStore.InitSchema(context.Background())
-			shadowStore = sqliteStore
+			return nil, "", fmt.Errorf("failed to init cortex memory schema: %w", err)
 		}
 	default:
 		return nil, "", fmt.Errorf("unsupported memory store type: %s", storeType)
@@ -726,9 +708,6 @@ func (b *Builder) buildMemoryService(agentgoCfg *config.Config, embedSvc domain.
 	}
 
 	memSvc := memory.NewService(memStore, llmSvc, embedSvc, memCfg)
-	if shadowStore != nil {
-		memSvc.SetShadowIndex(shadowStore)
-	}
 
 	// Seed MemoryBank directives as high-priority preference memories
 	if b.memoryCfg.Mission != "" || len(b.memoryCfg.Directives) > 0 {
@@ -759,7 +738,7 @@ func (b *Builder) buildMemoryService(agentgoCfg *config.Config, embedSvc domain.
 }
 
 func normalizeFileMemoryPath(storeType config.MemoryStoreType, memPath string, agentgoCfg *config.Config) string {
-	if storeType != config.MemoryStoreTypeFile && storeType != config.MemoryStoreTypeHybrid {
+	if storeType != config.MemoryStoreTypeFile {
 		return memPath
 	}
 
@@ -848,7 +827,7 @@ func WithMemoryPath(path string) MemoryOption {
 	return func(c *MemoryConfig) { c.MemoryPath = path }
 }
 
-// WithMemoryStoreType sets memory store type: "file", "vector", or "hybrid"
+// WithMemoryStoreType sets memory store type: "file" or "cortex".
 func WithMemoryStoreType(storeType string) MemoryOption {
 	return func(c *MemoryConfig) { c.StoreType = storeType }
 }
@@ -860,10 +839,10 @@ func WithMemoryReflect(threshold int) MemoryOption {
 	return func(c *MemoryConfig) { c.ReflectThreshold = threshold }
 }
 
-// WithMemoryHybrid enables hybrid store mode (FileMemoryStore as truth + RAG storage as shadow).
-// This activates vector search acceleration alongside IndexNavigator logical retrieval.
-func WithMemoryHybrid() MemoryOption {
-	return func(c *MemoryConfig) { c.StoreType = "hybrid" }
+// WithMemoryCortex enables the cortexdb-backed memory store directly.
+// This mode can operate without an embedder, relying on lexical retrieval as needed.
+func WithMemoryCortex() MemoryOption {
+	return func(c *MemoryConfig) { c.StoreType = "cortex" }
 }
 
 // WithMemoryBank sets the agent's long-term mission statement and hard directives.
@@ -944,7 +923,7 @@ func NewTeam(dbPathOrStore interface{}) *TeamBuilder {
 }
 
 // WithAgentName sets the global agent name used in built-in prompts and team names.
-// This overrides the agent.name field from config file or environment.
+// This overrides the agent.name field from runtime config or environment.
 // Must be called before Build() to take effect during initialization.
 func (b *TeamBuilder) WithAgentName(name string) *TeamBuilder {
 	b.agentName = name

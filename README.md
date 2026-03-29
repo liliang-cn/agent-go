@@ -597,38 +597,37 @@ result, _ := svc.Execute(ctx, plan.ID)
 
 ## Configuration & Storage
 
-Config file: `agentgo.toml` (auto-discovered in `./` → `~/.agentgo/` → `~/.agentgo/config/`).
+Runtime layout is derived from `AGENTGO_HOME` (default: `~/.agentgo`).
+Structured runtime config lives in `data/agentgo.db`.
 
 ### Directory layout (default `home = ~/.agentgo`)
 
 ```
 ~/.agentgo/
-├── agentgo.toml              ← config file
-├── mcpServers.json        ← MCP server definitions
+├── mcpServers.json           ← MCP server definitions
 ├── data/
-│   ├── agentgo.db            ← RAG vector store (sqlite-vec); also Memory vector store
-│   ├── agent.db           ← Agent sessions + execution plans
-│   └── memories/          ← Memory file store (Markdown + YAML frontmatter)
-├── skills/                ← SKILL.md files
-├── intents/               ← Intent YAML files
-└── workspace/             ← Agent working directory
+│   ├── agentgo.db            ← Control plane: providers, runtime config, agent/team metadata
+│   ├── cortex.db             ← Brain store: memory, vectors, graph, knowledge
+│   └── memories/             ← File memory store (Markdown + YAML frontmatter)
+├── skills/                  ← SKILL.md files
+├── intents/                 ← Intent YAML files
+└── workspace/               ← Agent working directory
 ```
 
 ### SQLite files
 
-| File                 | Default path              | Purpose                                                                                         |
-| -------------------- | ------------------------- | ----------------------------------------------------------------------------------------------- |
-| `agentgo.db`         | `$home/data/agentgo.db`   | RAG documents + vector index; shared as Memory vector store when `memory.store_type = "vector"` |
-| `agent.db`           | `$home/data/agent.db`     | Agent sessions and plan state                                                                   |
-| `history.db` _(opt)_ | via `WithHistoryDBPath()` | Detailed tool-call logs — only created when `WithStoreHistory(true)`                            |
+| File                 | Default path              | Purpose                                                      |
+| -------------------- | ------------------------- | ------------------------------------------------------------ |
+| `agentgo.db`         | `$home/data/agentgo.db`   | Runtime config, providers, MCP/skills paths, agent/team data |
+| `cortex.db`          | `$home/data/cortex.db`    | Brain store for memory, vectors, graph, and knowledge        |
+| `history.db` _(opt)_ | via `WithHistoryDBPath()` | Detailed tool-call logs — only created when `WithStoreHistory(true)` |
 
 ### Memory store types
 
 | `store_type`       | Storage                                                        | Requires embedder |
 | ------------------ | -------------------------------------------------------------- | ----------------- |
 | `file` _(default)_ | `data/memories/entities/*.md` and `data/memories/streams/*.md` | No                |
-| `vector`           | `data/agentgo.db` (shared)                                     | Yes               |
-| `hybrid`           | file primary + `agentgo.db` shadow index                       | Yes               |
+| `cortex`           | `data/cortex.db`                                               | No                |
 
 ### Cache store types
 
@@ -637,42 +636,23 @@ Config file: `agentgo.toml` (auto-discovered in `./` → `~/.agentgo/` → `~/.a
 | `memory` _(default)_ | in-process memory               | Fast ephemeral cache               |
 | `file`               | `data/cache/<namespace>/*.json` | Restart-friendly cache persistence |
 
-### Key config fields
+### Runtime settings
 
-```toml
-home = "~/.agentgo"             # base for all relative paths
-
-[memory]
-store_type  = "file"         # file | vector | hybrid
-
-[cache]
-store_type = "memory"        # memory | file
-max_size   = 1000
-query_ttl  = "15m"
-vector_ttl = "24h"
-llm_ttl    = "1h"
-chunk_ttl  = "24h"
-
-[rag.chunker]
-chunk_size = 512
-overlap    = 64
-method     = "sentence"
-
-[skills]
-enabled  = true
-auto_load = true
-
-[mcp]
-servers = ["~/.agentgo/mcpServers.json"]
-```
-
-AgentGo derives the runtime storage layout automatically from `home`:
+AgentGo derives the runtime storage layout automatically from `AGENTGO_HOME`:
 
 - workspace: `$home/workspace`
 - MCP filesystem allowlist: `$home/workspace`
-- RAG database: `$home/data/agentgo.db`
-- memory store: `$home/data/memories` or `$home/data/agentgo.db` when `memory.store_type = "vector"`
+- brain database: `$home/data/cortex.db`
+- memory store: `$home/data/memories` or `$home/data/cortex.db` when `memory.store_type = "cortex"`
 - cache directory: `$home/data/cache`
+
+The remaining structured runtime values live in `agentgo.db`, including:
+
+- LLM providers and pool strategy
+- embedding providers and `rag.embedding_model`
+- MCP config paths
+- skills load paths
+- per-agent preferred provider/model
 
 ### Cache CLI
 
@@ -683,27 +663,11 @@ agentgo cache get query my-key
 agentgo cache clear query
 ```
 
-See [`references/CONFIG.md`](references/CONFIG.md) for the full annotated config.
-
 ---
 
 ## Providers
 
-Configure in `agentgo.toml` (auto-discovered in `./`, `~/.agentgo/`, `~/.agentgo/config/`):
-
-```toml
-[[llm_pool.providers]]
-name     = "openai"
-provider = "openai"
-api_key  = "sk-..."
-model    = "gpt-4o"
-
-[[llm_pool.providers]]
-name     = "local"
-provider = "ollama"
-base_url = "http://localhost:11434"
-model    = "qwen2.5:14b"
-```
+Providers are configured in `agentgo.db` and managed through the CLI/UI/runtime APIs.
 
 Supported: OpenAI · Anthropic · Azure OpenAI · DeepSeek · Ollama (local)
 

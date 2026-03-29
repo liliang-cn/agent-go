@@ -470,30 +470,6 @@ func collectAvailableTools(mcpService MCPToolExecutor, ragProcessor domain.Proce
 		tools = append(tools, mcpTools...)
 	}
 
-	// Add general LLM tool
-	tools = append(tools, domain.ToolDefinition{
-		Type: "function",
-		Function: domain.ToolFunction{
-			Name:        "llm",
-			Description: "General LLM reasoning and text generation",
-			Parameters: map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"prompt": map[string]interface{}{
-						"type":        "string",
-						"description": "The prompt for the LLM",
-					},
-					"temperature": map[string]interface{}{
-						"type":        "number",
-						"description": "Temperature for generation (0-1)",
-						"default":     0.7,
-					},
-				},
-				"required": []string{"prompt"},
-			},
-		},
-	})
-
 	return tools
 }
 

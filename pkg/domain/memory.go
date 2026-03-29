@@ -260,6 +260,9 @@ type MemoryStore interface {
 	// Delete removes a memory
 	Delete(ctx context.Context, id string) error
 
+	// Clear removes all memories from the store.
+	Clear(ctx context.Context) error
+
 	// DeleteBySession removes all memories for a session
 	DeleteBySession(ctx context.Context, sessionID string) error
 
@@ -312,6 +315,9 @@ type MemoryService interface {
 
 	// Delete removes a memory
 	Delete(ctx context.Context, id string) error
+
+	// Clear removes all memories managed by the service.
+	Clear(ctx context.Context) error
 
 	// ConfigureBank sets mission and disposition for a memory bank (session)
 	ConfigureBank(ctx context.Context, sessionID string, config *MemoryBankConfig) error

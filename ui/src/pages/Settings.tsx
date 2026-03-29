@@ -12,7 +12,6 @@ export function Settings() {
   const [debug, setDebug] = useState(false)
   const [serverHost, setServerHost] = useState('')
   const [serverPort, setServerPort] = useState('7127')
-  const [mcpEnabled, setMCPEnabled] = useState(true)
   const [memoryStoreType, setMemoryStoreType] = useState('')
 
   useEffect(() => {
@@ -21,7 +20,6 @@ export function Settings() {
     setDebug(Boolean(config.debug))
     setServerHost(config.serverHost || '')
     setServerPort(String(config.serverPort || 7127))
-    setMCPEnabled(Boolean(config.mcpEnabled))
     setMemoryStoreType(config.memoryStoreType || '')
   }, [config])
 
@@ -33,7 +31,6 @@ export function Settings() {
         debug,
         serverHost,
         serverPort: Number(serverPort),
-        mcpEnabled,
         memoryStoreType,
       })
       setSaved(true)
@@ -91,21 +88,6 @@ export function Settings() {
           </section>
 
           <section className="glass-panel rounded-[32px] p-6">
-            <p className="text-xs uppercase tracking-[0.28em] text-slate-500">MCP</p>
-            <div className="mt-5 space-y-4">
-              <div className="dashboard-muted-card rounded-[20px] px-4 py-3 text-slate-700">
-                <label className="flex items-center gap-3">
-                  <input type="checkbox" checked={mcpEnabled} onChange={(e) => setMCPEnabled(e.target.checked)} />
-                  {t('mcp')}
-                </label>
-              </div>
-              <div className="rounded-[20px] border border-sky-100 bg-sky-50 px-4 py-3 text-sm text-slate-600">
-                {t('pathsDerivedFromHome')}
-              </div>
-            </div>
-          </section>
-
-          <section className="glass-panel rounded-[32px] p-6">
             <p className="text-xs uppercase tracking-[0.28em] text-slate-500">{t('knowledgeAndMemory')}</p>
             <div className="mt-5 grid gap-4 md:grid-cols-2">
               <label className="space-y-2">
@@ -128,8 +110,8 @@ export function Settings() {
             <p className="text-xs uppercase tracking-[0.28em] text-slate-500">{t('sourceOfTruth')}</p>
             <dl className="mt-5 space-y-4 text-sm">
               <div>
-                <dt className="text-slate-500">{t('configFile')}</dt>
-                <dd className="mt-1 break-all text-slate-900">{config?.configPath}</dd>
+                <dt className="text-slate-500">Agent DB</dt>
+                <dd className="mt-1 break-all text-slate-900">{config?.agentDbPath}</dd>
               </div>
               <div>
                 <dt className="text-slate-500">{t('dataDir')}</dt>

@@ -1,14 +1,13 @@
 package config
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/liliang-cn/agent-go/v2/pkg/mcp"
-	"github.com/liliang-cn/agent-go/v2/pkg/pool"
+	"github.com/liliang-cn/agent-go/v2/pkg/store"
 )
 
 func validConfig(home string) *Config {
@@ -103,23 +102,32 @@ func TestMemoryStoreTypeHelpers(t *testing.T) {
 	if got := cfg.GetMemoryStoreType(); got != MemoryStoreTypeFile {
 		t.Fatalf("expected default file memory store type, got %s", got)
 	}
-	if got := NormalizeMemoryStoreType("rag"); got != MemoryStoreTypeVector {
-		t.Fatalf("expected rag alias to normalize to vector, got %s", got)
+	if err := cfg.SetMemoryStoreTypeString("cortex"); err != nil {
+		t.Fatalf("set cortex memory store type failed: %v", err)
 	}
-	if err := cfg.SetMemoryStoreTypeString("vector"); err != nil {
-		t.Fatalf("set vector memory store type failed: %v", err)
-	}
-	if got := cfg.GetMemoryStoreType(); got != MemoryStoreTypeVector {
-		t.Fatalf("expected vector memory store type, got %s", got)
+	if got := cfg.GetMemoryStoreType(); got != MemoryStoreTypeCortex {
+		t.Fatalf("expected cortex memory store type, got %s", got)
 	}
 	if got := cfg.MemoryPrimaryPath(); got != filepath.Join(cfg.Home, "data", "cortex.db") {
-		t.Fatalf("expected vector memory path to use cortex db, got %s", got)
+		t.Fatalf("expected cortex memory path to use cortex db, got %s", got)
 	}
 	if err := cfg.SetMemoryStoreType(MemoryStoreTypeFile); err != nil {
 		t.Fatalf("set file memory store type failed: %v", err)
 	}
 	if got := cfg.MemoryPrimaryPath(); got != filepath.Join(cfg.Home, "data", "memories") {
 		t.Fatalf("expected file memory path after switching back, got %s", got)
+	}
+	if err := cfg.SetMemoryStoreTypeString("vector"); err == nil {
+		t.Fatal("expected vector memory store type to fail")
+	}
+	if err := cfg.SetMemoryStoreTypeString("rag"); err == nil {
+		t.Fatal("expected rag memory store type to fail")
+	}
+	if err := cfg.SetMemoryStoreTypeString("cortexdb"); err == nil {
+		t.Fatal("expected cortexdb memory store type to fail")
+	}
+	if err := cfg.SetMemoryStoreTypeString("hybrid"); err == nil {
+		t.Fatal("expected hybrid memory store type to fail")
 	}
 	if err := cfg.SetMemoryStoreTypeString("invalid"); err == nil {
 		t.Fatal("expected invalid memory store type to fail")
@@ -148,74 +156,120 @@ func TestResolveMCPServerPaths(t *testing.T) {
 
 func TestLoadIsSafeForConcurrentCalls(t *testing.T) {
 	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "agentgo.toml")
-	_ = os.WriteFile(configPath, []byte(`
-home = "`+tmpDir+`"
-[rag]
-enabled = true
-embedding_model = "test"
-`), 0o644)
-
-	oldWd, _ := os.Getwd()
-	defer func() { _ = os.Chdir(oldWd) }()
-	_ = os.Chdir(tmpDir)
+	t.Setenv("AGENTGO_HOME", tmpDir)
 
 	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, _ = Load("")
+			_, _ = Load()
 		}()
 	}
 	wg.Wait()
 }
 
-func TestLoadExplicitConfigPathHonorsHome(t *testing.T) {
+func TestLoadUsesAgentGoHome(t *testing.T) {
 	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "agentgo.toml")
 	customHome := filepath.Join(tmpDir, "custom-home")
+	t.Setenv("AGENTGO_HOME", customHome)
 
-	err := os.WriteFile(configPath, []byte(`
-home = "`+customHome+`"
-[rag]
-enabled = true
-embedding_model = "test"
-[memory]
-store_type = "vector"
-`), 0o644)
-	if err != nil {
-		t.Fatalf("write config failed: %v", err)
-	}
-
-	cfg, err := Load(configPath)
+	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("load failed: %v", err)
 	}
 
 	if cfg.Home != customHome {
-		t.Fatalf("expected explicit config home %s, got %s", customHome, cfg.Home)
-	}
-	if got := cfg.MemoryPrimaryPath(); got != filepath.Join(customHome, "data", "cortex.db") {
-		t.Fatalf("expected vector memory path under explicit home, got %s", got)
+		t.Fatalf("expected home %s, got %s", customHome, cfg.Home)
 	}
 }
 
-func TestUnmarshalProvidersAliases(t *testing.T) {
-	raw := []interface{}{
-		map[string]interface{}{
-			"name":            "primary",
-			"base_url":        "http://localhost:11434/v1",
-			"key":             "test",
-			"model_name":      "gpt-test",
-			"max_concurrency": 7,
-		},
+func TestLoadUsesAgentGoDBAsRuntimeSourceOfTruth(t *testing.T) {
+	tmpDir := t.TempDir()
+	home := filepath.Join(tmpDir, "home")
+	t.Setenv("AGENTGO_HOME", home)
+
+	cfg := &Config{Home: home}
+	cfg.ApplyHomeLayout()
+	db, err := store.NewAgentGoDB(cfg.AgentDBPath())
+	if err != nil {
+		t.Fatalf("new agentgo db failed: %v", err)
+	}
+	defer db.Close()
+	if err := db.SaveProvider(&store.LLMProvider{
+		Name:           "from-db",
+		BaseURL:        "http://db.example/v1",
+		Key:            "db-key",
+		ModelName:      "db-model",
+		MaxConcurrency: 3,
+		Capability:     4,
+		Enabled:        true,
+	}); err != nil {
+		t.Fatalf("save provider failed: %v", err)
+	}
+	if err := db.SaveConfig("llm.strategy", "least_load"); err != nil {
+		t.Fatalf("save llm.strategy failed: %v", err)
+	}
+	if err := db.SaveConfig("rag.embedding_model", "db-embedding"); err != nil {
+		t.Fatalf("save rag.embedding_model failed: %v", err)
 	}
 
-	var providers []pool.Provider
-	unmarshalProviders(raw, &providers)
-	if len(providers) != 1 || providers[0].MaxConcurrency != 7 {
-		t.Fatalf("unmarshal failed or alias not mapped")
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("load failed: %v", err)
+	}
+
+	if got := string(loaded.LLM.Strategy); got != "least_load" {
+		t.Fatalf("expected db-backed strategy least_load, got %q", got)
+	}
+	if len(loaded.LLM.Providers) != 1 || loaded.LLM.Providers[0].Name != "from-db" {
+		t.Fatalf("expected db-backed provider, got %+v", loaded.LLM.Providers)
+	}
+	if loaded.RAG.EmbeddingModel != "db-embedding" {
+		t.Fatalf("expected db-backed embedding model, got %q", loaded.RAG.EmbeddingModel)
+	}
+}
+
+func TestLoadBackfillsEmbeddingModelFromEnabledEmbeddingProvider(t *testing.T) {
+	tmpDir := t.TempDir()
+	home := filepath.Join(tmpDir, "home")
+	t.Setenv("AGENTGO_HOME", home)
+
+	cfg := &Config{Home: home}
+	cfg.ApplyHomeLayout()
+	db, err := store.NewAgentGoDB(cfg.AgentDBPath())
+	if err != nil {
+		t.Fatalf("new agentgo db failed: %v", err)
+	}
+	defer db.Close()
+
+	if err := db.SaveEmbeddingProvider(&store.EmbeddingProvider{
+		Name:           "embedder",
+		BaseURL:        "http://embed.example/v1",
+		Key:            "embed-key",
+		ModelName:      "text-embedding-3-small",
+		MaxConcurrency: 4,
+		Capability:     4,
+		Enabled:        true,
+	}); err != nil {
+		t.Fatalf("save embedding provider failed: %v", err)
+	}
+
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("load failed: %v", err)
+	}
+
+	if loaded.RAG.EmbeddingModel != "text-embedding-3-small" {
+		t.Fatalf("expected backfilled embedding model, got %q", loaded.RAG.EmbeddingModel)
+	}
+
+	savedValue, err := db.GetConfig("rag.embedding_model")
+	if err != nil {
+		t.Fatalf("get rag.embedding_model failed: %v", err)
+	}
+	if savedValue != "text-embedding-3-small" {
+		t.Fatalf("expected persisted rag.embedding_model, got %q", savedValue)
 	}
 }
 

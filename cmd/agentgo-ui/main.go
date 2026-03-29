@@ -12,6 +12,7 @@ import (
 	"github.com/liliang-cn/agent-go/v2/cmd/agentgo-ui/internal/handler"
 	"github.com/liliang-cn/agent-go/v2/pkg/agent"
 	"github.com/liliang-cn/agent-go/v2/pkg/config"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 	agentgolog "github.com/liliang-cn/agent-go/v2/pkg/log"
 	"github.com/liliang-cn/agent-go/v2/pkg/mcp"
 	"github.com/liliang-cn/agent-go/v2/pkg/memory"
@@ -28,7 +29,6 @@ var staticFS embed.FS
 var (
 	uiPort    int
 	uiHost    string
-	cfgFile   string
 	uiVersion string = "dev"
 )
 
@@ -44,7 +44,7 @@ func Execute() error {
 		Short: "AgentGo Web UI Server",
 		Long:  `AgentGo Web UI provides a web interface for interacting with AgentGo's RAG and Agent capabilities.`,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.Load(cfgFile)
+			cfg, err := config.Load()
 			if err != nil {
 				return fmt.Errorf("failed to load configuration: %w", err)
 			}
@@ -61,7 +61,6 @@ func Execute() error {
 		RunE: runServer,
 	}
 
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "configuration file path")
 	rootCmd.PersistentFlags().IntVarP(&uiPort, "port", "p", 7127, "port to run the UI server on")
 	rootCmd.PersistentFlags().StringVar(&uiHost, "host", "0.0.0.0", "host to bind the UI server to")
 	rootCmd.Version = uiVersion
@@ -70,7 +69,7 @@ func Execute() error {
 }
 
 func runServer(cmd *cobra.Command, args []string) error {
-	cfg, err := config.Load(cfgFile)
+	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
@@ -97,8 +96,8 @@ func runServer(cmd *cobra.Command, args []string) error {
 
 	// Create Skills service
 	skillsService, err := skills.NewService(&skills.Config{
-		Paths:   cfg.SkillsPaths(),
 		Enabled: true,
+		Paths:   cfg.SkillsPaths(),
 	})
 	if err != nil {
 		agentgolog.Warn("Failed to create skills service: %v", err)
@@ -115,7 +114,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 	}
 
 	mcpConfig := &mcp.Config{
-		Enabled:           cfg.MCP.Enabled,
+		Enabled:           true,
 		Servers:           cfg.MCP.Servers,
 		ServersConfigPath: cfg.MCPServersPath(), // Keep for potential writing
 		FilesystemDirs:    cfg.MCP.FilesystemDirs,
@@ -137,21 +136,30 @@ func runServer(cmd *cobra.Command, args []string) error {
 	}
 
 	var mcpService *mcp.Service
-	if cfg.MCP.Enabled {
-		mcpService, err = mcp.NewService(mcpConfig, llm)
-		if err != nil {
-			agentgolog.Warn("Failed to create MCP service: %v", err)
-		} else {
-			if startErr := mcpService.StartServers(context.Background(), nil); startErr != nil {
-				agentgolog.Warn("Failed to start MCP servers: %v", startErr)
-			}
+	mcpService, err = mcp.NewService(mcpConfig, llm)
+	if err != nil {
+		agentgolog.Warn("Failed to create MCP service: %v", err)
+	} else {
+		if startErr := mcpService.StartServers(context.Background(), nil); startErr != nil {
+			agentgolog.Warn("Failed to start MCP servers: %v", startErr)
 		}
 	}
 
 	// Create Memory service
-	memoryStore, err := store.NewFileMemoryStore(cfg.Memory.MemoryPath)
+	var memoryStore domain.MemoryStore
+	switch cfg.GetMemoryStoreType() {
+	case config.MemoryStoreTypeCortex:
+		memoryStore, err = store.NewCortexMemoryStore(cfg.MemoryPrimaryPath())
+	default:
+		memoryStore, err = store.NewFileMemoryStore(cfg.Memory.MemoryPath)
+	}
 	if err != nil {
 		agentgolog.Warn("Failed to create memory store: %v", err)
+	}
+	if memoryStore != nil {
+		if initErr := memoryStore.InitSchema(context.Background()); initErr != nil {
+			agentgolog.Warn("Failed to init memory store schema: %v", initErr)
+		}
 	}
 	var memoryService *memory.Service
 	if memoryStore != nil {

@@ -165,3 +165,39 @@ func TestMemoryStoreSearchByTextRanksByImportanceAndRecency(t *testing.T) {
 		t.Fatalf("expected recent low-importance result to outrank very old result, got positions %+v", positions)
 	}
 }
+
+func TestMemoryStoreClear(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "memory.db")
+
+	store, err := NewMemoryStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewMemoryStore() error = %v", err)
+	}
+	defer store.Close()
+
+	if err := store.InitSchema(ctx); err != nil {
+		t.Fatalf("InitSchema() error = %v", err)
+	}
+
+	for _, mem := range []*domain.Memory{
+		{ID: "clear-1", Type: domain.MemoryTypeFact, Content: "one", CreatedAt: time.Now()},
+		{ID: "clear-2", Type: domain.MemoryTypeFact, Content: "two", CreatedAt: time.Now()},
+	} {
+		if err := store.Store(ctx, mem); err != nil {
+			t.Fatalf("Store(%s) error = %v", mem.ID, err)
+		}
+	}
+
+	if err := store.Clear(ctx); err != nil {
+		t.Fatalf("Clear() error = %v", err)
+	}
+
+	memories, total, err := store.List(ctx, 10, 0)
+	if err != nil {
+		t.Fatalf("List() after clear error = %v", err)
+	}
+	if total != 0 || len(memories) != 0 {
+		t.Fatalf("expected empty store after clear, got total=%d len=%d", total, len(memories))
+	}
+}

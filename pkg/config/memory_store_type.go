@@ -10,18 +10,15 @@ type MemoryStoreType string
 
 const (
 	MemoryStoreTypeFile   MemoryStoreType = "file"
-	MemoryStoreTypeVector MemoryStoreType = "vector"
-	MemoryStoreTypeHybrid MemoryStoreType = "hybrid"
+	MemoryStoreTypeCortex MemoryStoreType = "cortex"
 )
 
 func NormalizeMemoryStoreType(raw string) MemoryStoreType {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "", "file":
 		return MemoryStoreTypeFile
-	case "vector", "rag":
-		return MemoryStoreTypeVector
-	case "hybrid":
-		return MemoryStoreTypeHybrid
+	case "cortex":
+		return MemoryStoreTypeCortex
 	default:
 		return MemoryStoreType(strings.ToLower(strings.TrimSpace(raw)))
 	}
@@ -41,7 +38,7 @@ func (t MemoryStoreType) String() string {
 
 func (t MemoryStoreType) Valid() bool {
 	switch NormalizeMemoryStoreType(t.String()) {
-	case MemoryStoreTypeFile, MemoryStoreTypeVector, MemoryStoreTypeHybrid:
+	case MemoryStoreTypeFile, MemoryStoreTypeCortex:
 		return true
 	default:
 		return false
@@ -50,7 +47,7 @@ func (t MemoryStoreType) Valid() bool {
 
 func (t MemoryStoreType) UsesFile() bool {
 	switch NormalizeMemoryStoreType(t.String()) {
-	case MemoryStoreTypeFile, MemoryStoreTypeHybrid:
+	case MemoryStoreTypeFile:
 		return true
 	default:
 		return false
@@ -59,7 +56,7 @@ func (t MemoryStoreType) UsesFile() bool {
 
 func (t MemoryStoreType) UsesVector() bool {
 	switch NormalizeMemoryStoreType(t.String()) {
-	case MemoryStoreTypeVector, MemoryStoreTypeHybrid:
+	case MemoryStoreTypeCortex:
 		return true
 	default:
 		return false
@@ -134,12 +131,8 @@ func (c *Config) applyMemoryLayout() {
 	filePath := filepath.Join(c.DataDir(), "memories")
 
 	switch storeType {
-	case MemoryStoreTypeVector:
+	case MemoryStoreTypeCortex:
 		c.Memory.MemoryPath = vectorPath
-	case MemoryStoreTypeHybrid:
-		if c.Memory.MemoryPath == "" || !filepath.IsAbs(c.Memory.MemoryPath) || sameAbsPath(c.Memory.MemoryPath, vectorPath) {
-			c.Memory.MemoryPath = filePath
-		}
 	case MemoryStoreTypeFile:
 		if c.Memory.MemoryPath == "" || !filepath.IsAbs(c.Memory.MemoryPath) || sameAbsPath(c.Memory.MemoryPath, vectorPath) {
 			c.Memory.MemoryPath = filePath

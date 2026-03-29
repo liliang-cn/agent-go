@@ -136,6 +136,43 @@ func TestFileMemoryStoreDeleteAndStale(t *testing.T) {
 	}
 }
 
+func TestFileMemoryStoreClear(t *testing.T) {
+	ctx := context.Background()
+	baseDir := t.TempDir()
+
+	store, err := NewFileMemoryStore(baseDir)
+	if err != nil {
+		t.Fatalf("new file memory store failed: %v", err)
+	}
+
+	for _, mem := range []*domain.Memory{
+		{ID: "fact-clear-1", Type: domain.MemoryTypeFact, Content: "one", CreatedAt: time.Now()},
+		{ID: "ctx-clear-1", Type: domain.MemoryTypeContext, Content: "two", CreatedAt: time.Now()},
+	} {
+		if err := store.Store(ctx, mem); err != nil {
+			t.Fatalf("store failed: %v", err)
+		}
+	}
+
+	if err := store.Clear(ctx); err != nil {
+		t.Fatalf("Clear() error = %v", err)
+	}
+
+	memories, total, err := store.List(ctx, 10, 0)
+	if err != nil {
+		t.Fatalf("List() after clear error = %v", err)
+	}
+	if total != 0 || len(memories) != 0 {
+		t.Fatalf("expected empty store after clear, got total=%d len=%d", total, len(memories))
+	}
+
+	for _, dir := range []string{"streams", "entities"} {
+		if _, err := os.Stat(filepath.Join(baseDir, dir)); err != nil {
+			t.Fatalf("expected %s directory to exist after clear: %v", dir, err)
+		}
+	}
+}
+
 func TestFileMemoryStoreIndexAndHelpers(t *testing.T) {
 	ctx := context.Background()
 	baseDir := t.TempDir()

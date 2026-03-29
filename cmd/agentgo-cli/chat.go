@@ -85,7 +85,7 @@ func runChat(cmd *cobra.Command, args []string) error {
 	chatCfg := Cfg
 	if chatCfg == nil {
 		var err error
-		chatCfg, err = config.Load(cfgFile)
+		chatCfg, err = config.Load()
 		if err != nil {
 			return fmt.Errorf("failed to load config: %w", err)
 		}
