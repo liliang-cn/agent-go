@@ -247,6 +247,9 @@ func (s *Service) RetrieveAndInjectWithContextAndLogic(ctx context.Context, quer
 		allMemories = s.mergeAndRank(allMemories)
 	}
 
+	// 6b. Query-aware filtering for relation-heavy schedule recall.
+	allMemories = FilterMemoriesForQuery(query, allMemories)
+
 	// 7. Limit results
 	if len(allMemories) > s.maxMemories {
 		allMemories = allMemories[:s.maxMemories]
@@ -412,6 +415,7 @@ func (s *Service) Add(ctx context.Context, memory *domain.Memory) error {
 	if memory.CreatedAt.IsZero() {
 		memory.CreatedAt = time.Now()
 	}
+	enrichStructuredMemory(memory)
 
 	// Always generate embedding if possible
 	if len(memory.Vector) == 0 && s.embedder != nil {
@@ -432,6 +436,8 @@ func (s *Service) Add(ctx context.Context, memory *domain.Memory) error {
 			_ = s.shadowIndex.Store(ctx, memory)
 		}
 	}
+
+	s.applyStructuredCorrections(ctx, memory)
 
 	return nil
 }
@@ -530,6 +536,18 @@ func (s *Service) List(ctx context.Context, limit, offset int) ([]*domain.Memory
 
 func (s *Service) Delete(ctx context.Context, id string) error {
 	return s.store.Delete(ctx, id)
+}
+
+func (s *Service) Clear(ctx context.Context) error {
+	if err := s.store.Clear(ctx); err != nil {
+		return err
+	}
+	if s.shadowIndex != nil && s.shadowIndex != s.store {
+		if err := s.shadowIndex.Clear(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Service) ConfigureBank(ctx context.Context, sessionID string, config *domain.MemoryBankConfig) error {

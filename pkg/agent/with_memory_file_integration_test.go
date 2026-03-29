@@ -118,6 +118,9 @@ func (e *explicitRecallTestLLM) Generate(ctx context.Context, prompt string, opt
 	if strings.Contains(prompt, "The vector memory test token is mango-9135.") {
 		return "mango-9135", nil
 	}
+	if strings.Contains(prompt, "Dashboard") {
+		return "明天上午处理 Dashboard 相关工作。", nil
+	}
 	if strings.Contains(prompt, "用户明天17:00去万达广场吃饭。") {
 		return "明天下午17:00去万达广场吃饭。", nil
 	}
@@ -319,9 +322,6 @@ func collectMessageContent(messages []domain.Message) string {
 func testAgentConfig(home string) *config.Config {
 	cfg := &config.Config{
 		Home: home,
-		LLM: config.LLMConfig{
-			Enabled: false,
-		},
 		RAG: config.RAGConfig{
 			Enabled: false,
 		},
@@ -334,9 +334,9 @@ func testAgentConfig(home string) *config.Config {
 	return cfg
 }
 
-func testVectorAgentConfig(home string) *config.Config {
+func testCortexAgentConfig(home string) *config.Config {
 	cfg := testAgentConfig(home)
-	cfg.Memory.StoreType = "vector"
+	cfg.Memory.StoreType = "cortex"
 	return cfg
 }
 
@@ -410,10 +410,10 @@ func TestAgentUsesMemorySaveToolWhenPromptSignalsDurableMemory(t *testing.T) {
 	llm := &memoryToolCallingTestLLM{}
 
 	svc, err := New("memory-agent").
-		WithConfig(testVectorAgentConfig(home)).
+		WithConfig(testCortexAgentConfig(home)).
 		WithLLM(llm).
 		WithEmbedder(vectorMemoryTestEmbedder{}).
-		WithMemory(WithMemoryStoreType("vector")).
+		WithMemory(WithMemoryStoreType("cortex")).
 		Build()
 	if err != nil {
 		t.Fatalf("build failed: %v", err)
@@ -463,10 +463,10 @@ func TestAgentUsesMemorySaveToolForImplicitScheduleStatement(t *testing.T) {
 	llm := &memoryToolCallingTestLLM{}
 
 	svc, err := New("memory-agent").
-		WithConfig(testVectorAgentConfig(home)).
+		WithConfig(testCortexAgentConfig(home)).
 		WithLLM(llm).
 		WithEmbedder(vectorMemoryTestEmbedder{}).
-		WithMemory(WithMemoryStoreType("vector")).
+		WithMemory(WithMemoryStoreType("cortex")).
 		Build()
 	if err != nil {
 		t.Fatalf("build failed: %v", err)
@@ -509,10 +509,10 @@ func TestMemoryToolsUseInheritedScopeForBuiltInArchivist(t *testing.T) {
 	home := t.TempDir()
 
 	svc, err := New("memory-agent").
-		WithConfig(testVectorAgentConfig(home)).
+		WithConfig(testCortexAgentConfig(home)).
 		WithLLM(&memoryToolCallingTestLLM{}).
 		WithEmbedder(vectorMemoryTestEmbedder{}).
-		WithMemory(WithMemoryStoreType("vector")).
+		WithMemory(WithMemoryStoreType("cortex")).
 		Build()
 	if err != nil {
 		t.Fatalf("build failed: %v", err)
@@ -676,6 +676,139 @@ func TestAgentScheduleRecallUsesShortcutAnswer(t *testing.T) {
 	}
 	if !strings.Contains(llm.lastGeneratePrompt, "用户明天17:00去万达广场吃饭。") {
 		t.Fatalf("expected recall prompt to contain schedule memory context, got %q", llm.lastGeneratePrompt)
+	}
+}
+
+func TestAgentPersonalScheduleRecallExcludesIndirectFamilyEvents(t *testing.T) {
+	ctx := context.Background()
+	home := t.TempDir()
+	llm := &explicitRecallTestLLM{}
+
+	svc, err := New("memory-agent").
+		WithConfig(testCortexAgentConfig(home)).
+		WithLLM(llm).
+		WithMemory(WithMemoryStoreType("cortex")).
+		Build()
+	if err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+	defer svc.Close()
+
+	for _, mem := range []*domain.Memory{
+		{
+			ID:         "memory-dashboard",
+			SessionID:  "agent:memory-agent",
+			ScopeType:  domain.MemoryScopeAgent,
+			ScopeID:    "memory-agent",
+			Type:       domain.MemoryTypeContext,
+			Content:    "明天早上要处理一下Dashboard的事情。",
+			Importance: 0.9,
+			CreatedAt:  time.Now(),
+		},
+		{
+			ID:         "memory-sanbao-trip",
+			SessionID:  "agent:memory-agent",
+			ScopeType:  domain.MemoryScopeAgent,
+			ScopeID:    "memory-agent",
+			Type:       domain.MemoryTypeFact,
+			Content:    "周二三宝要去春游，然后就放假了。",
+			Importance: 0.8,
+			CreatedAt:  time.Now(),
+		},
+	} {
+		if err := svc.MemoryService().Add(ctx, mem); err != nil {
+			t.Fatalf("add memory failed: %v", err)
+		}
+	}
+
+	result, err := svc.Chat(ctx, "我这周有什么安排？")
+	if err != nil {
+		t.Fatalf("chat failed: %v", err)
+	}
+	if got := strings.TrimSpace(result.Text()); got != "明天上午处理 Dashboard 相关工作。" {
+		t.Fatalf("expected personal schedule answer, got %q", got)
+	}
+	if !strings.Contains(llm.lastGeneratePrompt, "Dashboard") {
+		t.Fatalf("expected recall prompt to keep dashboard memory, got %q", llm.lastGeneratePrompt)
+	}
+	if strings.Contains(llm.lastGeneratePrompt, "三宝要去春游") {
+		t.Fatalf("expected personal schedule prompt to exclude indirect family event, got %q", llm.lastGeneratePrompt)
+	}
+}
+
+func TestAgentPersonalScheduleRecallAfterCorrectionPersistsAcrossRestart(t *testing.T) {
+	ctx := context.Background()
+	home := t.TempDir()
+
+	writer, err := New("memory-agent").
+		WithConfig(testCortexAgentConfig(home)).
+		WithLLM(&fileMemoryTestLLM{}).
+		WithMemory(WithMemoryStoreType("cortex")).
+		Build()
+	if err != nil {
+		t.Fatalf("build writer failed: %v", err)
+	}
+
+	for _, mem := range []*domain.Memory{
+		{
+			ID:         "restart-dashboard",
+			SessionID:  "agent:memory-agent",
+			ScopeType:  domain.MemoryScopeAgent,
+			ScopeID:    "memory-agent",
+			Type:       domain.MemoryTypeContext,
+			Content:    "明天早上要处理一下Dashboard的事情。",
+			Importance: 0.9,
+			CreatedAt:  time.Now(),
+		},
+		{
+			ID:         "restart-trip",
+			SessionID:  "agent:memory-agent",
+			ScopeType:  domain.MemoryScopeAgent,
+			ScopeID:    "memory-agent",
+			Type:       domain.MemoryTypeFact,
+			Content:    "周二三宝要去春游，然后就放假了。",
+			Importance: 0.8,
+			CreatedAt:  time.Now(),
+		},
+		{
+			ID:         "restart-trip-correction",
+			SessionID:  "agent:memory-agent",
+			ScopeType:  domain.MemoryScopeAgent,
+			ScopeID:    "memory-agent",
+			Type:       domain.MemoryTypeFact,
+			Content:    "三宝是跟着学校去春游，不用我。",
+			Importance: 0.85,
+			CreatedAt:  time.Now(),
+		},
+	} {
+		if err := writer.MemoryService().Add(ctx, mem); err != nil {
+			t.Fatalf("writer add memory failed: %v", err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("writer close failed: %v", err)
+	}
+
+	readerLLM := &explicitRecallTestLLM{}
+	reader, err := New("memory-agent").
+		WithConfig(testCortexAgentConfig(home)).
+		WithLLM(readerLLM).
+		WithMemory(WithMemoryStoreType("cortex")).
+		Build()
+	if err != nil {
+		t.Fatalf("build reader failed: %v", err)
+	}
+	defer reader.Close()
+
+	result, err := reader.Chat(ctx, "我这周有什么安排？")
+	if err != nil {
+		t.Fatalf("reader chat failed: %v", err)
+	}
+	if got := strings.TrimSpace(result.Text()); got != "明天上午处理 Dashboard 相关工作。" {
+		t.Fatalf("expected restart personal schedule answer, got %q", got)
+	}
+	if strings.Contains(readerLLM.lastGeneratePrompt, "三宝要去春游") || strings.Contains(readerLLM.lastGeneratePrompt, "不用我") {
+		t.Fatalf("expected restart recall prompt to exclude corrected indirect family event, got %q", readerLLM.lastGeneratePrompt)
 	}
 }
 

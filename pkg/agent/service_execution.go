@@ -73,8 +73,8 @@ func isExplicitMemoryRecallQuery(goal string) bool {
 	}
 
 	scheduleTimeHints := []string{
-		"today", "tomorrow", "tonight", "this afternoon", "this evening", "next week",
-		"今天", "明天", "今晚", "下午", "上午", "早上", "晚上", "下周",
+		"today", "tomorrow", "tonight", "this afternoon", "this evening", "this week", "next week",
+		"今天", "明天", "今晚", "下午", "上午", "早上", "晚上", "这周", "本周", "下周",
 	}
 	scheduleSubjectHints := []string{
 		"schedule", "plan", "plans", "agenda", "appointment", "meeting", "todo",
@@ -171,11 +171,26 @@ func extractExplicitMemorySaveContent(goal string) string {
 }
 
 func (s *Service) answerExplicitMemoryRecall(ctx context.Context, goal string, intent *IntentRecognitionResult, memoryContext string, memories []*domain.MemoryWithScore, cfg *RunConfig) (string, bool, error) {
-	if s == nil || s.llmService == nil || !isExplicitMemoryRecallIntent(goal, intent) || len(memories) == 0 {
+	if s == nil || s.llmService == nil || !isExplicitMemoryRecallIntent(goal, intent) {
 		return "", false, nil
 	}
 
 	recalled := strings.TrimSpace(memoryContext)
+	if len(memories) == 0 && s.memoryService != nil {
+		if listed, _, err := s.memoryService.List(ctx, 64, 0); err == nil {
+			fallback := make([]*domain.MemoryWithScore, 0, len(listed))
+			for _, mem := range listed {
+				if mem == nil {
+					continue
+				}
+				fallback = append(fallback, &domain.MemoryWithScore{Memory: mem, Score: 0.25})
+			}
+			memories = memorypkg.FilterMemoriesForQuery(goal, fallback)
+			if recalled == "" && len(memories) > 0 {
+				recalled = formatExplicitRecallMemories(memories)
+			}
+		}
+	}
 	if recalled == "" {
 		return "", false, nil
 	}
@@ -211,6 +226,22 @@ Recalled memories:
 		return "", false, nil
 	}
 	return resp, true, nil
+}
+
+func formatExplicitRecallMemories(memories []*domain.MemoryWithScore) string {
+	if len(memories) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("## Relevant Memory\n\n")
+	for i, memory := range memories {
+		if memory == nil || memory.Memory == nil {
+			continue
+		}
+		sb.WriteString(fmt.Sprintf("[%d] [%s]: %s\n\n", i+1, memory.Type, memory.Content))
+	}
+	return strings.TrimSpace(sb.String())
 }
 
 // executeWithLLM lets LLM decide which tool to use and executes with multi-round support
