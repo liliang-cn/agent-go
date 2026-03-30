@@ -66,6 +66,7 @@ func saveSetupProviderState(cfg *config.Config, provider SetupProvider) error {
 			BaseURL:        provider.BaseURL,
 			Key:            provider.APIKey,
 			ModelName:      provider.ModelName,
+			Models:         append([]string(nil), provider.Models...),
 			MaxConcurrency: provider.MaxConcurrency,
 			Capability:     provider.Capability,
 			Enabled:        true,

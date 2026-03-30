@@ -47,6 +47,9 @@ func runStatus(cmd *cobra.Command, args []string) error {
 				fmt.Printf("   ❌ Unhealthy\n")
 			}
 			fmt.Printf("   Model: %s\n", status.ModelName)
+			if len(status.Models) > 0 {
+				fmt.Printf("   Models: %v\n", status.Models)
+			}
 			fmt.Printf("   Capability: %d/5\n", status.Capability)
 			fmt.Printf("   Active: %d/%d\n", status.ActiveRequests, status.MaxConcurrency)
 		}

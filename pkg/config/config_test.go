@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -227,6 +228,31 @@ func TestLoadUsesAgentGoDBAsRuntimeSourceOfTruth(t *testing.T) {
 	}
 	if loaded.RAG.EmbeddingModel != "db-embedding" {
 		t.Fatalf("expected db-backed embedding model, got %q", loaded.RAG.EmbeddingModel)
+	}
+	expectedMCPPath := filepath.Join(home, "mcpServers.json")
+	if len(loaded.MCP.Servers) == 0 || loaded.MCP.Servers[0] != expectedMCPPath {
+		t.Fatalf("expected default MCP path %q, got %v", expectedMCPPath, loaded.MCP.Servers)
+	}
+}
+
+func TestMCPServersPathsDeduplicatesDefaultHomePath(t *testing.T) {
+	home := t.TempDir()
+	cfg := &Config{Home: home}
+
+	path := filepath.Join(home, "mcpServers.json")
+	if err := os.WriteFile(path, []byte(`{"mcpServers":{}}`), 0644); err != nil {
+		t.Fatalf("write mcpServers.json failed: %v", err)
+	}
+
+	paths := cfg.MCPServersPaths()
+	count := 0
+	for _, candidate := range paths {
+		if candidate == path {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("expected %q exactly once, got %v", path, paths)
 	}
 }
 

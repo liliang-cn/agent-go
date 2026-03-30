@@ -353,8 +353,8 @@ func (c *Config) LoadDBBackedRuntimeFrom(db *store.AgentGoDB) error {
 	}
 	if paths, err := dbConfigStringSlice(db, "mcp.paths"); err == nil {
 		c.MCP.Servers = paths
-		c.resolveMCPServerPaths()
 	}
+	c.resolveMCPServerPaths()
 
 	return nil
 }
@@ -456,19 +456,32 @@ func (c *Config) SkillsPaths() []string {
 
 // MCPServersPaths returns all paths to look for mcpServers.json files
 func (c *Config) MCPServersPaths() []string {
-	paths := []string{filepath.Join(c.Home, "mcpServers.json")}
+	seen := map[string]struct{}{}
+	paths := make([]string, 0, 3)
+	addPath := func(path string) {
+		if path == "" {
+			return
+		}
+		if _, ok := seen[path]; ok {
+			return
+		}
+		seen[path] = struct{}{}
+		paths = append(paths, path)
+	}
+
+	addPath(filepath.Join(c.Home, "mcpServers.json"))
 
 	if home, err := os.UserHomeDir(); err == nil {
 		// ~/.agents/mcpServers.json
 		agentsMcp := filepath.Join(home, ".agents", "mcpServers.json")
 		if _, err := os.Stat(agentsMcp); err == nil {
-			paths = append(paths, agentsMcp)
+			addPath(agentsMcp)
 		}
 
 		// ~/.agentgo/mcpServers.json (legacy)
 		oldHomeMcp := filepath.Join(home, ".agentgo", "mcpServers.json")
 		if _, err := os.Stat(oldHomeMcp); err == nil {
-			paths = append(paths, oldHomeMcp)
+			addPath(oldHomeMcp)
 		}
 	}
 

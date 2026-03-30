@@ -155,6 +155,18 @@ func (s *GlobalPoolService) GetLLMByProvider(name string) (*pool.Client, error) 
 	return s.llmPool.GetByProvider(name)
 }
 
+// GetLLMByProviderAndModel returns a client for an exact provider/model pair.
+func (s *GlobalPoolService) GetLLMByProviderAndModel(name, modelName string) (*pool.Client, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if !s.initialized {
+		return nil, fmt.Errorf("pool service not initialized")
+	}
+
+	return s.llmPool.GetByProviderAndModel(name, modelName)
+}
+
 // GetLLMByModel 按模型名获取LLM client。
 func (s *GlobalPoolService) GetLLMByModel(modelName string) (*pool.Client, error) {
 	s.mu.RLock()
@@ -269,7 +281,7 @@ func (s *GlobalPoolService) Chat(ctx context.Context, message string, opts ChatO
 		PreferredProvider: opts.Provider,
 		PreferredModel:    opts.Model,
 	}
-	client, err := s.llmPool.GetWithHint(hint)
+	client, err := s.getChatClient(hint)
 	if err != nil {
 		return "", err
 	}
@@ -367,7 +379,7 @@ func (s *GlobalPoolService) StreamChat(ctx context.Context, message string, opts
 		PreferredProvider: opts.Provider,
 		PreferredModel:    opts.Model,
 	}
-	client, err := s.llmPool.GetWithHint(hint)
+	client, err := s.getChatClient(hint)
 	if err != nil {
 		return err
 	}
@@ -983,6 +995,10 @@ func (s *GlobalPoolService) GetLLMServiceByProvider(name string) (domain.Generat
 	return s.GetLLMServiceWithHint(pool.SelectionHint{PreferredProvider: name})
 }
 
+func (s *GlobalPoolService) GetLLMServiceByProviderAndModel(name, modelName string) (domain.Generator, error) {
+	return s.GetLLMServiceWithHint(pool.SelectionHint{PreferredProvider: name, PreferredModel: modelName})
+}
+
 func (s *GlobalPoolService) GetLLMServiceByModel(modelName string) (domain.Generator, error) {
 	return s.GetLLMServiceWithHint(pool.SelectionHint{PreferredModel: modelName})
 }
@@ -1006,4 +1022,11 @@ func (s *GlobalPoolService) GetEmbeddingService(ctx context.Context) (domain.Emb
 		return nil, fmt.Errorf("pool service not initialized")
 	}
 	return &embeddingServiceWrapper{pool: s.embeddingPool}, nil
+}
+
+func (s *GlobalPoolService) getChatClient(hint pool.SelectionHint) (*pool.Client, error) {
+	if hint.PreferredProvider != "" && hint.PreferredModel != "" {
+		return s.llmPool.GetByProviderAndModel(hint.PreferredProvider, hint.PreferredModel)
+	}
+	return s.llmPool.GetWithHint(hint)
 }

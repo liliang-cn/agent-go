@@ -194,6 +194,7 @@ func (h *Handler) HandleStatus(w http.ResponseWriter, r *http.Request) {
 			"status":          status,
 			"type":            "llm",
 			"model":           st.ModelName,
+			"models":          st.Models,
 			"healthy":         st.Healthy,
 			"active_requests": st.ActiveRequests,
 			"max_concurrency": st.MaxConcurrency,

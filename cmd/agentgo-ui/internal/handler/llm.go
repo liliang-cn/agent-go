@@ -333,6 +333,8 @@ func acquireDirectChatLLM(poolService *services.GlobalPoolService, provider, mod
 	)
 
 	switch {
+	case provider != "" && model != "":
+		llmClient, err = poolService.GetLLMByProviderAndModel(provider, model)
 	case provider != "":
 		llmClient, err = poolService.GetLLMByProvider(provider)
 	case model != "":

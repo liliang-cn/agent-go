@@ -55,7 +55,7 @@ func TestGlobalPoolServiceGetLLMByProviderAndModel(t *testing.T) {
 	cfg := newPoolTestConfig(t)
 	seedPoolDB(t, cfg,
 		[]*store.LLMProvider{
-			{Name: "openai_local", BaseURL: "http://local.example/v1", Key: "x", ModelName: "gpt-oss", MaxConcurrency: 2, Capability: 5, Enabled: true},
+			{Name: "openai_local", BaseURL: "http://local.example/v1", Key: "x", ModelName: "gpt-oss", Models: []string{"gpt-oss", "gpt-5-mini"}, MaxConcurrency: 2, Capability: 5, Enabled: true},
 			{Name: "deepseek", BaseURL: "http://deepseek.example/v1", Key: "x", ModelName: "deepseek-chat", MaxConcurrency: 2, Capability: 4, Enabled: true},
 		},
 		nil,
@@ -85,6 +85,15 @@ func TestGlobalPoolServiceGetLLMByProviderAndModel(t *testing.T) {
 	if got := clientByModel.GetModelName(); got != "deepseek-chat" {
 		t.Fatalf("expected model-selected model deepseek-chat, got %q", got)
 	}
+
+	clientByProviderAndModel, err := svc.GetLLMByProviderAndModel("openai_local", "gpt-5-mini")
+	if err != nil {
+		t.Fatalf("GetLLMByProviderAndModel failed: %v", err)
+	}
+	defer svc.ReleaseLLM(clientByProviderAndModel)
+	if got := clientByProviderAndModel.GetModelName(); got != "gpt-5-mini" {
+		t.Fatalf("expected provider/model-selected model gpt-5-mini, got %q", got)
+	}
 }
 
 func TestGlobalPoolServiceGetLLMServiceByProviderAndModel(t *testing.T) {
@@ -92,7 +101,7 @@ func TestGlobalPoolServiceGetLLMServiceByProviderAndModel(t *testing.T) {
 	cfg := newPoolTestConfig(t)
 	seedPoolDB(t, cfg,
 		[]*store.LLMProvider{
-			{Name: "openai_local", BaseURL: "http://local.example/v1", Key: "x", ModelName: "gpt-oss", MaxConcurrency: 2, Capability: 5, Enabled: true},
+			{Name: "openai_local", BaseURL: "http://local.example/v1", Key: "x", ModelName: "gpt-oss", Models: []string{"gpt-oss", "gpt-5-mini"}, MaxConcurrency: 2, Capability: 5, Enabled: true},
 			{Name: "deepseek", BaseURL: "http://deepseek.example/v1", Key: "x", ModelName: "deepseek-chat", MaxConcurrency: 2, Capability: 4, Enabled: true},
 		},
 		nil,
@@ -127,6 +136,18 @@ func TestGlobalPoolServiceGetLLMServiceByProviderAndModel(t *testing.T) {
 	}
 	if got := namedModel.GetModelName(); got != "deepseek-chat" {
 		t.Fatalf("expected model-selected service model deepseek-chat, got %q", got)
+	}
+
+	llmByProviderAndModel, err := svc.GetLLMServiceByProviderAndModel("openai_local", "gpt-5-mini")
+	if err != nil {
+		t.Fatalf("GetLLMServiceByProviderAndModel failed: %v", err)
+	}
+	namedProviderAndModel, ok := llmByProviderAndModel.(modelNamer)
+	if !ok {
+		t.Fatalf("expected provider/model service to expose GetModelName")
+	}
+	if got := namedProviderAndModel.GetModelName(); got != "gpt-5-mini" {
+		t.Fatalf("expected provider/model-selected service model gpt-5-mini, got %q", got)
 	}
 }
 

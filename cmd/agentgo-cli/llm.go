@@ -12,15 +12,17 @@ import (
 )
 
 var (
-	llmProvider string
-	llmStream   bool
-	llmDebug    bool
+	llmProvider  string
+	llmChatModel string
+	llmStream    bool
+	llmDebug     bool
 
 	// flags for add/update
 	llmFlagName           string
 	llmFlagURL            string
 	llmFlagKey            string
 	llmFlagModel          string
+	llmFlagModels         []string
 	llmFlagCapability     int
 	llmFlagMaxConcurrency int
 	llmFlagEnabled        bool
@@ -53,6 +55,7 @@ var llmChatCmd = &cobra.Command{
 
 		chatOpts := services.ChatOptions{
 			Provider:  strings.TrimSpace(llmProvider),
+			Model:     strings.TrimSpace(llmChatModel),
 			MaxTokens: 30000,
 			Debug:     llmDebug,
 		}
@@ -109,16 +112,16 @@ var llmListCmd = &cobra.Command{
 		if len(providers) == 0 {
 			fmt.Println("No providers configured. Use 'llm add' to add one.")
 		} else {
-			fmt.Printf("%-20s %-10s %-40s %-35s %-12s %-5s\n",
-				"NAME", "ENABLED", "URL", "MODEL", "CONCURRENCY", "CAP")
-			fmt.Println(strings.Repeat("-", 130))
+			fmt.Printf("%-20s %-10s %-36s %-24s %-40s %-12s %-5s\n",
+				"NAME", "ENABLED", "URL", "DEFAULT_MODEL", "MODELS", "CONCURRENCY", "CAP")
+			fmt.Println(strings.Repeat("-", 160))
 			for _, p := range providers {
 				enabled := "yes"
 				if !p.Enabled {
 					enabled = "no"
 				}
-				fmt.Printf("%-20s %-10s %-40s %-35s %-12d %-5d\n",
-					p.Name, enabled, p.BaseURL, p.ModelName, p.MaxConcurrency, p.Capability)
+				fmt.Printf("%-20s %-10s %-36s %-24s %-40s %-12d %-5d\n",
+					p.Name, enabled, p.BaseURL, p.ModelName, formatProviderModels(p), p.MaxConcurrency, p.Capability)
 			}
 		}
 
@@ -147,8 +150,12 @@ var llmAddCmd = &cobra.Command{
 	Use:   "add",
 	Short: "Add a new LLM provider",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if llmFlagName == "" || llmFlagURL == "" || llmFlagModel == "" {
-			return fmt.Errorf("--name, --url, and --model are required")
+		defaultModel := strings.TrimSpace(llmFlagModel)
+		if defaultModel == "" && len(llmFlagModels) > 0 {
+			defaultModel = strings.TrimSpace(llmFlagModels[0])
+		}
+		if llmFlagName == "" || llmFlagURL == "" || defaultModel == "" {
+			return fmt.Errorf("--name, --url, and either --model or --models are required")
 		}
 
 		svc := services.GetGlobalPoolService()
@@ -169,7 +176,8 @@ var llmAddCmd = &cobra.Command{
 			Name:           llmFlagName,
 			BaseURL:        llmFlagURL,
 			Key:            llmFlagKey,
-			ModelName:      llmFlagModel,
+			ModelName:      defaultModel,
+			Models:         append([]string(nil), llmFlagModels...),
 			MaxConcurrency: maxConc,
 			Capability:     cap,
 			Enabled:        true,
@@ -211,6 +219,9 @@ var llmUpdateCmd = &cobra.Command{
 		}
 		if cmd.Flags().Changed("model") {
 			existing.ModelName = llmFlagModel
+		}
+		if cmd.Flags().Changed("models") {
+			existing.Models = append([]string(nil), llmFlagModels...)
 		}
 		if cmd.Flags().Changed("capability") {
 			existing.Capability = llmFlagCapability
@@ -430,6 +441,20 @@ func runRank(ctx context.Context, svc *services.GlobalPoolService, providerName 
 	return nil
 }
 
+func formatProviderModels(p *store.LLMProvider) string {
+	if p == nil {
+		return "-"
+	}
+	models := append([]string(nil), p.Models...)
+	if len(models) == 0 && strings.TrimSpace(p.ModelName) != "" {
+		models = []string{strings.TrimSpace(p.ModelName)}
+	}
+	if len(models) == 0 {
+		return "-"
+	}
+	return strings.Join(models, ",")
+}
+
 // llmTestCmd tests connectivity to a provider
 var llmTestCmd = &cobra.Command{
 	Use:   "test [provider-name]",
@@ -483,6 +508,7 @@ func init() {
 
 	// chat flags
 	llmChatCmd.Flags().StringVarP(&llmProvider, "provider", "p", "", "LLM provider to use")
+	llmChatCmd.Flags().StringVar(&llmChatModel, "model", "", "Model to use (optional; overrides the provider default)")
 	llmChatCmd.Flags().BoolVarP(&llmStream, "stream", "s", false, "Stream the response")
 	llmChatCmd.Flags().BoolVarP(&llmDebug, "debug", "d", false, "Show debug output (prompt and response)")
 
@@ -490,7 +516,8 @@ func init() {
 	llmAddCmd.Flags().StringVar(&llmFlagName, "name", "", "Provider name (required)")
 	llmAddCmd.Flags().StringVar(&llmFlagURL, "url", "", "Base URL (required)")
 	llmAddCmd.Flags().StringVar(&llmFlagKey, "key", "", "API key")
-	llmAddCmd.Flags().StringVar(&llmFlagModel, "model", "", "Model name (required)")
+	llmAddCmd.Flags().StringVar(&llmFlagModel, "model", "", "Default model name")
+	llmAddCmd.Flags().StringSliceVar(&llmFlagModels, "models", nil, "Supported models (comma-separated or repeated); --model remains the default")
 	llmAddCmd.Flags().IntVar(&llmFlagCapability, "capability", 3, "Capability level 1-5")
 	llmAddCmd.Flags().IntVar(&llmFlagMaxConcurrency, "max-concurrency", 5, "Max concurrent requests")
 
@@ -498,7 +525,8 @@ func init() {
 	llmUpdateCmd.Flags().StringVar(&llmFlagName, "name", "", "Provider name to update (required)")
 	llmUpdateCmd.Flags().StringVar(&llmFlagURL, "url", "", "New base URL")
 	llmUpdateCmd.Flags().StringVar(&llmFlagKey, "key", "", "New API key")
-	llmUpdateCmd.Flags().StringVar(&llmFlagModel, "model", "", "New model name")
+	llmUpdateCmd.Flags().StringVar(&llmFlagModel, "model", "", "New default model name")
+	llmUpdateCmd.Flags().StringSliceVar(&llmFlagModels, "models", nil, "Replace supported models (comma-separated or repeated)")
 	llmUpdateCmd.Flags().IntVar(&llmFlagCapability, "capability", 0, "New capability level 1-5")
 	llmUpdateCmd.Flags().IntVar(&llmFlagMaxConcurrency, "max-concurrency", 0, "New max concurrent requests")
 	llmUpdateCmd.Flags().BoolVar(&llmFlagEnabled, "enabled", true, "Enable or disable the provider")

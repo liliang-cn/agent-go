@@ -319,6 +319,35 @@ func (s *AgentGoDB) initSchema() error {
 	}
 
 	_, err = s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS llm_provider_models (
+			provider_name TEXT NOT NULL,
+			model_name TEXT NOT NULL,
+			is_default BOOLEAN NOT NULL DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (provider_name, model_name)
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create llm_provider_models table: %w", err)
+	}
+
+	_, err = s.db.Exec(`
+		INSERT OR IGNORE INTO llm_provider_models (provider_name, model_name, is_default)
+		SELECT name, model_name, 1
+		FROM llm_providers
+		WHERE TRIM(model_name) <> ''
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to backfill llm_provider_models table: %w", err)
+	}
+
+	_, err = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_llm_provider_models_provider_name ON llm_provider_models(provider_name)`)
+	if err != nil {
+		return fmt.Errorf("failed to create llm_provider_models provider_name index: %w", err)
+	}
+
+	_, err = s.db.Exec(`
 		CREATE TABLE IF NOT EXISTS embedding_providers (
 			name TEXT PRIMARY KEY,
 			base_url TEXT NOT NULL,

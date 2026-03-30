@@ -33,12 +33,13 @@ const (
 
 // Provider LLM Provider配置
 type Provider struct {
-	Name           string `mapstructure:"name" json:"name"`
-	BaseURL        string `mapstructure:"base_url" json:"base_url"`
-	Key            string `mapstructure:"key" json:"key"`
-	ModelName      string `mapstructure:"model_name" json:"model_name"`
-	MaxConcurrency int    `mapstructure:"max_concurrency" json:"max_concurrency"`
-	Capability     int    `mapstructure:"capability" json:"capability"` // 1-5 能力等级
+	Name           string   `mapstructure:"name" json:"name"`
+	BaseURL        string   `mapstructure:"base_url" json:"base_url"`
+	Key            string   `mapstructure:"key" json:"key"`
+	ModelName      string   `mapstructure:"model_name" json:"model_name"`
+	Models         []string `mapstructure:"models" json:"models,omitempty"`
+	MaxConcurrency int      `mapstructure:"max_concurrency" json:"max_concurrency"`
+	Capability     int      `mapstructure:"capability" json:"capability"` // 1-5 能力等级
 }
 
 type SelectionHint struct {
@@ -96,7 +97,8 @@ func NewPool(config PoolConfig) (*Pool, error) {
 
 	// 初始化clients
 	for _, p := range config.Providers {
-		client, err := NewClient(p.Name, p.BaseURL, p.Key, p.ModelName)
+		p = normalizeProviderConfig(p)
+		client, err := newClientForProvider(p, p.ModelName, pool.promptManager)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create client %s: %w", p.Name, err)
 		}
@@ -120,6 +122,93 @@ func (p *Pool) SetPromptManager(m *prompt.Manager) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.promptManager = m
+	for _, wrapper := range p.clients {
+		wrapper.client.SetPromptManager(m)
+	}
+}
+
+func normalizeProviderConfig(prov Provider) Provider {
+	defaultModel := strings.TrimSpace(prov.ModelName)
+	models := normalizeProviderModels(defaultModel, prov.Models)
+	if defaultModel == "" && len(models) > 0 {
+		defaultModel = models[0]
+	}
+	prov.ModelName = defaultModel
+	prov.Models = models
+	if prov.MaxConcurrency <= 0 {
+		prov.MaxConcurrency = 5
+	}
+	return prov
+}
+
+func normalizeProviderModels(defaultModel string, models []string) []string {
+	seen := make(map[string]struct{}, len(models)+1)
+	normalized := make([]string, 0, len(models)+1)
+	add := func(model string) {
+		model = strings.TrimSpace(model)
+		if model == "" {
+			return
+		}
+		key := strings.ToLower(model)
+		if _, exists := seen[key]; exists {
+			return
+		}
+		seen[key] = struct{}{}
+		normalized = append(normalized, model)
+	}
+
+	add(defaultModel)
+	for _, model := range models {
+		add(model)
+	}
+	return normalized
+}
+
+func providerModelName(prov Provider, requested string) (string, bool) {
+	prov = normalizeProviderConfig(prov)
+	requested = strings.TrimSpace(requested)
+	if requested == "" {
+		return prov.ModelName, prov.ModelName != ""
+	}
+	for _, model := range prov.Models {
+		if strings.EqualFold(model, requested) {
+			return model, true
+		}
+	}
+	if strings.EqualFold(prov.ModelName, requested) {
+		return prov.ModelName, true
+	}
+	return "", false
+}
+
+func providerSupportsModel(prov Provider, model string) bool {
+	_, ok := providerModelName(prov, model)
+	return ok
+}
+
+func newClientForProvider(prov Provider, model string, promptMgr *prompt.Manager) (*Client, error) {
+	resolvedModel, ok := providerModelName(prov, model)
+	if !ok {
+		return nil, fmt.Errorf("provider %q does not support model %q", prov.Name, model)
+	}
+	client, err := NewClient(prov.Name, prov.BaseURL, prov.Key, resolvedModel)
+	if err != nil {
+		return nil, err
+	}
+	if promptMgr != nil {
+		client.SetPromptManager(promptMgr)
+	}
+	return client, nil
+}
+
+func (p *Pool) clientForWrapper(wrapper *clientWrapper, model string) (*Client, error) {
+	if wrapper == nil {
+		return nil, fmt.Errorf("client wrapper is required")
+	}
+	if model == "" || strings.EqualFold(model, wrapper.provider.ModelName) {
+		return wrapper.client, nil
+	}
+	return newClientForProvider(wrapper.provider, model, p.promptManager)
 }
 
 // Get 获取一个client（根据策略）
@@ -159,7 +248,7 @@ func (p *Pool) Get() (*Client, error) {
 	}
 
 	atomic.AddInt32(&selected.activeRequests, 1)
-	return selected.client, nil
+	return p.clientForWrapper(selected, selected.provider.ModelName)
 }
 
 // GetByName 按名称获取，兼容旧调用；名称指 provider 名称。
@@ -182,7 +271,28 @@ func (p *Pool) GetByProvider(name string) (*Client, error) {
 	}
 
 	atomic.AddInt32(&wrapper.activeRequests, 1)
-	return wrapper.client, nil
+	return p.clientForWrapper(wrapper, wrapper.provider.ModelName)
+}
+
+// GetByProviderAndModel returns a client for the exact provider/model combination.
+func (p *Pool) GetByProviderAndModel(name, modelName string) (*Client, error) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	wrapper, ok := p.clients[name]
+	if !ok {
+		return nil, fmt.Errorf("client %s not found", name)
+	}
+	if !wrapper.healthy {
+		return nil, fmt.Errorf("client %s is not healthy", name)
+	}
+	resolvedModel, ok := providerModelName(wrapper.provider, modelName)
+	if !ok {
+		return nil, fmt.Errorf("provider %s does not support model %s", name, modelName)
+	}
+
+	atomic.AddInt32(&wrapper.activeRequests, 1)
+	return p.clientForWrapper(wrapper, resolvedModel)
 }
 
 // GetByModel 按模型名获取。
@@ -202,7 +312,7 @@ func (p *Pool) GetByModel(modelName string) (*Client, error) {
 
 	var preferred []*clientWrapper
 	for _, wrapper := range healthy {
-		if strings.EqualFold(wrapper.provider.ModelName, modelName) {
+		if providerSupportsModel(wrapper.provider, modelName) {
 			preferred = append(preferred, wrapper)
 		}
 	}
@@ -216,7 +326,7 @@ func (p *Pool) GetByModel(modelName string) (*Client, error) {
 	}
 
 	atomic.AddInt32(&selected.activeRequests, 1)
-	return selected.client, nil
+	return p.clientForWrapper(selected, modelName)
 }
 
 // GetByCapability 按能力等级获取（>=指定能力的最低负载）
@@ -235,7 +345,7 @@ func (p *Pool) GetByCapability(minCapability int) (*Client, error) {
 	}
 
 	atomic.AddInt32(&selected.activeRequests, 1)
-	return selected.client, nil
+	return p.clientForWrapper(selected, selected.provider.ModelName)
 }
 
 func (p *Pool) GetWithHint(hint SelectionHint) (*Client, error) {
@@ -253,7 +363,10 @@ func (p *Pool) GetWithHint(hint SelectionHint) (*Client, error) {
 	}
 
 	atomic.AddInt32(&selected.activeRequests, 1)
-	return selected.client, nil
+	if modelName, ok := providerModelName(selected.provider, hint.PreferredModel); ok {
+		return p.clientForWrapper(selected, modelName)
+	}
+	return p.clientForWrapper(selected, selected.provider.ModelName)
 }
 
 // Release 释放client
@@ -261,11 +374,13 @@ func (p *Pool) Release(client *Client) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
-	for _, wrapper := range p.clients {
-		if wrapper.client == client {
-			atomic.AddInt32(&wrapper.activeRequests, -1)
-			return
-		}
+	if client == nil {
+		return
+	}
+
+	wrapper, ok := p.clients[client.GetProviderName()]
+	if ok {
+		atomic.AddInt32(&wrapper.activeRequests, -1)
 	}
 }
 
@@ -348,19 +463,34 @@ func (p *Pool) selectByCapability(healthy []*clientWrapper, minCapability int) *
 
 func (p *Pool) selectWithHint(healthy []*clientWrapper, hint SelectionHint) *clientWrapper {
 	var preferred []*clientWrapper
-	for _, w := range healthy {
-		if hint.MinCapability > 0 && w.provider.Capability < hint.MinCapability {
-			continue
+	filter := func(match func(*clientWrapper) bool) []*clientWrapper {
+		candidates := make([]*clientWrapper, 0, len(healthy))
+		for _, w := range healthy {
+			if hint.MinCapability > 0 && w.provider.Capability < hint.MinCapability {
+				continue
+			}
+			if match(w) {
+				candidates = append(candidates, w)
+			}
 		}
+		return candidates
+	}
 
-		if hint.PreferredProvider != "" && strings.EqualFold(w.provider.Name, hint.PreferredProvider) {
-			preferred = append(preferred, w)
-			continue
-		}
-
-		if hint.PreferredModel != "" && strings.EqualFold(w.provider.ModelName, hint.PreferredModel) {
-			preferred = append(preferred, w)
-		}
+	if hint.PreferredProvider != "" && hint.PreferredModel != "" {
+		preferred = filter(func(w *clientWrapper) bool {
+			return strings.EqualFold(w.provider.Name, hint.PreferredProvider) &&
+				providerSupportsModel(w.provider, hint.PreferredModel)
+		})
+	}
+	if len(preferred) == 0 && hint.PreferredProvider != "" {
+		preferred = filter(func(w *clientWrapper) bool {
+			return strings.EqualFold(w.provider.Name, hint.PreferredProvider)
+		})
+	}
+	if len(preferred) == 0 && hint.PreferredModel != "" {
+		preferred = filter(func(w *clientWrapper) bool {
+			return providerSupportsModel(w.provider, hint.PreferredModel)
+		})
 	}
 
 	if len(preferred) > 0 {
@@ -444,6 +574,7 @@ func (p *Pool) GetStatus() map[string]ClientStatus {
 			MaxConcurrency: w.provider.MaxConcurrency,
 			Capability:     w.provider.Capability,
 			ModelName:      w.provider.ModelName,
+			Models:         append([]string(nil), w.provider.Models...),
 		}
 	}
 	return status
@@ -451,11 +582,12 @@ func (p *Pool) GetStatus() map[string]ClientStatus {
 
 // ClientStatus 客户端状态
 type ClientStatus struct {
-	Healthy        bool   `json:"healthy"`
-	ActiveRequests int32  `json:"active_requests"`
-	MaxConcurrency int    `json:"max_concurrency"`
-	Capability     int    `json:"capability"`
-	ModelName      string `json:"model_name"`
+	Healthy        bool     `json:"healthy"`
+	ActiveRequests int32    `json:"active_requests"`
+	MaxConcurrency int      `json:"max_concurrency"`
+	Capability     int      `json:"capability"`
+	ModelName      string   `json:"model_name"`
+	Models         []string `json:"models,omitempty"`
 }
 
 // Close 关闭pool
@@ -585,8 +717,9 @@ func (p *Pool) AddProvider(prov Provider) error {
 	if prov.MaxConcurrency <= 0 {
 		prov.MaxConcurrency = 5
 	}
+	prov = normalizeProviderConfig(prov)
 
-	client, err := NewClient(prov.Name, prov.BaseURL, prov.Key, prov.ModelName)
+	client, err := newClientForProvider(prov, prov.ModelName, p.promptManager)
 	if err != nil {
 		return fmt.Errorf("failed to create client for %s: %w", prov.Name, err)
 	}
@@ -629,8 +762,9 @@ func (p *Pool) UpdateProvider(prov Provider) error {
 	if prov.MaxConcurrency <= 0 {
 		prov.MaxConcurrency = 5
 	}
+	prov = normalizeProviderConfig(prov)
 
-	client, err := NewClient(prov.Name, prov.BaseURL, prov.Key, prov.ModelName)
+	client, err := newClientForProvider(prov, prov.ModelName, p.promptManager)
 	if err != nil {
 		return fmt.Errorf("failed to create client for %s: %w", prov.Name, err)
 	}
@@ -652,7 +786,9 @@ func (p *Pool) ListProviders() []Provider {
 
 	providers := make([]Provider, 0, len(p.clients))
 	for _, w := range p.clients {
-		providers = append(providers, w.provider)
+		provider := w.provider
+		provider.Models = append([]string(nil), provider.Models...)
+		providers = append(providers, provider)
 	}
 	return providers
 }

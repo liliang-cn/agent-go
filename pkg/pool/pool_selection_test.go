@@ -106,3 +106,34 @@ func TestPoolGetByModelReturnsMatchingClient(t *testing.T) {
 		t.Fatalf("expected primary-model, got %s", got)
 	}
 }
+
+func TestPoolGetByProviderAndModelReturnsRequestedModel(t *testing.T) {
+	p, err := NewPool(PoolConfig{
+		Enabled:  true,
+		Strategy: StrategyLeastLoad,
+		Providers: []Provider{
+			{
+				Name:           "qc",
+				BaseURL:        "http://qc.example/v1",
+				Key:            "x",
+				ModelName:      "gpt-5.4",
+				Models:         []string{"gpt-5.4", "gpt-5-mini"},
+				MaxConcurrency: 2,
+				Capability:     5,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewPool failed: %v", err)
+	}
+
+	client, err := p.GetByProviderAndModel("qc", "gpt-5-mini")
+	if err != nil {
+		t.Fatalf("GetByProviderAndModel failed: %v", err)
+	}
+	defer p.Release(client)
+
+	if got := client.GetModelName(); got != "gpt-5-mini" {
+		t.Fatalf("expected requested model gpt-5-mini, got %s", got)
+	}
+}

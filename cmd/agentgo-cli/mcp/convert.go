@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/liliang-cn/agent-go/v2/pkg/config"
 	agentgomcp "github.com/liliang-cn/agent-go/v2/pkg/mcp"
 	"github.com/liliang-cn/agent-go/v2/pkg/services"
+	"github.com/liliang-cn/agent-go/v2/pkg/store"
 	skillsmcp "github.com/liliang-cn/skills-go/mcp"
 	"github.com/spf13/cobra"
 )
@@ -113,7 +115,7 @@ func runMCPConvert(cmd *cobra.Command, args []string) error {
 			if provider == nil || !provider.Enabled {
 				continue
 			}
-			if convertLLMModel == "" || provider.ModelName == convertLLMModel {
+			if convertLLMModel == "" || providerSupportsRequestedModel(provider, convertLLMModel) {
 				convCfg.LLMAPIKey = provider.Key
 				convCfg.LLMBaseURL = provider.BaseURL
 				break
@@ -183,6 +185,25 @@ func runMCPConvert(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func providerSupportsRequestedModel(provider *store.LLMProvider, model string) bool {
+	if provider == nil {
+		return false
+	}
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return true
+	}
+	if strings.EqualFold(strings.TrimSpace(provider.ModelName), model) {
+		return true
+	}
+	for _, candidate := range provider.Models {
+		if strings.EqualFold(strings.TrimSpace(candidate), model) {
+			return true
+		}
+	}
+	return false
 }
 
 func runMCPDiscover(cmd *cobra.Command, args []string) error {

@@ -13,13 +13,14 @@ type SetupHandler struct {
 }
 
 type SetupProvider struct {
-	Name           string `json:"name"`
-	BaseURL        string `json:"baseUrl"`
-	APIKey         string `json:"apiKey,omitempty"`
-	ModelName      string `json:"modelName"`
-	EmbeddingModel string `json:"embeddingModel,omitempty"`
-	MaxConcurrency int    `json:"maxConcurrency"`
-	Capability     int    `json:"capability"`
+	Name           string   `json:"name"`
+	BaseURL        string   `json:"baseUrl"`
+	APIKey         string   `json:"apiKey,omitempty"`
+	ModelName      string   `json:"modelName"`
+	Models         []string `json:"models,omitempty"`
+	EmbeddingModel string   `json:"embeddingModel,omitempty"`
+	MaxConcurrency int      `json:"maxConcurrency"`
+	Capability     int      `json:"capability"`
 }
 
 type SetupState struct {
@@ -64,6 +65,7 @@ func (h *SetupHandler) snapshot() SetupState {
 			Name:           p.Name,
 			BaseURL:        p.BaseURL,
 			ModelName:      p.ModelName,
+			Models:         append([]string(nil), p.Models...),
 			EmbeddingModel: h.cfg.RAG.EmbeddingModel,
 			MaxConcurrency: p.MaxConcurrency,
 			Capability:     p.Capability,
