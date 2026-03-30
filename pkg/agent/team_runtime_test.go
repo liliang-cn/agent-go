@@ -652,6 +652,13 @@ func TestDefaultMemberMCPTools_CaptainIncludesFilesystemAndWebTools(t *testing.T
 	}
 }
 
+func TestDefaultMemberMCPTools_OperatorGetsAllMCPTools(t *testing.T) {
+	tools := defaultMemberMCPTools("Operator")
+	if len(tools) != 1 || tools[0] != "*" {
+		t.Fatalf("expected Operator to receive wildcard MCP access, got %v", tools)
+	}
+}
+
 func TestBuildTeamTaskEnvelope_ContainsSharedContext(t *testing.T) {
 	cfg := &config.Config{Home: "/tmp/agentgo-test"}
 	t.Setenv("SHELL", "/bin/test-shell")

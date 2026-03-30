@@ -24,13 +24,14 @@ type builtInRouteDecision struct {
 }
 
 type builtInRouteResult struct {
-	TargetAgent     string
-	IntentType      string
-	Reason          string
-	OptimizedPrompt string
-	Result          string
-	RouterRaw       string
-	OptimizerRaw    string
+	TargetAgent        string
+	IntentType         string
+	Reason             string
+	OptimizedPrompt    string
+	Result             string
+	VerificationResult string
+	RouterRaw          string
+	OptimizerRaw       string
 }
 
 func (m *TeamManager) routeBuiltInRequest(ctx context.Context, prompt string, queryContext domain.MemoryQueryContext) (*builtInRouteResult, error) {
@@ -75,8 +76,12 @@ func routeBuiltInRequestWithDispatcher(ctx context.Context, prompt string, query
 	wg.Wait()
 
 	decision := parseIntentRouterDecision(routerRaw)
+	fallbackDecision := fallbackBuiltInRouteDecision(prompt)
+	if shouldOverrideBuiltInRouteDecision(prompt, decision, fallbackDecision) {
+		decision = fallbackDecision
+	}
 	if decision.TargetAgent == "" {
-		decision = fallbackBuiltInRouteDecision(prompt)
+		decision = fallbackDecision
 		if routerErr != nil && strings.TrimSpace(decision.Reason) == "" {
 			decision.Reason = routerErr.Error()
 		}
@@ -94,15 +99,28 @@ func routeBuiltInRequestWithDispatcher(ctx context.Context, prompt string, query
 	if err != nil {
 		return nil, err
 	}
+	verificationResult := ""
+	if shouldVerifyBuiltInDispatchCompletion(prompt, decision) {
+		verifyPrompt := buildBuiltInCompletionVerificationPrompt(prompt, finalPrompt, result, decision)
+		if strings.TrimSpace(verifyPrompt) != "" {
+			if verifyRaw, verifyErr := dispatch(ctx, defaultVerifierAgentName, verifyPrompt, runOptions); verifyErr == nil {
+				verificationResult = strings.TrimSpace(verifyRaw)
+				if verified := applyBuiltInVerificationResult(result, verificationResult); strings.TrimSpace(verified) != "" {
+					result = verified
+				}
+			}
+		}
+	}
 
 	return &builtInRouteResult{
-		TargetAgent:     decision.TargetAgent,
-		IntentType:      decision.IntentType,
-		Reason:          decision.Reason,
-		OptimizedPrompt: finalPrompt,
-		Result:          result,
-		RouterRaw:       routerRaw,
-		OptimizerRaw:    optimizerRaw,
+		TargetAgent:        decision.TargetAgent,
+		IntentType:         decision.IntentType,
+		Reason:             decision.Reason,
+		OptimizedPrompt:    finalPrompt,
+		Result:             result,
+		VerificationResult: verificationResult,
+		RouterRaw:          routerRaw,
+		OptimizerRaw:       optimizerRaw,
 	}, nil
 }
 
@@ -111,7 +129,8 @@ func buildIntentRouterTaskPrompt(userPrompt string) string {
 Valid TARGET_AGENT values: Assistant, Operator, Stakeholder, Archivist, Verifier.
 Rules:
 - Use Archivist for memory_save, memory_recall, preferences, schedules, durable facts, and planned events.
-- Use Operator for files, commands, execution, validation, and environment inspection.
+- Use Operator for files, commands, execution, validation, environment inspection, MCP-backed actions, desktop automation, local app control, and device control.
+- If the user is asking the system to do something through a configured tool or server, prefer Operator.
 - Use Stakeholder for product, business, prioritization, requirements, scope, and acceptance criteria.
 - Use Verifier for checking or validating a candidate answer, especially conflicts or corrections.
 - Use Assistant for everything else.
@@ -222,6 +241,15 @@ func fallbackBuiltInRouteDecision(prompt string) builtInRouteDecision {
 
 	lower := strings.ToLower(strings.TrimSpace(prompt))
 	switch {
+	case containsAny(lower, []string{
+		"mcp", "tool", "server", "agentgo", "desktop pet", "pet", "husky",
+		"run it", "start it", "stop it", "toggle", "show", "hide", "reset",
+		"调用", "工具", "服务器", "跑起来", "停下", "停止", "显示", "隐藏", "切换", "重置", "播放", "宠物狗",
+	}):
+		decision.TargetAgent = defaultOperatorAgentName
+		if decision.IntentType == "" {
+			decision.IntentType = "tool_execution"
+		}
 	case containsAny(lower, []string{"priorit", "roadmap", "acceptance criteria", "scope", "business", "product", "requirement", "需求", "优先级", "范围", "产品", "验收标准"}):
 		decision.TargetAgent = defaultStakeholderAgentName
 		if decision.IntentType == "" {
@@ -240,6 +268,28 @@ func fallbackBuiltInRouteDecision(prompt string) builtInRouteDecision {
 	return decision
 }
 
+func shouldOverrideBuiltInRouteDecision(prompt string, decision, fallback builtInRouteDecision) bool {
+	if strings.TrimSpace(decision.TargetAgent) == "" || strings.TrimSpace(fallback.TargetAgent) == "" {
+		return false
+	}
+	if decision.TargetAgent == fallback.TargetAgent {
+		return false
+	}
+	if fallback.TargetAgent == defaultOperatorAgentName && promptLooksLikeOperatorControlRequest(prompt) {
+		return decision.TargetAgent == defaultAssistantAgentName
+	}
+	return false
+}
+
+func promptLooksLikeOperatorControlRequest(prompt string) bool {
+	lower := strings.ToLower(strings.TrimSpace(prompt))
+	return containsAny(lower, []string{
+		"mcp", "tool", "server", "desktop pet", "pet", "husky",
+		"run it", "start it", "stop it", "toggle", "show", "hide", "reset", "play action",
+		"调用", "工具", "服务器", "跑起来", "停下", "停止", "显示", "隐藏", "切换", "重置", "播放", "宠物狗",
+	})
+}
+
 func buildFinalBuiltInDispatchPrompt(originalPrompt, optimizedPrompt string, decision builtInRouteDecision) string {
 	originalPrompt = normalizeTaskPrompt(originalPrompt)
 	optimizedPrompt = firstNonEmpty(strings.TrimSpace(optimizedPrompt), strings.TrimSpace(originalPrompt))
@@ -252,7 +302,68 @@ func buildFinalBuiltInDispatchPrompt(originalPrompt, optimizedPrompt string, dec
 		}
 		return "记住：" + optimizedPrompt
 	}
+	if strings.EqualFold(decision.TargetAgent, defaultOperatorAgentName) && !looksLikeInformationSeekingQuery(originalPrompt) {
+		return strings.TrimSpace(optimizedPrompt + "\n\nExecution contract:\n- Execute the request directly using available tools or MCP capabilities when possible.\n- Do not bounce the task back to Concierge or say you are routing it.\n- If the request is actionable and reasonable defaults suffice, choose practical defaults instead of asking unnecessary follow-up questions.\n- Before giving your final answer, explicitly verify from tool results or observed effects whether the request is actually complete, and state the concrete evidence in your answer.\n- If blocked, say exactly what blocked execution.")
+	}
 	return optimizedPrompt
+}
+
+func shouldVerifyBuiltInDispatchCompletion(originalPrompt string, decision builtInRouteDecision) bool {
+	if !strings.EqualFold(decision.TargetAgent, defaultOperatorAgentName) {
+		return false
+	}
+	return promptLooksLikeOperatorControlRequest(originalPrompt) || strings.EqualFold(strings.TrimSpace(decision.IntentType), "tool_execution") || strings.EqualFold(strings.TrimSpace(decision.IntentType), "device_or_robot_control")
+}
+
+func buildBuiltInCompletionVerificationPrompt(originalPrompt, executedPrompt, previousResult string, decision builtInRouteDecision) string {
+	if !shouldVerifyBuiltInDispatchCompletion(originalPrompt, decision) {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprintf(`You are verifying a completed execution claim from Operator.
+
+Original user request:
+%s
+
+Instruction Operator executed:
+%s
+
+Operator's reported result:
+%s
+
+Your task:
+- Independently verify whether the requested action is complete.
+- Prefer read-only or status-oriented checks using available tools or MCP capabilities.
+- Do not repeat the primary action unless there is no safe read-only way to verify and the action is idempotent.
+- If the request is complete, reply exactly: VERIFIED_COMPLETE: <one concise sentence with concrete evidence>.
+- If the request is still blocked, incomplete, or unverifiable, reply exactly: VERIFIED_BLOCKED: <one concise sentence with the blocker or missing evidence>.
+`, strings.TrimSpace(originalPrompt), strings.TrimSpace(executedPrompt), strings.TrimSpace(previousResult)))
+}
+
+func applyBuiltInVerificationResult(previousResult, verification string) string {
+	previousResult = strings.TrimSpace(previousResult)
+	verification = strings.TrimSpace(verification)
+	switch {
+	case strings.HasPrefix(verification, "VERIFIED_COMPLETE:"):
+		evidence := strings.TrimSpace(strings.TrimPrefix(verification, "VERIFIED_COMPLETE:"))
+		if evidence == "" {
+			return previousResult
+		}
+		if previousResult == "" {
+			return evidence
+		}
+		return strings.TrimSpace(previousResult + "\n\nVerifier confirmation: " + evidence)
+	case strings.HasPrefix(verification, "VERIFIED_BLOCKED:"):
+		blocker := strings.TrimSpace(strings.TrimPrefix(verification, "VERIFIED_BLOCKED:"))
+		if blocker == "" {
+			return previousResult
+		}
+		if previousResult == "" {
+			return blocker
+		}
+		return strings.TrimSpace(previousResult + "\n\nVerifier warning: " + blocker)
+	default:
+		return previousResult
+	}
 }
 
 func looksLikeImplicitMemorySavePrompt(prompt string) bool {

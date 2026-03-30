@@ -1109,6 +1109,8 @@ func buildRuntimeContextLines() []string {
 
 func defaultMemberMCPTools(name string) []string {
 	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "operator", "verifier":
+		return []string{"*"}
 	case "assistant", "captain", "stakeholder":
 		return []string{
 			"mcp_filesystem_list_allowed_directories",

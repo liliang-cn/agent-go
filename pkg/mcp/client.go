@@ -378,38 +378,9 @@ func (c *Client) startHealthMonitoring() {
 	c.stopHealthCheck = make(chan struct{})
 
 	switch c.config.Type {
-	case ServerTypeStdio, "":
-		go c.monitorProcessExit()
 	case ServerTypeHTTP:
 		go c.startPingHeartbeat()
 	}
-}
-
-// monitorProcessExit monitors the Stdio server process for unexpected exit
-// This is the recommended approach for Stdio servers per MCP best practices
-func (c *Client) monitorProcessExit() {
-	if c.cmd == nil || c.cmd.Process == nil {
-		return
-	}
-
-	// Wait for process to exit
-	state, err := c.cmd.Process.Wait()
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if !c.connected {
-		return // Already closed
-	}
-
-	if err != nil {
-		log.Printf("[WARN] MCP server %s process error: %v", c.config.Name, err)
-	} else if state != nil && !state.Success() {
-		log.Printf("[WARN] MCP server %s process exited with code %d", c.config.Name, state.ExitCode())
-	}
-
-	// Mark as disconnected
-	c.connected = false
 }
 
 // startPingHeartbeat starts periodic ping requests for HTTP servers
@@ -685,6 +656,9 @@ func (c *Client) Close() error {
 	if c.session != nil {
 		// Close the session
 		err = c.session.Close()
+		if isBenignMCPCloseError(err) {
+			err = nil
+		}
 	}
 
 	c.connected = false
@@ -692,6 +666,15 @@ func (c *Client) Close() error {
 	c.cmd = nil
 
 	return err
+}
+
+func isBenignMCPCloseError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(msg, "wait: no child processes") ||
+		strings.Contains(msg, "os: process already finished")
 }
 
 // IsConnected returns whether the client is connected

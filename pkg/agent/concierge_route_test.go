@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -175,5 +176,79 @@ func TestParseIntentRouterDecisionParsesNeedsOptimization(t *testing.T) {
 	decision := parseIntentRouterDecision("TARGET_AGENT: Assistant\nINTENT_TYPE: general_qa\nREASON: test\nNEEDS_OPTIMIZATION: yes")
 	if !decision.NeedsOptimization {
 		t.Fatal("expected NeedsOptimization=true")
+	}
+}
+
+func TestFallbackBuiltInRouteDecisionPrefersOperatorForMCPStyleControlRequests(t *testing.T) {
+	t.Parallel()
+
+	decision := fallbackBuiltInRouteDecision("让宠物狗跑起来")
+	if decision.TargetAgent != defaultOperatorAgentName {
+		t.Fatalf("expected Operator target for MCP-style control request, got %+v", decision)
+	}
+	if decision.IntentType == "" {
+		t.Fatalf("expected fallback intent type to be populated, got %+v", decision)
+	}
+}
+
+func TestRouteBuiltInRequestVerifiesOperatorCompletion(t *testing.T) {
+	t.Parallel()
+
+	var prompts []string
+	dispatch := func(ctx context.Context, agentName, prompt string, opts []RunOption) (string, error) {
+		prompts = append(prompts, agentName+": "+prompt)
+		switch agentName {
+		case defaultIntentRouterAgentName:
+			return "TARGET_AGENT: Operator\nINTENT_TYPE: tool_execution\nREASON: execution request\nNEEDS_OPTIMIZATION: no", nil
+		case defaultPromptOptimizerAgentName:
+			return optimizedPromptBeginMarker + "\n让宠物狗跑起来\n" + optimizedPromptEndMarker, nil
+		case defaultOperatorAgentName:
+			return "I invoked the walking action.", nil
+		case defaultVerifierAgentName:
+			return "VERIFIED_COMPLETE: Current state reports the desktop pet is walking.", nil
+		default:
+			return "", fmt.Errorf("unexpected agent %s", agentName)
+		}
+	}
+
+	result, err := routeBuiltInRequestWithDispatcher(context.Background(), "让宠物狗跑起来", domain.MemoryQueryContext{}, dispatch)
+	if err != nil {
+		t.Fatalf("routeBuiltInRequestWithDispatcher failed: %v", err)
+	}
+	if result.TargetAgent != defaultOperatorAgentName {
+		t.Fatalf("expected Operator target, got %+v", result)
+	}
+	if !strings.Contains(result.Result, "Verifier confirmation: Current state reports the desktop pet is walking.") {
+		t.Fatalf("unexpected verified result: %+v", result)
+	}
+	if !strings.HasPrefix(result.VerificationResult, "VERIFIED_COMPLETE:") {
+		t.Fatalf("expected verification result to be recorded, got %+v", result)
+	}
+}
+
+func TestRouteBuiltInRequestOverridesAssistantToOperatorForPetControl(t *testing.T) {
+	t.Parallel()
+
+	dispatch := func(ctx context.Context, agentName, prompt string, opts []RunOption) (string, error) {
+		switch agentName {
+		case defaultIntentRouterAgentName:
+			return "TARGET_AGENT: Assistant\nINTENT_TYPE: general_instruction\nREASON: generic request\nNEEDS_OPTIMIZATION: no", nil
+		case defaultPromptOptimizerAgentName:
+			return optimizedPromptBeginMarker + "\n让宠物狗跑起来\n" + optimizedPromptEndMarker, nil
+		case defaultOperatorAgentName:
+			return "Walking action invoked.", nil
+		case defaultVerifierAgentName:
+			return "VERIFIED_COMPLETE: Desktop pet walking started successfully.", nil
+		default:
+			return "", fmt.Errorf("unexpected agent %s", agentName)
+		}
+	}
+
+	result, err := routeBuiltInRequestWithDispatcher(context.Background(), "让宠物狗跑起来", domain.MemoryQueryContext{}, dispatch)
+	if err != nil {
+		t.Fatalf("routeBuiltInRequestWithDispatcher failed: %v", err)
+	}
+	if result.TargetAgent != defaultOperatorAgentName {
+		t.Fatalf("expected Operator override, got %+v", result)
 	}
 }

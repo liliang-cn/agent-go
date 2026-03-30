@@ -59,7 +59,7 @@ type Service struct {
 	sessionMu          sync.RWMutex
 	memoryStoreType    string
 	memoryScopeAgentID string
-	memoryScopeTeamID string
+	memoryScopeTeamID  string
 	memoryScopeUserID  string
 	memorySaveMu       sync.RWMutex
 	memorySavedInRun   bool
@@ -397,6 +397,10 @@ func (s *Service) RunStreamWithOptions(ctx context.Context, goal string, opts ..
 	}
 	s.rememberMemoryQueryContext(session, s.resolveMemoryQueryContext(session))
 
+	if routedEvents, ok, err := s.streamDirectConciergeRoute(ctx, session, goal); ok {
+		return routedEvents, err
+	}
+
 	runtime := NewRuntime(s, session, cfg)
 	return runtime.RunStream(ctx, goal), nil
 }
@@ -469,6 +473,26 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 	}
 	memoryQueryContext := s.resolveMemoryQueryContext(session)
 	s.rememberMemoryQueryContext(session, memoryQueryContext)
+
+	if routedResult, ok, err := s.executeDirectConciergeRoute(runCtx, session, goal); ok {
+		if err != nil {
+			return nil, err
+		}
+		routedResult.StartedAt = &startTime
+		completedAt := time.Now()
+		routedResult.CompletedAt = &completedAt
+		routedResult.EstimatedTokens = s.estimateRunTokens(goal, routedResult.FinalResult)
+		session.AddMessage(domain.Message{
+			Role:    "user",
+			Content: goal,
+		})
+		session.AddMessage(domain.Message{
+			Role:    "assistant",
+			Content: fmt.Sprintf("%v", routedResult.FinalResult),
+		})
+		_ = s.store.SaveSession(session)
+		return routedResult, nil
+	}
 
 	// Parallel Context Collection
 	var (

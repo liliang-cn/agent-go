@@ -43,11 +43,12 @@ func (m *TeamManager) RegisterConciergeTools(concierge *Service) {
 			return nil, err
 		}
 		return map[string]interface{}{
-			"target_agent":     routed.TargetAgent,
-			"intent_type":      routed.IntentType,
-			"routing_reason":   routed.Reason,
-			"optimized_prompt": routed.OptimizedPrompt,
-			"result":           routed.Result,
+			"target_agent":        routed.TargetAgent,
+			"intent_type":         routed.IntentType,
+			"routing_reason":      routed.Reason,
+			"optimized_prompt":    routed.OptimizedPrompt,
+			"result":              routed.Result,
+			"verification_result": routed.VerificationResult,
 		}, nil
 	})
 

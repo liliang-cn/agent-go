@@ -95,6 +95,9 @@ func TestSeedDefaultMembersCreatesBuiltInsByDefault(t *testing.T) {
 	if !operator.EnableMCP || len(operator.MCPTools) == 0 {
 		t.Fatalf("expected Operator to have MCP enabled with default tools, got enable_mcp=%v tools=%v", operator.EnableMCP, operator.MCPTools)
 	}
+	if len(operator.MCPTools) != 1 || operator.MCPTools[0] != "*" {
+		t.Fatalf("expected Operator to receive wildcard MCP allowlist, got %v", operator.MCPTools)
+	}
 
 	concierge, err := manager.GetAgentByName("Concierge")
 	if err != nil {
@@ -114,7 +117,8 @@ func TestSeedDefaultMembersCreatesBuiltInsByDefault(t *testing.T) {
 	}
 	if !strings.Contains(concierge.Instructions, "only job is intake, routing, status inspection, and task dispatch") ||
 		!strings.Contains(concierge.Instructions, "call route_builtin_request") ||
-		!strings.Contains(concierge.Instructions, "runs PromptOptimizer and IntentRouter in parallel") {
+		!strings.Contains(concierge.Instructions, "runs PromptOptimizer and IntentRouter in parallel") ||
+		!strings.Contains(concierge.Instructions, "Do not use submit_agent_task or submit_team_task for ordinary user requests") {
 		t.Fatalf("expected Concierge prompt to focus on dispatch-only routing, got %q", concierge.Instructions)
 	}
 	if concierge.EnableMCP || len(concierge.MCPTools) != 0 {
@@ -166,6 +170,14 @@ func TestSeedDefaultMembersCreatesBuiltInsByDefault(t *testing.T) {
 	}
 	if promptOptimizer.EnableMCP || len(promptOptimizer.MCPTools) != 0 {
 		t.Fatalf("expected PromptOptimizer to stay lightweight without default MCP tools, got enable_mcp=%v tools=%v", promptOptimizer.EnableMCP, promptOptimizer.MCPTools)
+	}
+
+	verifier, err := manager.GetAgentByName("Verifier")
+	if err != nil {
+		t.Fatalf("get standalone verifier failed: %v", err)
+	}
+	if !verifier.EnableMCP || len(verifier.MCPTools) != 1 || verifier.MCPTools[0] != "*" {
+		t.Fatalf("expected Verifier to have wildcard MCP verification access, got enable_mcp=%v tools=%v", verifier.EnableMCP, verifier.MCPTools)
 	}
 
 	stakeholder, err := manager.GetAgentByName("Stakeholder")
