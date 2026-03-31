@@ -3,6 +3,8 @@ package team
 import (
 	"bytes"
 	"testing"
+
+	"github.com/liliang-cn/agent-go/v2/pkg/agent"
 )
 
 func TestParseDelegatedTasks(t *testing.T) {
@@ -57,6 +59,13 @@ func TestParseDelegatedTasksWithoutMentionReturnsNil(t *testing.T) {
 	}
 	if len(tasks) != 0 {
 		t.Fatalf("expected no tasks, got %+v", tasks)
+	}
+}
+
+func TestDefaultEntryAgentForDirectControlPromptUsesOperator(t *testing.T) {
+	got := agent.DefaultEntryAgentForPrompt("让宠物狗跑起来")
+	if got != "Operator" {
+		t.Fatalf("expected Operator, got %q", got)
 	}
 }
 

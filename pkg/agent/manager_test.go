@@ -179,6 +179,9 @@ func TestSeedDefaultMembersCreatesBuiltInsByDefault(t *testing.T) {
 	if !verifier.EnableMCP || len(verifier.MCPTools) != 1 || verifier.MCPTools[0] != "*" {
 		t.Fatalf("expected Verifier to have wildcard MCP verification access, got enable_mcp=%v tools=%v", verifier.EnableMCP, verifier.MCPTools)
 	}
+	if !strings.Contains(verifier.Instructions, "Do not repeat the primary action unless verification genuinely requires it") {
+		t.Fatalf("expected Verifier instructions to emphasize independent verification, got %q", verifier.Instructions)
+	}
 
 	stakeholder, err := manager.GetAgentByName("Stakeholder")
 	if err != nil {

@@ -41,7 +41,7 @@ func TestRouteBuiltInRequestDispatchesArchivistWithMemorySavePrefix(t *testing.T
 	result, err := routeBuiltInRequestWithDispatcher(context.Background(), "明天下午17：00去万达吃饭", domain.MemoryQueryContext{
 		AgentID: "Concierge",
 		TeamID:  defaultTeamID,
-	}, dispatch)
+	}, nil, dispatch)
 	if err != nil {
 		t.Fatalf("routeBuiltInRequestWithDispatcher failed: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestRouteBuiltInRequestRunsOptimizerWhenNeeded(t *testing.T) {
 	result, err := routeBuiltInRequestWithDispatcher(context.Background(), "明天天气怎么样", domain.MemoryQueryContext{
 		AgentID: "Concierge",
 		TeamID:  defaultTeamID,
-	}, dispatch)
+	}, nil, dispatch)
 	if err != nil {
 		t.Fatalf("routeBuiltInRequestWithDispatcher failed: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestRouteBuiltInRequestStartsRouterAndOptimizerConcurrently(t *testing.T) {
 	result, err := routeBuiltInRequestWithDispatcher(context.Background(), "帮我总结一下", domain.MemoryQueryContext{
 		AgentID: "Concierge",
 		TeamID:  defaultTeamID,
-	}, dispatch)
+	}, nil, dispatch)
 	if err != nil {
 		t.Fatalf("routeBuiltInRequestWithDispatcher failed: %v", err)
 	}
@@ -179,15 +179,14 @@ func TestParseIntentRouterDecisionParsesNeedsOptimization(t *testing.T) {
 	}
 }
 
-func TestFallbackBuiltInRouteDecisionPrefersOperatorForMCPStyleControlRequests(t *testing.T) {
+func TestFallbackBuiltInRouteDecisionDefaultsToAssistantForGenericRequests(t *testing.T) {
 	t.Parallel()
 
 	decision := fallbackBuiltInRouteDecision("让宠物狗跑起来")
-	if decision.TargetAgent != defaultOperatorAgentName {
-		t.Fatalf("expected Operator target for MCP-style control request, got %+v", decision)
-	}
-	if decision.IntentType == "" {
-		t.Fatalf("expected fallback intent type to be populated, got %+v", decision)
+	// Fallback heuristic uses only intent recognition patterns; generic action
+	// requests without file/memory/search patterns default to Assistant.
+	if decision.TargetAgent != defaultAssistantAgentName {
+		t.Fatalf("expected Assistant target for generic request, got %+v", decision)
 	}
 }
 
@@ -211,7 +210,7 @@ func TestRouteBuiltInRequestVerifiesOperatorCompletion(t *testing.T) {
 		}
 	}
 
-	result, err := routeBuiltInRequestWithDispatcher(context.Background(), "让宠物狗跑起来", domain.MemoryQueryContext{}, dispatch)
+	result, err := routeBuiltInRequestWithDispatcher(context.Background(), "让宠物狗跑起来", domain.MemoryQueryContext{}, nil, dispatch)
 	if err != nil {
 		t.Fatalf("routeBuiltInRequestWithDispatcher failed: %v", err)
 	}
@@ -226,13 +225,17 @@ func TestRouteBuiltInRequestVerifiesOperatorCompletion(t *testing.T) {
 	}
 }
 
-func TestRouteBuiltInRequestOverridesAssistantToOperatorForPetControl(t *testing.T) {
+func TestRouteBuiltInRequestRoutesToOperatorWhenMCPToolsProvided(t *testing.T) {
 	t.Parallel()
+
+	// Simulate MCP tool context that the IntentRouter can use to decide routing.
+	mcpTools := []string{"mcp_husky-pet_run: Make the pet dog run", "mcp_husky-pet_stop: Stop the pet dog"}
 
 	dispatch := func(ctx context.Context, agentName, prompt string, opts []RunOption) (string, error) {
 		switch agentName {
 		case defaultIntentRouterAgentName:
-			return "TARGET_AGENT: Assistant\nINTENT_TYPE: general_instruction\nREASON: generic request\nNEEDS_OPTIMIZATION: no", nil
+			// IntentRouter sees the MCP tool list in the prompt and picks Operator.
+			return "TARGET_AGENT: Operator\nINTENT_TYPE: tool_execution\nREASON: MCP tool available\nNEEDS_OPTIMIZATION: no", nil
 		case defaultPromptOptimizerAgentName:
 			return optimizedPromptBeginMarker + "\n让宠物狗跑起来\n" + optimizedPromptEndMarker, nil
 		case defaultOperatorAgentName:
@@ -244,11 +247,11 @@ func TestRouteBuiltInRequestOverridesAssistantToOperatorForPetControl(t *testing
 		}
 	}
 
-	result, err := routeBuiltInRequestWithDispatcher(context.Background(), "让宠物狗跑起来", domain.MemoryQueryContext{}, dispatch)
+	result, err := routeBuiltInRequestWithDispatcher(context.Background(), "让宠物狗跑起来", domain.MemoryQueryContext{}, mcpTools, dispatch)
 	if err != nil {
 		t.Fatalf("routeBuiltInRequestWithDispatcher failed: %v", err)
 	}
 	if result.TargetAgent != defaultOperatorAgentName {
-		t.Fatalf("expected Operator override, got %+v", result)
+		t.Fatalf("expected Operator when MCP tools provided, got %+v", result)
 	}
 }

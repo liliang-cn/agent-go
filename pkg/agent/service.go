@@ -493,6 +493,38 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 		_ = s.store.SaveSession(session)
 		return routedResult, nil
 	}
+	if directMCPResult, ok, err := s.tryDirectOperatorMCPExecution(runCtx, goal); ok {
+		if err != nil {
+			return nil, err
+		}
+		completedAt := time.Now()
+		session.AddMessage(domain.Message{
+			Role:    "user",
+			Content: goal,
+		})
+		session.AddMessage(domain.Message{
+			Role:    "assistant",
+			Content: directMCPResult,
+		})
+		_ = s.store.SaveSession(session)
+		return &ExecutionResult{
+			PlanID:          uuid.New().String(),
+			SessionID:       session.GetID(),
+			Success:         true,
+			StepsTotal:      1,
+			StepsDone:       1,
+			StepsFailed:     0,
+			StartedAt:       &startTime,
+			CompletedAt:     &completedAt,
+			ToolCalls:       1,
+			EstimatedTokens: s.estimateRunTokens(goal, directMCPResult),
+			FinalResult:     directMCPResult,
+			Duration:        "completed",
+			Metadata: map[string]interface{}{
+				"dispatch_mode": "direct_operator_mcp_execution",
+			},
+		}, nil
+	}
 
 	// Parallel Context Collection
 	var (

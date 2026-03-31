@@ -15,6 +15,9 @@ func (s *Service) buildSystemPrompt(ctx context.Context, agent *Agent) string {
 	operationalRules := strings.Join([]string{
 		"- Call task_complete as soon as you have the final answer. Never keep running after the task is done.",
 		"- For file operations use mcp_filesystem_* tools; for web search use mcp_websearch_* tools.",
+		"- Treat the visible callable tool list as the authoritative source of what can actually be executed in this runtime.",
+		"- Do not invent hidden tool or API names such as generic run/status/start methods when concrete callable tool names are already exposed.",
+		"- If you are unsure which exact tool fits a request, call `search_available_tools` before claiming the capability is unavailable.",
 		"- Skills: calling a skill tool returns step-by-step instructions — follow them, then call task_complete.",
 		"- Never repeat the same tool call with identical arguments.",
 	}, "\n")

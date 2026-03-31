@@ -35,12 +35,18 @@ type builtInRouteResult struct {
 }
 
 func (m *TeamManager) routeBuiltInRequest(ctx context.Context, prompt string, queryContext domain.MemoryQueryContext) (*builtInRouteResult, error) {
-	return routeBuiltInRequestWithDispatcher(ctx, prompt, queryContext, func(ctx context.Context, agentName, instruction string, opts []RunOption) (string, error) {
+	var mcpToolNames []string
+	if svc, err := m.getOrBuildService(defaultOperatorAgentName); err == nil && svc != nil && svc.mcpService != nil {
+		for _, t := range svc.mcpService.ListTools() {
+			mcpToolNames = append(mcpToolNames, t.Function.Name+": "+t.Function.Description)
+		}
+	}
+	return routeBuiltInRequestWithDispatcher(ctx, prompt, queryContext, mcpToolNames, func(ctx context.Context, agentName, instruction string, opts []RunOption) (string, error) {
 		return m.dispatchTaskWithOptions(ctx, agentName, instruction, "", opts)
 	})
 }
 
-func routeBuiltInRequestWithDispatcher(ctx context.Context, prompt string, queryContext domain.MemoryQueryContext, dispatch builtInDispatchFunc) (*builtInRouteResult, error) {
+func routeBuiltInRequestWithDispatcher(ctx context.Context, prompt string, queryContext domain.MemoryQueryContext, availableMCPTools []string, dispatch builtInDispatchFunc) (*builtInRouteResult, error) {
 	prompt = normalizeTaskPrompt(prompt)
 	if prompt == "" {
 		return nil, fmt.Errorf("prompt is required")
@@ -65,7 +71,7 @@ func routeBuiltInRequestWithDispatcher(ctx context.Context, prompt string, query
 
 	go func() {
 		defer wg.Done()
-		routerRaw, routerErr = dispatch(ctx, defaultIntentRouterAgentName, buildIntentRouterTaskPrompt(prompt), runOptions)
+		routerRaw, routerErr = dispatch(ctx, defaultIntentRouterAgentName, buildIntentRouterTaskPrompt(prompt, availableMCPTools), runOptions)
 	}()
 
 	go func() {
@@ -124,7 +130,15 @@ func routeBuiltInRequestWithDispatcher(ctx context.Context, prompt string, query
 	}, nil
 }
 
-func buildIntentRouterTaskPrompt(userPrompt string) string {
+func buildIntentRouterTaskPrompt(userPrompt string, availableMCPTools []string) string {
+	toolsSection := ""
+	if len(availableMCPTools) > 0 {
+		toolsSection = "\nCurrently available MCP tools for Operator:\n"
+		for _, t := range availableMCPTools {
+			toolsSection += "  - " + t + "\n"
+		}
+		toolsSection += "If any of these tools could satisfy the user's request, use Operator.\n"
+	}
 	return strings.TrimSpace(fmt.Sprintf(`Classify the user's request and choose exactly one built-in target agent.
 Valid TARGET_AGENT values: Assistant, Operator, Stakeholder, Archivist, Verifier.
 Rules:
@@ -134,7 +148,7 @@ Rules:
 - Use Stakeholder for product, business, prioritization, requirements, scope, and acceptance criteria.
 - Use Verifier for checking or validating a candidate answer, especially conflicts or corrections.
 - Use Assistant for everything else.
-Also decide if the request needs prompt optimization before dispatch.
+%sAlso decide if the request needs prompt optimization before dispatch.
 NEEDS_OPTIMIZATION: yes — only when the request is vague, ambiguous, or missing key context that a rewrite would meaningfully clarify.
 NEEDS_OPTIMIZATION: no — when the request is already clear, direct, or contains specific facts (dates, names, numbers).
 Return exactly:
@@ -144,7 +158,7 @@ REASON: <one short sentence>
 NEEDS_OPTIMIZATION: yes|no
 
 User request:
-%s`, strings.TrimSpace(userPrompt)))
+%s`, toolsSection, strings.TrimSpace(userPrompt)))
 }
 
 func buildPromptOptimizerTaskPrompt(userPrompt string) string {
@@ -239,29 +253,6 @@ func fallbackBuiltInRouteDecision(prompt string) builtInRouteDecision {
 		decision.TargetAgent = defaultAssistantAgentName
 	}
 
-	lower := strings.ToLower(strings.TrimSpace(prompt))
-	switch {
-	case containsAny(lower, []string{
-		"mcp", "tool", "server", "agentgo", "desktop pet", "pet", "husky",
-		"run it", "start it", "stop it", "toggle", "show", "hide", "reset",
-		"调用", "工具", "服务器", "跑起来", "停下", "停止", "显示", "隐藏", "切换", "重置", "播放", "宠物狗",
-	}):
-		decision.TargetAgent = defaultOperatorAgentName
-		if decision.IntentType == "" {
-			decision.IntentType = "tool_execution"
-		}
-	case containsAny(lower, []string{"priorit", "roadmap", "acceptance criteria", "scope", "business", "product", "requirement", "需求", "优先级", "范围", "产品", "验收标准"}):
-		decision.TargetAgent = defaultStakeholderAgentName
-		if decision.IntentType == "" {
-			decision.IntentType = "product_judgment"
-		}
-	case containsAny(lower, []string{"verify", "verification", "check whether", "validate", "double-check", "correct or not", "冲突", "核对", "验证", "校验"}):
-		decision.TargetAgent = defaultVerifierAgentName
-		if decision.IntentType == "" {
-			decision.IntentType = "verification"
-		}
-	}
-
 	if decision.TargetAgent == "" {
 		decision.TargetAgent = defaultAssistantAgentName
 	}
@@ -282,12 +273,16 @@ func shouldOverrideBuiltInRouteDecision(prompt string, decision, fallback builtI
 }
 
 func promptLooksLikeOperatorControlRequest(prompt string) bool {
-	lower := strings.ToLower(strings.TrimSpace(prompt))
-	return containsAny(lower, []string{
-		"mcp", "tool", "server", "desktop pet", "pet", "husky",
-		"run it", "start it", "stop it", "toggle", "show", "hide", "reset", "play action",
-		"调用", "工具", "服务器", "跑起来", "停下", "停止", "显示", "隐藏", "切换", "重置", "播放", "宠物狗",
-	})
+	decision := fallbackBuiltInRouteDecision(normalizeTaskPrompt(prompt))
+	return strings.EqualFold(decision.TargetAgent, defaultOperatorAgentName)
+}
+
+func DefaultEntryAgentForPrompt(prompt string) string {
+	decision := fallbackBuiltInRouteDecision(normalizeTaskPrompt(prompt))
+	if strings.EqualFold(decision.TargetAgent, defaultOperatorAgentName) {
+		return defaultOperatorAgentName
+	}
+	return defaultConciergeAgentName
 }
 
 func buildFinalBuiltInDispatchPrompt(originalPrompt, optimizedPrompt string, decision builtInRouteDecision) string {
@@ -332,8 +327,8 @@ Operator's reported result:
 
 Your task:
 - Independently verify whether the requested action is complete.
-- Prefer read-only or status-oriented checks using available tools or MCP capabilities.
-- Do not repeat the primary action unless there is no safe read-only way to verify and the action is idempotent.
+- Use the available tools or MCP capabilities to gather independent evidence.
+- Do not repeat the primary action unless verification genuinely requires it or the action is clearly safe and idempotent.
 - If the request is complete, reply exactly: VERIFIED_COMPLETE: <one concise sentence with concrete evidence>.
 - If the request is still blocked, incomplete, or unverifiable, reply exactly: VERIFIED_BLOCKED: <one concise sentence with the blocker or missing evidence>.
 `, strings.TrimSpace(originalPrompt), strings.TrimSpace(executedPrompt), strings.TrimSpace(previousResult)))

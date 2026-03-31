@@ -1,3 +1,8 @@
 {
-  "mcpServers": {}
+  "mcpServers": {
+    "husky-pet": {
+      "command": "/Users/liliang/.local/bin/mcp-pet-server",
+      "args": []
+    }
+  }
 }

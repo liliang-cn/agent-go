@@ -832,7 +832,7 @@ func runTeamMessage(ctx context.Context, manager *agent.TeamManager, conversatio
 
 	if len(tasks) == 0 {
 		tasks = []delegatedTask{{
-			AgentName:   "Concierge",
+			AgentName:   agent.DefaultEntryAgentForPrompt(message),
 			Instruction: message,
 		}}
 	}
