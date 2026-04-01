@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"slices"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/liliang-cn/agent-go/v2/pkg/config"
@@ -26,7 +29,7 @@ Servers are started on-demand when tools are called.`,
 
 var mcpListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List available MCP tools",
+	Short: "List configured MCP servers",
 	RunE:  runMCPList,
 }
 
@@ -84,9 +87,9 @@ func init() {
 	// Note: mcpChatAdvancedCmd is commented out in mcp_chat.go to avoid duplicate
 
 	// Add flags
-	mcpListCmd.Flags().StringP("server", "s", "", "Filter tools by server name")
+	mcpListCmd.Flags().StringP("server", "s", "", "Filter servers by name")
 	mcpListCmd.Flags().BoolP("json", "j", false, "Output in JSON format")
-	mcpListCmd.Flags().BoolP("skip-failed", "k", true, "Continue even if some servers fail to start")
+	mcpListCmd.Flags().BoolP("skip-failed", "k", true, "Deprecated: server listing no longer starts MCP processes")
 
 	mcpCallCmd.Flags().StringP("timeout", "t", "30s", "Call timeout duration")
 	mcpCallCmd.Flags().BoolP("json", "j", false, "Output result in JSON format")
@@ -291,81 +294,119 @@ func runMCPList(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	toolManager := mcp.NewMCPToolManager(&Cfg.MCP)
-	defer func() {
-		if err := toolManager.Close(); err != nil {
-			// Only print error if it's not a signal-related termination
-			if !strings.Contains(err.Error(), "signal: killed") {
-				fmt.Printf("Warning: failed to clean up tool manager: %v\n", err)
-			}
-		}
-	}()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	skipFailed, _ := cmd.Flags().GetBool("skip-failed")
-
-	// Start servers to get tools
-	if skipFailed {
-		succeeded, failed := toolManager.StartWithFailures(ctx)
-		if len(failed) > 0 {
-			fmt.Printf("⚠️  Warning: Failed to start %d server(s): %s\n", len(failed), strings.Join(failed, ", "))
-		}
-		if len(succeeded) > 0 {
-			fmt.Printf("✅ Started %d server(s) successfully\n\n", len(succeeded))
-		}
-	} else {
-		if err := toolManager.Start(ctx); err != nil {
-			return fmt.Errorf("failed to start MCP servers: %w", err)
-		}
-	}
-
 	serverFilter, _ := cmd.Flags().GetString("server")
 	jsonOutput, _ := cmd.Flags().GetBool("json")
-
-	var tools map[string]*mcp.MCPToolWrapper
-	if serverFilter != "" {
-		tools = toolManager.ListToolsByServer(serverFilter)
-	} else {
-		tools = toolManager.ListTools()
+	rows, err := configuredMCPServerRows(Cfg, serverFilter)
+	if err != nil {
+		return err
 	}
 
 	if jsonOutput {
-		llmTools := toolManager.GetToolsForLLM()
-		output, err := json.MarshalIndent(llmTools, "", "  ")
+		output, err := json.MarshalIndent(rows, "", "  ")
 		if err != nil {
-			return fmt.Errorf("failed to marshal tools: %w", err)
+			return fmt.Errorf("failed to marshal server list: %w", err)
 		}
 		fmt.Println(string(output))
 		return nil
 	}
 
-	// Human-readable output
-	fmt.Printf("🔧 Available MCP Tools (%d total):\n\n", len(tools))
-
-	serverGroups := make(map[string][]*mcp.MCPToolWrapper)
-	for _, tool := range tools {
-		serverName := tool.ServerName()
-		serverGroups[serverName] = append(serverGroups[serverName], tool)
+	if len(rows) == 0 {
+		fmt.Println("No MCP servers configured.")
+		return nil
 	}
 
-	for serverName, serverTools := range serverGroups {
-		fmt.Printf("📦 Server: %s (%d tools)\n", serverName, len(serverTools))
-		for _, tool := range serverTools {
-			fmt.Printf("   - %s\n", tool.Name())
-			fmt.Printf("     %s\n", tool.Description())
-
-			// Show schema if available
-			schema := tool.Schema()
-			if props, ok := schema["properties"].(map[string]interface{}); ok && len(props) > 0 {
-				fmt.Printf("     Parameters: %s\n", formatSchemaParams(props))
-			}
-		}
-		fmt.Println()
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "Name\tCommand\tArgs\tEnv\tCwd\tStatus\tAuth")
+	for _, row := range rows {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			row.Name, row.Command, row.Args, row.Env, row.Cwd, row.Status, row.Auth)
 	}
+	w.Flush()
 
 	return nil
+}
+
+type mcpListRow struct {
+	Name    string `json:"name"`
+	Command string `json:"command"`
+	Args    string `json:"args"`
+	Env     string `json:"env"`
+	Cwd     string `json:"cwd"`
+	Status  string `json:"status"`
+	Auth    string `json:"auth"`
+}
+
+func configuredMCPServerRows(cfg *config.Config, serverFilter string) ([]mcpListRow, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("config is required")
+	}
+
+	mcpCfg := cfg.MCP
+	mcpCfg.LoadedServers = nil
+	if err := mcpCfg.LoadServersFromJSON(); err != nil {
+		return nil, fmt.Errorf("failed to load MCP server configurations: %w", err)
+	}
+
+	filter := strings.ToLower(strings.TrimSpace(serverFilter))
+	loaded := mcpCfg.GetLoadedServers()
+	rows := make([]mcpListRow, 0, len(loaded))
+	for _, server := range loaded {
+		if server.Type == mcp.ServerTypeInProcess {
+			continue
+		}
+		if filter != "" && !strings.EqualFold(server.Name, filter) {
+			continue
+		}
+		rows = append(rows, mcpListRow{
+			Name:    strings.TrimSpace(server.Name),
+			Command: formatMCPListCommand(server),
+			Args:    formatMCPListArgs(server.Args),
+			Env:     formatMCPListEnv(server.Env),
+			Cwd:     dashIfEmpty(strings.TrimSpace(server.WorkingDir)),
+			Status:  "enabled",
+			Auth:    "Unsupported",
+		})
+	}
+	slices.SortFunc(rows, func(a, b mcpListRow) int {
+		return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
+	})
+	return rows, nil
+}
+
+func formatMCPListCommand(server mcp.ServerConfig) string {
+	if server.Type == mcp.ServerTypeHTTP || server.Type == mcp.ServerTypeSSE {
+		return dashIfEmpty(strings.TrimSpace(server.URL))
+	}
+	if len(server.Command) == 0 {
+		return "-"
+	}
+	return strings.Join(server.Command, " ")
+}
+
+func formatMCPListArgs(args []string) string {
+	if len(args) == 0 {
+		return "-"
+	}
+	return strings.Join(args, " ")
+}
+
+func formatMCPListEnv(env map[string]string) string {
+	if len(env) == 0 {
+		return "-"
+	}
+	keys := make([]string, 0, len(env))
+	for key := range env {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	return strings.Join(keys, ",")
+}
+
+func dashIfEmpty(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "-"
+	}
+	return value
 }
 
 func runMCPCall(cmd *cobra.Command, args []string) error {
