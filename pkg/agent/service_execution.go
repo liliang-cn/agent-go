@@ -13,7 +13,6 @@ import (
 	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 	memorypkg "github.com/liliang-cn/agent-go/v2/pkg/memory"
 	"github.com/liliang-cn/agent-go/v2/pkg/prompt"
-	"golang.org/x/sync/errgroup"
 )
 
 type executionMetrics struct {
@@ -22,9 +21,18 @@ type executionMetrics struct {
 	estimatedTokens int
 }
 
+type ToolExecutionCallbacks struct {
+	OnToolCall   func(name string, args map[string]interface{}, interruptBehavior string)
+	OnToolResult func(name string, result interface{}, err error, interruptBehavior string)
+	OnToolState  func(name string, state string, interruptBehavior string)
+	EventSink    func(*Event)
+	Debug        bool
+}
+
 const (
 	recentConversationWindow = 6
 	olderConversationLimit   = 12
+	toolUseNudgePrompt       = "Do not describe what you would do. You have tools available — call them now to accomplish the goal. Use the tool functions provided to you."
 )
 
 func isExplicitMemoryRecallQuery(goal string) bool {
@@ -254,25 +262,20 @@ func (s *Service) executeWithLLM(ctx context.Context, goal string, intent *Inten
 	metrics := &executionMetrics{}
 
 	// Determine starting agent
-	currentAgent := s.agent
-	if session != nil && session.AgentID != "" && s.registry != nil {
-		if a, ok := s.registry.GetAgent(session.AgentID); ok {
-			currentAgent = a
-		}
-	}
+	currentAgent := s.resolveCurrentAgent(session)
 
 	prevToolCalls := make(map[string]int)
 	summary := ""
 	if session != nil {
-		summary = session.Summary
+		summary = session.GetSummary()
 	}
 	messages := s.buildConversationMessages(session, goal, ragContext, memoryContext, summary)
+	state := newQueryLoopState(goal, messages, intent, maxRounds)
+	state.PrevToolCalls = prevToolCalls
 
 	if cfg.StoreHistory && s.historyStore != nil {
 		s.historyStore.RecordMessage(ctx, session.GetID(), currentAgent.ID(), goal, messages[len(messages)-1], 0)
 	}
-
-	toolCallCount := 0
 
 	// --- DEBUG: LOG AGENT CONFIGURATION ---
 	if s.debug {
@@ -293,6 +296,8 @@ func (s *Service) executeWithLLM(ctx context.Context, goal string, intent *Inten
 		default:
 		}
 
+		state.beginRound()
+		state.setStage(TurnStageAwaitingModel, "requesting model output", 0)
 		s.emitProgress("thinking", fmt.Sprintf("[%s] Thinking...", currentAgent.Name()), round+1, "")
 
 		result, turnTokens, err := s.runOneLLMTurn(ctx, currentAgent, messages, cfg, round, goal, intent)
@@ -300,57 +305,121 @@ func (s *Service) executeWithLLM(ctx context.Context, goal string, intent *Inten
 			return nil, metrics, err
 		}
 		metrics.estimatedTokens += turnTokens
+		state.noteTokens(turnTokens)
 
 		if len(result.ToolCalls) > 0 {
-			// Check for handoff first
-			if newAgent, updated := s.applyHandoff(ctx, &messages, currentAgent, result, session, round); updated {
-				currentAgent = newAgent
+			nextAgent, filteredToolCalls, duplicateToolResults, fallback, handoff := s.prepareToolRound(ctx, &messages, currentAgent, session, result, state.PrevToolCalls, round)
+			if handoff {
+				currentAgent = nextAgent
+				state.Transition = "handoff"
+				state.TransitionReason = "agent handoff requested"
 				continue
 			}
-
-			filteredToolCalls, duplicateToolResults, fallback := s.handleDuplicateToolCalls(messages, result, prevToolCalls)
 			if fallback != "" {
 				return fallback, metrics, nil
 			}
 			if len(filteredToolCalls) == 0 {
 				if len(duplicateToolResults) > 0 {
 					messages = s.appendToolRoundToMessages(messages, result, duplicateToolResults)
+					state.Messages = messages
 					s.recordToolResults(ctx, session, currentAgent, goal, duplicateToolResults, cfg, round)
-					toolCallCount += len(duplicateToolResults)
+					state.recordToolResults(duplicateToolResults)
 					metrics.toolCalls += len(duplicateToolResults)
 					metrics.toolsUsed = appendToolNames(metrics.toolsUsed, duplicateToolResults)
 				}
+				state.noteRoundCompleted()
 				continue
 			}
 
 			// Execute tool calls and append results to messages
+			state.setStage(TurnStageHandlingTools, "executing tool batch", len(filteredToolCalls))
 			s.emitProgress("tool_call", fmt.Sprintf("Calling %d tool(s)", len(filteredToolCalls)), round+1, "")
-			toolResults, err := s.executeToolCalls(ctx, currentAgent, session, filteredToolCalls)
+			var toolResults []ToolExecutionResult
+			messages, toolResults, err = s.executePreparedToolRound(ctx, currentAgent, session, messages, result, filteredToolCalls, duplicateToolResults, ToolExecutionCallbacks{}, false)
 			if err != nil {
 				messages = append(messages, domain.Message{
 					Role:    "assistant",
 					Content: fmt.Sprintf("Tool execution failed: %v", err),
 				})
+				state.Messages = messages
+				state.noteRoundCompleted()
 				continue
 			}
-
-			messages = s.appendToolRoundToMessages(messages, result, append(duplicateToolResults, toolResults...))
+			state.Messages = messages
 			s.recordToolResults(ctx, session, currentAgent, goal, toolResults, cfg, round)
-			toolCallCount += len(toolResults)
+			state.recordToolResults(toolResults)
 			metrics.toolCalls += len(toolResults)
 			metrics.toolsUsed = appendToolNames(metrics.toolsUsed, toolResults)
+			state.noteRoundCompleted()
 			continue
 		}
 
-		// No tool calls — done
-		if cfg.StoreHistory && s.historyStore != nil {
-			s.historyStore.CompleteSession(ctx, session.GetID(), currentAgent.ID(), goal, round+1, toolCallCount, true, 0)
-		}
-		return result.Content, metrics, nil
+		state.setStage(TurnStageCompleted, "text response completed", 0)
+		finalContent, err := s.completeTextOnlyTurn(ctx, session, currentAgent, goal, round+1, state.TotalToolCalls, cfg, result.Content)
+		return finalContent, metrics, err
 	}
 
-	result, err := s.handleMaxTurnsExceeded(ctx, session, currentAgent, goal, maxRounds, toolCallCount, messages, cfg)
+	result, err := s.handleMaxTurnsExceeded(ctx, session, currentAgent, goal, maxRounds, state.TotalToolCalls, messages, cfg)
 	return result, metrics, err
+}
+
+func (s *Service) prepareToolRound(ctx context.Context, messages *[]domain.Message, currentAgent *Agent, session *Session, result *domain.GenerationResult, prevToolCalls map[string]int, round int) (*Agent, []domain.ToolCall, []ToolExecutionResult, string, bool) {
+	result.ToolCalls = normalizeToolCalls(result.ToolCalls)
+
+	if newAgent, updated := s.applyHandoff(ctx, messages, currentAgent, result, session, round); updated {
+		return newAgent, nil, nil, "", true
+	}
+
+	filteredToolCalls, duplicateToolResults, fallback := s.handleDuplicateToolCalls(*messages, result, prevToolCalls)
+	result.ToolCalls = filteredToolCalls
+	return currentAgent, filteredToolCalls, duplicateToolResults, fallback, false
+}
+
+func shouldNudgeForMissingToolUse(toolsAvailable bool, toolUsed bool, nudged bool) bool {
+	return toolsAvailable && !toolUsed && !nudged
+}
+
+func (s *Service) completeTextOnlyTurn(ctx context.Context, session *Session, agent *Agent, goal string, round int, toolCallCount int, cfg *RunConfig, content string) (string, error) {
+	if cfg.StoreHistory && s.historyStore != nil {
+		s.historyStore.CompleteSession(ctx, session.GetID(), agent.ID(), goal, round, toolCallCount, true, 0)
+	}
+	return content, nil
+}
+
+func appendToolUseNudgeMessages(messages []domain.Message, content string) []domain.Message {
+	messages = append(messages, domain.Message{
+		Role:    "assistant",
+		Content: content,
+	})
+	messages = append(messages, domain.Message{
+		Role:    "user",
+		Content: toolUseNudgePrompt,
+	})
+	return messages
+}
+
+func buildUserContextMetaMessage(userCtx *UserContext) *domain.Message {
+	if userCtx == nil {
+		return nil
+	}
+	content := strings.TrimSpace(userCtx.FormatForMetaMessage())
+	if content == "" {
+		return nil
+	}
+	return &domain.Message{
+		Role:    "user",
+		Content: "<system-reminder>\n" + content + "\n</system-reminder>",
+	}
+}
+
+func (s *Service) executePreparedToolRound(ctx context.Context, currentAgent *Agent, session *Session, messages []domain.Message, result *domain.GenerationResult, filteredToolCalls []domain.ToolCall, duplicateToolResults []ToolExecutionResult, callbacks ToolExecutionCallbacks, continueOnError bool) ([]domain.Message, []ToolExecutionResult, error) {
+	result.ToolCalls = filteredToolCalls
+	toolResults, err := s.executeToolCallsWithOptions(ctx, currentAgent, session, filteredToolCalls, callbacks, continueOnError)
+	if err != nil {
+		return messages, nil, err
+	}
+	messages = s.appendToolRoundToMessages(messages, result, append(duplicateToolResults, toolResults...))
+	return messages, toolResults, nil
 }
 
 // buildConversationMessages constructs the next-turn user message and prepends prior session history when available.
@@ -361,7 +430,10 @@ func (s *Service) buildConversationMessages(session *Session, goal, ragContext, 
 	}
 
 	olderMessages, recentMessages := splitConversationHistory(history, recentConversationWindow, olderConversationLimit)
-	messages := make([]domain.Message, 0, len(olderMessages)+len(recentMessages)+2)
+	messages := make([]domain.Message, 0, len(olderMessages)+len(recentMessages)+3)
+	if userCtxMsg := buildUserContextMetaMessage(s.buildUserContext()); userCtxMsg != nil {
+		messages = append(messages, *userCtxMsg)
+	}
 	if contextMsg := buildConversationContextMessage(summary, memoryContext, ragContext); contextMsg != nil {
 		messages = append(messages, *contextMsg)
 	}
@@ -420,19 +492,15 @@ func buildConversationContextMessage(summary, memoryContext, ragContext string) 
 
 // runOneLLMTurn builds the prompt for this round and calls the LLM once.
 func (s *Service) runOneLLMTurn(ctx context.Context, currentAgent *Agent, messages []domain.Message, cfg *RunConfig, round int, goal string, intent *IntentRecognitionResult) (*domain.GenerationResult, int, error) {
-	tools := s.collectAllAvailableTools(ctx, currentAgent)
-	if looksLikeInformationSeekingQuery(goal) {
-		tools = filterToolDefinitions(tools, func(tool domain.ToolDefinition) bool {
-			return tool.Function.Name != "memory_save"
-		})
-	}
-	systemMsg := s.buildSystemPrompt(ctx, currentAgent)
-	genMessages := append([]domain.Message{{Role: "system", Content: systemMsg}}, messages...)
+	tools, genMessages := s.prepareTurnInputs(ctx, currentAgent, messages, goal)
 
 	if s.debug || cfg.Debug {
 		var promptBuilder strings.Builder
 		info := s.Info()
 		fmt.Fprintf(&promptBuilder, "MODEL: %s (%s)\n", info.Model, info.BaseURL)
+		if sections := formatSystemPromptSectionsForDebug(s.buildSystemPromptSections(ctx, currentAgent, systemPromptOptions{includePTC: s.ptcIntegration != nil})); sections != "" {
+			fmt.Fprintf(&promptBuilder, "%s\n\n", sections)
+		}
 		fmt.Fprintf(&promptBuilder, "=== TOOLS (%d) ===\n", len(tools))
 		for _, t := range tools {
 			fmt.Fprintf(&promptBuilder, "  • %s: %s\n", t.Function.Name, t.Function.Description)
@@ -453,7 +521,7 @@ func (s *Service) runOneLLMTurn(ctx context.Context, currentAgent *Agent, messag
 		maxTokens = 2000
 	}
 
-	result, err := s.llmService.GenerateWithTools(ctx, genMessages, tools, s.toolGenerationOptions(temperature, maxTokens, ""))
+	result, err := s.llmService.GenerateWithTools(ctx, genMessages, tools, s.toolGenerationOptions(temperature, maxTokens, toolChoiceForIntent(intent, round)))
 	if err != nil {
 		return nil, 0, fmt.Errorf("LLM generation failed: %w", err)
 	}
@@ -511,6 +579,22 @@ func (s *Service) applyHandoff(ctx context.Context, messages *[]domain.Message, 
 		}
 	}
 	return currentAgent, false
+}
+
+func normalizeToolCalls(toolCalls []domain.ToolCall) []domain.ToolCall {
+	if len(toolCalls) == 0 {
+		return nil
+	}
+	normalized := make([]domain.ToolCall, len(toolCalls))
+	copy(normalized, toolCalls)
+	for i := range normalized {
+		if normalized[i].ID == "" {
+			normalized[i].ID = domain.NormalizeToolCallID(fmt.Sprintf("%s_%d", normalized[i].Function.Name, i))
+			continue
+		}
+		normalized[i].ID = domain.NormalizeToolCallID(normalized[i].ID)
+	}
+	return normalized
 }
 
 func (s *Service) handleDuplicateToolCalls(messages []domain.Message, result *domain.GenerationResult, seen map[string]int) ([]domain.ToolCall, []ToolExecutionResult, string) {
@@ -808,76 +892,7 @@ func extractJSON(resp string, target interface{}) error {
 
 // executeToolCalls executes the tool calls decided by LLM and returns all results
 func (s *Service) executeToolCalls(ctx context.Context, currentAgent *Agent, session *Session, toolCalls []domain.ToolCall) ([]ToolExecutionResult, error) {
-	results := make([]ToolExecutionResult, len(toolCalls))
-
-	// Create an errgroup to run tools in parallel
-	g, groupCtx := errgroup.WithContext(ctx)
-
-	for i, tc := range toolCalls {
-		// Capture index and tool call for the goroutine
-		idx, toolCall := i, tc
-
-		g.Go(func() error {
-			toolCtx := withCurrentAgent(groupCtx, currentAgent)
-
-			// Format tool name for display
-			toolName := toolCall.Function.Name
-			toolDesc := toolName
-			if strings.HasPrefix(toolName, "mcp_") {
-				toolDesc = strings.TrimPrefix(toolName, "mcp_")
-			}
-
-			s.emitProgress("tool_call", fmt.Sprintf("→ %s", toolDesc), 0, toolName)
-
-			if s.debug {
-				s.EmitDebugPrint(0, "tool_call", fmt.Sprintf("TOOL: %s\nARGS: %v", toolName, toolCall.Function.Arguments))
-			}
-
-			s.logger.Debug("Executing Tool",
-				slog.String("tool", toolName),
-				slog.Any("arguments", toolCall.Function.Arguments))
-
-			// Delegate to SubAgent
-			result, err, _ := s.executeToolViaSubAgent(toolCtx, currentAgent, session, toolCall)
-
-			if err != nil {
-				s.logger.Error("Tool execution failed",
-					slog.String("tool", toolName),
-					slog.Any("error", err))
-
-				if s.debug {
-					s.EmitDebugPrint(0, "tool_result", fmt.Sprintf("TOOL: %s\nERROR: %v", toolName, err))
-				}
-
-				return fmt.Errorf("Tool %s failed: %w", toolCall.Function.Name, err)
-			}
-
-			s.logger.Debug("Tool Result",
-				slog.String("tool", toolName),
-				slog.Any("result", result))
-
-			if s.debug {
-				s.EmitDebugPrint(0, "tool_result", fmt.Sprintf("TOOL: %s\nRESULT: %v", toolName, result))
-			}
-
-			// Emit tool result progress
-			s.emitProgress("tool_result", fmt.Sprintf("✓ %s Done", toolDesc), 0, toolName)
-
-			results[idx] = ToolExecutionResult{
-				ToolCallID: toolCall.ID,
-				ToolName:   toolCall.Function.Name,
-				Result:     result,
-			}
-			return nil
-		})
-	}
-
-	// Wait for all tools to finish
-	if err := g.Wait(); err != nil {
-		return nil, err
-	}
-
-	return results, nil
+	return s.executeToolCallsWithOptions(ctx, currentAgent, session, toolCalls, ToolExecutionCallbacks{}, false)
 }
 
 // ToolExecutionResult represents the result of a single tool execution
@@ -943,7 +958,7 @@ func (s *Service) executeWithDynamicToolSelection(ctx context.Context, goal stri
 	}
 
 	// Use GenerateWithTools - let LLM natively decide which tools to call
-	result, err := s.llmService.GenerateWithTools(ctx, messages, availableTools, s.toolGenerationOptions(0.3, 1000, ""))
+	result, err := s.llmService.GenerateWithTools(ctx, messages, availableTools, s.toolGenerationOptions(0.3, 1000, toolChoiceForIntent(intent, 0)))
 
 	if err != nil {
 		return nil, fmt.Errorf("tool execution failed: %w", err)

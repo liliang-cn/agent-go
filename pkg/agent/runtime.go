@@ -12,10 +12,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 	memorypkg "github.com/liliang-cn/agent-go/v2/pkg/memory"
-	"github.com/liliang-cn/agent-go/v2/pkg/skills"
 	"github.com/liliang-cn/agent-go/v2/pkg/usage"
-	"golang.org/x/sync/errgroup"
 )
+
+type backgroundMemoryWriter interface {
+	EnqueueStoreIfWorthwhile(req *domain.MemoryStoreRequest) bool
+}
 
 // errTaskComplete is a sentinel returned from the StreamWithTools callback to
 // stop streaming as soon as task_complete is detected. It is NOT a real error.
@@ -33,18 +35,10 @@ type Runtime struct {
 
 // NewRuntime creates a new runtime instance
 func NewRuntime(svc *Service, session *Session, cfg *RunConfig) *Runtime {
-	// Determine initial agent
-	currentAgent := svc.agent
-	if session.AgentID != "" && svc.registry != nil {
-		if a, ok := svc.registry.GetAgent(session.AgentID); ok {
-			currentAgent = a
-		}
-	}
-
 	return &Runtime{
 		svc:          svc,
 		eventChan:    make(chan *Event, 100), // Buffer events
-		currentAgent: currentAgent,
+		currentAgent: svc.resolveCurrentAgent(session),
 		session:      session,
 		cfg:          cfg,
 	}
@@ -80,18 +74,17 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 	// model or unreachable LLM doesn't block the entire run forever.
 	prepCtx, prepCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer prepCancel()
-	memoryContext, ragContext := r.prepareContext(prepCtx, goal)
+	prepared := r.svc.prepareConversationContext(prepCtx, goal, r.session, prepareConversationOptions{includeIntent: true})
 
 	// 2. Build initial messages using the same layered assembly strategy as the non-streaming path.
-	summary := ""
-	if r.session != nil {
-		summary = r.session.Summary
-	}
-	messages := r.svc.buildConversationMessages(r.session, goal, ragContext, memoryContext, summary)
+	const maxRounds = 20
+	state := newQueryLoopState(goal, prepared.messages, prepared.intent, maxRounds)
+	state.setStage(TurnStagePreparingContext, "starting turn setup", 0)
+	r.emitLoopState(state)
+
+	messages := state.Messages
 	// Ensure the current user message is in the session before starting
 	r.session.AddMessage(domain.Message{Role: "user", Content: goal})
-
-	const maxRounds = 20
 	for round := 0; round < maxRounds; round++ {
 		// Check cancellation
 		if ctx.Err() != nil {
@@ -99,20 +92,22 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			return
 		}
 
+		state.beginRound()
 		r.emit(EventTypeThinking, "Thinking...")
+		state.setStage(TurnStageAwaitingModel, "requesting model output", 0)
+		r.emitLoopState(state)
 
-		// 3. Collect tools for CURRENT agent
-		tools := r.svc.collectAllAvailableTools(ctx, r.currentAgent)
-
-		// 4. Build System Prompt for CURRENT agent
-		systemMsg := r.svc.buildSystemPrompt(ctx, r.currentAgent)
-		genMessages := append([]domain.Message{{Role: "system", Content: systemMsg}}, messages...)
+		// 3. Build model inputs for CURRENT agent
+		tools, genMessages := r.svc.prepareTurnInputs(ctx, r.currentAgent, messages, goal)
 
 		// --- DEBUG: LOG FULL PROMPT + TOOLS ---
 		if r.debugEnabled() {
 			var promptBuilder strings.Builder
 			info := r.svc.Info()
 			fmt.Fprintf(&promptBuilder, "MODEL: %s (%s)\n", info.Model, info.BaseURL)
+			if sections := formatSystemPromptSectionsForDebug(r.svc.buildSystemPromptSections(ctx, r.currentAgent, systemPromptOptions{includePTC: r.svc.ptcIntegration != nil})); sections != "" {
+				fmt.Fprintf(&promptBuilder, "%s\n\n", sections)
+			}
 			// Token estimation
 			tc := usage.NewTokenCounter()
 			promptTokens := tc.EstimateConversationTokens(toUsageMessages(genMessages), info.Model)
@@ -131,8 +126,6 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		}
 
 		// 5. LLM Call (Streaming)
-		var fullContent strings.Builder
-		var toolCalls []domain.ToolCall
 		toolCallDetected := false
 		// taskCompleteTriggered signals task_complete was detected mid-stream.
 		// We break out of StreamWithTools early by returning an error from the
@@ -141,93 +134,55 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		var taskCompleteResult string
 		taskCompleteTriggered := false
 
-		var lastResponseID string
-		err := r.svc.llmService.StreamWithTools(ctx, genMessages, tools, r.svc.toolGenerationOptions(0.3, 2000, ""), func(delta *domain.GenerationResult) error {
-			if delta.ID != "" {
-				lastResponseID = delta.ID
-			}
-			// 0. Hardwired: intercept task_complete at stream level regardless of
-			//    PTC mode, system prompt overrides, or tool search configuration.
-			//    When the model emits a task_complete tool call, capture the result
-			//    and signal early termination by returning a sentinel error.
-			for _, tc := range delta.ToolCalls {
+		result, lastResponseID, err := r.svc.streamToolTurn(ctx, genMessages, tools, r.svc.toolGenerationOptions(0.3, 2000, toolChoiceForIntent(state.Intent, round)), StreamTurnCallbacks{
+			OnToolCall: func(tc domain.ToolCall) error {
 				if tc.Function.Name == "task_complete" {
-					toolCalls = delta.ToolCalls
-					r.emitToolCall(tc.Function.Name, tc.Function.Arguments)
-					if r, ok := tc.Function.Arguments["result"].(string); ok && r != "" {
-						taskCompleteResult = r
+					r.emitToolCall(tc.Function.Name, tc.Function.Arguments, "")
+					if res, ok := tc.Function.Arguments["result"].(string); ok && res != "" {
+						taskCompleteResult = res
 					}
 					taskCompleteTriggered = true
 					return errTaskComplete
 				}
-			}
-
-			// 1. Handle Reasoning (The "Thinking" Stream)
-			if delta.ReasoningContent != "" {
-				r.emit(EventTypeThinking, delta.ReasoningContent)
-			}
-
-			// 2. Handle Content (The "Output" Stream)
-			if delta.Content != "" {
-				fullContent.WriteString(delta.Content)
-				r.emit(EventTypePartial, delta.Content)
-			}
-
-			// 3. Handle Tool Calls detection
-			if len(delta.ToolCalls) > 0 {
+				return nil
+			},
+			OnReasoning: func(text string) {
+				r.emit(EventTypeThinking, text)
+			},
+			OnPartial: func(text string) {
+				r.emit(EventTypePartial, text)
+			},
+			OnFirstToolCall: func() {
 				if !toolCallDetected {
 					r.emit(EventTypeThinking, "Planning tool usage...")
 					toolCallDetected = true
 				}
-				toolCalls = delta.ToolCalls
-			}
-			return nil
+			},
 		})
 
 		// task_complete detected in stream — terminate immediately.
 		if taskCompleteTriggered {
-			result := taskCompleteResult
-			if result == "" {
-				result = fullContent.String()
+			final := taskCompleteResult
+			if final == "" && result != nil {
+				final = result.Content
 			}
 			if r.debugEnabled() {
 				var respBuilder strings.Builder
-				fmt.Fprintf(&respBuilder, "CONTENT: %s\n", fullContent.String())
-				if len(toolCalls) > 0 {
+				if result != nil {
+					fmt.Fprintf(&respBuilder, "CONTENT: %s\n", result.Content)
+				} else {
+					fmt.Fprintf(&respBuilder, "CONTENT: \n")
+				}
+				if result != nil && len(result.ToolCalls) > 0 {
 					fmt.Fprintf(&respBuilder, "TOOL CALLS:\n")
-					for _, tc := range toolCalls {
+					for _, tc := range result.ToolCalls {
 						fmt.Fprintf(&respBuilder, "  - %s(%v)\n", tc.Function.Name, tc.Function.Arguments)
 					}
 				}
 				r.emitDebug(round+1, "response", respBuilder.String())
 			}
-			r.emitToolResult("task_complete", result, nil)
-			allSources := r.sources
-			r.svc.ragSourcesMu.RLock()
-			allSources = append(allSources, r.svc.ragSources...)
-			r.svc.ragSourcesMu.RUnlock()
-			r.svc.ragSourcesMu.Lock()
-			r.svc.ragSources = nil
-			r.svc.ragSourcesMu.Unlock()
-			r.eventChan <- &Event{
-				ID:        uuid.New().String(),
-				Type:      EventTypeComplete,
-				AgentName: r.currentAgent.Name(),
-				AgentID:   r.currentAgent.ID(),
-				Content:   result,
-				Sources:   allSources,
-				Timestamp: time.Now(),
-			}
-			// Persist session history to agentgo.db
-			if len(messages) > 0 {
-				for _, msg := range messages {
-					r.session.AddMessage(msg)
-				}
-			}
-			if err := r.svc.store.SaveSession(r.session); err != nil {
-				r.svc.logger.Warn("failed to save session history", slog.String("error", err.Error()))
-			}
-			go r.saveToMemory(context.Background(), goal, result)
+			r.emitToolResult("task_complete", final, nil, "")
+			r.completeRun(goal, final, messages, true)
 			return
 		}
 
@@ -235,17 +190,18 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			r.emit(EventTypeError, fmt.Sprintf("LLM error: %v", err))
 			return
 		}
+		state.noteResponse(lastResponseID)
 
 		// --- DEBUG: LOG LLM RESPONSE ---
 		if r.debugEnabled() {
 			var respBuilder strings.Builder
 			info := r.svc.Info()
 			tc := usage.NewTokenCounter()
-			respTokens := tc.EstimateTokens(fullContent.String(), info.Model)
-			fmt.Fprintf(&respBuilder, "CONTENT: %s\n", fullContent.String())
-			if len(toolCalls) > 0 {
+			respTokens := tc.EstimateTokens(result.Content, info.Model)
+			fmt.Fprintf(&respBuilder, "CONTENT: %s\n", result.Content)
+			if len(result.ToolCalls) > 0 {
 				fmt.Fprintf(&respBuilder, "TOOL CALLS:\n")
-				for _, tc := range toolCalls {
+				for _, tc := range result.ToolCalls {
 					fmt.Fprintf(&respBuilder, "  - %s(%v)\n", tc.Function.Name, tc.Function.Arguments)
 				}
 			}
@@ -259,31 +215,15 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		}
 
 		// 6. Handle Result
-		if len(toolCalls) > 0 {
+		if len(result.ToolCalls) > 0 {
 			// Double check for task_complete in case it was not intercepted during stream
-			for _, tc := range toolCalls {
+			for _, tc := range result.ToolCalls {
 				if tc.Function.Name == "task_complete" {
-					result := fullContent.String()
+					final := result.Content
 					if res, ok := tc.Function.Arguments["result"].(string); ok && res != "" {
-						result = res
+						final = res
 					}
-					allSources := r.sources
-					r.svc.ragSourcesMu.RLock()
-					allSources = append(allSources, r.svc.ragSources...)
-					r.svc.ragSourcesMu.RUnlock()
-					r.svc.ragSourcesMu.Lock()
-					r.svc.ragSources = nil
-					r.svc.ragSourcesMu.Unlock()
-					r.eventChan <- &Event{
-						ID:        uuid.New().String(),
-						Type:      EventTypeComplete,
-						AgentName: r.currentAgent.Name(),
-						AgentID:   r.currentAgent.ID(),
-						Content:   result,
-						Sources:   allSources,
-						Timestamp: time.Now(),
-					}
-					go r.saveToMemory(context.Background(), goal, result)
+					r.completeRun(goal, final, nil, false)
 					return
 				}
 			}
@@ -291,425 +231,98 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			// Note: task_complete is intercepted at stream level above and never
 			// reaches this point. All remaining tool calls are real work items.
 
-			// PTC fix: some models (e.g. gpt-5.2) emit valid JS as text content
-			// and then issue a broken execute_javascript tool call with garbage code.
-			// When PTC is active and the text stream contains valid JS, override the
-			// tool call's code with the sanitised text-stream code.
-			if r.svc.isPTCEnabled() {
-				content := fullContent.String()
-				isCode := r.svc.ptcIntegration.IsCodeResponse(content)
-				if r.debugEnabled() {
-					r.emitDebug(round+1, "ptc_override", fmt.Sprintf("IsCodeResponse=%v contentLen=%d", isCode, len(content)))
-				}
-				if isCode {
-					extracted := r.svc.ptcIntegration.ExtractCode(content)
-					if r.debugEnabled() {
-						r.emitDebug(round+1, "ptc_override", fmt.Sprintf("Extracted code len=%d", len(extracted)))
-					}
-					extracted = sanitiseJSCode(extracted)
-					if r.debugEnabled() {
-						r.emitDebug(round+1, "ptc_override", fmt.Sprintf("Sanitised code len=%d", len(extracted)))
-					}
-					if extracted != "" {
-						for i, tc := range toolCalls {
-							if tc.Function.Name == "execute_javascript" {
-								if toolCalls[i].Function.Arguments == nil {
-									toolCalls[i].Function.Arguments = make(map[string]interface{})
-								}
-								toolCalls[i].Function.Arguments["code"] = extracted
-								if r.debugEnabled() {
-									r.emitDebug(round+1, "ptc_override", fmt.Sprintf("Replaced execute_javascript payload for tool call %d", i))
-								}
-							}
-						}
-					}
-				}
+			result.ToolCalls = r.overridePTCToolCallsFromContent(round, result.Content, result.ToolCalls)
+			result.ToolCalls = normalizeToolCalls(result.ToolCalls)
+			streamResult := &domain.GenerationResult{
+				ID:        lastResponseID,
+				Content:   result.Content,
+				ToolCalls: result.ToolCalls,
 			}
-
-			// Ensure every tool call has an ID before building the assistant message —
-			// some OpenAI-compatible providers omit the id field, which causes
-			// tool results to be silently dropped when matched back.
-			for i := range toolCalls {
-				if toolCalls[i].ID == "" {
-					toolCalls[i].ID = domain.NormalizeToolCallID(fmt.Sprintf("%s_%d", toolCalls[i].Function.Name, i))
-					continue
-				}
-				toolCalls[i].ID = domain.NormalizeToolCallID(toolCalls[i].ID)
-			}
-
-			// Add assistant's tool call message to history
-			messages = append(messages, domain.Message{
-				Role:       "assistant",
-				Content:    fullContent.String(),
-				ToolCalls:  toolCalls,
-				ResponseID: lastResponseID,
-			})
-
-			// 7. Process Tool Calls (Parallel Execution)
-			handoffOccurred := false
-
-			// Use errgroup for parallel tool execution
-			g, groupCtx := errgroup.WithContext(ctx)
-			toolResults := make([]struct {
-				Content    string
-				IsHandoff  bool
-				ToolCallID string
-				ToolName   string
-				Result     interface{}
-				Error      error
-			}, len(toolCalls))
-
-			for i, tc := range toolCalls {
-				idx, toolCall := i, tc
-
-				// Handle Handoff immediately (sequential) as it changes state
-				if strings.HasPrefix(toolCall.Function.Name, "transfer_to_") {
-					res, err, isHandoff := r.executeToolViaSubAgent(ctx, toolCall)
-					toolResults[idx].Content = toolResultToString(res)
-					if err != nil {
-						toolResults[idx].Content = fmt.Sprintf("Error: %v", err)
-					}
-					toolResults[idx].IsHandoff = isHandoff
-					toolResults[idx].ToolCallID = toolCall.ID
-					toolResults[idx].ToolName = toolCall.Function.Name
-					toolResults[idx].Result = res
-					toolResults[idx].Error = err
-					if isHandoff {
-						handoffOccurred = true
-					}
-					continue
-				}
-
-				// Parallel execute independent tools
-				g.Go(func() error {
-					r.emitToolCall(toolCall.Function.Name, toolCall.Function.Arguments)
-					res, err, isHandoff := r.executeToolViaSubAgent(groupCtx, toolCall)
-
-					content := ""
-					if err != nil {
-						content = fmt.Sprintf("Error: %v", err)
-					} else {
-						content = toolResultToString(res)
-					}
-
-					toolResults[idx].Content = content
-					toolResults[idx].IsHandoff = isHandoff
-					toolResults[idx].ToolCallID = toolCall.ID
-					toolResults[idx].ToolName = toolCall.Function.Name
-					toolResults[idx].Result = res
-					toolResults[idx].Error = err
-
-					r.emitToolResult(toolCall.Function.Name, res, err)
-					return nil
-				})
-			}
-
-			_ = g.Wait()
-
-			// Collect all results into messages
-			for _, tr := range toolResults {
-				if tr.ToolCallID == "" {
-					continue
-				} // Skip if not handled (shouldn't happen)
-
-				if tr.IsHandoff {
-					r.session.AgentID = r.currentAgent.ID()
-					messages = append(messages, domain.Message{
-						Role:       "tool",
-						ToolCallID: tr.ToolCallID,
-						Content:    fmt.Sprintf("Transferred to %s", r.currentAgent.Name()),
-					})
-				} else {
-					messages = append(messages, domain.Message{
-						Role:       "tool",
-						ToolCallID: tr.ToolCallID,
-						Content:    tr.Content,
-					})
-				}
-			}
-
-			if handoffOccurred {
+			nextAgent, filteredToolCalls, duplicateToolResults, fallback, handoff := r.svc.prepareToolRound(ctx, &messages, r.currentAgent, r.session, streamResult, state.PrevToolCalls, round)
+			if handoff {
+				r.currentAgent = nextAgent
+				state.Transition = "handoff"
+				state.TransitionReason = "agent handoff requested"
+				r.emit(EventTypeHandoff, fmt.Sprintf("Transferred to %s", r.currentAgent.Name()))
+				state.noteRoundCompleted()
 				continue
 			}
+			if fallback != "" {
+				r.completeRun(goal, fallback, nil, false)
+				return
+			}
+			if len(filteredToolCalls) == 0 {
+				if len(duplicateToolResults) > 0 {
+					messages = r.svc.appendToolRoundToMessages(messages, streamResult, duplicateToolResults)
+					state.Messages = messages
+					state.recordToolResults(duplicateToolResults)
+				}
+				state.noteRoundCompleted()
+				continue
+			}
+			streamResult.ToolCalls = filteredToolCalls
+			state.setStage(TurnStageHandlingTools, "executing tool batch", len(filteredToolCalls))
+			r.emitLoopState(state)
+
+			toolResults, err := r.svc.executeToolCallsWithOptions(ctx, r.currentAgent, r.session, filteredToolCalls, ToolExecutionCallbacks{
+				OnToolCall: func(name string, args map[string]interface{}, interruptBehavior string) {
+					r.emitToolCall(name, args, interruptBehavior)
+				},
+				OnToolResult: func(name string, result interface{}, err error, interruptBehavior string) {
+					r.emitToolResult(name, result, err, interruptBehavior)
+				},
+				OnToolState: func(name string, state string, interruptBehavior string) {
+					r.emitToolState(name, state, interruptBehavior)
+				},
+				EventSink: r.forwardSubAgentEvent,
+				Debug:     r.debugEnabled(),
+			}, true)
+			if err != nil {
+				r.emit(EventTypeError, fmt.Sprintf("Tool execution error: %v", err))
+				return
+			}
+			messages = r.svc.appendToolRoundToMessages(messages, streamResult, append(duplicateToolResults, toolResults...))
+			state.Messages = messages
+			state.recordToolResults(append(duplicateToolResults, toolResults...))
 
 			// In non-PTC mode, encourage the model to process results and move towards completion
-			isPTCToolRound := r.svc.isPTCEnabled() && len(toolCalls) == 1 && toolCalls[0].Function.Name == "execute_javascript"
+			isPTCToolRound := r.svc.isPTCEnabled() && len(filteredToolCalls) == 1 && filteredToolCalls[0].Function.Name == "execute_javascript"
 			if !isPTCToolRound {
+				state.setStage(TurnStageAwaitingAnswer, "waiting for final answer after tool results", len(filteredToolCalls))
+				r.emitLoopState(state)
 				messages = append(messages, domain.Message{
 					Role:    "user",
 					Content: "Analyze the tool results above. If you have fulfilled the user's request, provide your final answer and call task_complete. Otherwise, continue with the necessary next steps.",
 				})
+				state.Messages = messages
 			}
 
 		} else {
-			// PTC fallback: when PTC is active and the LLM wrote JS code as a
-			// text/markdown response instead of using the execute_javascript
-			// function-call, intercept it, execute it, and inject the result
-			// back so the LLM can produce a grounded final answer.
-			if r.svc.isPTCEnabled() {
-				content := fullContent.String()
-				if r.svc.ptcIntegration.IsCodeResponse(content) {
-					code := r.svc.ptcIntegration.ExtractCode(content)
-					if code != "" {
-						tc := domain.ToolCall{
-							ID:   domain.NormalizeToolCallID("ptc_fallback_" + uuid.New().String()[:8]),
-							Type: "function",
-							Function: domain.FunctionCall{
-								Name:      "execute_javascript",
-								Arguments: map[string]interface{}{"code": code},
-							},
-						}
-						r.emitToolCall("execute_javascript", tc.Function.Arguments)
-						execResult, execErr, _ := r.executeToolViaSubAgent(ctx, tc)
-						r.emitToolResult("execute_javascript", execResult, execErr)
-
-						// Append assistant's code message + execution result so
-						// the LLM can synthesise a final answer in the next round.
-						messages = append(messages, domain.Message{
-							Role:      "assistant",
-							Content:   content,
-							ToolCalls: []domain.ToolCall{tc},
-						})
-						resultMsg := toolResultToString(execResult)
-						if execErr != nil {
-							resultMsg = fmt.Sprintf("execute_javascript error: %v", execErr)
-						}
-						messages = append(messages, domain.Message{
-							Role:       "tool",
-							ToolCallID: tc.ID,
-							Content:    resultMsg,
-						})
-						continue // next round → LLM synthesises answer
-					}
-				}
+			if nextMessages, handled := r.handlePTCTextFallback(ctx, result.Content, messages); handled {
+				messages = nextMessages
+				state.Messages = messages
+				state.noteRoundCompleted()
+				continue // next round → LLM synthesises answer
 			}
 
-			// Final Answer - merge sources from runtime and service
-			allSources := r.sources
-			r.svc.ragSourcesMu.RLock()
-			if len(r.svc.ragSources) > 0 {
-				allSources = append(allSources, r.svc.ragSources...)
-			}
-			r.svc.ragSourcesMu.RUnlock()
-
-			r.eventChan <- &Event{
-				ID:        uuid.New().String(),
-				Type:      EventTypeComplete,
-				AgentName: r.currentAgent.Name(),
-				AgentID:   r.currentAgent.ID(),
-				Content:   fullContent.String(),
-				Sources:   allSources, // Include all collected RAG sources
-				Timestamp: time.Now(),
-			}
-
-			// Persist session history to agentgo.db
-			if len(messages) > 0 {
-				for _, msg := range messages {
-					r.session.AddMessage(msg)
-				}
-			}
-			if err := r.svc.store.SaveSession(r.session); err != nil {
-				r.svc.logger.Warn("failed to save session history", slog.String("error", err.Error()))
-			}
-
-			// Clear service sources for next run
-			r.svc.ragSourcesMu.Lock()
-			r.svc.ragSources = nil
-			r.svc.ragSourcesMu.Unlock()
-
-			// Auto-save to memory ASYNC to prevent lag at the end
-			go r.saveToMemory(context.Background(), goal, fullContent.String())
+			r.completeRun(goal, result.Content, messages, true)
 			return
 		}
+		state.noteRoundCompleted()
 	}
 }
 
 // executeToolOrHandoff executes a tool call and handles agent switching
 func (r *Runtime) executeToolOrHandoff(ctx context.Context, tc domain.ToolCall) (interface{}, error, bool) {
-	toolName := tc.Function.Name
-	resolvedToolName := r.resolveExecutableToolName(toolName)
 	ctx = withEventSink(ctx, r.forwardSubAgentEvent)
 	ctx = withRunDebug(ctx, r.debugEnabled())
 	ctx = withCurrentSession(ctx, r.session)
-
-	// === PRE-TOOL HOOK ===
-	hookData := HookData{
-		ToolName:  resolvedToolName,
-		ToolArgs:  tc.Function.Arguments,
-		SessionID: r.session.GetID(),
-		AgentID:   r.currentAgent.ID(),
-	}
-
-	if r.svc.hooks != nil {
-		modifiedData, err := r.svc.hooks.EmitWithResult(ctx, HookEventPreToolUse, hookData)
-		if err != nil {
-			// Hook blocked execution
-			return nil, err, false
-		}
-		// Use modified args if hook changed them
-		if modifiedData.ToolArgs != nil {
-			tc.Function.Arguments = modifiedData.ToolArgs
-		}
-	}
-
-	// Check for Handoff
-	if strings.HasPrefix(tc.Function.Name, "transfer_to_") {
-		for _, h := range r.currentAgent.Handoffs() {
-			if h.ToolName() == tc.Function.Name {
-				targetAgent := h.TargetAgent()
-				reason := tc.Function.Arguments["reason"]
-
-				r.emit(EventTypeHandoff, fmt.Sprintf("Transferring to %s: %v", targetAgent.Name(), reason))
-
-				// SWITCH AGENT
-				r.currentAgent = targetAgent
-				return nil, nil, true
-			}
-		}
-	}
-
-	if err := r.svc.authorizeTool(ctx, PermissionRequest{
-		ToolName:  resolvedToolName,
-		ToolArgs:  tc.Function.Arguments,
-		SessionID: r.session.GetID(),
-		AgentID:   r.currentAgent.ID(),
-	}); err != nil {
-		return nil, err, false
-	}
-
-	// Normal Tool Execution
-	var result interface{}
-	var execErr error
-
-	// 1. Special Case: task_complete
-	if toolName == "task_complete" {
-		res, _ := tc.Function.Arguments["result"].(string)
-		result = res
-		if result == "" {
-			result = "Task complete"
-		}
-	} else if handler, ok := r.currentAgent.GetHandler(resolvedToolName); ok {
-		// 2. Agent-Local Tools
-		result, execErr = handler(ctx, tc.Function.Arguments)
-	} else if r.svc.toolRegistry.Has(resolvedToolName) {
-		// 3. Unified ToolRegistry — custom tools, RAG, Memory, SubAgent, search_available_tools.
-		result, execErr = r.svc.toolRegistry.Call(ctx, resolvedToolName, tc.Function.Arguments)
-	} else if r.svc.isMCPTool(resolvedToolName) {
-		// 4. MCP Tools
-		result, execErr = r.svc.mcpService.CallTool(ctx, resolvedToolName, tc.Function.Arguments)
-	} else if r.svc.isSkill(ctx, resolvedToolName) && r.svc.skillsService != nil {
-		// 5. Skills
-		skillID := strings.TrimPrefix(resolvedToolName, "skill_")
-		res, err := r.svc.skillsService.Execute(ctx, &skills.ExecutionRequest{
-			SkillID:   skillID,
-			Variables: tc.Function.Arguments,
-		})
-		if err != nil {
-			execErr = err
-		} else {
-			result = res.Output
-		}
-	} else if toolName == "execute_javascript" && r.svc.ptcIntegration != nil {
-		// 6. PTC: execute_javascript tool (JavaScript sandbox)
-		result, execErr = r.svc.ptcIntegration.ExecuteJavascriptTool(ctx, tc.Function.Arguments)
-	} else if domain.IsToolSearchTool(resolvedToolName) {
-		// 7. Tool Search: search for deferred tools
-		query, _ := tc.Function.Arguments["query"].(string)
-		if query == "" {
-			execErr = fmt.Errorf("tool search requires a 'query' argument")
-		} else {
-			// Determine search type
-			searchType := "regex"
-			if resolvedToolName == "tool_search_tool_bm25" {
-				searchType = "bm25"
-			}
-			// Execute search
-			matchedTools, err := r.svc.toolRegistry.ExecuteToolSearch(query, searchType)
-			if err != nil {
-				execErr = err
-			} else {
-				matchedTools = r.svc.filterToolDefinitionsForAgent(r.currentAgent, matchedTools)
-				// Build tool_references result
-				var refs []domain.ToolReference
-				for _, t := range matchedTools {
-					refs = append(refs, domain.ToolReference{ToolName: t.Function.Name})
-					// Auto-activate the tool for this session
-					r.svc.toolRegistry.ActivateForSession(r.session.GetID(), t.Function.Name)
-				}
-				result = domain.ToolSearchResult{ToolReferences: refs}
-			}
-		}
-	} else {
-		execErr = fmt.Errorf("unknown tool: %s", toolName)
-	}
-
-	// === POST-TOOL HOOK ===
-	hookData.ToolResult = result
-	hookData.ToolError = execErr
-	if r.svc.hooks != nil {
-		r.svc.hooks.Emit(HookEventPostToolUse, hookData)
-	}
-
-	return result, execErr, false
-}
-
-func (r *Runtime) resolveExecutableToolName(name string) string {
-	if name == "" || name == "task_complete" || strings.HasPrefix(name, "transfer_to_") {
-		return name
-	}
-
-	candidates := make([]string, 0, len(r.currentAgent.Tools())+32)
-	for _, def := range r.currentAgent.Tools() {
-		candidates = append(candidates, def.Function.Name)
-	}
-	for _, info := range r.svc.toolRegistry.ListForCallTool() {
-		candidates = append(candidates, info.Name)
-	}
-	if r.svc.mcpService != nil {
-		for _, def := range r.svc.mcpService.ListTools() {
-			candidates = append(candidates, def.Function.Name)
-		}
-	}
-
-	if resolved := resolveClosestToolName(name, candidates); resolved != "" {
-		return resolved
-	}
-	return name
-}
-
-func (r *Runtime) prepareContext(ctx context.Context, goal string) (string, string) {
-	var ragCtx, memCtx string
-
-	g, groupCtx := errgroup.WithContext(ctx)
-
-	// RAG Retrieval — skip when PTC is enabled: the LLM will call rag_query
-	// explicitly via execute_javascript / callTool, so pre-injecting the
-	// answer would short-circuit the tool and make it unreachable.
-	if r.svc.ragProcessor != nil && !r.svc.isPTCEnabled() {
-		g.Go(func() error {
-			if res, err := r.svc.performRAGQuery(groupCtx, goal); err == nil {
-				ragCtx = res
-			}
-			return nil
-		})
-	}
-
-	// Memory Retrieval
-	if r.svc.memoryService != nil {
-		queryContext := r.svc.resolveMemoryQueryContext(r.session)
-		r.svc.rememberMemoryQueryContext(r.session, queryContext)
-		g.Go(func() error {
-			var err error
-			memCtx, _, err = r.svc.memoryService.RetrieveAndInjectWithContext(groupCtx, goal, queryContext)
-			if err != nil {
-				r.svc.logger.Warn("memory retrieval failed", slog.String("error", err.Error()))
-			}
-			return nil
-		})
-	}
-
-	_ = g.Wait()
-	return memCtx, ragCtx
+	return r.svc.executeDirectToolCall(ctx, r.currentAgent, r.session, tc, DirectToolExecutionOptions{
+		OnHandoff: func(targetAgent *Agent, reason interface{}) {
+			r.emit(EventTypeHandoff, fmt.Sprintf("Transferring to %s: %v", targetAgent.Name(), reason))
+			r.currentAgent = targetAgent
+		},
+	})
 }
 
 func (r *Runtime) saveToMemory(ctx context.Context, goal, result string) {
@@ -754,16 +367,125 @@ func (r *Runtime) saveToMemory(ctx context.Context, goal, result string) {
 				log.Printf("[Agent] Stored to memory: %s", content)
 			}
 		}
-		if err := r.svc.memoryService.StoreIfWorthwhile(ctx, &domain.MemoryStoreRequest{
+		req := &domain.MemoryStoreRequest{
 			SessionID:  r.session.GetID(),
 			AgentID:    queryContext.AgentID,
-			TeamID:    queryContext.TeamID,
+			TeamID:     queryContext.TeamID,
 			UserID:     queryContext.UserID,
 			TaskGoal:   goal,
 			TaskResult: result,
-		}); err != nil {
+		}
+		if writer, ok := r.svc.memoryService.(backgroundMemoryWriter); ok && writer.EnqueueStoreIfWorthwhile(req) {
+			// queued to background durable-memory worker
+		} else if err := r.svc.memoryService.StoreIfWorthwhile(ctx, req); err != nil {
 			r.svc.logger.Warn("failed to store memory after run", slog.String("error", err.Error()))
 		}
+	}
+}
+
+func (r *Runtime) collectAllSources() []domain.Chunk {
+	allSources := append([]domain.Chunk(nil), r.sources...)
+	r.svc.ragSourcesMu.RLock()
+	if len(r.svc.ragSources) > 0 {
+		allSources = append(allSources, r.svc.ragSources...)
+	}
+	r.svc.ragSourcesMu.RUnlock()
+	return allSources
+}
+
+func (r *Runtime) clearCollectedSources() {
+	r.svc.ragSourcesMu.Lock()
+	r.svc.ragSources = nil
+	r.svc.ragSourcesMu.Unlock()
+}
+
+func (r *Runtime) persistMessages(messages []domain.Message) {
+	if len(messages) == 0 {
+		return
+	}
+	for _, msg := range messages {
+		r.session.AddMessage(msg)
+	}
+	if err := r.svc.store.SaveSession(r.session); err != nil {
+		r.svc.logger.Warn("failed to save session history", slog.String("error", err.Error()))
+	}
+}
+
+func (r *Runtime) completeRun(goal, content string, messages []domain.Message, persistHistory bool) {
+	r.emitTurnState(TurnStageCompleted, "run completed", 0, 0, nil)
+	r.eventChan <- &Event{
+		ID:        uuid.New().String(),
+		Type:      EventTypeComplete,
+		AgentName: r.currentAgent.Name(),
+		AgentID:   r.currentAgent.ID(),
+		Content:   content,
+		Sources:   r.collectAllSources(),
+		Timestamp: time.Now(),
+	}
+	if persistHistory {
+		r.persistMessages(messages)
+	}
+	r.clearCollectedSources()
+	go r.saveToMemory(context.Background(), goal, content)
+}
+
+func (r *Runtime) emitLoopState(state *queryLoopState) {
+	if state == nil {
+		return
+	}
+	stateDelta := map[string]interface{}{
+		"turn_stage":         state.Stage,
+		"transition_reason":  state.TransitionReason,
+		"transition":         state.Transition,
+		"round":              state.CurrentRound,
+		"tool_call_count":    state.PendingToolCount,
+		"total_tool_calls":   state.TotalToolCalls,
+		"interruptible":      !r.svc.hasBlockingToolInProgress(),
+		"budget_max_rounds":  state.Budget.MaxRounds,
+		"budget_used_rounds": state.Budget.CompletedRounds,
+		"budget_remaining":   state.Budget.RemainingRounds,
+		"budget_tokens":      state.Budget.EstimatedTokens,
+		"compaction_count":   state.Budget.CompactionCount,
+		"recovery_count":     state.Budget.RecoveryCount,
+	}
+	if state.Intent != nil {
+		stateDelta["intent_type"] = state.Intent.IntentType
+		stateDelta["preferred_agent"] = state.Intent.PreferredAgent
+		stateDelta["requires_tools"] = state.Intent.RequiresTools
+	}
+	r.eventChan <- &Event{
+		ID:         uuid.New().String(),
+		Type:       EventTypeStateUpdate,
+		AgentName:  r.currentAgent.Name(),
+		AgentID:    r.currentAgent.ID(),
+		Content:    state.TransitionReason,
+		StateDelta: stateDelta,
+		Timestamp:  time.Now(),
+	}
+}
+
+func (r *Runtime) emitTurnState(stage, reason string, round int, toolCount int, intent *IntentRecognitionResult) {
+	stateDelta := map[string]interface{}{
+		"turn_stage":        stage,
+		"transition_reason": reason,
+		"round":             round,
+		"tool_call_count":   toolCount,
+		"interruptible":     !r.svc.hasBlockingToolInProgress(),
+	}
+	if intent != nil {
+		stateDelta["intent_type"] = intent.IntentType
+		stateDelta["preferred_agent"] = intent.PreferredAgent
+		stateDelta["requires_tools"] = intent.RequiresTools
+		stateDelta["transition"] = intent.Transition
+	}
+	r.eventChan <- &Event{
+		ID:         uuid.New().String(),
+		Type:       EventTypeStateUpdate,
+		AgentName:  r.currentAgent.Name(),
+		AgentID:    r.currentAgent.ID(),
+		Content:    reason,
+		StateDelta: stateDelta,
+		Timestamp:  time.Now(),
 	}
 }
 
@@ -779,7 +501,7 @@ func (r *Runtime) emit(t EventType, content string) {
 	}
 }
 
-func (r *Runtime) emitToolCall(name string, args map[string]interface{}) {
+func (r *Runtime) emitToolCall(name string, args map[string]interface{}, interruptBehavior string) {
 	r.eventChan <- &Event{
 		ID:        uuid.New().String(),
 		Type:      EventTypeToolCall,
@@ -788,9 +510,26 @@ func (r *Runtime) emitToolCall(name string, args map[string]interface{}) {
 		ToolArgs:  args,
 		Timestamp: time.Now(),
 	}
+	if interruptBehavior == InterruptBehaviorBlock {
+		blockingCount := r.svc.blockingToolCount()
+		r.eventChan <- &Event{
+			ID:        uuid.New().String(),
+			Type:      EventTypeStateUpdate,
+			AgentName: r.currentAgent.Name(),
+			AgentID:   r.currentAgent.ID(),
+			Content:   fmt.Sprintf("Running non-interruptible tool: %s (%d blocking)", name, blockingCount),
+			StateDelta: map[string]interface{}{
+				"interruptible":       false,
+				"active_tool":         name,
+				"interrupt_behavior":  interruptBehavior,
+				"blocking_tool_count": blockingCount,
+			},
+			Timestamp: time.Now(),
+		}
+	}
 }
 
-func (r *Runtime) emitToolResult(name string, res interface{}, err error) {
+func (r *Runtime) emitToolResult(name string, res interface{}, err error, interruptBehavior string) {
 	evt := &Event{
 		ID:         uuid.New().String(),
 		Type:       EventTypeToolResult,
@@ -804,6 +543,40 @@ func (r *Runtime) emitToolResult(name string, res interface{}, err error) {
 		evt.Content = err.Error()
 	}
 	r.eventChan <- evt
+	if interruptBehavior == InterruptBehaviorBlock {
+		blockingCount := r.svc.blockingToolCount()
+		r.eventChan <- &Event{
+			ID:        uuid.New().String(),
+			Type:      EventTypeStateUpdate,
+			AgentName: r.currentAgent.Name(),
+			AgentID:   r.currentAgent.ID(),
+			Content:   fmt.Sprintf("Tool finished: %s (%d blocking remaining)", name, blockingCount),
+			StateDelta: map[string]interface{}{
+				"interruptible":       blockingCount == 0,
+				"active_tool":         name,
+				"interrupt_behavior":  interruptBehavior,
+				"blocking_tool_count": blockingCount,
+			},
+			Timestamp: time.Now(),
+		}
+	}
+}
+
+func (r *Runtime) emitToolState(name string, state string, interruptBehavior string) {
+	r.eventChan <- &Event{
+		ID:        uuid.New().String(),
+		Type:      EventTypeStateUpdate,
+		AgentName: r.currentAgent.Name(),
+		AgentID:   r.currentAgent.ID(),
+		Content:   fmt.Sprintf("Tool %s is %s", name, state),
+		StateDelta: map[string]interface{}{
+			"tool_name":          name,
+			"tool_state":         state,
+			"interrupt_behavior": interruptBehavior,
+			"interruptible":      !r.svc.hasBlockingToolInProgress(),
+		},
+		Timestamp: time.Now(),
+	}
 }
 
 func (r *Runtime) emitDebug(round int, debugType string, content string) {

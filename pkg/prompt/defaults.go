@@ -4,9 +4,18 @@ package prompt
 const (
 	PlannerIntentRecognition  = "planner.intent_recognition"
 	PlannerSystemPrompt       = "planner.system_prompt"
+	PlannerSystemRole         = "planner.system.role"
+	PlannerSystemTools        = "planner.system.tools"
+	PlannerSystemGuidance     = "planner.system.guidance"
 	PlannerUserPrompt         = "planner.user_prompt"
+	PlannerUserGoal           = "planner.user.goal"
+	PlannerUserIntent         = "planner.user.intent"
+	PlannerUserSessionContext = "planner.user.session_context"
 	AgentVerification         = "agent.verification"
 	AgentSystemPrompt         = "agent.system_prompt"
+	AgentSystemIdentity       = "agent.system.identity"
+	AgentSystemOperational    = "agent.system.operational"
+	AgentSystemContext        = "agent.system.context"
 	AgentRevisePlan           = "agent.revise_plan"
 	MemoryExtraction          = "memory.extraction"
 	MemoryReflection          = "memory.reflection"
@@ -38,7 +47,10 @@ Contextual Information:
 {{.Context}}
 {{end}}
 
-Classify this goal. Return JSON with intent_type, target_file (if applicable), topic, requirements, and confidence.`
+Classify this goal. Return JSON with intent_type, target_file (if applicable), topic, requirements, confidence, and when possible:
+- requires_tools: true if the request should mainly be fulfilled via tools/MCP/filesystem/memory actions
+- preferred_agent: one of Assistant, Operator, Stakeholder, Archivist, Verifier
+- transition: tool_first, prefer_tooling, or text_first`
 
 	// 2. Planner System Prompt (Planning)
 	m.defaults[PlannerSystemPrompt] = `You are an AI planning agent. Your task is to break down goals into clear, executable steps.
@@ -46,6 +58,27 @@ Classify this goal. Return JSON with intent_type, target_file (if applicable), t
 {{.ToolDescriptions}}
 
 When creating a plan:
+1. Think step by step about what needs to be done
+2. Break down complex goals into smaller, manageable steps
+3. Choose the most appropriate tool for each step
+4. Provide clear arguments for each tool call
+5. Reason about your plan before presenting the steps
+
+CRITICAL - Match Your Tools to the Task:
+- Creating/Saving/Writing files -> MUST use filesystem tools (NOT llm!)
+- Reading/Opening files -> use filesystem tools
+- Searching the web -> use web search tools
+{{if .HasRAG}}- Querying your knowledge base -> use rag_query
+{{end}}- Generating content -> use llm
+- Analyzing data -> use llm
+
+Return your response as JSON with:
+- reasoning: Your explanation of the plan
+- steps: Array of steps with description, tool, and arguments`
+
+	m.defaults[PlannerSystemRole] = `You are an AI planning agent. Your task is to break down goals into clear, executable steps.`
+	m.defaults[PlannerSystemTools] = `{{.ToolDescriptions}}`
+	m.defaults[PlannerSystemGuidance] = `When creating a plan:
 1. Think step by step about what needs to be done
 2. Break down complex goals into smaller, manageable steps
 3. Choose the most appropriate tool for each step
@@ -80,6 +113,15 @@ Recent conversation context:
 
 Create a step-by-step plan to accomplish this goal. Return JSON with reasoning and steps.`
 
+	m.defaults[PlannerUserGoal] = `Goal: {{.Goal}}`
+	m.defaults[PlannerUserIntent] = `Intent Analysis:
+- Type: {{.Intent.IntentType}}
+{{if .Intent.TargetFile}}- Target File: {{.Intent.TargetFile}}{{end}}
+{{if .Intent.Topic}}- Topic: {{.Intent.Topic}}{{end}}
+- Confidence: {{.Intent.Confidence}}`
+	m.defaults[PlannerUserSessionContext] = `{{if .SessionContext}}Recent conversation context:
+{{.SessionContext}}{{end}}`
+
 	// 4. Agent Verification
 	m.defaults[AgentVerification] = `Original Goal: {{.Goal}}
 
@@ -105,6 +147,16 @@ Rules:
 {{.OperationalRules}}{{end}}
 
 {{.SystemContext}}`
+
+	// 5a. Agent System Identity
+	m.defaults[AgentSystemIdentity] = `{{.AgentInstructions}}`
+
+	// 5b. Agent System Operational Rules
+	m.defaults[AgentSystemOperational] = `{{if .OperationalRules}}Rules:
+{{.OperationalRules}}{{end}}`
+
+	// 5c. Agent System Context
+	m.defaults[AgentSystemContext] = `{{.SystemContext}}`
 
 	// 6. Agent Revise Plan
 	m.defaults[AgentRevisePlan] = `You are revising an existing execution plan based on user feedback.

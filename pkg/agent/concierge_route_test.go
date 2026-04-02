@@ -82,11 +82,13 @@ func TestRouteBuiltInRequestRunsOptimizerWhenNeeded(t *testing.T) {
 
 		switch agentName {
 		case defaultIntentRouterAgentName:
-			return "TARGET_AGENT: Assistant\nINTENT_TYPE: general_qa\nREASON: vague question\nNEEDS_OPTIMIZATION: yes", nil
+			return "TARGET_AGENT: Operator\nINTENT_TYPE: web_search\nREASON: current information request\nNEEDS_OPTIMIZATION: yes", nil
 		case defaultPromptOptimizerAgentName:
 			return optimizedPromptBeginMarker + "\nWhat is the weather forecast for tomorrow?\n" + optimizedPromptEndMarker, nil
-		case defaultAssistantAgentName:
+		case defaultOperatorAgentName:
 			return "It will be sunny.", nil
+		case defaultVerifierAgentName:
+			return "VERIFIED_COMPLETE: Weather lookup completed.", nil
 		default:
 			return "", fmt.Errorf("unexpected agent %s", agentName)
 		}
@@ -100,15 +102,15 @@ func TestRouteBuiltInRequestRunsOptimizerWhenNeeded(t *testing.T) {
 		t.Fatalf("routeBuiltInRequestWithDispatcher failed: %v", err)
 	}
 
-	if result.TargetAgent != defaultAssistantAgentName {
-		t.Fatalf("expected Assistant target, got %s", result.TargetAgent)
+	if result.TargetAgent != defaultOperatorAgentName {
+		t.Fatalf("expected Operator target, got %s", result.TargetAgent)
 	}
 
 	mu.Lock()
 	defer mu.Unlock()
-	// 3 calls: IntentRouter + PromptOptimizer + Assistant
-	if len(calls) != 3 {
-		t.Fatalf("expected 3 dispatch calls, got %+v", calls)
+	// 4 calls: IntentRouter + PromptOptimizer + Operator + Verifier
+	if len(calls) != 4 {
+		t.Fatalf("expected 4 dispatch calls, got %+v", calls)
 	}
 }
 
@@ -187,6 +189,15 @@ func TestFallbackBuiltInRouteDecisionDefaultsToAssistantForGenericRequests(t *te
 	// requests without file/memory/search patterns default to Assistant.
 	if decision.TargetAgent != defaultAssistantAgentName {
 		t.Fatalf("expected Assistant target for generic request, got %+v", decision)
+	}
+}
+
+func TestFallbackBuiltInRouteDecisionUsesExecutionHintsForCurrentInfo(t *testing.T) {
+	t.Parallel()
+
+	decision := fallbackBuiltInRouteDecision("What's the latest weather in Shanghai today?")
+	if decision.TargetAgent != defaultOperatorAgentName {
+		t.Fatalf("expected Operator target for current-info request, got %+v", decision)
 	}
 }
 

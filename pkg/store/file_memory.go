@@ -26,6 +26,22 @@ type FileMemoryStore struct {
 	llm        domain.Generator
 }
 
+const (
+	FileMemoryEntrypointName     = "MEMORY.md"
+	fileMemoryEntrypointMaxLines = 120
+	FileSessionMemoryDirName     = "_session"
+)
+
+type FileMemoryHeader struct {
+	ID         string
+	Type       domain.MemoryType
+	ScopeType  domain.MemoryScopeType
+	ScopeID    string
+	Importance float64
+	Summary    string
+	UpdatedAt  time.Time
+}
+
 // WithLLM injects an LLM generator used for Reflect() consolidation.
 func (s *FileMemoryStore) WithLLM(llm domain.Generator) {
 	s.llm = llm
@@ -175,6 +191,7 @@ func (s *FileMemoryStore) Store(ctx context.Context, memory *domain.Memory) erro
 		s.upsertIndexEntry(entry)
 	}
 
+	_ = s.rebuildEntrypointLocked()
 	s.indexDirty = false
 	return nil
 }
@@ -587,6 +604,7 @@ func (s *FileMemoryStore) Delete(ctx context.Context, id string) error {
 	for _, cat := range []string{"streams", "entities"} {
 		_ = os.Remove(filepath.Join(s.baseDir, cat, id+".md"))
 	}
+	_ = s.rebuildEntrypointLocked()
 	s.indexDirty = true
 	return nil
 }
@@ -604,6 +622,9 @@ func (s *FileMemoryStore) Clear(ctx context.Context) error {
 		if err := os.MkdirAll(filepath.Join(s.baseDir, dir), 0755); err != nil {
 			return err
 		}
+	}
+	if err := os.Remove(s.entrypointPath()); err != nil && !os.IsNotExist(err) {
+		return err
 	}
 
 	s.indexDirty = true
@@ -963,6 +984,126 @@ func (s *FileMemoryStore) archiveManifestDir() string {
 	return filepath.Join(s.baseDir, "_archive", "manifests")
 }
 
+func (s *FileMemoryStore) entrypointPath() string {
+	return filepath.Join(s.baseDir, FileMemoryEntrypointName)
+}
+
+func (s *FileMemoryStore) sessionMemoryPath(sessionID string) string {
+	return filepath.Join(s.baseDir, FileSessionMemoryDirName, sanitizeScopeID(strings.TrimSpace(sessionID))+".md")
+}
+
+func (s *FileMemoryStore) ReadEntrypoint() (string, error) {
+	data, err := os.ReadFile(s.entrypointPath())
+	if err != nil {
+		return "", err
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) > fileMemoryEntrypointMaxLines {
+		lines = append(lines[:fileMemoryEntrypointMaxLines], "... (truncated)")
+	}
+	return strings.Join(lines, "\n"), nil
+}
+
+func (s *FileMemoryStore) ReadSessionMemory(sessionID string) (string, error) {
+	if strings.TrimSpace(sessionID) == "" {
+		return "", nil
+	}
+	data, err := os.ReadFile(s.sessionMemoryPath(sessionID))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	return strings.TrimSpace(string(data)), nil
+}
+
+func (s *FileMemoryStore) WriteSessionMemory(sessionID, content string) error {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return nil
+	}
+	path := s.sessionMemoryPath(sessionID)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(strings.TrimSpace(content)), 0644)
+}
+
+func (s *FileMemoryStore) ListHeaders(ctx context.Context, limit int) ([]FileMemoryHeader, error) {
+	all, _, err := s.List(ctx, 1000, 0)
+	if err != nil {
+		return nil, err
+	}
+	headers := make([]FileMemoryHeader, 0, len(all))
+	for _, m := range all {
+		if m.Archived {
+			continue
+		}
+		headers = append(headers, FileMemoryHeader{
+			ID:         m.ID,
+			Type:       m.Type,
+			ScopeType:  m.ScopeType,
+			ScopeID:    m.ScopeID,
+			Importance: m.Importance,
+			Summary:    truncate(m.Content, 140),
+			UpdatedAt:  m.UpdatedAt,
+		})
+	}
+	sort.Slice(headers, func(i, j int) bool {
+		if headers[i].Importance != headers[j].Importance {
+			return headers[i].Importance > headers[j].Importance
+		}
+		return headers[i].UpdatedAt.After(headers[j].UpdatedAt)
+	})
+	if limit > 0 && len(headers) > limit {
+		headers = headers[:limit]
+	}
+	return headers, nil
+}
+
+func (s *FileMemoryStore) SelectRelevantHeaders(ctx context.Context, query string, topK int) ([]FileMemoryHeader, error) {
+	headers, err := s.ListHeaders(ctx, 0)
+	if err != nil {
+		return nil, err
+	}
+	if len(headers) == 0 {
+		return nil, nil
+	}
+	tokens := tokenizeText(query)
+	if len(tokens) == 0 {
+		if topK > 0 && len(headers) > topK {
+			return headers[:topK], nil
+		}
+		return headers, nil
+	}
+	type scored struct {
+		FileMemoryHeader
+		score float64
+	}
+	scoredHeaders := make([]scored, 0, len(headers))
+	now := time.Now()
+	for _, header := range headers {
+		score := ngramMatchScore(tokens, header.Summary)
+		if score == 0 {
+			continue
+		}
+		score = applyMemoryBoosts(score, header.Importance, header.UpdatedAt, now)
+		scoredHeaders = append(scoredHeaders, scored{FileMemoryHeader: header, score: score})
+	}
+	sort.Slice(scoredHeaders, func(i, j int) bool {
+		return scoredHeaders[i].score > scoredHeaders[j].score
+	})
+	if topK > 0 && len(scoredHeaders) > topK {
+		scoredHeaders = scoredHeaders[:topK]
+	}
+	out := make([]FileMemoryHeader, 0, len(scoredHeaders))
+	for _, item := range scoredHeaders {
+		out = append(out, item.FileMemoryHeader)
+	}
+	return out, nil
+}
+
 // indexFilePath returns the per-type index file path, e.g. _index/types/observations.md.
 func (s *FileMemoryStore) indexFilePath(t domain.MemoryType) string {
 	return filepath.Join(s.typeIndexDir(), string(t)+"s.md")
@@ -1291,7 +1432,74 @@ func (s *FileMemoryStore) rebuildIndex(ctx context.Context) error {
 			return err
 		}
 	}
+	if err := s.rebuildEntrypointLocked(); err != nil {
+		return err
+	}
 	return nil
+}
+
+func (s *FileMemoryStore) rebuildEntrypointLocked() error {
+	type entry struct {
+		ID         string
+		Type       domain.MemoryType
+		ScopeType  domain.MemoryScopeType
+		ScopeID    string
+		Importance float64
+		Content    string
+	}
+
+	entries := make([]entry, 0)
+	for _, cat := range []string{"streams", "entities"} {
+		files, _ := filepath.Glob(filepath.Join(s.baseDir, cat, "*.md"))
+		for _, f := range files {
+			m, err := s.readFile(f)
+			if err != nil || m.Archived {
+				continue
+			}
+			entries = append(entries, entry{
+				ID:         m.ID,
+				Type:       m.Type,
+				ScopeType:  m.ScopeType,
+				ScopeID:    m.ScopeID,
+				Importance: m.Importance,
+				Content:    m.Content,
+			})
+		}
+	}
+
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].Type != entries[j].Type {
+			return entries[i].Type < entries[j].Type
+		}
+		if entries[i].Importance != entries[j].Importance {
+			return entries[i].Importance > entries[j].Importance
+		}
+		return entries[i].ID < entries[j].ID
+	})
+
+	var sb strings.Builder
+	sb.WriteString("# MEMORY\n\n")
+	sb.WriteString("This file is a compact index of active memories. Each line is a summary pointer, not the full memory body.\n\n")
+	currentType := domain.MemoryType("")
+	for _, item := range entries {
+		if item.Type != currentType {
+			currentType = item.Type
+			sb.WriteString("## ")
+			sb.WriteString(strings.Title(string(currentType)))
+			sb.WriteString("\n")
+		}
+		scope := normalizeScope(domain.MemoryScope{Type: item.ScopeType, ID: item.ScopeID})
+		scopeLabel := string(scope.Type)
+		if scope.ID != "" {
+			scopeLabel += ":" + scope.ID
+		}
+		sb.WriteString(fmt.Sprintf("- [%s] (%s, importance=%.2f) %s\n", item.ID, scopeLabel, item.Importance, truncate(item.Content, 140)))
+	}
+	if len(entries) == 0 {
+		sb.WriteString("_No active memories._\n")
+	}
+
+	return os.WriteFile(s.entrypointPath(), []byte(sb.String()), 0644)
 }
 
 // writeIndexFile writes one per-type index file atomically (tmp + rename).

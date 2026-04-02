@@ -1,129 +1,89 @@
 # AGENTS.md
 
-This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
+This file provides guidance for working in this repository.
 
-## Architecture Priority (Important!)
+## Core Identity
 
-**AgentGo's True Nature**: Primarily a **local RAG system** with **optional agent automation**. Core: document ingestion → chunking → vector storage → semantic search → Q&A. Agents are a secondary feature leveraging MCP tools.
+AgentGo is a Go framework for building Agent / Team based systems.
 
-**Feature Priority**: RAG System → Multi-Provider LLM → MCP Tools → Agent Automation → HTTP API → Local-First
+The core of the project is `pkg/`.
 
-**Evidence**: Core packages (`pkg/store/`, `pkg/chunker/`, `pkg/processor/`) vs optional agents (`pkg/agents/`). Most commands are RAG-focused (`ingest`, `query`) vs agent additions (`agent run`).
+`cmd/`, `ui`, and other entrypoints are optional adapters. They are not the architectural center of the project.
 
-## Development Commands
+## Architecture Priority
 
-### Build and Test
+Always reason about the repository in this order:
 
-use makefile
+1. `pkg/agent` is the framework core
+2. `pkg/*` capability modules extend the framework core
+3. storage / config / infra support the framework core
+4. CLI / UI / API are optional shells around the framework
 
-## Common Development Tasks
+Do not describe this project as:
 
-### Examples Generation
+- a CLI-first app
+- a UI-first app
+- a RAG-first app
 
-Use the `/examples` command to create runnable examples:
+Describe it as:
 
-```bash
-# This will:
-# 1. Analyze the requested feature/task
-# 2. Create appropriate folder structure in /examples/
-# 3. Generate complete, runnable Go file with imports and error handling
-# 4. Run the example with: go run examples/$feature/$filename.go
-```
+- a Go framework
+- centered on Agent / Team abstractions
+- extensible through providers, MCP, skills, memory, RAG, router, and related modules
 
-**Example Structure**:
+## Core Modules
 
-```
-examples/
-├── basic_rag_usage/main.go          # Simple RAG operations
-├── provider_switching/main.go       # Multi-provider examples
-├── mcp_integration/main.go          # MCP tool usage
-├── agent_workflows/main.go          # Agent automation
-├── custom_chunking/main.go          # Chunking strategies
-└── http_api_client/main.go          # API usage examples
-```
+Primary framework core:
 
-**Best Practices for Examples**:
+- `pkg/agent`
 
-- Each example in its own folder with `main.go`
-- Include proper imports, error handling, and cleanup
-- Add comments explaining key concepts
-- Use realistic data and scenarios
-- Follow Go best practices and project patterns
+Primary capability modules:
 
-### Release Workflow
+- `pkg/providers`
+- `pkg/mcp`
+- `pkg/skills`
+- `pkg/memory`
+- `pkg/rag`
+- `pkg/router`
+- `pkg/ptc`
 
-Use the `/release` command for automated releases:
+Support modules:
 
-```bash
-# Custom slash command available: /release [optional commit message]
-# This will:
-# 1. Check git status and recent tags
-# 2. Add non-binary files to git
-# 3. Analyze commit content to determine semantic version bump
-# 4. Create commit without co-author
-# 5. Create and push tag (auto-determined from changes)
-# 6. Push changes to remote
-```
+- `pkg/store`
+- `pkg/config`
+- `pkg/log`
+- `pkg/cache`
+- `pkg/pool`
+- `pkg/usage`
+- `pkg/domain`
 
-**Custom Command**: The `/release` slash command is implemented in `.Codex/commands/release.md`
+Optional adapters:
 
-**Tag Version Determination**:
+- `cmd/agentgo-cli`
+- `cmd/agentgo-ui`
+- `api/`
 
-- **MAJOR** (x.0.0): Breaking changes, API changes, architecture changes
-- **MINOR** (x.y.0): New features, new commands, significant enhancements
-- **PATCH** (x.y.z): Bug fixes, documentation updates, small improvements
+## Design Rules
 
-**Manual Release Steps** (if needed):
+When making changes:
 
-```bash
-# Check current status and analyze changes
-git status
-git tag --sort=-version:refname | head -5
-git diff HEAD~1..HEAD --stat  # Review changes for version determination
+1. Prefer improving `pkg/` over adding behavior in `cmd/`
+2. Keep Agent / Team abstractions clean and reusable
+3. Treat CLI/UI behavior as adapter logic, not framework logic
+4. New capabilities should plug into the framework core instead of bypassing it
+5. Avoid coupling capability modules too tightly to one adapter
 
-# Add files (excluding binaries)
-git add README.md README_zh-CN.md docs/index.html
-git add examples/ pkg/ cmd/
-git add *.json *.md mcpServers.json
+## Session Identity
 
-# Create commit (message affects version determination)
-git commit -m "feat: your commit message here"
+Every conversation should have its own UUID-based session identity.
 
-# Create and push tag (version determined by content analysis)
-# PATCH: "fix:", "docs:", "style:", "refactor:", "test:", "chore:"
-# MINOR: "feat:", new functionality, new commands
-# MAJOR: "BREAKING CHANGE:", API changes, architectural changes
-git tag -a v2.x.x -m "Release v2.x.x: description"
-git push origin main --tags
-```
+Session identity is the primary conversation boundary.
 
-### Debugging Provider Issues
+Do not introduce `userID` as the main identity for a conversation.
 
-1. Check provider connectivity: `./agentgo status --verbose`
-2. Test with minimal query: `./agentgo query "test" --verbose`
-3. Verify model availability on provider (Ollama: `ollama list`)
+## Development Notes
 
-### Debugging MCP Issues
-
-1. Check server status: `./agentgo mcp status`
-2. Test tool directly: `./agentgo mcp tools call filesystem read_file '{"path": "test.txt"}'`
-3. Review server logs in `~/.agentgo/logs/`
-
-### Debugging Skills Issues
-
-1. List available skills: `./agentgo skills list`
-2. Show skill details: `./agentgo skills show [skill-id]`
-3. Test skill execution: `./agentgo skills run [skill-id] --var key=value`
-4. Check for `SKILL.md` format errors in logs.
-
-### Adding New Commands
-
-1. Create command file in `cmd/agentgo/`
-2. Add to root command in `cmd/agentgo/root.go`
-3. Follow existing patterns for config loading and error handling
-4. Add corresponding API endpoint in `api/handlers/` if needed
-
-The codebase follows Go best practices with clear separation of concerns, comprehensive error handling, and extensive configuration options for different deployment scenarios.
-
-- go run . to test it
-- what the fuck is this userID??? use UUID!!!!每一个对话都有一个 uuid，没有 userid ufck！！！！！！
+- Use the Makefile for common development tasks
+- Prefer changes that improve library ergonomics and composability
+- Keep public package APIs stable and intentional
+- Think in terms of embeddable framework design, not only local app behavior

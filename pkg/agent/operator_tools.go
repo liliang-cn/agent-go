@@ -12,11 +12,11 @@ func registerOperatorTools(operator *Service) {
 		return
 	}
 
-	register := func(name, description string, parameters map[string]interface{}, handler func(context.Context, map[string]interface{}) (interface{}, error)) {
+	register := func(name, description string, parameters map[string]interface{}, metadata ToolMetadata, handler func(context.Context, map[string]interface{}) (interface{}, error)) {
 		if operator.toolRegistry != nil && operator.toolRegistry.Has(name) {
 			return
 		}
-		operator.AddTool(name, description, parameters, handler)
+		operator.AddToolWithMetadata(name, description, parameters, handler, metadata)
 	}
 
 	register("start_pty_session", "Start a generic PTY-backed command session. Use this for interactive CLI tools and command-driven agents.", map[string]interface{}{
@@ -44,7 +44,7 @@ func registerOperatorTools(operator *Service) {
 			},
 		},
 		"required": []string{"command"},
-	}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	}, ToolMetadata{InterruptBehavior: InterruptBehaviorBlock}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		command := getStringArg(args, "command")
 		if command == "" {
 			return nil, fmt.Errorf("command is required")
@@ -65,7 +65,7 @@ func registerOperatorTools(operator *Service) {
 			"tail_chars": map[string]interface{}{"type": "number", "description": "Optional output tail length in characters."},
 		},
 		"required": []string{"session_id", "input"},
-	}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	}, ToolMetadata{InterruptBehavior: InterruptBehaviorBlock}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		sessionID := getStringArg(args, "session_id")
 		input := getStringArg(args, "input")
 		if sessionID == "" || input == "" {
@@ -85,7 +85,7 @@ func registerOperatorTools(operator *Service) {
 			"tail_chars": map[string]interface{}{"type": "number", "description": "Optional output tail length in characters."},
 		},
 		"required": []string{"session_id"},
-	}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	}, ToolMetadata{ReadOnly: true, ConcurrencySafe: true, InterruptBehavior: InterruptBehaviorCancel}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		sessionID := getStringArg(args, "session_id")
 		if sessionID == "" {
 			return nil, fmt.Errorf("session_id is required")
@@ -102,7 +102,7 @@ func registerOperatorTools(operator *Service) {
 		"properties": map[string]interface{}{
 			"tail_chars": map[string]interface{}{"type": "number", "description": "Optional output tail length in characters."},
 		},
-	}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	}, ToolMetadata{ReadOnly: true, ConcurrencySafe: true, InterruptBehavior: InterruptBehaviorCancel}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		tailChars := getIntArg(args, "tail_chars", operatorSessionTailDefault)
 		sessions := globalOperatorSessions.list(tailChars)
 		for _, session := range sessions {
@@ -119,7 +119,7 @@ func registerOperatorTools(operator *Service) {
 			"tail_chars": map[string]interface{}{"type": "number", "description": "Optional output tail length in characters."},
 		},
 		"required": []string{"session_id"},
-	}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	}, ToolMetadata{InterruptBehavior: InterruptBehaviorBlock}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		sessionID := getStringArg(args, "session_id")
 		if sessionID == "" {
 			return nil, fmt.Errorf("session_id is required")
@@ -140,7 +140,7 @@ func registerOperatorTools(operator *Service) {
 			"tail_chars": map[string]interface{}{"type": "number", "description": "Optional output tail length in characters."},
 		},
 		"required": []string{"session_id"},
-	}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	}, ToolMetadata{Destructive: true, InterruptBehavior: InterruptBehaviorBlock}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		sessionID := getStringArg(args, "session_id")
 		if sessionID == "" {
 			return nil, fmt.Errorf("session_id is required")
@@ -175,7 +175,7 @@ func registerOperatorTools(operator *Service) {
 			"tail_chars":     map[string]interface{}{"type": "number", "description": "Optional output tail length in characters."},
 		},
 		"required": []string{"provider"},
-	}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	}, ToolMetadata{InterruptBehavior: InterruptBehaviorBlock}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		provider := getStringArg(args, "provider")
 		command, resolvedArgs, err := resolveCodingAgentCommand(provider, "", getStringSliceArg(args, "args"))
 		if err != nil {
@@ -197,7 +197,7 @@ func registerOperatorTools(operator *Service) {
 			"tail_chars": map[string]interface{}{"type": "number", "description": "Optional output tail length in characters."},
 		},
 		"required": []string{"session_id", "prompt"},
-	}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	}, ToolMetadata{InterruptBehavior: InterruptBehaviorBlock}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		sessionID := getStringArg(args, "session_id")
 		prompt := getStringArg(args, "prompt")
 		if sessionID == "" || prompt == "" {
@@ -217,7 +217,7 @@ func registerOperatorTools(operator *Service) {
 			"tail_chars": map[string]interface{}{"type": "number", "description": "Optional output tail length in characters."},
 		},
 		"required": []string{"session_id"},
-	}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	}, ToolMetadata{ReadOnly: true, ConcurrencySafe: true, InterruptBehavior: InterruptBehaviorCancel}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		sessionID := getStringArg(args, "session_id")
 		if sessionID == "" {
 			return nil, fmt.Errorf("session_id is required")
@@ -235,7 +235,7 @@ func registerOperatorTools(operator *Service) {
 			"provider":   map[string]interface{}{"type": "string", "description": "Optional provider filter."},
 			"tail_chars": map[string]interface{}{"type": "number", "description": "Optional output tail length in characters."},
 		},
-	}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	}, ToolMetadata{ReadOnly: true, ConcurrencySafe: true, InterruptBehavior: InterruptBehaviorCancel}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		provider := strings.ToLower(strings.TrimSpace(getStringArg(args, "provider")))
 		tailChars := getIntArg(args, "tail_chars", operatorSessionTailDefault)
 		sessions := globalOperatorSessions.list(tailChars)
@@ -259,7 +259,7 @@ func registerOperatorTools(operator *Service) {
 			"tail_chars": map[string]interface{}{"type": "number", "description": "Optional output tail length in characters."},
 		},
 		"required": []string{"session_id"},
-	}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	}, ToolMetadata{InterruptBehavior: InterruptBehaviorBlock}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		sessionID := getStringArg(args, "session_id")
 		if sessionID == "" {
 			return nil, fmt.Errorf("session_id is required")
@@ -280,7 +280,7 @@ func registerOperatorTools(operator *Service) {
 			"tail_chars": map[string]interface{}{"type": "number", "description": "Optional output tail length in characters."},
 		},
 		"required": []string{"session_id"},
-	}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	}, ToolMetadata{Destructive: true, InterruptBehavior: InterruptBehaviorBlock}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		sessionID := getStringArg(args, "session_id")
 		if sessionID == "" {
 			return nil, fmt.Errorf("session_id is required")
@@ -309,7 +309,7 @@ func registerOperatorTools(operator *Service) {
 			"tail_chars": map[string]interface{}{"type": "number", "description": "Optional output tail length in characters."},
 		},
 		"required": []string{"provider", "prompt"},
-	}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	}, ToolMetadata{InterruptBehavior: InterruptBehaviorBlock}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		provider := strings.ToLower(strings.TrimSpace(getStringArg(args, "provider")))
 		prompt := getStringArg(args, "prompt")
 		if provider == "" || prompt == "" {

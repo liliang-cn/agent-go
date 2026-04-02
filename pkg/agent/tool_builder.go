@@ -86,11 +86,15 @@ func Items(t ParamType) ParamOption {
 // ToolBuilder is a fluent builder that constructs a *Tool step-by-step.
 // All Param() calls return the same *ToolBuilder so the chain stays on one type.
 type ToolBuilder struct {
-	name         string
-	description  string
-	params       []paramDef
-	handler      func(context.Context, map[string]interface{}) (interface{}, error)
-	deferLoading bool
+	name              string
+	description       string
+	params            []paramDef
+	handler           func(context.Context, map[string]interface{}) (interface{}, error)
+	deferLoading      bool
+	readOnly          bool
+	concurrencySafe   bool
+	destructive       bool
+	interruptBehavior string
 }
 
 // BuildTool starts a new ToolBuilder chain for a tool with the given name.
@@ -107,6 +111,29 @@ func (b *ToolBuilder) Description(desc string) *ToolBuilder {
 // Deferred marks the tool as deferred loading (only loaded via search_tools).
 func (b *ToolBuilder) Deferred(deferLoading bool) *ToolBuilder {
 	b.deferLoading = deferLoading
+	return b
+}
+
+func (b *ToolBuilder) ReadOnly(readOnly bool) *ToolBuilder {
+	b.readOnly = readOnly
+	if readOnly && !b.concurrencySafe {
+		b.concurrencySafe = true
+	}
+	return b
+}
+
+func (b *ToolBuilder) ConcurrencySafe(concurrencySafe bool) *ToolBuilder {
+	b.concurrencySafe = concurrencySafe
+	return b
+}
+
+func (b *ToolBuilder) Destructive(destructive bool) *ToolBuilder {
+	b.destructive = destructive
+	return b
+}
+
+func (b *ToolBuilder) InterruptBehavior(interruptBehavior string) *ToolBuilder {
+	b.interruptBehavior = interruptBehavior
 	return b
 }
 
@@ -144,11 +171,15 @@ func (b *ToolBuilder) Build() *Tool {
 	}
 
 	return &Tool{
-		name:         b.name,
-		description:  b.description,
-		parameters:   b.buildSchema(),
-		handler:      b.handler,
-		deferLoading: b.deferLoading,
+		name:              b.name,
+		description:       b.description,
+		parameters:        b.buildSchema(),
+		handler:           b.handler,
+		deferLoading:      b.deferLoading,
+		readOnly:          b.readOnly,
+		concurrencySafe:   b.concurrencySafe,
+		destructive:       b.destructive,
+		interruptBehavior: b.interruptBehavior,
 	}
 }
 

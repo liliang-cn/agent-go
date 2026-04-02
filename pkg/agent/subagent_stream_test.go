@@ -130,3 +130,165 @@ func TestRuntimeForwardSubAgentEventRewritesTerminalEvents(t *testing.T) {
 		t.Fatalf("error event = %+v, want state update failure", errEvt)
 	}
 }
+
+func TestRuntimeEmitToolCallAndResult_BlockingToolEmitsStateUpdates(t *testing.T) {
+	t.Parallel()
+
+	svc := &Service{
+		agent:           NewAgent("Assistant"),
+		toolRegistry:    NewToolRegistry(),
+		inProgressTools: make(map[string]int),
+	}
+	svc.toolRegistry.RegisterWithMetadata(
+		domain.ToolDefinition{
+			Type: "function",
+			Function: domain.ToolFunction{
+				Name:       "blocking_tool",
+				Parameters: map[string]interface{}{"type": "object"},
+			},
+		},
+		nil,
+		CategoryCustom,
+		ToolMetadata{InterruptBehavior: InterruptBehaviorBlock},
+	)
+
+	runtime := &Runtime{
+		svc:          svc,
+		currentAgent: svc.agent,
+		eventChan:    make(chan *Event, 8),
+	}
+
+	behavior, endExecution := svc.beginToolExecution("blocking_tool", svc.agent)
+	runtime.emitToolCall("blocking_tool", map[string]interface{}{"x": 1}, behavior)
+	endExecution()
+	runtime.emitToolResult("blocking_tool", "ok", nil, behavior)
+
+	toolCall := <-runtime.eventChan
+	startState := <-runtime.eventChan
+	toolResult := <-runtime.eventChan
+	endState := <-runtime.eventChan
+
+	if toolCall.Type != EventTypeToolCall {
+		t.Fatalf("first event = %+v, want tool_call", toolCall)
+	}
+	if startState.Type != EventTypeStateUpdate || startState.StateDelta["interruptible"] != false {
+		t.Fatalf("start state event = %+v, want non-interruptible state update", startState)
+	}
+	if got := startState.StateDelta["blocking_tool_count"]; got != 1 {
+		t.Fatalf("expected blocking_tool_count=1, got %#v", got)
+	}
+	if toolResult.Type != EventTypeToolResult {
+		t.Fatalf("third event = %+v, want tool_result", toolResult)
+	}
+	if endState.Type != EventTypeStateUpdate || endState.StateDelta["interruptible"] != true {
+		t.Fatalf("end state event = %+v, want interruptible state update", endState)
+	}
+	if got := endState.StateDelta["blocking_tool_count"]; got != 0 {
+		t.Fatalf("expected blocking_tool_count=0, got %#v", got)
+	}
+}
+
+func TestRuntimeBlockingToolStateUpdate_TracksRemainingCount(t *testing.T) {
+	t.Parallel()
+
+	svc := &Service{
+		agent:           NewAgent("Assistant"),
+		toolRegistry:    NewToolRegistry(),
+		inProgressTools: make(map[string]int),
+	}
+	runtime := &Runtime{
+		svc:          svc,
+		currentAgent: svc.agent,
+		eventChan:    make(chan *Event, 8),
+	}
+
+	_, end1 := svc.beginToolExecution("memory_save", nil)
+	behavior2, end2 := svc.beginToolExecution("delegate_to_subagent", nil)
+	runtime.emitToolCall("delegate_to_subagent", nil, behavior2)
+	end2()
+	runtime.emitToolResult("delegate_to_subagent", "ok", nil, behavior2)
+	end1()
+
+	_ = <-runtime.eventChan
+	startState := <-runtime.eventChan
+	_ = <-runtime.eventChan
+	endState := <-runtime.eventChan
+
+	if got := startState.StateDelta["blocking_tool_count"]; got != 2 {
+		t.Fatalf("expected start blocking count 2, got %#v", got)
+	}
+	if got := endState.StateDelta["blocking_tool_count"]; got != 1 {
+		t.Fatalf("expected end blocking count 1, got %#v", got)
+	}
+	if endState.StateDelta["interruptible"] != false {
+		t.Fatalf("expected still non-interruptible, got %+v", endState)
+	}
+}
+
+func TestRuntimeEmitTurnState_IncludesStageAndReason(t *testing.T) {
+	t.Parallel()
+
+	svc := &Service{
+		agent:           NewAgent("Assistant"),
+		inProgressTools: make(map[string]int),
+	}
+	runtime := &Runtime{
+		svc:          svc,
+		currentAgent: svc.agent,
+		eventChan:    make(chan *Event, 2),
+	}
+
+	runtime.emitTurnState(TurnStageAwaitingModel, "requesting model output", 2, 3, &IntentRecognitionResult{
+		IntentType:     "web_search",
+		PreferredAgent: defaultOperatorAgentName,
+		RequiresTools:  true,
+		Transition:     "tool_first",
+	})
+	evt := <-runtime.eventChan
+	if evt.Type != EventTypeStateUpdate {
+		t.Fatalf("event = %+v, want state update", evt)
+	}
+	if got := evt.StateDelta["turn_stage"]; got != TurnStageAwaitingModel {
+		t.Fatalf("turn_stage = %#v, want %q", got, TurnStageAwaitingModel)
+	}
+	if got := evt.StateDelta["transition_reason"]; got != "requesting model output" {
+		t.Fatalf("transition_reason = %#v", got)
+	}
+	if got := evt.StateDelta["round"]; got != 2 {
+		t.Fatalf("round = %#v, want 2", got)
+	}
+	if got := evt.StateDelta["tool_call_count"]; got != 3 {
+		t.Fatalf("tool_call_count = %#v, want 3", got)
+	}
+	if got := evt.StateDelta["intent_type"]; got != "web_search" {
+		t.Fatalf("intent_type = %#v, want web_search", got)
+	}
+}
+
+func TestRuntimeEmitToolState_IncludesQueuedExecutingCompleted(t *testing.T) {
+	t.Parallel()
+
+	svc := &Service{
+		agent:           NewAgent("Assistant"),
+		inProgressTools: make(map[string]int),
+	}
+	runtime := &Runtime{
+		svc:          svc,
+		currentAgent: svc.agent,
+		eventChan:    make(chan *Event, 4),
+	}
+
+	runtime.emitToolState("echo_tool", "queued", InterruptBehaviorCancel)
+	runtime.emitToolState("echo_tool", "executing", InterruptBehaviorCancel)
+	runtime.emitToolState("echo_tool", "completed", InterruptBehaviorCancel)
+
+	for _, want := range []string{"queued", "executing", "completed"} {
+		evt := <-runtime.eventChan
+		if evt.Type != EventTypeStateUpdate {
+			t.Fatalf("event = %+v, want state update", evt)
+		}
+		if got := evt.StateDelta["tool_state"]; got != want {
+			t.Fatalf("tool_state = %#v, want %q", got, want)
+		}
+	}
+}

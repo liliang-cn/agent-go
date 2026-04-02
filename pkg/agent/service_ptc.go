@@ -65,13 +65,7 @@ DO NOT wrap code in function main(){...}main().
 Example format:
 ` + "<code>\nconst data = callTool('some_tool', { arg: 'value' });\nconsole.log(\"Processing:\", data);\nreturn { result: data };\n</code>"
 
-	// Determine current agent (same logic as executeWithLLM).
-	currentAgent := s.agent
-	if session != nil && session.AgentID != "" && s.registry != nil {
-		if a, ok := s.registry.GetAgent(session.AgentID); ok {
-			currentAgent = a
-		}
-	}
+	currentAgent := s.resolveCurrentAgent(session)
 
 	// Prepend system prompt so the LLM has full context (memory, env, PTC instructions, etc.)
 	systemMsg := s.buildSystemPrompt(ctx, currentAgent)
@@ -164,10 +158,32 @@ Example format:
 	// Some models ignore the PTC transport instruction and emit normal tool calls.
 	// Execute them directly instead of returning the model's internal reasoning text.
 	if len(toolCalls) > 0 && !hasExecuteJavaScript {
-		toolResults, err := s.executeToolCalls(ctx, currentAgent, session, toolCalls)
+		result := &domain.GenerationResult{
+			Content:   content,
+			ToolCalls: toolCalls,
+		}
+		nextAgent, filteredToolCalls, duplicateToolResults, fallback, handoff := s.prepareToolRound(ctx, &messages, currentAgent, session, result, make(map[string]int), 0)
+		if handoff {
+			currentAgent = nextAgent
+		}
+		if fallback != "" {
+			return fallback, nil, nil
+		}
+		if len(filteredToolCalls) == 0 {
+			if len(duplicateToolResults) == 1 {
+				return toolResultToString(duplicateToolResults[0].Result), nil, nil
+			}
+			if len(duplicateToolResults) > 1 {
+				return strings.TrimSpace(s.formatToolResults(duplicateToolResults)), nil, nil
+			}
+			return "", nil, nil
+		}
+
+		toolResults, err := s.executeToolCalls(ctx, currentAgent, session, filteredToolCalls)
 		if err != nil {
 			return nil, nil, fmt.Errorf("PTC direct tool-call fallback failed: %w", err)
 		}
+		toolResults = append(duplicateToolResults, toolResults...)
 
 		var final strings.Builder
 		final.WriteString("Direct tool-call fallback executed successfully.\n")

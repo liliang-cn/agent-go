@@ -2,6 +2,7 @@ package prompt
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,13 +17,23 @@ type Manager struct {
 	prompts  map[string]string
 	defaults map[string]string
 	funcMap  template.FuncMap
+	sections map[string]SectionRenderer
 }
+
+type Section struct {
+	Name    string
+	Content string
+	Dynamic bool
+}
+
+type SectionRenderer func(ctx context.Context, data interface{}) (Section, error)
 
 // NewManager creates a new prompt manager
 func NewManager() *Manager {
 	m := &Manager{
 		prompts:  make(map[string]string),
 		defaults: make(map[string]string),
+		sections: make(map[string]SectionRenderer),
 		funcMap: template.FuncMap{
 			"add": func(a, b int) int { return a + b },
 			"sub": func(a, b int) int { return a - b },
@@ -32,6 +43,47 @@ func NewManager() *Manager {
 	}
 	m.loadDefaults()
 	return m
+}
+
+func (m *Manager) RegisterSection(name string, renderer SectionRenderer) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if renderer == nil {
+		delete(m.sections, name)
+		return
+	}
+	m.sections[name] = renderer
+}
+
+func (m *Manager) ResolveSections(ctx context.Context, names []string, data interface{}) ([]Section, error) {
+	m.mu.RLock()
+	renderers := make([]SectionRenderer, 0, len(names))
+	orderedNames := make([]string, 0, len(names))
+	for _, name := range names {
+		renderer, ok := m.sections[name]
+		if !ok {
+			continue
+		}
+		renderers = append(renderers, renderer)
+		orderedNames = append(orderedNames, name)
+	}
+	m.mu.RUnlock()
+
+	sections := make([]Section, 0, len(renderers))
+	for idx, renderer := range renderers {
+		section, err := renderer(ctx, data)
+		if err != nil {
+			return nil, fmt.Errorf("resolve section %s: %w", orderedNames[idx], err)
+		}
+		if strings.TrimSpace(section.Name) == "" {
+			section.Name = orderedNames[idx]
+		}
+		if strings.TrimSpace(section.Content) == "" {
+			continue
+		}
+		sections = append(sections, section)
+	}
+	return sections, nil
 }
 
 // RegisterDefault registers a default prompt that can be overridden

@@ -240,8 +240,13 @@ func normalizeBuiltInTargetAgent(name string) string {
 func fallbackBuiltInRouteDecision(prompt string) builtInRouteDecision {
 	intent := (&Planner{}).fallbackIntentRecognition(prompt)
 	decision := builtInRouteDecision{
-		IntentType: strings.TrimSpace(intent.IntentType),
-		Reason:     "fallback heuristic route",
+		IntentType:        strings.TrimSpace(intent.IntentType),
+		Reason:            "fallback heuristic route",
+		NeedsOptimization: strings.TrimSpace(intent.Transition) == "text_first" && intent.Confidence < 0.75,
+	}
+
+	if strings.TrimSpace(intent.PreferredAgent) != "" {
+		decision.TargetAgent = strings.TrimSpace(intent.PreferredAgent)
 	}
 
 	switch intent.IntentType {
@@ -249,7 +254,7 @@ func fallbackBuiltInRouteDecision(prompt string) builtInRouteDecision {
 		decision.TargetAgent = defaultArchivistAgentName
 	case "file_create", "file_read", "file_edit":
 		decision.TargetAgent = defaultOperatorAgentName
-	case "analysis", "general_qa", "web_search", "rag_query":
+	case "analysis", "general_qa", "rag_query":
 		decision.TargetAgent = defaultAssistantAgentName
 	}
 
@@ -278,11 +283,33 @@ func promptLooksLikeOperatorControlRequest(prompt string) bool {
 }
 
 func DefaultEntryAgentForPrompt(prompt string) string {
+	intent := (&Planner{}).fallbackIntentRecognition(normalizeTaskPrompt(prompt))
+	if looksLikeDirectExecutionPrompt(prompt, intent) {
+		return defaultOperatorAgentName
+	}
+	if preferred := preferredEntryAgentForIntent(intent); strings.EqualFold(preferred, defaultOperatorAgentName) {
+		return defaultOperatorAgentName
+	}
 	decision := fallbackBuiltInRouteDecision(normalizeTaskPrompt(prompt))
 	if strings.EqualFold(decision.TargetAgent, defaultOperatorAgentName) {
 		return defaultOperatorAgentName
 	}
 	return defaultConciergeAgentName
+}
+
+func looksLikeDirectExecutionPrompt(prompt string, intent *IntentRecognitionResult) bool {
+	prompt = normalizeTaskPrompt(prompt)
+	if strings.TrimSpace(prompt) == "" || looksLikeInformationSeekingQuery(prompt) {
+		return false
+	}
+	if intent != nil && (intent.IntentType == "memory_save" || intent.IntentType == "memory_recall") {
+		return false
+	}
+	lower := strings.ToLower(prompt)
+	return containsAny(lower, []string{
+		"run", "start", "stop", "execute", "launch", "open", "click", "turn on", "turn off", "make",
+		"让", "启动", "停止", "执行", "打开", "点击", "运行", "关掉", "开启",
+	})
 }
 
 func buildFinalBuiltInDispatchPrompt(originalPrompt, optimizedPrompt string, decision builtInRouteDecision) string {

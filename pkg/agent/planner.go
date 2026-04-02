@@ -68,11 +68,19 @@ type PlanRequest struct {
 
 // IntentRecognitionResult represents the recognized intent from the goal
 type IntentRecognitionResult struct {
-	IntentType   string   `json:"intent_type"`  // file_create, file_read, web_search, rag_query, general_qa, etc
-	TargetFile   string   `json:"target_file"`  // extracted file path if any
-	Topic        string   `json:"topic"`        // main topic/subject
-	Requirements []string `json:"requirements"` // specific requirements extracted
-	Confidence   float64  `json:"confidence"`   // confidence score
+	IntentType     string   `json:"intent_type"`  // file_create, file_read, web_search, rag_query, general_qa, etc
+	TargetFile     string   `json:"target_file"`  // extracted file path if any
+	Topic          string   `json:"topic"`        // main topic/subject
+	Requirements   []string `json:"requirements"` // specific requirements extracted
+	Confidence     float64  `json:"confidence"`   // confidence score
+	RequiresTools  bool     `json:"requires_tools,omitempty"`
+	PreferredAgent string   `json:"preferred_agent,omitempty"`
+	Transition     string   `json:"transition,omitempty"`
+}
+
+type intentSignal struct {
+	source string
+	intent *IntentRecognitionResult
 }
 
 // PlanResponse represents the LLM's plan response
@@ -107,6 +115,9 @@ func (p *Planner) Plan(ctx context.Context, goal string, session *Session) (*Pla
 		var sb strings.Builder
 		info := p.service.Info()
 		fmt.Fprintf(&sb, "MODEL: %s (%s)\n", info.Model, info.BaseURL)
+		if sections := renderPlannerPromptSections(p.buildPlannerSystemPromptSections()); sections != "" {
+			fmt.Fprintf(&sb, "=== PLANNER SYSTEM PROMPT SECTIONS ===\n%s\n\n", sections)
+		}
 		fmt.Fprintf(&sb, "=== PLANNING PROMPT ===\n%s\n", fullPrompt)
 		p.service.EmitDebugPrint(0, "planner_prompt", sb.String())
 	}
@@ -262,19 +273,7 @@ func (p *Planner) isValidTool(toolName string) bool {
 
 // buildSystemPrompt creates the system prompt for planning
 func (p *Planner) buildSystemPrompt() string {
-	toolDescriptions := p.describeAvailableTools()
-
-	data := map[string]interface{}{
-		"ToolDescriptions": toolDescriptions,
-		"HasRAG":           p.hasRAGTools(),
-	}
-
-	rendered, err := p.promptManager.Render(prompt.PlannerSystemPrompt, data)
-	if err != nil {
-		return "You are an AI planning agent. Help user achieve their goal using available tools."
-	}
-
-	return rendered
+	return renderPlannerPromptSections(p.buildPlannerSystemPromptSections())
 }
 
 // describeAvailableTools creates a compact description of available tools (name + parameters only)
@@ -413,24 +412,102 @@ func containsHelper(s, substr string) bool {
 
 // RecognizeIntent performs intent recognition using semantic router (fast) with LLM fallback
 func (p *Planner) RecognizeIntent(ctx context.Context, goal string, session *Session) (*IntentRecognitionResult, error) {
-	// Try semantic router first (fast, vector-based)
-	if p.router != nil {
-		routerResult, err := p.router.RecognizeIntent(ctx, goal)
-		if err == nil && routerResult.Confidence >= 0.75 {
-			// Good semantic match - use it directly
-			return &IntentRecognitionResult{
-				IntentType:   routerResult.IntentType,
-				TargetFile:   routerResult.TargetFile,
-				Topic:        routerResult.Topic,
-				Requirements: routerResult.Requirements,
-				Confidence:   routerResult.Confidence,
-			}, nil
-		}
-		// Low confidence or error - fall through to LLM
+	signals, err := p.collectIntentSignals(ctx, goal, session)
+	if err != nil {
+		return nil, err
+	}
+	return p.combineIntentSignals(goal, signals), nil
+}
+
+func (p *Planner) collectIntentSignals(ctx context.Context, goal string, session *Session) ([]intentSignal, error) {
+	signals := make([]intentSignal, 0, 4)
+
+	if heuristic := p.ruleBasedIntentRecognition(goal); heuristic != nil {
+		signals = append(signals, intentSignal{source: "rules", intent: heuristic})
 	}
 
-	// Fall back to LLM-based intent recognition
-	return p.llmIntentRecognition(ctx, goal, session)
+	if p.router != nil {
+		routerResult, err := p.router.RecognizeIntent(ctx, goal)
+		if err == nil && routerResult != nil {
+			signals = append(signals, intentSignal{
+				source: "router",
+				intent: p.populateIntentExecutionHints(&IntentRecognitionResult{
+					IntentType:   routerResult.IntentType,
+					TargetFile:   routerResult.TargetFile,
+					Topic:        routerResult.Topic,
+					Requirements: routerResult.Requirements,
+					Confidence:   routerResult.Confidence,
+				}),
+			})
+		}
+	}
+
+	intent, err := p.llmIntentRecognition(ctx, goal, session)
+	if err != nil {
+		return nil, err
+	}
+	if intent != nil {
+		signals = append(signals, intentSignal{source: "llm", intent: p.populateIntentExecutionHints(intent)})
+	}
+
+	fallback := p.fallbackIntentRecognition(goal)
+	if fallback != nil {
+		signals = append(signals, intentSignal{source: "fallback", intent: fallback})
+	}
+
+	return signals, nil
+}
+
+func (p *Planner) combineIntentSignals(goal string, signals []intentSignal) *IntentRecognitionResult {
+	var (
+		best       *IntentRecognitionResult
+		bestSource string
+	)
+
+	for _, signal := range signals {
+		if signal.intent == nil || strings.TrimSpace(signal.intent.IntentType) == "" {
+			continue
+		}
+		switch signal.source {
+		case "rules":
+			if signal.intent.Confidence >= 0.8 {
+				return p.populateIntentExecutionHints(signal.intent)
+			}
+		case "router":
+			if signal.intent.Confidence >= 0.75 {
+				return p.populateIntentExecutionHints(signal.intent)
+			}
+		}
+		if best == nil || signal.intent.Confidence > best.Confidence || (signal.intent.Confidence == best.Confidence && sourcePriority(signal.source) < sourcePriority(bestSource)) {
+			best = signal.intent
+			bestSource = signal.source
+		}
+	}
+
+	if best != nil {
+		return p.populateIntentExecutionHints(best)
+	}
+
+	return p.populateIntentExecutionHints(&IntentRecognitionResult{
+		IntentType: "general_qa",
+		Topic:      p.extractTopic(goal),
+		Confidence: 0.4,
+	})
+}
+
+func sourcePriority(source string) int {
+	switch source {
+	case "rules":
+		return 0
+	case "router":
+		return 1
+	case "llm":
+		return 2
+	case "fallback":
+		return 3
+	default:
+		return 9
+	}
 }
 
 // llmIntentRecognition performs LLM-based intent recognition as fallback
@@ -466,6 +543,20 @@ func (p *Planner) llmIntentRecognition(ctx context.Context, goal string, session
 			"confidence": map[string]interface{}{
 				"type":        "number",
 				"description": "Confidence score from 0.0 to 1.0",
+			},
+			"requires_tools": map[string]interface{}{
+				"type":        "boolean",
+				"description": "Whether fulfilling this intent should prefer tool-based execution.",
+			},
+			"preferred_agent": map[string]interface{}{
+				"type":        "string",
+				"enum":        []string{defaultAssistantAgentName, defaultOperatorAgentName, defaultArchivistAgentName, defaultStakeholderAgentName, defaultVerifierAgentName},
+				"description": "Best-fit built-in standalone agent for this intent.",
+			},
+			"transition": map[string]interface{}{
+				"type":        "string",
+				"enum":        []string{"tool_first", "text_first", "prefer_tooling"},
+				"description": "Suggested next-step execution mode for the runtime.",
 			},
 		},
 		"required": []string{"intent_type", "confidence"},
@@ -503,9 +594,9 @@ func (p *Planner) buildIntentRecognitionPrompt(goal string, session *Session) st
 	// Add session context if available
 	if session != nil {
 		var context strings.Builder
-		if session.Summary != "" {
+		if session.GetSummary() != "" {
 			context.WriteString("Conversation Summary:\n")
-			context.WriteString(session.Summary)
+			context.WriteString(session.GetSummary())
 			context.WriteString("\n\n")
 		}
 
@@ -553,6 +644,10 @@ func (p *Planner) hasRAGTools() bool {
 
 // fallbackIntentRecognition provides basic regex-based intent recognition as fallback
 func (p *Planner) fallbackIntentRecognition(goal string) *IntentRecognitionResult {
+	if heuristic := p.ruleBasedIntentRecognition(goal); heuristic != nil {
+		return p.populateIntentExecutionHints(heuristic)
+	}
+
 	goal = normalizeTaskPrompt(goal)
 	intent := &IntentRecognitionResult{
 		IntentType: "general_qa",
@@ -620,6 +715,149 @@ func (p *Planner) fallbackIntentRecognition(goal string) *IntentRecognitionResul
 	return intent
 }
 
+func (p *Planner) populateIntentExecutionHints(intent *IntentRecognitionResult) *IntentRecognitionResult {
+	if intent == nil {
+		return nil
+	}
+	switch intent.IntentType {
+	case "file_create", "file_edit", "web_search", "memory_save":
+		intent.RequiresTools = true
+	case "file_read", "rag_query", "memory_recall":
+		intent.RequiresTools = true
+		intent.Transition = "prefer_tooling"
+	}
+
+	switch intent.IntentType {
+	case "file_create", "file_read", "file_edit", "web_search":
+		intent.PreferredAgent = defaultOperatorAgentName
+	case "memory_save", "memory_recall":
+		intent.PreferredAgent = defaultArchivistAgentName
+	case "analysis":
+		intent.PreferredAgent = defaultAssistantAgentName
+	case "general_qa":
+		intent.PreferredAgent = defaultAssistantAgentName
+	case "rag_query":
+		intent.PreferredAgent = defaultAssistantAgentName
+	}
+
+	if intent.Transition == "" {
+		if intent.RequiresTools {
+			intent.Transition = "tool_first"
+		} else {
+			intent.Transition = "text_first"
+		}
+	}
+	return intent
+}
+
+func (p *Planner) ruleBasedIntentRecognition(goal string) *IntentRecognitionResult {
+	goal = normalizeTaskPrompt(goal)
+	trimmed := strings.TrimSpace(goal)
+	mk := func(intent *IntentRecognitionResult) *IntentRecognitionResult {
+		return p.populateIntentExecutionHints(intent)
+	}
+	if trimmed == "" {
+		return mk(&IntentRecognitionResult{IntentType: "general_qa", Confidence: 0.2})
+	}
+
+	for _, classifier := range []func(string) *IntentRecognitionResult{
+		p.classifyMemoryIntent,
+		p.classifyFileIntent,
+		p.classifyExternalInfoIntent,
+		p.classifyKnowledgeIntent,
+		p.classifyAnalysisIntent,
+		p.classifyGeneralQuestionIntent,
+	} {
+		if intent := classifier(trimmed); intent != nil {
+			return mk(intent)
+		}
+	}
+
+	return nil
+}
+
+func (p *Planner) classifyMemoryIntent(goal string) *IntentRecognitionResult {
+	lowerGoal := strings.ToLower(goal)
+	if isExplicitMemoryRecallQuery(goal) {
+		return &IntentRecognitionResult{IntentType: "memory_recall", Topic: p.extractTopic(goal), Confidence: 0.9}
+	}
+	if isExplicitMemorySaveIntent(goal, nil) {
+		return &IntentRecognitionResult{IntentType: "memory_save", Topic: p.extractTopic(goal), Confidence: 0.9}
+	}
+	if !looksLikeInformationSeekingQuery(goal) &&
+		containsAny(lowerGoal, []string{"tomorrow", "today", "tonight", "next week", "pm", "am", "明天", "今天", "今晚", "下周", "下午", "上午", "点", "："}) &&
+		containsAny(lowerGoal, []string{"meeting", "kickoff", "standup", "deadline", "appointment", "interview", "go to", "visit", "eat", "会议", "启动会", "截止", "约", "去", "吃饭"}) {
+		return &IntentRecognitionResult{IntentType: "memory_save", Topic: p.extractTopic(goal), Confidence: 0.82}
+	}
+	return nil
+}
+
+func (p *Planner) classifyFileIntent(goal string) *IntentRecognitionResult {
+	lowerGoal := strings.ToLower(goal)
+	targetFile := p.extractFilePathFromGoal(goal)
+	hasFilePath := strings.TrimSpace(targetFile) != ""
+
+	if hasFilePath {
+		switch {
+		case containsAny(lowerGoal, []string{"edit", "modify", "update", "append", "replace", "rewrite", "patch", "fix", "refactor", "rename", "修改", "更新", "追加", "替换", "修复", "重构"}):
+			return &IntentRecognitionResult{IntentType: "file_edit", TargetFile: targetFile, Topic: p.extractTopic(goal), Confidence: 0.9}
+		case containsAny(lowerGoal, []string{"create", "new", "generate", "save", "write", "output", "创建", "新建", "生成", "保存", "写入", "输出"}):
+			return &IntentRecognitionResult{IntentType: "file_create", TargetFile: targetFile, Topic: p.extractTopic(goal), Confidence: 0.88}
+		case containsAny(lowerGoal, []string{"read", "open", "show", "view", "inspect", "check", "analyze", "读取", "打开", "查看", "看看", "检查", "分析"}):
+			return &IntentRecognitionResult{IntentType: "file_read", TargetFile: targetFile, Topic: p.extractTopic(goal), Confidence: 0.88}
+		}
+	}
+
+	switch {
+	case containsAny(lowerGoal, []string{"edit file", "modify file", "update file", "patch file", "fix file", "修改文件", "更新文件", "修复文件"}):
+		return &IntentRecognitionResult{IntentType: "file_edit", TargetFile: targetFile, Topic: p.extractTopic(goal), Confidence: 0.82}
+	case containsAny(lowerGoal, []string{"read file", "open file", "show file", "查看文件", "读取文件", "打开文件"}):
+		return &IntentRecognitionResult{IntentType: "file_read", TargetFile: targetFile, Topic: p.extractTopic(goal), Confidence: 0.8}
+	case containsAny(lowerGoal, []string{"create file", "write file", "save file", "生成文件", "创建文件", "写入文件"}):
+		return &IntentRecognitionResult{IntentType: "file_create", TargetFile: targetFile, Topic: p.extractTopic(goal), Confidence: 0.8}
+	default:
+		return nil
+	}
+}
+
+func (p *Planner) classifyExternalInfoIntent(goal string) *IntentRecognitionResult {
+	lowerGoal := strings.ToLower(goal)
+	switch {
+	case containsAny(lowerGoal, []string{"latest", "current", "today", "recent", "news", "weather", "forecast", "stock", "price", "score", "today's", "实时", "最新", "当前", "今天", "新闻", "天气", "股价", "价格", "比分"}):
+		return &IntentRecognitionResult{IntentType: "web_search", Topic: p.extractTopic(goal), Confidence: 0.85}
+	case containsAny(lowerGoal, []string{"google", "search the web", "web search", "bing", "百度", "搜索网页", "上网搜"}):
+		return &IntentRecognitionResult{IntentType: "web_search", Topic: p.extractTopic(goal), Confidence: 0.82}
+	default:
+		return nil
+	}
+}
+
+func (p *Planner) classifyKnowledgeIntent(goal string) *IntentRecognitionResult {
+	if !p.hasRAGTools() {
+		return nil
+	}
+	lowerGoal := strings.ToLower(goal)
+	if containsAny(lowerGoal, []string{"knowledge base", "knowledgebase", "docs", "documentation", "internal docs", "vector store", "rag", "知识库", "文档库", "内部文档"}) {
+		return &IntentRecognitionResult{IntentType: "rag_query", Topic: p.extractTopic(goal), Confidence: 0.8}
+	}
+	return nil
+}
+
+func (p *Planner) classifyAnalysisIntent(goal string) *IntentRecognitionResult {
+	lowerGoal := strings.ToLower(goal)
+	if containsAny(lowerGoal, []string{"analyze", "analysis", "summarize", "summary", "compare", "explain", "分析", "总结", "对比", "解释"}) {
+		return &IntentRecognitionResult{IntentType: "analysis", Topic: p.extractTopic(goal), Confidence: 0.72}
+	}
+	return nil
+}
+
+func (p *Planner) classifyGeneralQuestionIntent(goal string) *IntentRecognitionResult {
+	if looksLikeInformationSeekingQuery(goal) {
+		return &IntentRecognitionResult{IntentType: "general_qa", Topic: p.extractTopic(goal), Confidence: 0.65}
+	}
+	return nil
+}
+
 // extractFilePathFromGoal extracts file path from goal text
 func (p *Planner) extractFilePathFromGoal(goal string) string {
 	// Look for file patterns: ./path, path.ext, "path/to/file"
@@ -680,37 +918,7 @@ func (p *Planner) extractTopic(goal string) string {
 
 // buildUserPromptWithContext creates the user prompt with intent context
 func (p *Planner) buildUserPromptWithContext(goal string, session *Session, intent *IntentRecognitionResult) string {
-	data := map[string]interface{}{
-		"Goal":   goal,
-		"Intent": intent,
-	}
-
-	// Add session context if available
-	if session != nil {
-		var sb strings.Builder
-		if session.Summary != "" {
-			sb.WriteString("Conversation Summary:\n")
-			sb.WriteString(session.Summary)
-			sb.WriteString("\n\n")
-		}
-
-		// Add recent messages
-		messages := session.GetLastNMessages(5)
-		if len(messages) > 0 {
-			sb.WriteString("Recent conversation context:\n")
-			for _, msg := range messages {
-				sb.WriteString(fmt.Sprintf("- [%s]: %s\n", msg.Role, msg.Content))
-			}
-		}
-		data["SessionContext"] = sb.String()
-	}
-
-	rendered, err := p.promptManager.Render(prompt.PlannerUserPrompt, data)
-	if err != nil {
-		return fmt.Sprintf("Goal: %s. Create a plan.", goal)
-	}
-
-	return rendered
+	return renderPlannerPromptSections(p.buildPlannerUserPromptSections(goal, session, intent))
 }
 
 // ============================================================================

@@ -37,6 +37,10 @@ type MCPToolExecutor interface {
 	AddServer(ctx context.Context, name string, command string, args []string) error
 }
 
+type MCPToolMetadataProvider interface {
+	ToolMetadata(toolName string) (ToolMetadata, bool)
+}
+
 // NewExecutor creates a new executor
 func NewExecutor(
 	service *Service,
@@ -279,13 +283,7 @@ func (e *Executor) executeTool(ctx context.Context, toolName string, args map[st
 		},
 	}
 
-	// Determine agent: use the one associated with the session if possible
-	targetAgent := e.service.agent
-	if session != nil && session.AgentID != "" && e.service.registry != nil {
-		if a, ok := e.service.registry.GetAgent(session.AgentID); ok {
-			targetAgent = a
-		}
-	}
+	targetAgent := e.service.resolveCurrentAgent(session)
 
 	result, err, _ := e.service.executeToolViaSubAgent(ctx, targetAgent, session, tc)
 	return result, err
@@ -378,9 +376,9 @@ func (e *Executor) buildPromptWithContext(prompt string, session *Session) strin
 	var sb strings.Builder
 
 	// Add summary if available
-	if session.Summary != "" {
+	if session.GetSummary() != "" {
 		sb.WriteString("Conversation Summary:\n")
-		sb.WriteString(session.Summary)
+		sb.WriteString(session.GetSummary())
 		sb.WriteString("\n\n")
 	}
 

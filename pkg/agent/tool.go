@@ -17,11 +17,15 @@ import (
 // Tool is a self-contained tool definition: schema + handler.
 // Created via NewTool[T] (typed, struct-based) or ToolBuilder (fluent).
 type Tool struct {
-	name         string
-	description  string
-	parameters   map[string]interface{} // JSON Schema object
-	handler      func(context.Context, map[string]interface{}) (interface{}, error)
-	deferLoading bool
+	name              string
+	description       string
+	parameters        map[string]interface{} // JSON Schema object
+	handler           func(context.Context, map[string]interface{}) (interface{}, error)
+	deferLoading      bool
+	readOnly          bool
+	concurrencySafe   bool
+	destructive       bool
+	interruptBehavior string
 }
 
 // Name returns the tool name.
@@ -34,7 +38,11 @@ func (t *Tool) Description() string { return t.description }
 func (t *Tool) Parameters() map[string]interface{} { return t.parameters }
 
 // DeferLoading returns whether the tool should be excluded from initial context.
-func (t *Tool) DeferLoading() bool { return t.deferLoading }
+func (t *Tool) DeferLoading() bool        { return t.deferLoading }
+func (t *Tool) ReadOnly() bool            { return t.readOnly }
+func (t *Tool) ConcurrencySafe() bool     { return t.concurrencySafe }
+func (t *Tool) Destructive() bool         { return t.destructive }
+func (t *Tool) InterruptBehavior() string { return t.interruptBehavior }
 
 // Handler returns the raw map-based handler (used internally by agent/ptc router).
 func (t *Tool) Handler() func(context.Context, map[string]interface{}) (interface{}, error) {
@@ -52,6 +60,29 @@ func (t *Tool) toToolDefinition() domain.ToolDefinition {
 		},
 		DeferLoading: t.deferLoading,
 	}
+}
+
+func (t *Tool) WithReadOnly(readOnly bool) *Tool {
+	t.readOnly = readOnly
+	if readOnly && !t.concurrencySafe {
+		t.concurrencySafe = true
+	}
+	return t
+}
+
+func (t *Tool) WithConcurrencySafe(concurrencySafe bool) *Tool {
+	t.concurrencySafe = concurrencySafe
+	return t
+}
+
+func (t *Tool) WithDestructive(destructive bool) *Tool {
+	t.destructive = destructive
+	return t
+}
+
+func (t *Tool) WithInterruptBehavior(interruptBehavior string) *Tool {
+	t.interruptBehavior = strings.TrimSpace(interruptBehavior)
+	return t
 }
 
 // NewTool creates a Tool from a typed handler whose parameter type T carries

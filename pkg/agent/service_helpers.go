@@ -12,6 +12,29 @@ import (
 	"github.com/liliang-cn/agent-go/v2/pkg/skills"
 )
 
+func (s *Service) resolveCurrentAgent(session *Session) *Agent {
+	currentAgent := s.agent
+	if session != nil && session.AgentID != "" && s.registry != nil {
+		if agent, ok := s.registry.GetAgent(session.AgentID); ok {
+			currentAgent = agent
+		}
+	}
+	return currentAgent
+}
+
+func (s *Service) prepareTurnInputs(ctx context.Context, currentAgent *Agent, messages []domain.Message, goal string) ([]domain.ToolDefinition, []domain.Message) {
+	tools := s.collectAllAvailableTools(ctx, currentAgent)
+	if looksLikeInformationSeekingQuery(goal) {
+		tools = filterToolDefinitions(tools, func(tool domain.ToolDefinition) bool {
+			return tool.Function.Name != "memory_save"
+		})
+	}
+
+	systemMsg := s.buildSystemPrompt(ctx, currentAgent)
+	genMessages := append([]domain.Message{{Role: "system", Content: systemMsg}}, messages...)
+	return tools, genMessages
+}
+
 // addRAGSources adds sources with deduplication by ID
 func (s *Service) addRAGSources(sources []domain.Chunk) {
 	if len(sources) == 0 {
@@ -513,10 +536,6 @@ func (s *Service) executeToolViaSubAgentWithEvents(ctx context.Context, currentA
 // EmitDebugPrint prints formatted debug information to console if debug mode is enabled.
 // This ensures consistent look across different execution paths (Execute, Run, RunStream).
 func (s *Service) EmitDebugPrint(round int, debugType string, content string) {
-	if !s.debug {
-		return
-	}
-
 	sep := strings.Repeat("─", 60)
 	label := strings.ToUpper(debugType)
 

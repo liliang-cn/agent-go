@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -89,5 +90,32 @@ func (sa *SubAgent) emitDebug(round int, debugType, content string) {
 		DebugType: debugType,
 		Content:   content,
 		Timestamp: time.Now(),
+	})
+}
+
+func (sa *SubAgent) emitLoopState(state *queryLoopState) {
+	if state == nil {
+		return
+	}
+	stateDelta := map[string]interface{}{
+		"turn_stage":        state.Stage,
+		"transition_reason": state.TransitionReason,
+		"round":             state.CurrentRound,
+		"tool_call_count":   state.PendingToolCount,
+	}
+	if state.Intent != nil {
+		stateDelta["intent_type"] = state.Intent.IntentType
+		stateDelta["preferred_agent"] = state.Intent.PreferredAgent
+		stateDelta["requires_tools"] = state.Intent.RequiresTools
+		stateDelta["transition"] = state.Intent.Transition
+	}
+	sa.emitEvent(&Event{
+		ID:         uuid.NewString(),
+		Type:       EventTypeStateUpdate,
+		AgentID:    sa.config.Agent.ID(),
+		AgentName:  sa.config.Agent.Name(),
+		Content:    fmt.Sprintf("Turn %d: %s", state.CurrentRound, state.TransitionReason),
+		StateDelta: stateDelta,
+		Timestamp:  time.Now(),
 	})
 }

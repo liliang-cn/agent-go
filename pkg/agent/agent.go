@@ -19,6 +19,7 @@ type Agent struct {
 	mcpTools     []string // Specific MCP tools allowed for this agent (names). Use ["*"] for all.
 	skills       []string // Specific Skills allowed (IDs). Use ["*"] for all.
 	handlers     map[string]func(context.Context, map[string]interface{}) (interface{}, error)
+	metadata     map[string]ToolMetadata
 	model        string
 	temperature  float64
 }
@@ -34,6 +35,7 @@ func NewAgent(name string) *Agent {
 		mcpTools:     []string{"*"}, // Default to all
 		skills:       []string{"*"}, // Default to all
 		handlers:     make(map[string]func(context.Context, map[string]interface{}) (interface{}, error)),
+		metadata:     make(map[string]ToolMetadata),
 		model:        "",
 		temperature:  0.7,
 	}
@@ -41,6 +43,11 @@ func NewAgent(name string) *Agent {
 
 // AddTool adds a custom Go function tool to the agent
 func (a *Agent) AddTool(name, description string, parameters map[string]interface{}, handler func(context.Context, map[string]interface{}) (interface{}, error)) {
+	metadata, _ := inferGenericToolMetadata(name)
+	a.AddToolWithMetadata(name, description, parameters, handler, metadata)
+}
+
+func (a *Agent) AddToolWithMetadata(name, description string, parameters map[string]interface{}, handler func(context.Context, map[string]interface{}) (interface{}, error), metadata ToolMetadata) {
 	a.AddToolWithHandler(domain.ToolDefinition{
 		Type: "function",
 		Function: domain.ToolFunction{
@@ -48,15 +55,21 @@ func (a *Agent) AddTool(name, description string, parameters map[string]interfac
 			Description: description,
 			Parameters:  parameters,
 		},
-	}, handler)
+	}, handler, metadata)
 }
 
 // AddToolWithHandler adds a pre-built tool definition and its handler
-func (a *Agent) AddToolWithHandler(def domain.ToolDefinition, handler func(context.Context, map[string]interface{}) (interface{}, error)) {
+func (a *Agent) AddToolWithHandler(def domain.ToolDefinition, handler func(context.Context, map[string]interface{}) (interface{}, error), metadata ...ToolMetadata) {
 	if a.handlers == nil {
 		a.handlers = make(map[string]func(context.Context, map[string]interface{}) (interface{}, error))
 	}
+	if a.metadata == nil {
+		a.metadata = make(map[string]ToolMetadata)
+	}
 	a.handlers[def.Function.Name] = handler
+	if len(metadata) > 0 {
+		a.metadata[def.Function.Name] = metadata[0]
+	}
 	a.tools = append(a.tools, def)
 }
 
@@ -67,6 +80,13 @@ func (a *Agent) GetHandler(name string) (func(context.Context, map[string]interf
 	}
 	handler, ok := a.handlers[name]
 	return handler, ok
+}
+
+func (a *Agent) MetadataOf(name string) ToolMetadata {
+	if a == nil || a.metadata == nil {
+		return ToolMetadata{}
+	}
+	return a.metadata[name]
 }
 
 // SetAllowedMCPTools sets which MCP tools this agent can use
@@ -118,6 +138,7 @@ func NewAgentWithConfig(name, instructions string, tools []domain.ToolDefinition
 		mcpTools:     []string{"*"}, // Default to all
 		skills:       []string{"*"}, // Default to all
 		handlers:     make(map[string]func(context.Context, map[string]interface{}) (interface{}, error)),
+		metadata:     make(map[string]ToolMetadata),
 		model:        "",
 		temperature:  0.7,
 	}

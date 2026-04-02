@@ -24,17 +24,17 @@ func (m *TeamManager) registerBuiltInAgentDelegationTools(svc *Service, model *A
 	allowedAgentNames := delegableBuiltInAgentNamesFor(model)
 	allowedAgentLabel := strings.Join(allowedAgentNames, ", ")
 
-	register := func(name, description string, parameters map[string]interface{}, handler func(context.Context, map[string]interface{}) (interface{}, error)) {
+	register := func(name, description string, parameters map[string]interface{}, metadata ToolMetadata, handler func(context.Context, map[string]interface{}) (interface{}, error)) {
 		if svc.toolRegistry != nil && svc.toolRegistry.Has(name) {
 			return
 		}
-		svc.AddTool(name, description, parameters, handler)
+		svc.AddToolWithMetadata(name, description, parameters, handler, metadata)
 	}
 
 	register("list_builtin_agents", "List delegable built-in standalone agents available to this agent.", map[string]interface{}{
 		"type":       "object",
 		"properties": map[string]interface{}{},
-	}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	}, ToolMetadata{ReadOnly: true, ConcurrencySafe: true, InterruptBehavior: InterruptBehaviorCancel}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		agents, err := m.listDelegableBuiltInAgentsFor(model)
 		if err != nil {
 			return nil, err
@@ -64,7 +64,7 @@ func (m *TeamManager) registerBuiltInAgentDelegationTools(svc *Service, model *A
 			},
 		},
 		"required": []string{"agent_name", "prompt"},
-	}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	}, ToolMetadata{InterruptBehavior: InterruptBehaviorBlock}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		agentName := getStringArg(args, "agent_name")
 		prompt := getStringArg(args, "prompt")
 		if prompt == "" {
@@ -101,7 +101,7 @@ func (m *TeamManager) registerBuiltInAgentDelegationTools(svc *Service, model *A
 			},
 		},
 		"required": []string{"agent_name", "prompt"},
-	}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	}, ToolMetadata{InterruptBehavior: InterruptBehaviorBlock}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		agentName := getStringArg(args, "agent_name")
 		prompt := getStringArg(args, "prompt")
 		if prompt == "" {
@@ -132,7 +132,7 @@ func (m *TeamManager) registerBuiltInAgentDelegationTools(svc *Service, model *A
 			},
 		},
 		"required": []string{"task_id"},
-	}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	}, ToolMetadata{ReadOnly: true, ConcurrencySafe: true, InterruptBehavior: InterruptBehaviorCancel}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		taskID := getStringArg(args, "task_id")
 		if taskID == "" {
 			return nil, fmt.Errorf("task_id is required")

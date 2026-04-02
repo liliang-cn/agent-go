@@ -180,6 +180,14 @@ func TestRegisterConciergeToolsExposesStatusAndSubmission(t *testing.T) {
 	if !svc.agent.HasTool("submit_agent_task") {
 		t.Fatal("expected submit_agent_task to be available on Concierge")
 	}
+	listTeamsMeta := svc.toolRegistry.MetadataOf("list_teams")
+	if !listTeamsMeta.ReadOnly || !listTeamsMeta.ConcurrencySafe || listTeamsMeta.InterruptBehavior != InterruptBehaviorCancel {
+		t.Fatalf("unexpected list_teams metadata: %+v", listTeamsMeta)
+	}
+	submitTaskMeta := svc.toolRegistry.MetadataOf("submit_agent_task")
+	if submitTaskMeta.InterruptBehavior != InterruptBehaviorBlock {
+		t.Fatalf("unexpected submit_agent_task metadata: %+v", submitTaskMeta)
+	}
 
 	rawTeams, err := svc.toolRegistry.Call(context.Background(), "list_teams", map[string]interface{}{})
 	if err != nil {
@@ -229,6 +237,38 @@ func TestRegisterConciergeToolsExposesStatusAndSubmission(t *testing.T) {
 	}
 	if tasks[0].Prompt != "prepare a short acknowledgement" {
 		t.Fatalf("unexpected queued prompt: %+v", tasks[0])
+	}
+}
+
+func TestRegisterCaptainTools_Metadata(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "agent.db"))
+	if err != nil {
+		t.Fatalf("new store failed: %v", err)
+	}
+	manager := NewTeamManager(store)
+	if err := manager.SeedDefaultMembers(); err != nil {
+		t.Fatalf("seed default members failed: %v", err)
+	}
+
+	svc, err := manager.GetAgentService("Captain")
+	if err != nil {
+		t.Fatalf("get captain service failed: %v", err)
+	}
+	manager.RegisterCaptainTools(svc)
+
+	discoverMeta := svc.toolRegistry.MetadataOf("discover_agents")
+	if !discoverMeta.ReadOnly || !discoverMeta.ConcurrencySafe || discoverMeta.InterruptBehavior != InterruptBehaviorCancel {
+		t.Fatalf("unexpected discover_agents metadata: %+v", discoverMeta)
+	}
+
+	submitMeta := svc.toolRegistry.MetadataOf("submit_team_async")
+	if submitMeta.InterruptBehavior != InterruptBehaviorBlock {
+		t.Fatalf("unexpected submit_team_async metadata: %+v", submitMeta)
+	}
+
+	delegateMeta := svc.toolRegistry.MetadataOf("delegate_task")
+	if delegateMeta.InterruptBehavior != InterruptBehaviorBlock {
+		t.Fatalf("unexpected delegate_task metadata: %+v", delegateMeta)
 	}
 }
 

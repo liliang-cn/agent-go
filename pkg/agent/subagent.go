@@ -230,17 +230,19 @@ func (sa *SubAgent) Run(parentCtx context.Context) (interface{}, error) {
 	}
 
 	// Emit SubagentStart hook
-	sa.hooks.Emit(HookEventSubagentStart, HookData{
-		SubagentID:   sa.id,
-		SubagentName: sa.config.Agent.Name(),
-		Goal:         sa.config.Goal,
-		SessionID:    sa.session.GetID(),
-		AgentID:      sa.config.Agent.ID(),
-		Metadata: map[string]interface{}{
-			"max_turns": sa.config.MaxTurns,
-			"timeout":   sa.config.Timeout.String(),
-		},
-	})
+	if sa.hooks != nil {
+		sa.hooks.Emit(HookEventSubagentStart, HookData{
+			SubagentID:   sa.id,
+			SubagentName: sa.config.Agent.Name(),
+			Goal:         sa.config.Goal,
+			SessionID:    sa.session.GetID(),
+			AgentID:      sa.config.Agent.ID(),
+			Metadata: map[string]interface{}{
+				"max_turns": sa.config.MaxTurns,
+				"timeout":   sa.config.Timeout.String(),
+			},
+		})
+	}
 	sa.emitStart(fmt.Sprintf("Starting sub-agent goal: %s", sa.config.Goal))
 
 	defer func() {
@@ -284,18 +286,20 @@ func (sa *SubAgent) Run(parentCtx context.Context) (interface{}, error) {
 		}
 
 		// Emit SubagentStop hook
-		sa.hooks.Emit(HookEventSubagentStop, HookData{
-			SubagentID:   sa.id,
-			SubagentName: sa.config.Agent.Name(),
-			Result:       sa.result,
-			Error:        sa.err,
-			Duration:     now.Sub(sa.startTime),
-			SessionID:    sa.session.GetID(),
-			Metadata: map[string]interface{}{
-				"final_state": string(sa.state),
-				"turns_used":  sa.currentTurn,
-			},
-		})
+		if sa.hooks != nil {
+			sa.hooks.Emit(HookEventSubagentStop, HookData{
+				SubagentID:   sa.id,
+				SubagentName: sa.config.Agent.Name(),
+				Result:       sa.result,
+				Error:        sa.err,
+				Duration:     now.Sub(sa.startTime),
+				SessionID:    sa.session.GetID(),
+				Metadata: map[string]interface{}{
+					"final_state": string(sa.state),
+					"turns_used":  sa.currentTurn,
+				},
+			})
+		}
 	}()
 
 	// Execute with retry support
@@ -360,14 +364,16 @@ func (sa *SubAgent) Cancel() error {
 	}
 
 	// Emit cancel hook
-	sa.hooks.Emit(HookEventSubagentCancel, HookData{
-		SubagentID:   sa.id,
-		SubagentName: sa.config.Agent.Name(),
-		Goal:         sa.config.Goal,
-		Metadata: map[string]interface{}{
-			"current_turn": sa.currentTurn,
-		},
-	})
+	if sa.hooks != nil {
+		sa.hooks.Emit(HookEventSubagentCancel, HookData{
+			SubagentID:   sa.id,
+			SubagentName: sa.config.Agent.Name(),
+			Goal:         sa.config.Goal,
+			Metadata: map[string]interface{}{
+				"current_turn": sa.currentTurn,
+			},
+		})
+	}
 
 	return nil
 }
@@ -420,10 +426,8 @@ func (sa *SubAgent) execute(ctx context.Context) (interface{}, error) {
 	}
 
 	// Collect tools with filtering
-	tools := sa.collectFilteredTools(ctx, sa.config.Agent)
-
-	// Build messages with SubAgent-specific goal framing
-	messages := sa.buildInitialMessages(tools)
+	currentAgent := sa.config.Agent
+	tools := sa.collectFilteredTools(ctx, currentAgent)
 
 	sa.emitProgress("Starting execution")
 
@@ -434,6 +438,13 @@ func (sa *SubAgent) execute(ctx context.Context) (interface{}, error) {
 	toolUsed := false
 	// Only nudge once per execution to avoid infinite nudge loops.
 	nudged := false
+	var subIntent *IntentRecognitionResult
+	if sa.config.Service != nil && sa.config.Service.planner != nil {
+		subIntent = sa.config.Service.planner.ruleBasedIntentRecognition(sa.config.Goal)
+	}
+	state := newQueryLoopState(sa.config.Goal, sa.buildInitialMessages(tools), subIntent, sa.config.MaxTurns)
+	state.setStage(TurnStagePreparingContext, "starting subagent execution", 0)
+	sa.emitLoopState(state)
 
 	// Execute with turn limit
 	for round := 0; round < sa.config.MaxTurns; round++ {
@@ -444,15 +455,18 @@ func (sa *SubAgent) execute(ctx context.Context) (interface{}, error) {
 		default:
 		}
 
+		state.beginRound()
 		sa.mu.Lock()
-		sa.currentTurn = round + 1
+		sa.currentTurn = state.CurrentRound
 		sa.mu.Unlock()
 
 		sa.emitProgress(fmt.Sprintf("Turn %d/%d", sa.currentTurn, sa.config.MaxTurns))
+		state.setStage(TurnStageAwaitingModel, "requesting model output", 0)
+		sa.emitLoopState(state)
 
 		// Build system prompt with SubAgent-specific tool instructions
 		systemMsg := sa.buildSystemPrompt(ctx, tools)
-		genMessages := append([]domain.Message{{Role: "system", Content: systemMsg}}, messages...)
+		genMessages := append([]domain.Message{{Role: "system", Content: systemMsg}}, state.Messages...)
 
 		// On the first turn with tools available and before any tool has been used
 		// or nudge has been attempted, set tool_choice=required to force the API
@@ -460,40 +474,33 @@ func (sa *SubAgent) execute(ctx context.Context) (interface{}, error) {
 		// After a nudge or once tools have been used, let the model choose freely
 		// ("auto") — forcing "required" beyond Turn 1 can cause some proxies to
 		// return non-standard binary responses.
-		genOpts := sa.config.Service.toolGenerationOptions(0.3, 2000, "")
-		if len(tools) > 0 && !toolUsed && !nudged {
+		genOpts := sa.config.Service.toolGenerationOptions(0.3, 2000, toolChoiceForIntent(subIntent, round))
+		if genOpts.ToolChoice == "" && len(tools) > 0 && !toolUsed && !nudged {
 			genOpts.ToolChoice = "required"
 		}
 
 		if sa.config.Debug {
-			sa.emitDebug(round+1, "prompt", buildDebugPrompt(sa.config.Service.Info(), tools, genMessages))
+			var promptContent strings.Builder
+			if sections := formatSystemPromptSectionsForDebug(sa.config.Service.buildSystemPromptSections(ctx, sa.config.Agent, systemPromptOptions{includePTC: sa.config.Service.ptcIntegration != nil})); sections != "" {
+				promptContent.WriteString(sections)
+				promptContent.WriteString("\n\n")
+			}
+			promptContent.WriteString(buildDebugPrompt(sa.config.Service.Info(), tools, genMessages))
+			sa.emitDebug(round+1, "prompt", promptContent.String())
 		}
 
-		var (
-			fullContent strings.Builder
-			toolCalls   []domain.ToolCall
-		)
-
-		err := sa.config.Service.llmService.StreamWithTools(ctx, genMessages, tools, genOpts, func(delta *domain.GenerationResult) error {
-			if delta.ReasoningContent != "" {
-				sa.emitThinking(delta.ReasoningContent)
-			}
-			if delta.Content != "" {
-				fullContent.WriteString(delta.Content)
-				sa.emitPartial(delta.Content)
-			}
-			if len(delta.ToolCalls) > 0 {
-				toolCalls = delta.ToolCalls
-			}
-			return nil
+		result, responseID, err := sa.config.Service.streamToolTurn(ctx, genMessages, tools, genOpts, StreamTurnCallbacks{
+			OnReasoning: func(text string) {
+				sa.emitThinking(text)
+			},
+			OnPartial: func(text string) {
+				sa.emitPartial(text)
+			},
 		})
 		if err != nil {
 			return nil, fmt.Errorf("LLM error: %w", err)
 		}
-		result := &domain.GenerationResult{
-			Content:   fullContent.String(),
-			ToolCalls: toolCalls,
-		}
+		state.noteResponse(responseID)
 
 		if sa.config.Debug {
 			sa.emitDebug(round+1, "response", buildDebugResponse(result.Content, result.ToolCalls, nil))
@@ -502,68 +509,70 @@ func (sa *SubAgent) execute(ctx context.Context) (interface{}, error) {
 		// Handle tool calls
 		if len(result.ToolCalls) > 0 {
 			toolUsed = true
-
-			// Add assistant message with tool calls
-			messages = append(messages, domain.Message{
-				Role:      "assistant",
-				Content:   result.Content,
-				ToolCalls: result.ToolCalls,
-			})
-
-			// Execute tools
-			for _, tc := range result.ToolCalls {
-				sa.emitProgress(fmt.Sprintf("Executing tool: %s", tc.Function.Name))
-				sa.emitToolCall(tc.Function.Name, tc.Function.Arguments)
-
-				toolResult, toolErr, _ := sa.executeTool(ctx, tc)
-				sa.emitToolResult(tc.Function.Name, toolResult, toolErr)
-
-				var content string
-				if toolErr != nil {
-					content = fmt.Sprintf("Error: %v", toolErr)
-				} else {
-					content = toolResultToString(toolResult)
-				}
-
-				messages = append(messages, domain.Message{
-					Role:       "tool",
-					ToolCallID: tc.ID,
-					Content:    content,
-				})
+			nextAgent, filteredToolCalls, duplicateToolResults, fallback, handoff := sa.config.Service.prepareToolRound(ctx, &state.Messages, currentAgent, sa.session, result, state.PrevToolCalls, round)
+			if handoff {
+				currentAgent = nextAgent
+				sa.config.Agent = nextAgent
+				tools = sa.collectFilteredTools(ctx, currentAgent)
+				continue
 			}
+			if fallback != "" {
+				sa.emitProgress("Execution completed")
+				return fallback, nil
+			}
+			if len(filteredToolCalls) == 0 {
+				if len(duplicateToolResults) > 0 {
+					state.Messages = sa.config.Service.appendToolRoundToMessages(state.Messages, result, duplicateToolResults)
+				}
+				continue
+			}
+
+			state.setStage(TurnStageHandlingTools, "executing tool batch", len(filteredToolCalls))
+			sa.emitLoopState(state)
+			var toolResults []ToolExecutionResult
+			state.Messages, toolResults, err = sa.config.Service.executePreparedToolRound(ctx, currentAgent, sa.session, state.Messages, result, filteredToolCalls, duplicateToolResults, ToolExecutionCallbacks{
+				OnToolCall: func(name string, args map[string]interface{}, interruptBehavior string) {
+					sa.emitProgress(fmt.Sprintf("Executing tool: %s", name))
+					sa.emitToolCall(name, args)
+				},
+				OnToolResult: func(name string, result interface{}, err error, interruptBehavior string) {
+					sa.emitToolResult(name, result, err)
+				},
+				OnToolState: func(name string, state string, interruptBehavior string) {
+					sa.emitEvent(&Event{
+						ID:        uuid.NewString(),
+						Type:      EventTypeStateUpdate,
+						AgentID:   currentAgent.ID(),
+						AgentName: currentAgent.Name(),
+						Content:   fmt.Sprintf("Tool %s is %s", name, state),
+						StateDelta: map[string]interface{}{
+							"tool_name":          name,
+							"tool_state":         state,
+							"interrupt_behavior": interruptBehavior,
+						},
+						Timestamp: time.Now(),
+					})
+				},
+				EventSink: sa.emitEvent,
+				Debug:     sa.config.Debug,
+			}, true)
+			if err != nil {
+				return nil, fmt.Errorf("tool execution failed: %w", err)
+			}
+			state.recordToolResults(toolResults)
 			continue
 		}
 
-		// No tool calls in response.
-		// If tools are available but the LLM hasn't used any yet,
-		// nudge it to actually invoke the tools rather than just
-		// describing what it would do.
-		if len(tools) > 0 && !toolUsed && !nudged {
+		if shouldNudgeForMissingToolUse(len(tools) > 0, toolUsed, nudged) {
 			nudged = true
 			sa.emitProgress("Nudging LLM to use available tools")
-
-			// Add the LLM's text as an assistant message
-			messages = append(messages, domain.Message{
-				Role:    "assistant",
-				Content: result.Content,
-			})
-
-			// Add a nudge message to encourage actual tool invocation
-			messages = append(messages, domain.Message{
-				Role: "user",
-				Content: "Do not describe what you would do. " +
-					"You have tools available — call them now to accomplish the goal. " +
-					"Use the tool functions provided to you.",
-			})
+			state.Messages = appendToolUseNudgeMessages(state.Messages, result.Content)
 			continue
 		}
 
-		// LLM returned text without tool calls and either:
-		// - No tools are available (pure text task)
-		// - Tools were already used (LLM is summarizing results)
-		// - Nudge was already attempted (LLM genuinely can't/won't use tools)
-		// In all cases, treat as completed.
 		sa.emitProgress("Execution completed")
+		state.setStage(TurnStageCompleted, "subagent completed", 0)
+		sa.emitLoopState(state)
 		return result.Content, nil
 	}
 
@@ -632,13 +641,24 @@ func (sa *SubAgent) executeTool(ctx context.Context, tc domain.ToolCall) (interf
 		return nil, fmt.Errorf("tool %s is denied", tc.Function.Name), false
 	}
 
-	// Execute via service's tool execution logic
-	rt := &Runtime{
-		svc:          sa.config.Service,
-		currentAgent: sa.config.Agent,
-		session:      sa.session,
-	}
-	return rt.executeToolOrHandoff(ctx, tc)
+	ctx = withEventSink(ctx, sa.emitEvent)
+	ctx = withRunDebug(ctx, sa.config.Debug)
+	ctx = withCurrentSession(ctx, sa.session)
+
+	currentAgent := sa.config.Agent
+	return sa.config.Service.executeDirectToolCall(ctx, currentAgent, sa.session, tc, DirectToolExecutionOptions{
+		OnHandoff: func(targetAgent *Agent, reason interface{}) {
+			sa.emitEvent(&Event{
+				ID:        uuid.NewString(),
+				Type:      EventTypeHandoff,
+				AgentID:   currentAgent.ID(),
+				AgentName: currentAgent.Name(),
+				Content:   fmt.Sprintf("Transferring to %s: %v", targetAgent.Name(), reason),
+				Timestamp: time.Now(),
+			})
+			sa.config.Agent = targetAgent
+		},
+	})
 }
 
 // collectFilteredTools collects and filters tools for this sub-agent

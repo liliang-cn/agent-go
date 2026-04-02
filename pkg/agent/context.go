@@ -29,6 +29,10 @@ type SystemContext struct {
 	SkillNames []string          // available skill IDs
 }
 
+type UserContext struct {
+	CurrentDate string
+}
+
 // buildSystemContext 收集系统上下文信息
 func (s *Service) buildSystemContext() *SystemContext {
 	bgCtx := context.Background()
@@ -106,6 +110,13 @@ func (s *Service) buildSystemContext() *SystemContext {
 	return ctx
 }
 
+func (s *Service) buildUserContext() *UserContext {
+	now := time.Now()
+	return &UserContext{
+		CurrentDate: fmt.Sprintf("Today's date is %s.", now.Format("2006-01-02")),
+	}
+}
+
 // FormatForPrompt 格式化系统上下文为prompt字符串
 func (c *SystemContext) FormatForPrompt() string {
 	var sb strings.Builder
@@ -141,6 +152,13 @@ func (c *SystemContext) FormatForPrompt() string {
 	}
 
 	return sb.String()
+}
+
+func (c *UserContext) FormatForMetaMessage() string {
+	if c == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.CurrentDate)
 }
 
 // FormatCompact 紧凑格式，适合嵌入到现有prompt中

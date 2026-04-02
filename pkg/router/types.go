@@ -2,8 +2,11 @@ package router
 
 import (
 	"context"
+	"encoding/json"
 
 	"fmt"
+	"regexp"
+	"strings"
 
 	"sync"
 
@@ -150,8 +153,41 @@ type IntentRecognitionResult struct {
 
 	Requirements []string `json:"requirements"` // Specific requirements extracted
 
-	Confidence float64 `json:"confidence"` // Confidence score
+	Confidence     float64 `json:"confidence"` // Confidence score
+	RequiresTools  bool    `json:"requires_tools,omitempty"`
+	PreferredAgent string  `json:"preferred_agent,omitempty"`
+	Transition     string  `json:"transition,omitempty"`
+}
 
+func populateIntentExecutionHints(intent *IntentRecognitionResult) *IntentRecognitionResult {
+	if intent == nil {
+		return nil
+	}
+	switch intent.IntentType {
+	case "file_create", "file_edit", "web_search", "memory_save":
+		intent.RequiresTools = true
+	case "file_read", "rag_query", "memory_recall":
+		intent.RequiresTools = true
+		intent.Transition = "prefer_tooling"
+	}
+
+	switch intent.IntentType {
+	case "file_create", "file_read", "file_edit", "web_search":
+		intent.PreferredAgent = "Operator"
+	case "memory_save", "memory_recall":
+		intent.PreferredAgent = "Archivist"
+	case "analysis", "general_qa", "rag_query":
+		intent.PreferredAgent = "Assistant"
+	}
+
+	if intent.Transition == "" {
+		if intent.RequiresTools {
+			intent.Transition = "tool_first"
+		} else {
+			intent.Transition = "text_first"
+		}
+	}
+	return intent
 }
 
 // RecognizeIntent performs intent recognition using the semantic router
@@ -160,16 +196,16 @@ func (s *Service) RecognizeIntent(ctx context.Context, query string) (*IntentRec
 
 	result, err := s.Route(ctx, query)
 
-	if err != nil {
+	if err != nil || result == nil || !result.Matched {
 
 		// Return a fallback result on error
 
-		return &IntentRecognitionResult{
+		return populateIntentExecutionHints(&IntentRecognitionResult{
 
 			IntentType: "general_qa",
 
 			Confidence: 0.0,
-		}, nil
+		}), nil
 
 	}
 
@@ -200,7 +236,7 @@ func (s *Service) RecognizeIntent(ctx context.Context, query string) (*IntentRec
 
 	}
 
-	return intentResult, nil
+	return populateIntentExecutionHints(intentResult), nil
 
 }
 
@@ -270,7 +306,7 @@ func (r *FallbackLLMRecognizer) RecognizeIntent(ctx context.Context, query strin
 
 		}
 
-		return intentResult, nil
+		return populateIntentExecutionHints(intentResult), nil
 
 	}
 
@@ -292,14 +328,14 @@ func (r *FallbackLLMRecognizer) llmRecognize(ctx context.Context, query string) 
 
 		// Final fallback
 
-		return &IntentRecognitionResult{
+		return populateIntentExecutionHints(&IntentRecognitionResult{
 
 			IntentType: "general_qa",
 
 			Confidence: 0.5,
 
 			Topic: query,
-		}, nil
+		}), nil
 
 	}
 
@@ -331,11 +367,99 @@ func (r *FallbackLLMRecognizer) buildRecognitionPrompt(query string) string {
 }
 
 func (r *FallbackLLMRecognizer) parseRecognitionResult(content, query string) (*IntentRecognitionResult, error) {
-	// Simple parsing - in production would use proper JSON parsing
-	// For now, return a basic result
-	return &IntentRecognitionResult{
-		IntentType: "general_qa",
-		Confidence: 0.6,
-		Topic:      query,
-	}, nil
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return r.basicFallback(query), nil
+	}
+
+	var parsed IntentRecognitionResult
+	if err := json.Unmarshal([]byte(content), &parsed); err == nil && strings.TrimSpace(parsed.IntentType) != "" {
+		if parsed.Topic == "" {
+			parsed.Topic = query
+		}
+		if parsed.Confidence <= 0 {
+			parsed.Confidence = 0.6
+		}
+		return populateIntentExecutionHints(&parsed), nil
+	}
+
+	if block := extractJSONBlock(content); block != "" {
+		if err := json.Unmarshal([]byte(block), &parsed); err == nil && strings.TrimSpace(parsed.IntentType) != "" {
+			if parsed.Topic == "" {
+				parsed.Topic = query
+			}
+			if parsed.Confidence <= 0 {
+				parsed.Confidence = 0.6
+			}
+			return populateIntentExecutionHints(&parsed), nil
+		}
+	}
+
+	intent := strings.TrimSpace(extractField(content, "intent_type"))
+	if intent == "" {
+		return r.basicFallback(query), nil
+	}
+	return populateIntentExecutionHints(&IntentRecognitionResult{
+		IntentType: intent,
+		TargetFile: strings.TrimSpace(extractField(content, "target_file")),
+		Topic:      firstNonEmpty(strings.TrimSpace(extractField(content, "topic")), query),
+		Confidence: parseConfidence(extractField(content, "confidence")),
+	}), nil
+}
+
+func (r *FallbackLLMRecognizer) basicFallback(query string) *IntentRecognitionResult {
+	lower := strings.ToLower(strings.TrimSpace(query))
+	switch {
+	case strings.Contains(lower, "remember"), strings.Contains(lower, "记住"):
+		return populateIntentExecutionHints(&IntentRecognitionResult{IntentType: "memory_save", Confidence: 0.7, Topic: query})
+	case strings.Contains(lower, "from memory"), strings.Contains(lower, "记得"), strings.Contains(lower, "之前"):
+		return populateIntentExecutionHints(&IntentRecognitionResult{IntentType: "memory_recall", Confidence: 0.7, Topic: query})
+	case strings.Contains(lower, "latest"), strings.Contains(lower, "current"), strings.Contains(lower, "最新"), strings.Contains(lower, "今天"):
+		return populateIntentExecutionHints(&IntentRecognitionResult{IntentType: "web_search", Confidence: 0.68, Topic: query})
+	case extractPath(query) != "":
+		return populateIntentExecutionHints(&IntentRecognitionResult{IntentType: "file_read", TargetFile: extractPath(query), Confidence: 0.65, Topic: query})
+	default:
+		return populateIntentExecutionHints(&IntentRecognitionResult{IntentType: "general_qa", Confidence: 0.6, Topic: query})
+	}
+}
+
+func extractJSONBlock(text string) string {
+	re := regexp.MustCompile(`\{[\s\S]*\}`)
+	return strings.TrimSpace(re.FindString(text))
+}
+
+func extractField(text, field string) string {
+	re := regexp.MustCompile(`(?im)^` + regexp.QuoteMeta(field) + `\s*:\s*(.+)$`)
+	m := re.FindStringSubmatch(text)
+	if len(m) > 1 {
+		return strings.TrimSpace(m[1])
+	}
+	return ""
+}
+
+func parseConfidence(raw string) float64 {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0.6
+	}
+	var f float64
+	if _, err := fmt.Sscanf(raw, "%f", &f); err == nil && f > 0 {
+		return f
+	}
+	return 0.6
+}
+
+func extractPath(text string) string {
+	re := regexp.MustCompile(`[./]?[a-zA-Z0-9_\-./]+\.[a-z]{2,6}`)
+	m := re.FindString(text)
+	return strings.TrimSpace(m)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }

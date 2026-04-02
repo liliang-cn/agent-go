@@ -10,6 +10,14 @@ import (
 type EventType string
 
 const (
+	TurnStagePreparingContext = "preparing_context"
+	TurnStageAwaitingModel    = "awaiting_model"
+	TurnStageHandlingTools    = "handling_tools"
+	TurnStageAwaitingAnswer   = "awaiting_answer"
+	TurnStageCompleted        = "completed"
+)
+
+const (
 	// Workflow Events
 	EventTypeStart    EventType = "workflow_start"
 	EventTypeComplete EventType = "workflow_complete"

@@ -114,3 +114,26 @@ func TestResolveCodingAgentCommand(t *testing.T) {
 		}
 	}
 }
+
+func TestRegisterOperatorTools_Metadata(t *testing.T) {
+	svc := &Service{
+		agent:        NewAgentWithConfig("Operator", "operator", nil),
+		toolRegistry: NewToolRegistry(),
+	}
+	registerOperatorTools(svc)
+
+	readMeta := svc.toolRegistry.MetadataOf("get_pty_session")
+	if !readMeta.ReadOnly || !readMeta.ConcurrencySafe || readMeta.InterruptBehavior != InterruptBehaviorCancel {
+		t.Fatalf("unexpected get_pty_session metadata: %+v", readMeta)
+	}
+
+	stopMeta := svc.toolRegistry.MetadataOf("stop_pty_session")
+	if !stopMeta.Destructive || stopMeta.InterruptBehavior != InterruptBehaviorBlock {
+		t.Fatalf("unexpected stop_pty_session metadata: %+v", stopMeta)
+	}
+
+	runOnceMeta := svc.toolRegistry.MetadataOf("run_coding_agent_once")
+	if runOnceMeta.InterruptBehavior != InterruptBehaviorBlock {
+		t.Fatalf("unexpected run_coding_agent_once metadata: %+v", runOnceMeta)
+	}
+}

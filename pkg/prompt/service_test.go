@@ -1,6 +1,7 @@
 package prompt
 
 import (
+	"context"
 	"github.com/stretchr/testify/assert"
 	"testing"
 )
@@ -38,4 +39,25 @@ func TestDefaultPromptsExist(t *testing.T) {
 	assert.NotEmpty(t, m.Get(PlannerSystemPrompt))
 	assert.NotEmpty(t, m.Get(AgentVerification))
 	assert.NotEmpty(t, m.Get(AgentSystemPrompt))
+}
+
+func TestPromptManager_ResolveSections(t *testing.T) {
+	m := NewManager()
+	m.RegisterSection("alpha", func(ctx context.Context, data interface{}) (Section, error) {
+		return Section{Name: "alpha", Content: "A"}, nil
+	})
+	m.RegisterSection("beta", func(ctx context.Context, data interface{}) (Section, error) {
+		return Section{Name: "beta", Content: "B", Dynamic: true}, nil
+	})
+
+	sections, err := m.ResolveSections(context.Background(), []string{"alpha", "beta"}, nil)
+	assert.NoError(t, err)
+	if assert.Len(t, sections, 2) {
+		assert.Equal(t, "alpha", sections[0].Name)
+		assert.Equal(t, "A", sections[0].Content)
+		assert.False(t, sections[0].Dynamic)
+		assert.Equal(t, "beta", sections[1].Name)
+		assert.Equal(t, "B", sections[1].Content)
+		assert.True(t, sections[1].Dynamic)
+	}
 }

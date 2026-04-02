@@ -40,6 +40,9 @@ type Service struct {
 	reflectThreshold int // auto-reflect after this many new facts
 
 	mu sync.RWMutex
+
+	backgroundOnce sync.Once
+	durableQueue   chan *domain.MemoryStoreRequest
 }
 
 // Config holds configuration for the memory service
@@ -116,6 +119,44 @@ func NewService(
 	return svc
 }
 
+func (s *Service) startDurableWorkerIfNeeded() {
+	if s == nil {
+		return
+	}
+	if _, ok := s.store.(*store.FileMemoryStore); !ok {
+		return
+	}
+	s.backgroundOnce.Do(func() {
+		s.durableQueue = make(chan *domain.MemoryStoreRequest, 32)
+		go s.runDurableWorker()
+	})
+}
+
+func (s *Service) runDurableWorker() {
+	for req := range s.durableQueue {
+		if req == nil {
+			continue
+		}
+		_ = s.storeIfWorthwhileSync(context.Background(), req)
+	}
+}
+
+func (s *Service) EnqueueStoreIfWorthwhile(req *domain.MemoryStoreRequest) bool {
+	if s == nil || req == nil {
+		return false
+	}
+	s.startDurableWorkerIfNeeded()
+	if s.durableQueue == nil {
+		return false
+	}
+	select {
+	case s.durableQueue <- req:
+		return true
+	default:
+		return false
+	}
+}
+
 // SetPromptManager sets a custom prompt manager
 func (s *Service) SetPromptManager(m *prompt.Manager) {
 	s.promptManager = m
@@ -135,7 +176,7 @@ func (s *Service) SetShadowIndex(idx domain.MemoryStore) {
 // Returns: formatted context string, scored memories, navigator reasoning (MemoryLogic), error
 func (s *Service) RetrieveAndInject(ctx context.Context, query string, sessionID string) (string, []*domain.MemoryWithScore, error) {
 	_, mems, _, err := s.RetrieveAndInjectWithContextAndLogic(ctx, query, domain.MemoryQueryContext{SessionID: sessionID})
-	return s.formatMemories(mems), mems, err
+	return s.formatMemoriesForQuery(ctx, query, domain.MemoryQueryContext{SessionID: sessionID}, mems), mems, err
 }
 
 // RetrieveAndInjectWithLogic is the full retrieval pipeline returning the navigator's
@@ -147,7 +188,7 @@ func (s *Service) RetrieveAndInjectWithLogic(ctx context.Context, query string, 
 // RetrieveAndInjectWithContext searches relevant memories using an explicit scope chain.
 func (s *Service) RetrieveAndInjectWithContext(ctx context.Context, query string, queryContext domain.MemoryQueryContext) (string, []*domain.MemoryWithScore, error) {
 	_, mems, _, err := s.RetrieveAndInjectWithContextAndLogic(ctx, query, queryContext)
-	return s.formatMemories(mems), mems, err
+	return s.formatMemoriesForQuery(ctx, query, queryContext, mems), mems, err
 }
 
 // RetrieveAndInjectWithContextAndLogic is the full retrieval pipeline returning the navigator's
@@ -266,12 +307,16 @@ func (s *Service) RetrieveAndInjectWithContextAndLogic(ctx context.Context, quer
 		return "", nil, memoryLogic, nil
 	}
 
-	return s.formatMemories(allMemories), allMemories, memoryLogic, nil
+	return s.formatMemoriesForQuery(ctx, query, queryContext, allMemories), allMemories, memoryLogic, nil
 }
 
 // StoreIfWorthwhile decides what to store based on task completion.
 // T6b: After storing new facts, checks if ReflectThreshold is reached and triggers async Reflect.
 func (s *Service) StoreIfWorthwhile(ctx context.Context, req *domain.MemoryStoreRequest) error {
+	return s.storeIfWorthwhileSync(ctx, req)
+}
+
+func (s *Service) storeIfWorthwhileSync(ctx context.Context, req *domain.MemoryStoreRequest) error {
 	if s.llm == nil {
 		return nil
 	}
@@ -650,16 +695,61 @@ func (s *Service) rrfFusion(vector, text []*domain.MemoryWithScore) []*domain.Me
 	return results
 }
 
-func (s *Service) formatMemories(memories []*domain.MemoryWithScore) string {
-	if len(memories) == 0 {
+func (s *Service) formatMemoriesForQuery(ctx context.Context, query string, queryContext domain.MemoryQueryContext, memories []*domain.MemoryWithScore) string {
+	entrypoint, sessionMemory, selectedHeaders := s.fileMemoryPromptContext(ctx, query, queryContext)
+	if len(memories) == 0 && entrypoint == "" && sessionMemory == "" {
 		return ""
 	}
 	var sb strings.Builder
+	if strings.TrimSpace(sessionMemory) != "" {
+		sb.WriteString("## Session Memory\n\n")
+		sb.WriteString(strings.TrimSpace(sessionMemory))
+		sb.WriteString("\n\n")
+	}
+	if entrypoint != "" {
+		sb.WriteString("## Memory Index\n\n")
+		sb.WriteString(entrypoint)
+		sb.WriteString("\n\n")
+	}
+	if len(selectedHeaders) > 0 {
+		sb.WriteString("## Selected Memory Headers\n\n")
+		for i, header := range selectedHeaders {
+			scopeLabel := string(normalizeScopeType(header.ScopeType))
+			if strings.TrimSpace(header.ScopeID) != "" {
+				scopeLabel += ":" + strings.TrimSpace(header.ScopeID)
+			}
+			sb.WriteString(fmt.Sprintf("[%d] [%s] (%s, importance=%.2f) %s\n\n", i+1, header.Type, scopeLabel, header.Importance, header.Summary))
+		}
+	}
+	if len(memories) == 0 {
+		return sb.String()
+	}
 	sb.WriteString("## Relevant Memory\n\n")
 	for i, m := range memories {
 		sb.WriteString(fmt.Sprintf("[%d] [%s]: %s\n\n", i+1, m.Type, m.Content))
 	}
 	return sb.String()
+}
+
+func (s *Service) fileMemoryPromptContext(ctx context.Context, query string, queryContext domain.MemoryQueryContext) (entrypoint string, sessionMemory string, headers []store.FileMemoryHeader) {
+	fileStore, ok := s.store.(*store.FileMemoryStore)
+	if !ok {
+		return "", "", nil
+	}
+	if content, err := fileStore.ReadEntrypoint(); err == nil && strings.TrimSpace(content) != "" {
+		entrypoint = strings.TrimSpace(content)
+	}
+	if content, err := fileStore.ReadSessionMemory(queryContext.SessionID); err == nil && strings.TrimSpace(content) != "" {
+		sessionMemory = strings.TrimSpace(content)
+	}
+	limit := s.maxMemories
+	if limit <= 0 || limit > 5 {
+		limit = 5
+	}
+	if selected, err := fileStore.SelectRelevantHeaders(ctx, query, limit); err == nil {
+		headers = selected
+	}
+	return entrypoint, sessionMemory, headers
 }
 
 func filterMemoriesByScopes(memories []*domain.MemoryWithScore, scopes []domain.MemoryScope) []*domain.MemoryWithScore {

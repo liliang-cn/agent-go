@@ -7,10 +7,13 @@ import (
 
 // PermissionRequest describes a tool execution that may require approval.
 type PermissionRequest struct {
-	ToolName  string                 `json:"tool_name"`
-	ToolArgs  map[string]interface{} `json:"tool_args,omitempty"`
-	SessionID string                 `json:"session_id,omitempty"`
-	AgentID   string                 `json:"agent_id,omitempty"`
+	ToolName        string                 `json:"tool_name"`
+	ToolArgs        map[string]interface{} `json:"tool_args,omitempty"`
+	SessionID       string                 `json:"session_id,omitempty"`
+	AgentID         string                 `json:"agent_id,omitempty"`
+	ReadOnly        bool                   `json:"read_only,omitempty"`
+	Destructive     bool                   `json:"destructive,omitempty"`
+	ConcurrencySafe bool                   `json:"concurrency_safe,omitempty"`
 }
 
 // PermissionResponse is the decision returned by a PermissionHandler.
@@ -28,6 +31,12 @@ type PermissionPolicy func(req PermissionRequest) bool
 
 // DefaultPermissionPolicy marks risky tools as approval-gated.
 func DefaultPermissionPolicy(req PermissionRequest) bool {
+	if req.ReadOnly {
+		return false
+	}
+	if req.Destructive {
+		return true
+	}
 	lower := strings.ToLower(req.ToolName)
 	switch {
 	case strings.Contains(lower, "write"),

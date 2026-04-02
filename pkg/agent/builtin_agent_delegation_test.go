@@ -29,6 +29,10 @@ func TestConciergeBuiltInDelegationTargetsIntentRouterOnly(t *testing.T) {
 	if !svc.toolRegistry.Has("route_builtin_request") {
 		t.Fatal("expected concierge tool registry to include route_builtin_request")
 	}
+	routeMeta := svc.toolRegistry.MetadataOf("route_builtin_request")
+	if routeMeta.InterruptBehavior != InterruptBehaviorBlock {
+		t.Fatalf("unexpected route_builtin_request metadata: %+v", routeMeta)
+	}
 }
 
 func TestIntentRouterBuiltInDelegationTargetsCoreSpecialists(t *testing.T) {
@@ -50,6 +54,14 @@ func TestIntentRouterBuiltInDelegationTargetsCoreSpecialists(t *testing.T) {
 	}
 	if !svc.agent.HasTool("submit_builtin_agent_task") {
 		t.Fatal("expected intent router to have submit_builtin_agent_task")
+	}
+	listMeta := svc.toolRegistry.MetadataOf("list_builtin_agents")
+	if !listMeta.ReadOnly || !listMeta.ConcurrencySafe || listMeta.InterruptBehavior != InterruptBehaviorCancel {
+		t.Fatalf("unexpected list_builtin_agents metadata: %+v", listMeta)
+	}
+	delegateMeta := svc.toolRegistry.MetadataOf("delegate_builtin_agent")
+	if delegateMeta.InterruptBehavior != InterruptBehaviorBlock {
+		t.Fatalf("unexpected delegate_builtin_agent metadata: %+v", delegateMeta)
 	}
 
 	raw, err := svc.toolRegistry.Call(context.Background(), "list_builtin_agents", map[string]interface{}{})

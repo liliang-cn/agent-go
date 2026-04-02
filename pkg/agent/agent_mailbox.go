@@ -134,11 +134,11 @@ func (m *TeamManager) registerAgentMessagingTools(svc *Service, model *AgentMode
 		return
 	}
 
-	register := func(name, description string, parameters map[string]interface{}, handler func(context.Context, map[string]interface{}) (interface{}, error)) {
+	register := func(name, description string, parameters map[string]interface{}, metadata ToolMetadata, handler func(context.Context, map[string]interface{}) (interface{}, error)) {
 		if svc.toolRegistry != nil && svc.toolRegistry.Has(name) {
 			return
 		}
-		svc.AddTool(name, description, parameters, handler)
+		svc.AddToolWithMetadata(name, description, parameters, handler, metadata)
 	}
 
 	register("send_agent_message", "Send a structured built-in message to another agent's mailbox for asynchronous coordination.", map[string]interface{}{
@@ -178,7 +178,7 @@ func (m *TeamManager) registerAgentMessagingTools(svc *Service, model *AgentMode
 			},
 		},
 		"required": []string{"agent_name"},
-	}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	}, ToolMetadata{InterruptBehavior: InterruptBehaviorBlock}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		targetAgent := getStringArg(args, "agent_name")
 		if targetAgent == "" {
 			return nil, fmt.Errorf("agent_name is required")
@@ -233,7 +233,7 @@ func (m *TeamManager) registerAgentMessagingTools(svc *Service, model *AgentMode
 				"description": "Whether to remove the returned messages from the inbox. Defaults to true.",
 			},
 		},
-	}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	}, ToolMetadata{ReadOnly: true, ConcurrencySafe: true, InterruptBehavior: InterruptBehaviorCancel}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		agentName := strings.TrimSpace(model.Name)
 		if current := getCurrentAgent(ctx); current != nil && strings.TrimSpace(current.Name()) != "" {
 			agentName = strings.TrimSpace(current.Name())

@@ -4,67 +4,14 @@ import (
 	"context"
 	"fmt"
 	"strings"
-
-	"github.com/liliang-cn/agent-go/v2/pkg/prompt"
 )
 
 // buildSystemPrompt constructs the system prompt for the current agent.
 // ctx is required when PTC is enabled so available callTool() names can be listed dynamically.
 func (s *Service) buildSystemPrompt(ctx context.Context, agent *Agent) string {
-	systemCtx := s.buildSystemContext()
-	operationalRules := strings.Join([]string{
-		"- Call task_complete as soon as you have the final answer. Never keep running after the task is done.",
-		"- For file operations use mcp_filesystem_* tools; for web search use mcp_websearch_* tools.",
-		"- Treat the visible callable tool list as the authoritative source of what can actually be executed in this runtime.",
-		"- Do not invent hidden tool or API names such as generic run/status/start methods when concrete callable tool names are already exposed.",
-		"- If you are unsure which exact tool fits a request, call `search_available_tools` before claiming the capability is unavailable.",
-		"- Skills: calling a skill tool returns step-by-step instructions — follow them, then call task_complete.",
-		"- Never repeat the same tool call with identical arguments.",
-	}, "\n")
-	if isDispatchOnlyAgent(agent) {
-		operationalRules = ""
-	}
-
-	data := map[string]interface{}{
-		"AgentInstructions": agent.Instructions(),
-		"OperationalRules":  operationalRules,
-		"SystemContext":     systemCtx.FormatForPrompt(),
-	}
-
-	rendered, err := s.promptManager.Render(prompt.AgentSystemPrompt, data)
-	if err != nil {
-		// Fallback
-		rendered = agent.Instructions() + "\n\n" + systemCtx.FormatForPrompt()
-	}
-
-	// Append PTC instructions when enabled so the LLM knows how to use execute_javascript.
-	// Dynamically list what is callable via callTool() so the model doesn't have to guess.
-	if s.ptcIntegration != nil {
-		availableCallTools := s.ptcAvailableCallTools(ctx)
-		if ptcPrompt := s.ptcIntegration.GetPTCSystemPrompt(availableCallTools); ptcPrompt != "" {
-			rendered += "\n\n" + ptcPrompt
-		}
-	}
-
-	if note := s.buildMemoryPromptNote(ctx, agent); note != "" {
-		rendered += "\n\n" + note
-	}
-
-	if note := s.buildAgentMessagingPromptNote(ctx, agent); note != "" {
-		rendered += "\n\n" + note
-	}
-
-	if summary := s.buildToolCatalogSummary(ctx); summary != "" {
-		rendered += "\n\n" + summary
-	}
-
-	if !isDispatchOnlyAgent(agent) {
-		if note := s.buildWebSearchPromptNote(agent); note != "" {
-			rendered += "\n\n" + note
-		}
-	}
-
-	return rendered
+	return renderSystemPromptSections(s.buildSystemPromptSections(ctx, agent, systemPromptOptions{
+		includePTC: s.ptcIntegration != nil,
+	}))
 }
 
 func isConciergeAgent(agent *Agent) bool {
@@ -107,41 +54,7 @@ func (s *Service) buildEnrichedPrompt(goal, memoryContext, ragResult string) str
 
 // buildPTCSystemPrompt builds the system prompt with PTC instructions
 func (s *Service) buildPTCSystemPrompt(ctx context.Context) string {
-	var sb strings.Builder
-
-	// Base agent instructions
-	if s.agent != nil {
-		sb.WriteString(s.agent.Instructions())
-		sb.WriteString("\n\n")
-	}
-
-	// PTC instructions with dynamic tool list
-	if s.ptcIntegration != nil && s.ptcIntegration.config.Enabled {
-		availableCallTools := s.ptcAvailableCallTools(ctx)
-		sb.WriteString(s.ptcIntegration.GetPTCSystemPrompt(availableCallTools))
-	}
-
-	if note := s.buildMemoryPromptNote(ctx, s.agent); note != "" {
-		sb.WriteString("\n\n")
-		sb.WriteString(note)
-	}
-
-	if note := s.buildAgentMessagingPromptNote(ctx, s.agent); note != "" {
-		sb.WriteString("\n\n")
-		sb.WriteString(note)
-	}
-
-	if summary := s.buildToolCatalogSummary(ctx); summary != "" {
-		sb.WriteString("\n")
-		sb.WriteString(summary)
-	}
-
-	if note := s.buildWebSearchPromptNote(s.agent); note != "" {
-		sb.WriteString("\n\n")
-		sb.WriteString(note)
-	}
-
-	return sb.String()
+	return renderSystemPromptSections(s.buildSystemPromptSections(ctx, s.agent, systemPromptOptions{includePTC: true}))
 }
 
 func (s *Service) buildMemoryPromptNote(ctx context.Context, agent *Agent) string {

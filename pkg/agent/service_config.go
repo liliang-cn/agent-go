@@ -38,7 +38,7 @@ func (s *Service) registerMCPToolsInRegistry(mcpSvc *mcp.Service) {
 		}
 		// Register as deferred tool for search
 		toolName := t.Name
-		s.toolRegistry.Register(domain.ToolDefinition{
+		s.toolRegistry.RegisterWithMetadata(domain.ToolDefinition{
 			Type:         "function",
 			DeferLoading: true, // MCP tools are always deferred for search
 			Function: domain.ToolFunction{
@@ -48,7 +48,7 @@ func (s *Service) registerMCPToolsInRegistry(mcpSvc *mcp.Service) {
 			},
 		}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 			return mcpSvc.CallTool(ctx, toolName, args)
-		}, CategoryMCP)
+		}, CategoryMCP, s.lookupToolMetadata(toolName))
 	}
 }
 
@@ -86,7 +86,7 @@ func (s *Service) registerSkillsInRegistry(skillsService *skills.Service) {
 		toolName := "skill_" + sk.ID
 		// Register as deferred tool for search
 		skillID := sk.ID
-		s.toolRegistry.Register(domain.ToolDefinition{
+		s.toolRegistry.RegisterWithMetadata(domain.ToolDefinition{
 			Type:         "function",
 			DeferLoading: true, // Skills are always deferred for search
 			Function: domain.ToolFunction{
@@ -107,7 +107,7 @@ func (s *Service) registerSkillsInRegistry(skillsService *skills.Service) {
 				return nil, err
 			}
 			return res.Output, nil
-		}, CategorySkill)
+		}, CategorySkill, ToolMetadata{InterruptBehavior: InterruptBehaviorBlock})
 	}
 }
 
@@ -169,7 +169,12 @@ func (s *Service) RegisterAgent(agent *Agent) {
 // enabled, also via callTool() inside the JavaScript sandbox.
 func (s *Service) AddTool(name, description string, parameters map[string]interface{},
 	handler func(context.Context, map[string]interface{}) (interface{}, error)) {
+	metadata, _ := inferGenericToolMetadata(name)
+	s.AddToolWithMetadata(name, description, parameters, handler, metadata)
+}
 
+func (s *Service) AddToolWithMetadata(name, description string, parameters map[string]interface{},
+	handler func(context.Context, map[string]interface{}) (interface{}, error), metadata ToolMetadata) {
 	def := domain.ToolDefinition{
 		Type: "function",
 		Function: domain.ToolFunction{
@@ -183,12 +188,12 @@ func (s *Service) AddTool(name, description string, parameters map[string]interf
 	// collectAllAvailableTools() reads from here; PTC's callTool() routes through
 	// the registry too (via SyncToPTCRouter called at build time, and for tools
 	// added after build we also sync to the ptcRouter directly below).
-	s.toolRegistry.Register(def, handler, CategoryCustom)
+	s.toolRegistry.RegisterWithMetadata(def, handler, CategoryCustom, metadata)
 
 	// Also keep a handler on the default agent so currentAgent.GetHandler() still
 	// works for multi-agent priority dispatch in executeToolCalls().
 	if s.agent != nil {
-		s.agent.AddTool(name, description, parameters, handler)
+		s.agent.AddToolWithMetadata(name, description, parameters, handler, metadata)
 	}
 
 	// If PTC is already configured, register directly on the router so that
@@ -210,10 +215,20 @@ func (s *Service) AddTool(name, description string, parameters map[string]interf
 // using the typed or fluent builder APIs.
 func (s *Service) Register(tool *Tool) {
 	def := tool.toToolDefinition()
-	s.toolRegistry.Register(def, tool.handler, CategoryCustom)
+	s.toolRegistry.RegisterWithMetadata(def, tool.handler, CategoryCustom, ToolMetadata{
+		ReadOnly:          tool.ReadOnly(),
+		ConcurrencySafe:   tool.ConcurrencySafe(),
+		Destructive:       tool.Destructive(),
+		InterruptBehavior: tool.InterruptBehavior(),
+	})
 
 	if s.agent != nil {
-		s.agent.AddToolWithHandler(def, tool.handler)
+		s.agent.AddToolWithHandler(def, tool.handler, ToolMetadata{
+			ReadOnly:          tool.ReadOnly(),
+			ConcurrencySafe:   tool.ConcurrencySafe(),
+			Destructive:       tool.Destructive(),
+			InterruptBehavior: tool.InterruptBehavior(),
+		})
 	}
 
 	if s.ptcIntegration != nil && s.ptcIntegration.config.Enabled {

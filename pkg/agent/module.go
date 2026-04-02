@@ -58,7 +58,7 @@ func NewRAGModule(proc domain.Processor, onSources func([]domain.Chunk)) Module 
 func (m *ragModule) ID() string { return "rag" }
 
 func (m *ragModule) RegisterTools(registry *ToolRegistry) error {
-	registry.Register(domain.ToolDefinition{
+	registry.RegisterWithMetadata(domain.ToolDefinition{
 		Type: "function",
 		Function: domain.ToolFunction{
 			Name:        "rag_query",
@@ -91,9 +91,9 @@ func (m *ragModule) RegisterTools(registry *ToolRegistry) error {
 			m.onSources(resp.Sources)
 		}
 		return map[string]interface{}{"answer": resp.Answer, "sources": len(resp.Sources)}, nil
-	}, CategoryRAG)
+	}, CategoryRAG, ToolMetadata{ReadOnly: true, ConcurrencySafe: true})
 
-	registry.Register(domain.ToolDefinition{
+	registry.RegisterWithMetadata(domain.ToolDefinition{
 		Type: "function",
 		Function: domain.ToolFunction{
 			Name:        "rag_ingest",
@@ -117,7 +117,7 @@ func (m *ragModule) RegisterTools(registry *ToolRegistry) error {
 			return nil, err
 		}
 		return map[string]interface{}{"status": "ingested"}, nil
-	}, CategoryRAG)
+	}, CategoryRAG, ToolMetadata{})
 
 	return nil
 }
@@ -140,7 +140,7 @@ func NewMemoryModule(svc domain.MemoryService, onSaved func(), queryContext func
 func (m *memoryModule) ID() string { return "memory" }
 
 func (m *memoryModule) RegisterTools(registry *ToolRegistry) error {
-	registry.Register(domain.ToolDefinition{
+	registry.RegisterWithMetadata(domain.ToolDefinition{
 		Type: "function",
 		Function: domain.ToolFunction{
 			Name:        "memory_save",
@@ -190,9 +190,9 @@ func (m *memoryModule) RegisterTools(registry *ToolRegistry) error {
 			return nil, err
 		}
 		return map[string]interface{}{"status": "saved", "content": content}, nil
-	}, CategoryMemory)
+	}, CategoryMemory, ToolMetadata{})
 
-	registry.Register(domain.ToolDefinition{
+	registry.RegisterWithMetadata(domain.ToolDefinition{
 		Type: "function",
 		Function: domain.ToolFunction{
 			Name:        "memory_recall",
@@ -239,9 +239,9 @@ func (m *memoryModule) RegisterTools(registry *ToolRegistry) error {
 			result["formatted"] = formatted
 		}
 		return result, nil
-	}, CategoryMemory)
+	}, CategoryMemory, ToolMetadata{ReadOnly: true, ConcurrencySafe: true})
 
-	registry.Register(domain.ToolDefinition{
+	registry.RegisterWithMetadata(domain.ToolDefinition{
 		Type: "function",
 		Function: domain.ToolFunction{
 			Name:        "memory_update",
@@ -265,9 +265,9 @@ func (m *memoryModule) RegisterTools(registry *ToolRegistry) error {
 			return nil, err
 		}
 		return map[string]interface{}{"status": "updated", "id": id}, nil
-	}, CategoryMemory)
+	}, CategoryMemory, ToolMetadata{})
 
-	registry.Register(domain.ToolDefinition{
+	registry.RegisterWithMetadata(domain.ToolDefinition{
 		Type: "function",
 		Function: domain.ToolFunction{
 			Name:        "memory_delete",
@@ -289,7 +289,7 @@ func (m *memoryModule) RegisterTools(registry *ToolRegistry) error {
 			return nil, err
 		}
 		return map[string]interface{}{"status": "deleted", "id": id}, nil
-	}, CategoryMemory)
+	}, CategoryMemory, ToolMetadata{Destructive: true})
 
 	return nil
 }

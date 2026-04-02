@@ -256,3 +256,187 @@ func TestBuildSystemPromptIncludesAgentMessagingGuidanceWhenMessagingToolsCallab
 		t.Fatalf("expected prompt to enumerate structured message types, got %q", got)
 	}
 }
+
+func TestBuildSystemPrompt_InsertsDynamicBoundaryBeforeDynamicSections(t *testing.T) {
+	assistant := NewAgentWithConfig("Assistant", "assistant instructions", nil)
+	registry := NewToolRegistry()
+	registry.Register(domain.ToolDefinition{
+		Type: "function",
+		Function: domain.ToolFunction{
+			Name:        "memory_save",
+			Description: "Save information to long-term memory",
+			Parameters:  map[string]interface{}{"type": "object"},
+		},
+	}, nil, CategoryMemory)
+
+	svc := &Service{
+		agent:           assistant,
+		promptManager:   prompt.NewManager(),
+		toolRegistry:    registry,
+		memoryService:   promptTestMemoryService{},
+		memoryStoreType: "cortex",
+		cfg: &config.Config{
+			Tooling: config.ToolingConfig{
+				WebSearch: config.WebSearchConfig{Mode: "auto"},
+			},
+		},
+	}
+
+	got := svc.buildSystemPrompt(context.Background(), assistant)
+	boundaryIdx := strings.Index(got, SystemPromptDynamicBoundary)
+	if boundaryIdx < 0 {
+		t.Fatalf("expected dynamic boundary in prompt, got %q", got)
+	}
+	memoryIdx := strings.Index(got, "Memory tool usage:")
+	if memoryIdx < 0 {
+		t.Fatalf("expected dynamic memory section in prompt, got %q", got)
+	}
+	if boundaryIdx > memoryIdx {
+		t.Fatalf("expected boundary before memory section, got prompt %q", got)
+	}
+}
+
+func TestBuildSystemPromptSections_StartWithBaseSection(t *testing.T) {
+	assistant := NewAgentWithConfig("Assistant", "assistant instructions", nil)
+	svc := &Service{
+		agent:         assistant,
+		promptManager: prompt.NewManager(),
+		cfg: &config.Config{
+			Tooling: config.ToolingConfig{
+				WebSearch: config.WebSearchConfig{Mode: "auto"},
+			},
+		},
+	}
+
+	sections := svc.buildSystemPromptSections(context.Background(), assistant, systemPromptOptions{})
+	if len(sections) == 0 {
+		t.Fatal("expected at least one system prompt section")
+	}
+	if sections[0].name != "identity" {
+		t.Fatalf("expected first section to be base, got %+v", sections[0])
+	}
+	if strings.TrimSpace(sections[0].content) == "" {
+		t.Fatalf("expected base section content, got %+v", sections[0])
+	}
+}
+
+func TestBuildSystemPromptSections_SplitsBaseIntoCoreSections(t *testing.T) {
+	assistant := NewAgentWithConfig("Assistant", "assistant instructions", nil)
+	svc := &Service{
+		agent:         assistant,
+		promptManager: prompt.NewManager(),
+		cfg: &config.Config{
+			Tooling: config.ToolingConfig{
+				WebSearch: config.WebSearchConfig{Mode: "auto"},
+			},
+		},
+	}
+
+	sections := svc.buildSystemPromptSections(context.Background(), assistant, systemPromptOptions{})
+	names := make([]string, 0, len(sections))
+	for _, section := range sections {
+		names = append(names, section.name)
+	}
+
+	if !containsStr(names, "identity") {
+		t.Fatalf("expected identity section, got %v", names)
+	}
+	if !containsStr(names, "operational") {
+		t.Fatalf("expected operational section, got %v", names)
+	}
+	if !containsStr(names, "system_context") {
+		t.Fatalf("expected system_context section, got %v", names)
+	}
+}
+
+func TestBuildDynamicSystemPromptSections_UsesNamedSections(t *testing.T) {
+	assistant := NewAgentWithConfig("Assistant", "assistant instructions", nil)
+	registry := NewToolRegistry()
+	registry.Register(domain.ToolDefinition{
+		Type: "function",
+		Function: domain.ToolFunction{
+			Name:        "memory_save",
+			Description: "Save information to long-term memory",
+			Parameters:  map[string]interface{}{"type": "object"},
+		},
+	}, nil, CategoryMemory)
+	registry.Register(domain.ToolDefinition{
+		Type: "function",
+		Function: domain.ToolFunction{
+			Name:        "send_agent_message",
+			Description: "Send message",
+			Parameters:  map[string]interface{}{"type": "object"},
+		},
+	}, nil, CategoryCustom)
+
+	svc := &Service{
+		agent:           assistant,
+		promptManager:   prompt.NewManager(),
+		toolRegistry:    registry,
+		memoryService:   promptTestMemoryService{},
+		memoryStoreType: "cortex",
+		cfg: &config.Config{
+			Tooling: config.ToolingConfig{
+				WebSearch: config.WebSearchConfig{Mode: "auto"},
+			},
+		},
+	}
+
+	sections := svc.buildDynamicSystemPromptSections(context.Background(), assistant, systemPromptOptions{})
+	names := make([]string, 0, len(sections))
+	for _, section := range sections {
+		names = append(names, section.name)
+	}
+
+	if !containsStr(names, "memory") {
+		t.Fatalf("expected memory section, got %v", names)
+	}
+	if !containsStr(names, "messaging") {
+		t.Fatalf("expected messaging section, got %v", names)
+	}
+	if !containsStr(names, "web_search") {
+		t.Fatalf("expected web_search section, got %v", names)
+	}
+}
+
+func TestBuildSystemPrompt_RegistersAndResolvesSections(t *testing.T) {
+	assistant := NewAgentWithConfig("Assistant", "assistant instructions", nil)
+	pm := prompt.NewManager()
+
+	svc := &Service{
+		agent:         assistant,
+		promptManager: pm,
+		cfg: &config.Config{
+			Tooling: config.ToolingConfig{
+				WebSearch: config.WebSearchConfig{Mode: "off"},
+			},
+		},
+	}
+
+	svc.ensureSystemPromptSectionRegistry()
+	sections, err := pm.ResolveSections(context.Background(), []string{"identity", "operational", "system_context"}, systemPromptSectionData{
+		service: svc,
+		agent:   assistant,
+		options: systemPromptOptions{},
+		data: map[string]interface{}{
+			"AgentInstructions": assistant.Instructions(),
+			"OperationalRules":  "RULES",
+			"SystemContext":     "CTX",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ResolveSections() error = %v", err)
+	}
+	if len(sections) != 3 {
+		t.Fatalf("expected 3 resolved sections, got %+v", sections)
+	}
+	if sections[0].Name != "identity" || !strings.Contains(sections[0].Content, "assistant instructions") {
+		t.Fatalf("unexpected identity section: %+v", sections[0])
+	}
+	if sections[1].Name != "operational" || !strings.Contains(sections[1].Content, "RULES") {
+		t.Fatalf("unexpected operational section: %+v", sections[1])
+	}
+	if sections[2].Name != "system_context" || !strings.Contains(sections[2].Content, "CTX") {
+		t.Fatalf("unexpected system_context section: %+v", sections[2])
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 	"github.com/liliang-cn/agent-go/v2/pkg/store"
@@ -53,6 +54,12 @@ func TestFileMemoryIntegration(t *testing.T) {
 	if formatted == "" || len(recalled) == 0 {
 		t.Fatalf("expected retrieved memory context, got formatted=%q recalled=%d", formatted, len(recalled))
 	}
+	if !strings.Contains(formatted, "## Memory Index") {
+		t.Fatalf("expected formatted context to include memory index, got %q", formatted)
+	}
+	if !strings.Contains(formatted, "# MEMORY") {
+		t.Fatalf("expected formatted context to include MEMORY entrypoint, got %q", formatted)
+	}
 	if recalled[0].Content != mem.Content {
 		t.Fatalf("unexpected recalled memory: %+v", recalled[0])
 	}
@@ -72,6 +79,35 @@ func TestFileMemoryIntegration(t *testing.T) {
 
 type scopedNavigatorTestLLM struct {
 	lastNavigatorPrompt string
+}
+
+type backgroundMemoryTestLLM struct{}
+
+func (b *backgroundMemoryTestLLM) Generate(ctx context.Context, prompt string, opts *domain.GenerationOptions) (string, error) {
+	return "", nil
+}
+
+func (b *backgroundMemoryTestLLM) Stream(ctx context.Context, prompt string, opts *domain.GenerationOptions, callback func(string)) error {
+	return nil
+}
+
+func (b *backgroundMemoryTestLLM) GenerateWithTools(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions) (*domain.GenerationResult, error) {
+	return &domain.GenerationResult{Content: ""}, nil
+}
+
+func (b *backgroundMemoryTestLLM) StreamWithTools(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions, callback domain.ToolCallCallback) error {
+	return nil
+}
+
+func (b *backgroundMemoryTestLLM) GenerateStructured(ctx context.Context, prompt string, schema interface{}, opts *domain.GenerationOptions) (*domain.StructuredResult, error) {
+	return &domain.StructuredResult{
+		Raw:   `{"should_store":true,"memories":[{"type":"fact","content":"Alice prefers green tea","importance":0.9,"scope":"session"}]}`,
+		Valid: true,
+	}, nil
+}
+
+func (b *backgroundMemoryTestLLM) RecognizeIntent(ctx context.Context, request string) (*domain.IntentResult, error) {
+	return nil, nil
 }
 
 func (s *scopedNavigatorTestLLM) Generate(ctx context.Context, prompt string, opts *domain.GenerationOptions) (string, error) {
@@ -162,4 +198,35 @@ func containsAll(text string, parts ...string) bool {
 		}
 	}
 	return true
+}
+
+func TestFileMemoryIntegrationBackgroundDurableWorker(t *testing.T) {
+	ctx := context.Background()
+
+	memStore, err := store.NewFileMemoryStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new file memory store failed: %v", err)
+	}
+
+	service := NewService(memStore, &backgroundMemoryTestLLM{}, nil, nil)
+	ok := service.EnqueueStoreIfWorthwhile(&domain.MemoryStoreRequest{
+		SessionID:  "session-bg-1",
+		TaskGoal:   "Remember Alice's tea preference",
+		TaskResult: "Alice prefers green tea",
+	})
+	if !ok {
+		t.Fatal("expected durable worker enqueue to succeed")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		mems, total, err := service.List(ctx, 10, 0)
+		if err == nil && total > 0 && len(mems) > 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected background worker to store memories, got total=%d err=%v", total, err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }

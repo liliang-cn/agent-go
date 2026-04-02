@@ -15,6 +15,9 @@ func (s *Service) recognizeIntent(ctx context.Context, goal string, session *Ses
 
 // shouldUseRAG determines if RAG should be used based on intent
 func (s *Service) shouldUseRAG(intent *IntentRecognitionResult) bool {
+	if intent != nil && intent.IntentType == "rag_query" {
+		return true
+	}
 	// Use RAG for query, analysis, and general_qa intents
 	return intent.IntentType == "rag_query" ||
 		intent.IntentType == "analysis" ||
@@ -24,10 +27,17 @@ func (s *Service) shouldUseRAG(intent *IntentRecognitionResult) bool {
 
 // shouldUseSkills determines if skills should be used based on intent
 func (s *Service) shouldUseSkills(intent *IntentRecognitionResult) bool {
+	if intent != nil && intent.RequiresTools {
+		switch intent.IntentType {
+		case "web_search", "file_create", "file_read", "file_edit":
+			return true
+		}
+	}
 	// Use skills for web_search, file operations, etc.
 	return intent.IntentType == "web_search" ||
 		intent.IntentType == "file_create" ||
-		intent.IntentType == "file_read"
+		intent.IntentType == "file_read" ||
+		intent.IntentType == "file_edit"
 }
 
 // executeSkills executes skills based on intent
@@ -87,4 +97,31 @@ func (s *Service) executeSkills(ctx context.Context, intent *IntentRecognitionRe
 	}
 
 	return nil, fmt.Errorf("no suitable skill found for intent: %s", intent.IntentType)
+}
+
+func toolChoiceForIntent(intent *IntentRecognitionResult, round int) string {
+	if intent == nil {
+		return ""
+	}
+	if round > 0 {
+		return ""
+	}
+	switch strings.TrimSpace(intent.Transition) {
+	case "tool_first", "prefer_tooling":
+		return "required"
+	default:
+		return ""
+	}
+}
+
+func preferredEntryAgentForIntent(intent *IntentRecognitionResult) string {
+	if intent == nil {
+		return ""
+	}
+	switch strings.TrimSpace(intent.PreferredAgent) {
+	case defaultOperatorAgentName, defaultArchivistAgentName, defaultAssistantAgentName, defaultStakeholderAgentName, defaultVerifierAgentName:
+		return strings.TrimSpace(intent.PreferredAgent)
+	default:
+		return ""
+	}
 }

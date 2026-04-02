@@ -39,6 +39,14 @@ func TestAgentMessagingToolsDeliverMailboxMessages(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("send_agent_message failed: %v", err)
 	}
+	sendMeta := concierge.toolRegistry.MetadataOf("send_agent_message")
+	if sendMeta.InterruptBehavior != InterruptBehaviorBlock {
+		t.Fatalf("unexpected send_agent_message metadata: %+v", sendMeta)
+	}
+	getMeta := archivist.toolRegistry.MetadataOf("get_agent_messages")
+	if !getMeta.ReadOnly || !getMeta.ConcurrencySafe || getMeta.InterruptBehavior != InterruptBehaviorCancel {
+		t.Fatalf("unexpected get_agent_messages metadata: %+v", getMeta)
+	}
 
 	raw, err := archivist.toolRegistry.Call(context.Background(), "get_agent_messages", map[string]interface{}{
 		"limit":   10,

@@ -15,6 +15,13 @@ import (
 // ToolHandler executes a tool call synchronously.
 type ToolHandler func(ctx context.Context, args map[string]interface{}) (interface{}, error)
 
+type ToolMetadata struct {
+	ReadOnly          bool
+	ConcurrencySafe   bool
+	Destructive       bool
+	InterruptBehavior string
+}
+
 // Tool categories used by ToolRegistry.
 const (
 	CategoryCustom = "custom" // user-registered via AddTool()
@@ -28,6 +35,7 @@ type registeredTool struct {
 	def      domain.ToolDefinition
 	handler  ToolHandler
 	category string
+	metadata ToolMetadata
 }
 
 // ToolRegistry is the single source of truth for tool definitions and handlers.
@@ -128,9 +136,19 @@ func (r *ToolRegistry) SearchAllTools(query string) []domain.ToolDefinition {
 //   - returned by ListForLLM(false) for native function calling
 //   - accessible via callTool() in the PTC JavaScript sandbox after SyncToPTCRouter
 func (r *ToolRegistry) Register(def domain.ToolDefinition, handler ToolHandler, category string) {
+	r.RegisterWithMetadata(def, handler, category, ToolMetadata{})
+}
+
+// RegisterWithMetadata adds a tool plus execution metadata used by runtime orchestration.
+func (r *ToolRegistry) RegisterWithMetadata(def domain.ToolDefinition, handler ToolHandler, category string, metadata ToolMetadata) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.tools[def.Function.Name] = &registeredTool{def: def, handler: handler, category: category}
+	r.tools[def.Function.Name] = &registeredTool{
+		def:      def,
+		handler:  handler,
+		category: category,
+		metadata: metadata,
+	}
 }
 
 // Unregister removes a tool from the registry.
@@ -156,6 +174,16 @@ func (r *ToolRegistry) CategoryOf(name string) string {
 		return t.category
 	}
 	return ""
+}
+
+// MetadataOf returns execution metadata for a registered tool.
+func (r *ToolRegistry) MetadataOf(name string) ToolMetadata {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if t, ok := r.tools[name]; ok {
+		return t.metadata
+	}
+	return ToolMetadata{}
 }
 
 // ListForLLM returns the tool definitions that should be passed to the LLM.

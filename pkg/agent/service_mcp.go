@@ -56,3 +56,7 @@ func (a *mcpToolAdapter) ListTools() []domain.ToolDefinition {
 func (a *mcpToolAdapter) AddServer(ctx context.Context, name string, command string, args []string) error {
 	return a.service.AddDynamicServer(ctx, name, command, args)
 }
+
+func (a *mcpToolAdapter) ToolMetadata(toolName string) (ToolMetadata, bool) {
+	return inferDynamicToolMetadata(toolName)
+}

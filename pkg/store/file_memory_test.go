@@ -286,6 +286,57 @@ func TestFileMemoryStoreIndexAndHelpers(t *testing.T) {
 	}
 }
 
+func TestFileMemoryStoreMaintainsEntrypointIndex(t *testing.T) {
+	ctx := context.Background()
+	baseDir := t.TempDir()
+	store, err := NewFileMemoryStore(baseDir)
+	if err != nil {
+		t.Fatalf("new file memory store failed: %v", err)
+	}
+
+	mem := &domain.Memory{
+		ID:         "fact-entry-1",
+		Type:       domain.MemoryTypeFact,
+		Content:    "Alice prefers tea over coffee in the morning.",
+		Importance: 0.9,
+		ScopeType:  domain.MemoryScopeUser,
+		ScopeID:    "alice",
+		CreatedAt:  time.Now(),
+	}
+	if err := store.Store(ctx, mem); err != nil {
+		t.Fatalf("store failed: %v", err)
+	}
+
+	entrypoint, err := store.ReadEntrypoint()
+	if err != nil {
+		t.Fatalf("ReadEntrypoint() error = %v", err)
+	}
+	if !strings.Contains(entrypoint, "# MEMORY") {
+		t.Fatalf("expected MEMORY header, got %q", entrypoint)
+	}
+	if !strings.Contains(entrypoint, "fact-entry-1") || !strings.Contains(entrypoint, "user:alice") {
+		t.Fatalf("expected entrypoint to summarize stored memory, got %q", entrypoint)
+	}
+}
+
+func TestFileMemoryStoreSessionMemoryRoundTrip(t *testing.T) {
+	store, err := NewFileMemoryStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new file memory store failed: %v", err)
+	}
+
+	if err := store.WriteSessionMemory("session-123", "Current session summary"); err != nil {
+		t.Fatalf("WriteSessionMemory() error = %v", err)
+	}
+	got, err := store.ReadSessionMemory("session-123")
+	if err != nil {
+		t.Fatalf("ReadSessionMemory() error = %v", err)
+	}
+	if got != "Current session summary" {
+		t.Fatalf("session memory = %q, want %q", got, "Current session summary")
+	}
+}
+
 func TestFileMemoryStoreReadFileScopeCompatibility(t *testing.T) {
 	ctx := context.Background()
 	baseDir := t.TempDir()

@@ -1368,11 +1368,11 @@ func (m *TeamManager) RegisterCaptainTools(captain *Service) {
 		return
 	}
 
-	register := func(name, description string, parameters map[string]interface{}, handler func(context.Context, map[string]interface{}) (interface{}, error)) {
+	register := func(name, description string, parameters map[string]interface{}, metadata ToolMetadata, handler func(context.Context, map[string]interface{}) (interface{}, error)) {
 		if captain.toolRegistry != nil && captain.toolRegistry.Has(name) {
 			return
 		}
-		captain.AddTool(name, description, parameters, handler)
+		captain.AddToolWithMetadata(name, description, parameters, handler, metadata)
 	}
 
 	// 1. discover_agents
@@ -1387,7 +1387,7 @@ func (m *TeamManager) RegisterCaptainTools(captain *Service) {
 			},
 		},
 	}
-	register(discoverDef.Function.Name, discoverDef.Function.Description, discoverDef.Function.Parameters, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	register(discoverDef.Function.Name, discoverDef.Function.Description, discoverDef.Function.Parameters, ToolMetadata{ReadOnly: true, ConcurrencySafe: true, InterruptBehavior: InterruptBehaviorCancel}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		agents, err := m.ListMembers()
 		if err != nil {
 			return nil, err
@@ -1425,7 +1425,7 @@ func (m *TeamManager) RegisterCaptainTools(captain *Service) {
 			},
 		},
 	}
-	register(submitAsyncDef.Function.Name, submitAsyncDef.Function.Description, submitAsyncDef.Function.Parameters, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	register(submitAsyncDef.Function.Name, submitAsyncDef.Function.Description, submitAsyncDef.Function.Parameters, ToolMetadata{InterruptBehavior: InterruptBehaviorBlock}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		lead, team, err := m.resolveCaptainServiceContext(captain)
 		if err != nil {
 			return nil, err
@@ -1472,7 +1472,7 @@ func (m *TeamManager) RegisterCaptainTools(captain *Service) {
 			},
 		},
 	}
-	register(getTaskDef.Function.Name, getTaskDef.Function.Description, getTaskDef.Function.Parameters, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	register(getTaskDef.Function.Name, getTaskDef.Function.Description, getTaskDef.Function.Parameters, ToolMetadata{ReadOnly: true, ConcurrencySafe: true, InterruptBehavior: InterruptBehaviorCancel}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		taskID := getStringArg(args, "task_id")
 		if taskID == "" {
 			return nil, fmt.Errorf("task_id is required")
@@ -1497,7 +1497,7 @@ func (m *TeamManager) RegisterCaptainTools(captain *Service) {
 			},
 		},
 	}
-	register(listTasksDef.Function.Name, listTasksDef.Function.Description, listTasksDef.Function.Parameters, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	register(listTasksDef.Function.Name, listTasksDef.Function.Description, listTasksDef.Function.Parameters, ToolMetadata{ReadOnly: true, ConcurrencySafe: true, InterruptBehavior: InterruptBehaviorCancel}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		_, team, err := m.resolveCaptainServiceContext(captain)
 		if err != nil {
 			return nil, err
@@ -1544,7 +1544,7 @@ func (m *TeamManager) RegisterCaptainTools(captain *Service) {
 			},
 		},
 	}
-	register(delegateDef.Function.Name, delegateDef.Function.Description, delegateDef.Function.Parameters, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	register(delegateDef.Function.Name, delegateDef.Function.Description, delegateDef.Function.Parameters, ToolMetadata{InterruptBehavior: InterruptBehaviorBlock}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		agentName, _ := args["agent_name"].(string)
 		instruction, _ := args["instruction"].(string)
 		return m.DispatchTask(ctx, agentName, instruction)

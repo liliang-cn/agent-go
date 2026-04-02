@@ -21,7 +21,6 @@ import (
 	"github.com/liliang-cn/agent-go/v2/pkg/router"
 	"github.com/liliang-cn/agent-go/v2/pkg/skills"
 	"github.com/liliang-cn/agent-go/v2/pkg/usage"
-	"golang.org/x/sync/errgroup"
 )
 
 // ProgressEvent 进度事件
@@ -70,6 +69,8 @@ type Service struct {
 	permissionMu       sync.RWMutex
 	permissionHandler  PermissionHandler
 	permissionPolicy   PermissionPolicy
+	inProgressToolsMu  sync.RWMutex
+	inProgressTools    map[string]int
 
 	// Model metadata for Info()
 	modelName string
@@ -162,6 +163,7 @@ func NewService(
 		hooks:              NewHookRegistry(),
 		toolRegistry:       NewToolRegistry(),
 		tokenCounter:       usage.NewTokenCounter(),
+		inProgressTools:    make(map[string]int),
 		// Public fields
 		LLM:     llmService,
 		RAG:     ragProcessor,
@@ -219,9 +221,9 @@ func (s *Service) registerBuiltInTools() {
 			},
 		},
 	}
-	s.toolRegistry.Register(delegateDef, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	s.toolRegistry.RegisterWithMetadata(delegateDef, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		return s.executeSubAgentDelegation(ctx, s.agent, args)
-	}, CategoryCustom)
+	}, CategoryCustom, ToolMetadata{InterruptBehavior: InterruptBehaviorBlock})
 
 	// 2. task_complete (optional registration if needed by some paths)
 	completeDef := domain.ToolDefinition{
@@ -241,10 +243,10 @@ func (s *Service) registerBuiltInTools() {
 			},
 		},
 	}
-	s.toolRegistry.Register(completeDef, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	s.toolRegistry.RegisterWithMetadata(completeDef, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		res, _ := args["result"].(string)
 		return res, nil
-	}, CategoryCustom)
+	}, CategoryCustom, ToolMetadata{ReadOnly: true, ConcurrencySafe: true, InterruptBehavior: InterruptBehaviorCancel})
 }
 
 // Plan generates an execution plan for the given goal
@@ -471,8 +473,7 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 	if inherited := strings.TrimSpace(cfg.InheritedMemoryUserID); inherited != "" {
 		session.SetContext(sessionContextMemoryUserScope, inherited)
 	}
-	memoryQueryContext := s.resolveMemoryQueryContext(session)
-	s.rememberMemoryQueryContext(session, memoryQueryContext)
+	s.rememberMemoryQueryContext(session, s.resolveMemoryQueryContext(session))
 
 	if routedResult, ok, err := s.executeDirectConciergeRoute(runCtx, session, goal); ok {
 		if err != nil {
@@ -526,51 +527,15 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 		}, nil
 	}
 
-	// Parallel Context Collection
-	var (
-		intent         *IntentRecognitionResult
-		ragContext     string
-		memoryContext  string
-		memoryMemories []*domain.MemoryWithScore
-		memoryLogic    string
-	)
-
-	g, groupCtx := errgroup.WithContext(runCtx)
-
-	// 1. Intent Recognition
-	g.Go(func() error {
-		var err error
-		intent, err = s.recognizeIntent(groupCtx, goal, session)
-		return err
+	prepared := s.prepareConversationContext(runCtx, goal, session, prepareConversationOptions{
+		includeIntent: true,
+		emitProgress:  true,
 	})
-
-	// 2. RAG Retrieval — skip when PTC is enabled (same reason as runtime.go:
-	// the LLM must call rag_query explicitly via execute_javascript/callTool).
-	if s.ragProcessor != nil && !s.isPTCEnabled() {
-		g.Go(func() error {
-			s.emitProgress("thinking", "🔍 Searching knowledge base...", 0, "")
-			var err error
-			ragContext, err = s.performRAGQuery(groupCtx, goal)
-			if err == nil && ragContext != "" {
-				s.emitProgress("tool_result", fmt.Sprintf("✓ Found %d relevant documents", countDocuments(ragContext)), 0, "")
-			}
-			return nil // Don't fail the whole run if RAG fails
-		})
-	}
-
-	// 3. Memory Recall
-	if s.memoryService != nil {
-		g.Go(func() error {
-			var err error
-			memoryContext, memoryMemories, memoryLogic, err = s.memoryService.RetrieveAndInjectWithContextAndLogic(groupCtx, goal, memoryQueryContext)
-			return err
-		})
-	}
-
-	// Wait for all context collection to finish
-	if err := g.Wait(); err != nil {
-		s.logger.Warn("Context collection partial failure", slog.Any("error", err))
-	}
+	intent := prepared.intent
+	ragContext := prepared.ragContext
+	memoryContext := prepared.memoryContext
+	memoryMemories := prepared.memoryMemories
+	memoryLogic := prepared.memoryLogic
 
 	// Execute: PTC is just a transport mode — branch internally, same public API.
 	var finalResult interface{}
@@ -678,6 +643,11 @@ func (s *Service) Cancel() bool {
 	s.cancelMu.Lock()
 	defer s.cancelMu.Unlock()
 
+	if s.hasBlockingToolInProgress() {
+		log.Printf("[Agent] Cancellation deferred: blocking tool still in progress")
+		return false
+	}
+
 	if s.cancelFunc != nil {
 		log.Printf("[Agent] Cancelling current execution...")
 		s.cancelFunc()
@@ -752,7 +722,12 @@ func (s *Service) GetToolRegistry() *ToolRegistry {
 
 // RegisterTool registers a custom tool in the tool registry
 func (s *Service) RegisterTool(def domain.ToolDefinition, handler ToolHandler) {
-	s.toolRegistry.Register(def, handler, CategoryCustom)
+	metadata, _ := inferGenericToolMetadata(def.Function.Name)
+	s.RegisterToolWithMetadata(def, handler, metadata)
+}
+
+func (s *Service) RegisterToolWithMetadata(def domain.ToolDefinition, handler ToolHandler, metadata ToolMetadata) {
+	s.toolRegistry.RegisterWithMetadata(def, handler, CategoryCustom, metadata)
 }
 
 func (s *Service) Info() AgentInfo {

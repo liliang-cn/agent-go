@@ -558,12 +558,12 @@ func (b *Builder) build() (*Service, error) {
 			},
 		},
 	}
-	svc.toolRegistry.Register(searchToolDef, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	svc.toolRegistry.RegisterWithMetadata(searchToolDef, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		queryStr, _ := args["query"].(string)
 		instruction, _ := args["instruction"].(string)
 		scope, _ := args["scope"].(string)
 		return svc.SearchAndExecute(ctx, queryStr, instruction, scope)
-	}, CategoryCustom)
+	}, CategoryCustom, ToolMetadata{ReadOnly: true, ConcurrencySafe: true, InterruptBehavior: InterruptBehaviorCancel})
 
 	// Register tools added inline via WithTool/WithTools. This runs after built-in
 	// modules but before PTC sync so all tools are reachable via callTool() in JS.

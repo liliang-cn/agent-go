@@ -16,11 +16,11 @@ func (m *TeamManager) RegisterConciergeTools(concierge *Service) {
 	configureConciergeService(concierge)
 	m.configureConciergeVerifierHook(concierge)
 
-	register := func(name, description string, parameters map[string]interface{}, handler func(context.Context, map[string]interface{}) (interface{}, error)) {
+	register := func(name, description string, parameters map[string]interface{}, metadata ToolMetadata, handler func(context.Context, map[string]interface{}) (interface{}, error)) {
 		if concierge.toolRegistry != nil && concierge.toolRegistry.Has(name) {
 			return
 		}
-		concierge.AddTool(name, description, parameters, handler)
+		concierge.AddToolWithMetadata(name, description, parameters, handler, metadata)
 	}
 
 	register("route_builtin_request", "Run PromptOptimizer and IntentRouter in parallel, then dispatch the optimized request to the best-fit built-in specialist and return the inline result.", map[string]interface{}{
@@ -32,7 +32,7 @@ func (m *TeamManager) RegisterConciergeTools(concierge *Service) {
 			},
 		},
 		"required": []string{"prompt"},
-	}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	}, ToolMetadata{InterruptBehavior: InterruptBehaviorBlock}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		prompt := getStringArg(args, "prompt")
 		if prompt == "" {
 			return nil, fmt.Errorf("prompt is required")
@@ -55,7 +55,7 @@ func (m *TeamManager) RegisterConciergeTools(concierge *Service) {
 	register("list_teams", "List all teams with their current runtime status.", map[string]interface{}{
 		"type":       "object",
 		"properties": map[string]interface{}{},
-	}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	}, ToolMetadata{ReadOnly: true, ConcurrencySafe: true, InterruptBehavior: InterruptBehaviorCancel}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		statuses, err := m.ListTeamStatuses()
 		if err != nil {
 			return nil, err
@@ -83,7 +83,7 @@ func (m *TeamManager) RegisterConciergeTools(concierge *Service) {
 			"team_id":   map[string]interface{}{"type": "string"},
 			"team_name": map[string]interface{}{"type": "string"},
 		},
-	}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	}, ToolMetadata{ReadOnly: true, ConcurrencySafe: true, InterruptBehavior: InterruptBehaviorCancel}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		team, err := m.resolveTeamRef(getStringArg(args, "team_id"), getStringArg(args, "team_name"))
 		if err != nil {
 			return nil, err
@@ -94,7 +94,7 @@ func (m *TeamManager) RegisterConciergeTools(concierge *Service) {
 	register("list_agents", "List all known agents with their runtime status.", map[string]interface{}{
 		"type":       "object",
 		"properties": map[string]interface{}{},
-	}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	}, ToolMetadata{ReadOnly: true, ConcurrencySafe: true, InterruptBehavior: InterruptBehaviorCancel}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		statuses, err := m.ListAgentStatuses()
 		if err != nil {
 			return nil, err
@@ -136,7 +136,7 @@ func (m *TeamManager) RegisterConciergeTools(concierge *Service) {
 			},
 		},
 		"required": []string{"agent_name"},
-	}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	}, ToolMetadata{ReadOnly: true, ConcurrencySafe: true, InterruptBehavior: InterruptBehaviorCancel}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		agentName := getStringArg(args, "agent_name")
 		if agentName == "" {
 			return nil, fmt.Errorf("agent_name is required")
@@ -157,7 +157,7 @@ func (m *TeamManager) RegisterConciergeTools(concierge *Service) {
 			},
 		},
 		"required": []string{"agent_name", "prompt"},
-	}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	}, ToolMetadata{InterruptBehavior: InterruptBehaviorBlock}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		agentName := getStringArg(args, "agent_name")
 		prompt := getStringArg(args, "prompt")
 		if agentName == "" {
@@ -195,7 +195,7 @@ func (m *TeamManager) RegisterConciergeTools(concierge *Service) {
 			},
 		},
 		"required": []string{"prompt"},
-	}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	}, ToolMetadata{InterruptBehavior: InterruptBehaviorBlock}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		team, err := m.resolveTeamRef(getStringArg(args, "team_id"), getStringArg(args, "team_name"))
 		if err != nil {
 			return nil, err
@@ -240,7 +240,7 @@ func (m *TeamManager) RegisterConciergeTools(concierge *Service) {
 			},
 		},
 		"required": []string{"task_id"},
-	}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	}, ToolMetadata{ReadOnly: true, ConcurrencySafe: true, InterruptBehavior: InterruptBehaviorCancel}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		taskID := getStringArg(args, "task_id")
 		if taskID == "" {
 			return nil, fmt.Errorf("task_id is required")
@@ -256,7 +256,7 @@ func (m *TeamManager) RegisterConciergeTools(concierge *Service) {
 				"description": "Optional maximum number of tasks to return.",
 			},
 		},
-	}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	}, ToolMetadata{ReadOnly: true, ConcurrencySafe: true, InterruptBehavior: InterruptBehaviorCancel}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		sessionID := strings.TrimSpace(concierge.CurrentSessionID())
 		if sessionID == "" {
 			return []map[string]interface{}{}, nil
@@ -290,7 +290,7 @@ func (m *TeamManager) RegisterConciergeTools(concierge *Service) {
 			"team_name": map[string]interface{}{"type": "string"},
 			"limit":     map[string]interface{}{"type": "number"},
 		},
-	}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	}, ToolMetadata{ReadOnly: true, ConcurrencySafe: true, InterruptBehavior: InterruptBehaviorCancel}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		team, err := m.resolveTeamRef(getStringArg(args, "team_id"), getStringArg(args, "team_name"))
 		if err != nil {
 			return nil, err
