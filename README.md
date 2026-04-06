@@ -1,15 +1,15 @@
 # AgentGo
 
-**Local-first RAG + Agent framework for Go.**
+**Agent / Team framework for Go with local-first AI capabilities.**
 
 > “AgentGo? It's useless and it consumes a lot of tokens.” -- some guy on the internet
 
 [中文文档](README_zh-CN.md) · [API Reference](references/API.md) · [Architecture](references/ARCHITECTURE.md)
 
-AgentGo is a Go library for building AI applications that keep your data local. Start with semantic search over your documents, add agent automation when you need it.
+AgentGo is a Go framework for building Agent / Team based systems. Providers, MCP, skills, memory, RAG, router, and PTC extend the same runtime core, while CLI and UI remain optional adapters.
 
 ```bash
-go get github.com/liliang-cn/agent-go
+go get github.com/liliang-cn/agent-go/v2
 ```
 
 ---
@@ -282,6 +282,51 @@ svc, _ := agent.New("agent").
 
 ---
 
+## Tool Registration With Runtime Metadata
+
+AgentGo tools can now declare execution semantics directly. This lets the runtime make better decisions about batching, cancellation, permissions, and streaming state updates.
+
+```go
+svc, _ := agent.New("assistant").Build()
+defer svc.Close()
+
+svc.Register(
+    agent.BuildTool("workspace_summary").
+        Description("Return a compact summary of the active workspace.").
+        ReadOnly(true).
+        InterruptBehavior(agent.InterruptBehaviorCancel).
+        Handler(func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+            return map[string]any{
+                "workspace": "current project",
+                "mode":      "demo",
+            }, nil
+        }).
+        Build(),
+)
+
+svc.AddToolWithMetadata(
+    "write_release_note",
+    "Write a release note file.",
+    map[string]interface{}{
+        "type": "object",
+        "properties": map[string]interface{}{
+            "path": map[string]interface{}{"type": "string"},
+            "body": map[string]interface{}{"type": "string"},
+        },
+        "required": []string{"path", "body"},
+    },
+    func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+        return "ok", nil
+    },
+    agent.ToolMetadata{
+        Destructive:       true,
+        InterruptBehavior: agent.InterruptBehaviorBlock,
+    },
+)
+```
+
+---
+
 ## Agent APIs
 
 ### Runtime Invocation
@@ -307,6 +352,16 @@ result.Text()        // final answer as string
 result.Err()         // non-nil if agent reported an error
 result.HasSources()  // true when RAG chunks were used
 ```
+
+`RunStream()` now emits richer `state_update` events, including:
+
+- `turn_stage`
+- `loop_transition`
+- `transition_reason`
+- `tool_state`
+- `preferred_agent`
+- `requires_tools`
+- `transition`
 
 ### Standalone Agent Management
 
@@ -375,10 +430,26 @@ lr, _ := agent.NewLongRun(svc).
     Build()
 ```
 
+For file-backed memory stores, AgentGo now exposes prompt-friendly entrypoints and session helpers:
+
+```go
+fileStore, _ := store.NewFileMemoryStore("./memory")
+
+_ = fileStore.WriteSessionMemory("session-123", "Current draft: keep the tone concise.")
+sessionNote, _ := fileStore.ReadSessionMemory("session-123")
+entrypoint, _ := fileStore.ReadEntrypoint() // reads MEMORY.md
+headers, _ := fileStore.SelectRelevantHeaders(context.Background(), "Go backend concise tone", 3)
+
+fmt.Println(sessionNote)
+fmt.Println(entrypoint)
+fmt.Println(headers)
+```
+
 Memory degrades gracefully:
 
 - no embedder -> file memory still works
 - file-backed memory uses Markdown + YAML frontmatter and PageIndex-style retrieval
+- file-backed memory now maintains `MEMORY.md`, `_session/*.md`, and header selection APIs
 - `remember:` prompts can be written directly to memory
 - ordinary dialogue can also be extracted into memory via `StoreIfWorthwhile`
 

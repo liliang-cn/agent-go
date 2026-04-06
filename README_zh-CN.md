@@ -1,13 +1,13 @@
 # AgentGo
 
-**本地优先的 RAG + Agent Go 框架。**
+**面向 Agent / Team 的 Go 框架，内置本地优先 AI 能力。**
 
 [English](README.md) · [API 参考](references/API.md) · [架构文档](references/ARCHITECTURE.md)
 
-AgentGo 是一个 Go 库，用于构建数据保持本地的 AI 应用。从文档语义搜索开始，按需添加 Agent 自动化能力。
+AgentGo 是一个 Go 框架，用于构建 Agent / Team 系统。providers、MCP、skills、memory、RAG、router 和 PTC 都是挂在同一套运行时核心上的能力层，CLI / UI 只是可选适配器。
 
 ```bash
-go get github.com/liliang-cn/agent-go
+go get github.com/liliang-cn/agent-go/v2
 ```
 
 ---
@@ -280,6 +280,56 @@ svc, _ := agent.New("agent").
 
 ---
 
+## 带执行语义的工具注册
+
+现在工具可以直接声明自己的运行时语义。这样 runtime 可以更好地处理：
+
+- 并发批处理
+- 取消行为
+- 权限策略
+- 流式状态更新
+
+```go
+svc, _ := agent.New("assistant").Build()
+defer svc.Close()
+
+svc.Register(
+    agent.BuildTool("workspace_summary").
+        Description("返回当前工作区的简要摘要。").
+        ReadOnly(true).
+        InterruptBehavior(agent.InterruptBehaviorCancel).
+        Handler(func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+            return map[string]any{
+                "workspace": "current project",
+                "mode":      "demo",
+            }, nil
+        }).
+        Build(),
+)
+
+svc.AddToolWithMetadata(
+    "write_release_note",
+    "写入一份发布说明文件。",
+    map[string]interface{}{
+        "type": "object",
+        "properties": map[string]interface{}{
+            "path": map[string]interface{}{"type": "string"},
+            "body": map[string]interface{}{"type": "string"},
+        },
+        "required": []string{"path", "body"},
+    },
+    func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+        return "ok", nil
+    },
+    agent.ToolMetadata{
+        Destructive:       true,
+        InterruptBehavior: agent.InterruptBehaviorBlock,
+    },
+)
+```
+
+---
+
 ## Agent APIs
 
 ### 运行时调用
@@ -305,6 +355,16 @@ result.Text()        // 最终回答（字符串）
 result.Err()         // 非 nil 表示 Agent 报告了错误
 result.HasSources()  // true 表示使用了 RAG 检索结果
 ```
+
+现在 `RunStream()` 的 `state_update` 事件里会带更多运行时字段，例如：
+
+- `turn_stage`
+- `loop_transition`
+- `transition_reason`
+- `tool_state`
+- `preferred_agent`
+- `requires_tools`
+- `transition`
 
 ### Standalone Agent 管理
 
@@ -377,12 +437,28 @@ lr, _ := agent.NewLongRun(svc).
     Build()
 ```
 
+对于文件型 memory store，现在还提供了 prompt 入口索引和 session 记忆辅助接口：
+
+```go
+fileStore, _ := store.NewFileMemoryStore("./memory")
+
+_ = fileStore.WriteSessionMemory("session-123", "当前草稿：保持简洁、专业。")
+sessionNote, _ := fileStore.ReadSessionMemory("session-123")
+entrypoint, _ := fileStore.ReadEntrypoint() // 读取 MEMORY.md
+headers, _ := fileStore.SelectRelevantHeaders(context.Background(), "Go 后端 简洁 风格", 3)
+
+fmt.Println(sessionNote)
+fmt.Println(entrypoint)
+fmt.Println(headers)
+```
+
 无 Embedder 时优雅降级：`memory` 默认可以直接走文件存储与索引导航。
 
 如果你只想先跑通本地优先方案，建议这样理解：
 
 - `memory` 先用文件版，保证可读、可编辑、可追踪
 - `cache` 先用文件版或内存版，保证查询加速，但不要承载长期知识
+- 文件 memory 现在会维护 `MEMORY.md`、`_session/*.md`，并支持 header selector
 
 ---
 

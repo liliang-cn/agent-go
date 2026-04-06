@@ -58,6 +58,19 @@ func main() {
 
 		for _, query := range queries {
 			fmt.Printf("\nQuery: %s\n", query)
+			intent, err := svc.Router.RecognizeIntent(ctx, query)
+			if err != nil {
+				log.Printf("Intent recognition failed: %v", err)
+			} else {
+				fmt.Printf("Intent: %s (confidence=%.2f, tools=%v, preferred_agent=%s, transition=%s)\n",
+					intent.IntentType,
+					intent.Confidence,
+					intent.RequiresTools,
+					intent.PreferredAgent,
+					intent.Transition,
+				)
+			}
+
 			result, err := svc.Router.Route(ctx, query)
 			if err != nil {
 				log.Printf("Routing failed: %v", err)
@@ -73,6 +86,23 @@ func main() {
 		}
 	} else {
 		fmt.Println("\nNote: Create .intents/check_weather.md to enable weather routing demo.")
+	}
+
+	fmt.Println("\n--- Testing Built-in Heuristics ---")
+	heuristicQueries := []string{
+		"请修改 ./README.md 的第一段",
+		"帮我记住我喜欢简洁一点的技术文风",
+		"去内部知识库里找 deployment checklist",
+	}
+	for _, query := range heuristicQueries {
+		intent, err := svc.Router.RecognizeIntent(ctx, query)
+		if err != nil {
+			log.Printf("Intent recognition failed: %v", err)
+			continue
+		}
+		fmt.Printf("- %s\n", query)
+		fmt.Printf("  -> intent=%s confidence=%.2f tools=%v preferred_agent=%s transition=%s\n",
+			intent.IntentType, intent.Confidence, intent.RequiresTools, intent.PreferredAgent, intent.Transition)
 	}
 
 	fmt.Println("\nIntent routing example completed successfully!")

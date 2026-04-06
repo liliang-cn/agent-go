@@ -1,10 +1,8 @@
 // Package main demonstrates the simplest way to get started with AgentGo.
 //
-// AgentGo is a Retrieval-Augmented Generation system with built-in:
-// - Document ingestion and semantic search
-// - Multi-provider LLM support (OpenAI, Ollama, etc.)
-// - MCP tools integration
-// - Agent automation with PTC (Programmatic Tool Calling)
+// AgentGo is a Go framework centered on Agent / Team runtimes.
+// Capabilities such as RAG, memory, MCP, skills, and PTC can be attached
+// to the same framework core as needed.
 //
 // Usage:
 //
@@ -66,6 +64,30 @@ func main() {
 
 	for token := range svc.Stream(ctx, "Count from 1 to 5, one number per line.") {
 		fmt.Print(token)
+	}
+	fmt.Println()
+
+	fmt.Println()
+	// RunStream() — full runtime event visibility. This is the API to use when
+	// you want turn stages, tool calls, tool states, and final completion events.
+	fmt.Println("Q: Briefly explain when you would use tools.")
+	fmt.Println("Runtime:")
+
+	events, err := svc.RunStream(ctx, "Briefly explain when you would use tools.")
+	if err != nil {
+		log.Fatalf("Failed to start RunStream: %v", err)
+	}
+	for evt := range events {
+		switch evt.Type {
+		case agent.EventTypeStateUpdate:
+			fmt.Printf("  [state] %v\n", evt.StateDelta)
+		case agent.EventTypePartial:
+			fmt.Print(evt.Content)
+		case agent.EventTypeToolCall:
+			fmt.Printf("\n  [tool_call] %s %v\n", evt.ToolName, evt.ToolArgs)
+		case agent.EventTypeToolResult:
+			fmt.Printf("\n  [tool_result] %s => %v\n", evt.ToolName, evt.ToolResult)
+		}
 	}
 	fmt.Println()
 

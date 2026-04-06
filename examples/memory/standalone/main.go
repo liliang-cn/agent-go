@@ -67,7 +67,17 @@ func main() {
 		}
 	}
 
-	fmt.Println("\n--- 2. Checking Files on Disk ---")
+	fmt.Println("\n--- 2. Session Memory (SESSION.md style) ---")
+	if err := fileStore.WriteSessionMemory("demo-session", "Current draft is a technical overview. Keep the tone concise and precise."); err != nil {
+		log.Fatalf("Failed to write session memory: %v", err)
+	}
+	sessionMemory, err := fileStore.ReadSessionMemory("demo-session")
+	if err != nil {
+		log.Fatalf("Failed to read session memory: %v", err)
+	}
+	fmt.Printf("Session Memory:\n%s\n", sessionMemory)
+
+	fmt.Println("\n--- 3. Checking Files on Disk ---")
 	// FileMemoryStore saves facts/preferences in 'entities' and context in 'streams'
 	files, _ := filepath.Glob(filepath.Join(tempDir, "entities", "*.md"))
 	for _, f := range files {
@@ -81,7 +91,14 @@ func main() {
 		fmt.Printf("   %s\n", preview)
 	}
 
-	fmt.Println("\n--- 3. Listing Memories via Service ---")
+	fmt.Println("\n--- 4. MEMORY.md Entrypoint ---")
+	entrypoint, err := fileStore.ReadEntrypoint()
+	if err != nil {
+		log.Fatalf("Failed to read MEMORY.md entrypoint: %v", err)
+	}
+	fmt.Println(entrypoint)
+
+	fmt.Println("\n--- 5. Listing Memories via Service ---")
 	list, total, err := svc.List(ctx, 10, 0)
 	if err != nil {
 		log.Fatalf("Failed to list: %v", err)
@@ -91,26 +108,29 @@ func main() {
 		fmt.Printf("🔹 [%s] %s: %s\n", m.Type, m.ID, m.Content)
 	}
 
-	fmt.Println("\n--- 4. Searching Memories (Text Match) ---")
-	// Since embedder is nil, Search will fallback to List or basic text matching if implemented
-	// In FileMemoryStore, Search returns all if vector is nil, but SearchByText does filtering
-	query := "modular"
-	fmt.Printf("Searching for: '%s'\n", query)
-
-	// We call SearchByText on the store directly for this demo if needed,
-	// but svc.Search with nil embedder currently returns top results from List.
-	// Let's use the Store's text search specifically.
-	results, err := fileStore.SearchByText(ctx, query, 5)
+	fmt.Println("\n--- 6. Selecting Relevant Memory Headers ---")
+	query := "Go backend tools modular local-first"
+	fmt.Printf("Selecting headers for query: '%s'\n", query)
+	headers, err := fileStore.SelectRelevantHeaders(ctx, query, 3)
 	if err != nil {
-		fmt.Printf("Search failed: %v\n", err)
+		fmt.Printf("Header selection failed: %v\n", err)
 	} else {
-		fmt.Printf("Found %d matches:\n", len(results))
-		for _, r := range results {
-			fmt.Printf("🎯 Score %.2f: %s\n", r.Score, r.Content)
+		fmt.Printf("Selected %d headers:\n", len(headers))
+		for _, h := range headers {
+			fmt.Printf("🧭 [%s] importance=%.2f summary=%s\n", h.Type, h.Importance, h.Summary)
 		}
 	}
 
-	fmt.Println("\n--- 5. Deleting Memory ---")
+	fmt.Println("\n--- 7. RetrieveAndInject() Prompt Context ---")
+	contextBlock, retrieved, err := svc.RetrieveAndInject(ctx, query, "demo-session")
+	if err != nil {
+		fmt.Printf("RetrieveAndInject failed: %v\n", err)
+	} else {
+		fmt.Printf("Retrieved %d memories\n", len(retrieved))
+		fmt.Println(contextBlock)
+	}
+
+	fmt.Println("\n--- 8. Deleting Memory ---")
 	err = svc.Delete(ctx, "mem-2")
 	if err != nil {
 		fmt.Printf("Failed to delete: %v\n", err)
