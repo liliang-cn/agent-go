@@ -80,6 +80,9 @@ type Service struct {
 	// Hook system for lifecycle events
 	hooks *HookRegistry
 
+	// Subconscious background worker pool
+	subconscious *SubconsciousWorkerPool
+
 	// Stop hooks for end-of-turn execution
 	stopHookService *StopHookService
 
@@ -165,7 +168,7 @@ func NewService(
 		logger:             logger,
 		memoryScopeAgentID: strings.TrimSpace(agent.Name()),
 		hooks:              NewHookRegistry(),
-		stopHookService:   NewStopHookService(),
+		stopHookService:    NewStopHookService(),
 		toolRegistry:       NewToolRegistry(),
 		tokenCounter:       usage.NewTokenCounter(),
 		inProgressTools:    make(map[string]int),
@@ -175,6 +178,10 @@ func NewService(
 		Memory:  memoryService,
 		Prompts: promptMgr,
 	}
+
+	// Initialize and start subconscious pool
+	s.subconscious = NewSubconsciousWorkerPool(s)
+	s.subconscious.Start(1) // 1 worker is enough for background tasks
 
 	// Inject prompt manager into memory service if it supports it
 	if memoryService != nil {

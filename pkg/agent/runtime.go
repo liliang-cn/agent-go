@@ -534,6 +534,17 @@ func (r *Runtime) completeRun(goal, content string, messages []domain.Message, p
 	}
 	r.clearCollectedSources()
 	go r.saveToMemory(context.Background(), goal, content)
+
+	// Trigger subconscious memory extraction
+	if r.svc.subconscious != nil {
+		r.svc.subconscious.Enqueue(SubconsciousJob{
+			SessionID: r.session.GetID(),
+			AgentID:   r.currentAgent.ID(),
+			Goal:      goal,
+			Result:    content,
+			Messages:  messages,
+		})
+	}
 }
 
 func (r *Runtime) emitLoopState(state *queryLoopState) {

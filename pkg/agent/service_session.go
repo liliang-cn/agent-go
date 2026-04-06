@@ -258,6 +258,9 @@ func (s *Service) RunRealtime(ctx context.Context, opts *domain.GenerationOption
 
 // Close closes the service and releases resources
 func (s *Service) Close() error {
+	if s.subconscious != nil {
+		s.subconscious.Stop()
+	}
 	return s.store.Close()
 }
 
