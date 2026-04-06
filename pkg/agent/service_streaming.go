@@ -15,10 +15,16 @@ type StreamTurnCallbacks struct {
 }
 
 func (s *Service) streamToolTurn(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions, callbacks StreamTurnCallbacks) (*domain.GenerationResult, string, error) {
+	return s.streamToolTurnWithRecovery(ctx, messages, tools, opts, callbacks, 0)
+}
+
+// streamToolTurnWithRecovery attempts streaming, and if a withholdable error occurs,
+// compacts messages and retries once.
+func (s *Service) streamToolTurnWithRecovery(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions, callbacks StreamTurnCallbacks, attempt int) (*domain.GenerationResult, string, error) {
 	var (
 		fullContent      strings.Builder
-		toolCalls        []domain.ToolCall
-		lastResponseID   string
+		toolCalls       []domain.ToolCall
+		lastResponseID  string
 		toolCallDetected bool
 	)
 
@@ -55,6 +61,15 @@ func (s *Service) streamToolTurn(ctx context.Context, messages []domain.Message,
 		return nil
 	})
 	if err != nil {
+		// Check if error is withholdable and we haven't already retried
+		if attempt == 0 && IsWithholdable(err) {
+			// Try to compact messages and retry once
+			compacted, compErr := s.CompactMessages(ctx, messages)
+			if compErr == nil {
+				// Retry with compacted messages
+				return s.streamToolTurnWithRecovery(ctx, compacted, tools, opts, callbacks, attempt+1)
+			}
+		}
 		return nil, lastResponseID, err
 	}
 	return &domain.GenerationResult{

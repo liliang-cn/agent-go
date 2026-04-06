@@ -99,6 +99,7 @@ func (sa *SubAgent) emitLoopState(state *queryLoopState) {
 	}
 	stateDelta := map[string]interface{}{
 		"turn_stage":        state.Stage,
+		"loop_transition":   state.LoopTransition,
 		"transition_reason": state.TransitionReason,
 		"round":             state.CurrentRound,
 		"tool_call_count":   state.PendingToolCount,

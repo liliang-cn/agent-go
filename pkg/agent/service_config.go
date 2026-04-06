@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 	"github.com/liliang-cn/agent-go/v2/pkg/mcp"
@@ -131,6 +132,27 @@ func (s *Service) SetPTC(ptcIntegration *PTCIntegration) {
 func (s *Service) SetModelInfo(modelName, baseURL string) {
 	s.modelName = modelName
 	s.baseURL = baseURL
+}
+
+// SetContextWindow sets the context window size for the model.
+// This is optional - if not set, auto-compact won't trigger based on context limits.
+// Typical values: 4096, 8192, 128000, 200000
+func (s *Service) SetContextWindow(tokens int) {
+	s.contextWindow = tokens
+}
+
+// GetContextWindow returns the configured context window size (0 = unknown)
+func (s *Service) GetContextWindow() int {
+	return s.contextWindow
+}
+
+// EffectiveContextWindow returns context window or a safe default (32k) if not set.
+// Use this when you need to make decisions about compaction.
+func (s *Service) EffectiveContextWindow() int {
+	if s.contextWindow <= 0 {
+		return 32000 // Safe default for most models
+	}
+	return s.contextWindow
 }
 
 // SetHistoryStore sets the history store for execution recording
@@ -303,6 +325,17 @@ func (s *Service) GetHooks() *HookRegistry {
 	return s.hooks
 }
 
+// RegisterStopHook registers a stop hook that runs at the end of each turn
+// Stop hooks can block continuation by returning a result with PreventContinuation=true
+func (s *Service) RegisterStopHook(cfg StopHookConfig) {
+	s.stopHookService.RegisterStopHook(cfg)
+}
+
+// UnregisterStopHooks removes all stop hooks
+func (s *Service) UnregisterStopHooks() {
+	s.stopHookService.UnregisterStopHooks()
+}
+
 // CreateSubAgent creates a sub-agent wrapper for isolated execution
 func (s *Service) CreateSubAgent(agent *Agent, goal string, opts ...SubAgentOption) *SubAgent {
 	cfg := SubAgentConfig{
@@ -323,6 +356,14 @@ func (s *Service) emitProgress(eventType, message string, round int, tool string
 			Tool:    tool,
 		})
 	}
+}
+
+// emitAnalyticsEvent logs an analytics event
+func (s *Service) emitAnalyticsEvent(name string, data map[string]interface{}) {
+	s.logger.Debug("analytics_event",
+		slog.String("name", name),
+		slog.Any("data", data),
+	)
 }
 
 // AddFunctionSkill adds a function-based skill dynamically

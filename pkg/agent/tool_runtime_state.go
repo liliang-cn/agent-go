@@ -2,6 +2,16 @@ package agent
 
 import "strings"
 
+// ToolStatus represents the state of a tool in the execution pipeline
+type ToolStatus string
+
+const (
+	ToolStatusQueued    ToolStatus = "queued"
+	ToolStatusExecuting ToolStatus = "executing"
+	ToolStatusCompleted ToolStatus = "completed"
+	ToolStatusYielded   ToolStatus = "yielded"
+)
+
 const (
 	InterruptBehaviorCancel = "cancel"
 	InterruptBehaviorBlock  = "block"

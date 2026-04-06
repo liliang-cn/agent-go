@@ -29,6 +29,33 @@ type OpenAIRealtimeSession struct {
 	mu   sync.Mutex
 }
 
+// ClassifyError wraps an error with a specific type if it matches known patterns.
+// This enables error withholding and recovery in the agent.
+func ClassifyError(err error) error {
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "context_length") ||
+		strings.Contains(msg, "prompt too long") ||
+		strings.Contains(msg, "too many tokens") ||
+		strings.Contains(msg, "maximum context"):
+		return fmt.Errorf("%w: %v", domain.ErrContextTooLong, err)
+	case strings.Contains(msg, "max_tokens") ||
+		strings.Contains(msg, "maximum output tokens") ||
+		strings.Contains(msg, "output token") ||
+		strings.Contains(msg, "response too long"):
+		return fmt.Errorf("%w: %v", domain.ErrMaxOutputTokens, err)
+	case strings.Contains(msg, "rate_limit") ||
+		strings.Contains(msg, "rate limit") ||
+		strings.Contains(msg, "429") ||
+		strings.Contains(msg, "too many requests"):
+		return fmt.Errorf("%w: %v", domain.ErrRateLimited, err)
+	}
+	return err
+}
+
 func (s *OpenAIRealtimeSession) Send(ctx context.Context, msg domain.Message) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -326,7 +353,11 @@ func (p *OpenAILLMProvider) Stream(ctx context.Context, prompt string, opts *dom
 	}
 
 	if err := stream.Err(); err != nil {
-		return fmt.Errorf("%w: %v", domain.ErrGenerationFailed, err)
+		wrapped := ClassifyError(err)
+		if wrapped == err {
+			return fmt.Errorf("%w: %v", domain.ErrGenerationFailed, err)
+		}
+		return wrapped
 	}
 
 	return nil
@@ -453,7 +484,11 @@ func (p *OpenAILLMProvider) streamWithToolsOnce(ctx context.Context, messages []
 	}
 
 	if err := stream.Err(); err != nil {
-		return fmt.Errorf("%w: %v", domain.ErrGenerationFailed, err)
+		wrapped := ClassifyError(err)
+		if wrapped == err {
+			return fmt.Errorf("%w: %v", domain.ErrGenerationFailed, err)
+		}
+		return wrapped
 	}
 
 	return nil

@@ -36,6 +36,13 @@ const (
 
 	// HookEventPostExecution fires after the entire agent run completes
 	HookEventPostExecution HookEvent = "post_execution"
+
+	// HookEventStop fires at the end of each turn before continuation decision
+	// Can block continuation by returning HookResult with PreventContinuation=true
+	HookEventStop HookEvent = "stop"
+
+	// HookEventTurnComplete fires when a turn completes successfully
+	HookEventTurnComplete HookEvent = "turn_complete"
 )
 
 // HookData contains data passed to hook handlers
@@ -59,6 +66,32 @@ type HookData struct {
 	AgentID   string                 `json:"agent_id,omitempty"`
 	Timestamp time.Time              `json:"timestamp,omitempty"`
 	Metadata  map[string]interface{} `json:"metadata,omitempty"`
+
+	// Stop hook fields
+	PreventContinuation bool     `json:"prevent_continuation,omitempty"`
+	StopReason          string   `json:"stop_reason,omitempty"`
+	HookOutput          string   `json:"hook_output,omitempty"`
+	HookError           string   `json:"hook_error,omitempty"`
+	HookExitCode        int      `json:"hook_exit_code,omitempty"`
+	DurationMs          int64    `json:"duration_ms,omitempty"`
+}
+
+// StopHookResult is returned by stop hooks to control continuation behavior
+type StopHookResult struct {
+	// PreventContinuation if true, stops the agent loop from continuing
+	PreventContinuation bool `json:"prevent_continuation"`
+	// StopReason describes why continuation was prevented
+	StopReason string `json:"stop_reason,omitempty"`
+	// BlockingError is an error message to display to the user (blocks with message)
+	BlockingError string `json:"blocking_error,omitempty"`
+	// HookOutput captures stdout from the hook command
+	HookOutput string `json:"hook_output,omitempty"`
+	// HookError captures stderr from the hook command
+	HookError string `json:"hook_error,omitempty"`
+	// ExitCode from the hook command
+	ExitCode int `json:"exit_code,omitempty"`
+	// DurationMs execution time of the hook
+	DurationMs int64 `json:"duration_ms,omitempty"`
 }
 
 // HookHandler is a function that handles a hook event

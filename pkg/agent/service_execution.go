@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"log/slog"
@@ -19,6 +20,101 @@ type executionMetrics struct {
 	toolCalls       int
 	toolsUsed       []string
 	estimatedTokens int
+}
+
+// ============================================================
+// Error Withholding - Recovery from API errors
+// ============================================================
+
+// IsWithholdable returns true if the error is a recoverable error
+// that can be handled via compaction/retry.
+func IsWithholdable(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, domain.ErrContextTooLong) ||
+		errors.Is(err, domain.ErrMaxOutputTokens) ||
+		errors.Is(err, domain.ErrRateLimited)
+}
+
+// IsContextTooLong returns true if the error indicates context length exceeded.
+func IsContextTooLong(err error) bool {
+	return err != nil && errors.Is(err, domain.ErrContextTooLong)
+}
+
+// IsMaxOutputTokens returns true if the error indicates max output tokens exceeded.
+func IsMaxOutputTokens(err error) bool {
+	return err != nil && errors.Is(err, domain.ErrMaxOutputTokens)
+}
+
+// CompactMessages compacts the conversation history using LLM summarization.
+// Returns a new message list with summarized content.
+func (s *Service) CompactMessages(ctx context.Context, messages []domain.Message) ([]domain.Message, error) {
+	if len(messages) == 0 {
+		return messages, nil
+	}
+
+	// Build conversation text for summarization (similar to CompactSession)
+	var conversationText strings.Builder
+	for _, msg := range messages {
+		switch msg.Role {
+		case "user":
+			conversationText.WriteString(fmt.Sprintf("User: %s\n", msg.Content))
+		case "assistant":
+			conversationText.WriteString(fmt.Sprintf("Assistant: %s\n", msg.Content))
+		}
+	}
+
+	// Get compact prompt template
+	compactPrompt := s.promptManager.Get(prompt.LLMCompact)
+	if compactPrompt == "" {
+		compactPrompt = "You are a helpful assistant that summarizes long conversations. Your goal is to extract key points and important information from the conversation, keeping it concise but comprehensive."
+	}
+
+	// Build full prompt
+	fullPrompt := fmt.Sprintf("%s\n\nConversation to summarize:\n%s\n\nPlease provide a concise summary of the key points:", compactPrompt, conversationText.String())
+
+	// Generate summary using LLM
+	summary, err := s.llmService.Generate(ctx, fullPrompt, nil)
+	if err != nil {
+		return nil, fmt.Errorf("compaction failed: %w", err)
+	}
+
+	// Rebuild messages with summary as the first user message
+	compacted := []domain.Message{
+		{Role: "user", Content: fmt.Sprintf("[Earlier conversation summarized: %s]", summary)},
+	}
+
+	// Add recent messages (last 2 to maintain context)
+	if len(messages) > 2 {
+		compacted = append(compacted, messages[len(messages)-2:]...)
+	}
+
+	return compacted, nil
+}
+
+// checkpointTracker tracks timing for profiling checkpoints
+type checkpointTracker struct {
+	times map[string]time.Time
+}
+
+func newCheckpointTracker() *checkpointTracker {
+	return &checkpointTracker{}
+}
+
+func (ct *checkpointTracker) start(name string) {
+	if ct.times == nil {
+		ct.times = make(map[string]time.Time)
+	}
+	ct.times[name] = time.Now()
+}
+
+func (ct *checkpointTracker) end(name string) time.Duration {
+	if start, ok := ct.times[name]; ok {
+		delete(ct.times, name)
+		return time.Since(start)
+	}
+	return 0
 }
 
 type ToolExecutionCallbacks struct {
@@ -259,8 +355,6 @@ func (s *Service) executeWithLLM(ctx context.Context, goal string, intent *Inten
 		maxRounds = 20
 	}
 
-	metrics := &executionMetrics{}
-
 	// Determine starting agent
 	currentAgent := s.resolveCurrentAgent(session)
 
@@ -270,11 +364,15 @@ func (s *Service) executeWithLLM(ctx context.Context, goal string, intent *Inten
 		summary = session.GetSummary()
 	}
 	messages := s.buildConversationMessages(session, goal, ragContext, memoryContext, summary)
-	state := newQueryLoopState(goal, messages, intent, maxRounds)
+	state := newServiceExecutionLoopState(goal, messages, intent, maxRounds, currentAgent)
 	state.PrevToolCalls = prevToolCalls
 
+	// Checkpoint tracking for profiling
+	cp := newCheckpointTracker()
+	cp.start("context_prepared")
+
 	if cfg.StoreHistory && s.historyStore != nil {
-		s.historyStore.RecordMessage(ctx, session.GetID(), currentAgent.ID(), goal, messages[len(messages)-1], 0)
+		s.historyStore.RecordMessage(ctx, session.GetID(), state.CurrentAgent.ID(), goal, state.Messages[len(state.Messages)-1], 0)
 	}
 
 	// --- DEBUG: LOG AGENT CONFIGURATION ---
@@ -292,75 +390,89 @@ func (s *Service) executeWithLLM(ctx context.Context, goal string, intent *Inten
 	for round := 0; round < maxRounds; round++ {
 		select {
 		case <-ctx.Done():
-			return nil, metrics, fmt.Errorf("execution cancelled by user")
+			return nil, state.metricsSnapshot(), fmt.Errorf("execution cancelled by user")
 		default:
 		}
 
 		state.beginRound()
 		state.setStage(TurnStageAwaitingModel, "requesting model output", 0)
-		s.emitProgress("thinking", fmt.Sprintf("[%s] Thinking...", currentAgent.Name()), round+1, "")
+		s.emitProgress("thinking", fmt.Sprintf("[%s] Thinking...", state.CurrentAgent.Name()), round+1, "")
 
-		result, turnTokens, err := s.runOneLLMTurn(ctx, currentAgent, messages, cfg, round, goal, intent)
+		cp.start("llm_call")
+		result, turnTokens, err := s.runOneLLMTurn(ctx, state.CurrentAgent, state.Messages, cfg, round, goal, intent)
+		llmDur := cp.end("llm_call")
 		if err != nil {
-			return nil, metrics, err
+			return nil, state.metricsSnapshot(), err
 		}
-		metrics.estimatedTokens += turnTokens
-		state.noteTokens(turnTokens)
+		state.noteTurnTokens(turnTokens)
+
+		// Emit LLM latency analytics
+		s.emitAnalyticsEvent(AnalyticsLLMLatency, map[string]interface{}{
+			"round":       round + 1,
+			"tokens":      turnTokens,
+			"duration_ms": llmDur.Milliseconds(),
+		})
 
 		if len(result.ToolCalls) > 0 {
-			nextAgent, filteredToolCalls, duplicateToolResults, fallback, handoff := s.prepareToolRound(ctx, &messages, currentAgent, session, result, state.PrevToolCalls, round)
+			nextAgent, filteredToolCalls, duplicateToolResults, fallback, handoff := s.prepareToolRound(ctx, &state.Messages, state.CurrentAgent, session, result, state.PrevToolCalls, round)
 			if handoff {
-				currentAgent = nextAgent
-				state.Transition = "handoff"
-				state.TransitionReason = "agent handoff requested"
+				state.setCurrentAgent(nextAgent)
+				state.continueWith(queryLoopTransitionHandoff, "agent handoff requested", state.Messages)
 				continue
 			}
 			if fallback != "" {
-				return fallback, metrics, nil
+				state.setLoopTransition(queryLoopTransitionTextResponse, "duplicate tool call returned best-effort final answer")
+				state.setStage(TurnStageCompleted, "duplicate tool call returned best-effort final answer", 0)
+				return fallback, state.metricsSnapshot(), nil
 			}
 			if len(filteredToolCalls) == 0 {
 				if len(duplicateToolResults) > 0 {
-					messages = s.appendToolRoundToMessages(messages, result, duplicateToolResults)
-					state.Messages = messages
-					s.recordToolResults(ctx, session, currentAgent, goal, duplicateToolResults, cfg, round)
-					state.recordToolResults(duplicateToolResults)
-					metrics.toolCalls += len(duplicateToolResults)
-					metrics.toolsUsed = appendToolNames(metrics.toolsUsed, duplicateToolResults)
+					state.setMessages(s.appendToolRoundToMessages(state.Messages, result, duplicateToolResults))
+					s.recordToolResults(ctx, session, state.CurrentAgent, goal, duplicateToolResults, cfg, round)
+					state.noteToolResults(duplicateToolResults)
 				}
-				state.noteRoundCompleted()
+				state.continueWith(queryLoopTransitionDuplicateToolResults, "reused duplicate tool results", state.Messages)
 				continue
 			}
 
 			// Execute tool calls and append results to messages
 			state.setStage(TurnStageHandlingTools, "executing tool batch", len(filteredToolCalls))
 			s.emitProgress("tool_call", fmt.Sprintf("Calling %d tool(s)", len(filteredToolCalls)), round+1, "")
+			cp.start("tool_execution")
 			var toolResults []ToolExecutionResult
-			messages, toolResults, err = s.executePreparedToolRound(ctx, currentAgent, session, messages, result, filteredToolCalls, duplicateToolResults, ToolExecutionCallbacks{}, false)
+			state.Messages, toolResults, err = s.executePreparedToolRound(ctx, state.CurrentAgent, session, state.Messages, result, filteredToolCalls, duplicateToolResults, ToolExecutionCallbacks{}, false)
+			toolDur := cp.end("tool_execution")
 			if err != nil {
-				messages = append(messages, domain.Message{
+				state.setMessages(append(state.Messages, domain.Message{
 					Role:    "assistant",
 					Content: fmt.Sprintf("Tool execution failed: %v", err),
-				})
-				state.Messages = messages
-				state.noteRoundCompleted()
+				}))
+				state.continueWith(queryLoopTransitionToolExecutionError, "tool execution failed, retrying in next round", state.Messages)
 				continue
 			}
-			state.Messages = messages
-			s.recordToolResults(ctx, session, currentAgent, goal, toolResults, cfg, round)
-			state.recordToolResults(toolResults)
-			metrics.toolCalls += len(toolResults)
-			metrics.toolsUsed = appendToolNames(metrics.toolsUsed, toolResults)
-			state.noteRoundCompleted()
+			s.recordToolResults(ctx, session, state.CurrentAgent, goal, toolResults, cfg, round)
+			state.noteToolResults(toolResults)
+
+			// Emit tool execution analytics
+			s.emitAnalyticsEvent(AnalyticsToolExecutionLatency, map[string]interface{}{
+				"round":       round + 1,
+				"tool_count":  len(toolResults),
+				"duration_ms": toolDur.Milliseconds(),
+			})
+
+			state.continueWith(queryLoopTransitionToolBatch, "tool batch completed; continue to next turn", state.Messages)
 			continue
 		}
 
 		state.setStage(TurnStageCompleted, "text response completed", 0)
-		finalContent, err := s.completeTextOnlyTurn(ctx, session, currentAgent, goal, round+1, state.TotalToolCalls, cfg, result.Content)
-		return finalContent, metrics, err
+		state.setLoopTransition(queryLoopTransitionTextResponse, "text response completed")
+		finalContent, err := s.completeTextOnlyTurn(ctx, session, state.CurrentAgent, goal, round+1, state.TotalToolCalls, cfg, result.Content)
+		return finalContent, state.metricsSnapshot(), err
 	}
 
-	result, err := s.handleMaxTurnsExceeded(ctx, session, currentAgent, goal, maxRounds, state.TotalToolCalls, messages, cfg)
-	return result, metrics, err
+	state.setLoopTransition(queryLoopTransitionMaxTurnsExceeded, "maximum rounds reached")
+	result, err := s.handleMaxTurnsExceeded(ctx, session, state.CurrentAgent, goal, maxRounds, state.TotalToolCalls, state.Messages, cfg)
+	return result, state.metricsSnapshot(), err
 }
 
 func (s *Service) prepareToolRound(ctx context.Context, messages *[]domain.Message, currentAgent *Agent, session *Session, result *domain.GenerationResult, prevToolCalls map[string]int, round int) (*Agent, []domain.ToolCall, []ToolExecutionResult, string, bool) {
@@ -523,6 +635,17 @@ func (s *Service) runOneLLMTurn(ctx context.Context, currentAgent *Agent, messag
 
 	result, err := s.llmService.GenerateWithTools(ctx, genMessages, tools, s.toolGenerationOptions(temperature, maxTokens, toolChoiceForIntent(intent, round)))
 	if err != nil {
+		// Check if error is withholdable - try compact and retry once
+		if IsWithholdable(err) {
+			compacted, compErr := s.CompactMessages(ctx, genMessages)
+			if compErr == nil {
+				// Retry with compacted messages
+				retryResult, retryErr := s.llmService.GenerateWithTools(ctx, compacted, tools, s.toolGenerationOptions(temperature, maxTokens, toolChoiceForIntent(intent, round)))
+				if retryErr == nil && retryResult != nil {
+					return retryResult, s.estimateGenerationTokens(compacted, retryResult), nil
+				}
+			}
+		}
 		return nil, 0, fmt.Errorf("LLM generation failed: %w", err)
 	}
 	if result == nil {

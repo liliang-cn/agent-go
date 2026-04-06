@@ -73,11 +73,15 @@ type Service struct {
 	inProgressTools    map[string]int
 
 	// Model metadata for Info()
-	modelName string
-	baseURL   string
+	modelName     string
+	baseURL       string
+	contextWindow int // Optional: context window size (0 = unknown, use default)
 
 	// Hook system for lifecycle events
 	hooks *HookRegistry
+
+	// Stop hooks for end-of-turn execution
+	stopHookService *StopHookService
 
 	// toolRegistry is the unified registry for custom, RAG, and Memory tools.
 	// All modules register here so that both LLM listing and PTC callTool()
@@ -161,6 +165,7 @@ func NewService(
 		logger:             logger,
 		memoryScopeAgentID: strings.TrimSpace(agent.Name()),
 		hooks:              NewHookRegistry(),
+		stopHookService:   NewStopHookService(),
 		toolRegistry:       NewToolRegistry(),
 		tokenCounter:       usage.NewTokenCounter(),
 		inProgressTools:    make(map[string]int),

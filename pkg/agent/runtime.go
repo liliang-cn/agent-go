@@ -31,6 +31,9 @@ type Runtime struct {
 	session      *Session
 	cfg          *RunConfig
 	sources      []domain.Chunk // Collect RAG sources during execution
+
+	// Checkpoint profiling
+	checkpointTimes map[string]time.Time
 }
 
 // NewRuntime creates a new runtime instance
@@ -72,9 +75,11 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 
 	// 1. Prepare context (Memory & RAG) — with a timeout so a slow embedding
 	// model or unreachable LLM doesn't block the entire run forever.
+	prepStart := time.Now()
 	prepCtx, prepCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer prepCancel()
 	prepared := r.svc.prepareConversationContext(prepCtx, goal, r.session, prepareConversationOptions{includeIntent: true})
+	r.emitCheckpoint("context_prepared", prepStart, time.Now(), time.Since(prepStart))
 
 	// 2. Build initial messages using the same layered assembly strategy as the non-streaming path.
 	const maxRounds = 20
@@ -134,6 +139,8 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		var taskCompleteResult string
 		taskCompleteTriggered := false
 
+		llmStart := time.Now()
+		r.CheckpointStart("llm_call")
 		result, lastResponseID, err := r.svc.streamToolTurn(ctx, genMessages, tools, r.svc.toolGenerationOptions(0.3, 2000, toolChoiceForIntent(state.Intent, round)), StreamTurnCallbacks{
 			OnToolCall: func(tc domain.ToolCall) error {
 				if tc.Function.Name == "task_complete" {
@@ -158,6 +165,15 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 					toolCallDetected = true
 				}
 			},
+		})
+		r.CheckpointEnd("llm_call")
+
+		// Emit LLM latency analytics
+		llmDur := time.Since(llmStart)
+		r.eventChan <- NewAnalyticsEvent(AnalyticsLLMLatency, map[string]interface{}{
+			"round":       round + 1,
+			"tokens":      state.Budget.EstimatedTokens,
+			"duration_ms": llmDur.Milliseconds(),
 		})
 
 		// task_complete detected in stream — terminate immediately.
@@ -264,6 +280,8 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			state.setStage(TurnStageHandlingTools, "executing tool batch", len(filteredToolCalls))
 			r.emitLoopState(state)
 
+			toolStart := time.Now()
+			r.CheckpointStart("tool_execution")
 			toolResults, err := r.svc.executeToolCallsWithOptions(ctx, r.currentAgent, r.session, filteredToolCalls, ToolExecutionCallbacks{
 				OnToolCall: func(name string, args map[string]interface{}, interruptBehavior string) {
 					r.emitToolCall(name, args, interruptBehavior)
@@ -281,6 +299,13 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 				r.emit(EventTypeError, fmt.Sprintf("Tool execution error: %v", err))
 				return
 			}
+			r.CheckpointEnd("tool_execution")
+			toolDur := time.Since(toolStart)
+			r.eventChan <- NewAnalyticsEvent(AnalyticsToolExecutionLatency, map[string]interface{}{
+				"round":       round + 1,
+				"tool_count":  len(toolResults),
+				"duration_ms": toolDur.Milliseconds(),
+			})
 			messages = r.svc.appendToolRoundToMessages(messages, streamResult, append(duplicateToolResults, toolResults...))
 			state.Messages = messages
 			state.recordToolResults(append(duplicateToolResults, toolResults...))
@@ -297,6 +322,15 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 				state.Messages = messages
 			}
 
+		// Execute stop hooks after tool execution (before continuation decision)
+		if stopResult := r.executeStopHooks(ctx, state, messages, toolResults); stopResult != nil {
+			if stopResult.PreventContinuation {
+				r.emit(EventTypeStop, fmt.Sprintf("Stopped by hook: %s", stopResult.StopReason))
+				r.completeRun(goal, stopResult.StopReason, messages, false)
+				return
+			}
+		}
+
 		} else {
 			if nextMessages, handled := r.handlePTCTextFallback(ctx, result.Content, messages); handled {
 				messages = nextMessages
@@ -308,7 +342,14 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			r.completeRun(goal, result.Content, messages, true)
 			return
 		}
+
 		state.noteRoundCompleted()
+		r.CheckpointEnd("round_completed")
+		r.eventChan <- NewAnalyticsEvent(AnalyticsRoundCompleted, map[string]interface{}{
+			"round":         state.CurrentRound,
+			"total_tokens":  state.Budget.EstimatedTokens,
+			"total_tools":   state.TotalToolCalls,
+		})
 	}
 }
 
@@ -323,6 +364,35 @@ func (r *Runtime) executeToolOrHandoff(ctx context.Context, tc domain.ToolCall) 
 			r.currentAgent = targetAgent
 		},
 	})
+}
+
+// executeStopHooks runs stop hooks and returns the result
+// Returns nil if no hooks prevented continuation
+func (r *Runtime) executeStopHooks(ctx context.Context, state *queryLoopState, messages []domain.Message, toolResults []ToolExecutionResult) *StopHookResult {
+	if r.svc.stopHookService == nil {
+		return nil
+	}
+
+	sessionID := r.session.ID
+	if sessionID == "" {
+		sessionID = r.svc.currentSessionID
+	}
+
+	agentID := ""
+	if r.currentAgent != nil {
+		agentID = r.currentAgent.ID()
+	}
+
+	result := r.svc.stopHookService.ExecuteStopHooks(ctx, sessionID, agentID, state.Goal, messages, toolResults)
+
+	if result != nil && result.HookOutput != "" {
+		// Emit stop hook output as debug info
+		if r.debugEnabled() {
+			r.emitDebug(state.CurrentRound, "stop_hook", result.HookOutput)
+		}
+	}
+
+	return result
 }
 
 func (r *Runtime) saveToMemory(ctx context.Context, goal, result string) {
@@ -435,6 +505,7 @@ func (r *Runtime) emitLoopState(state *queryLoopState) {
 	}
 	stateDelta := map[string]interface{}{
 		"turn_stage":         state.Stage,
+		"loop_transition":    state.LoopTransition,
 		"transition_reason":  state.TransitionReason,
 		"transition":         state.Transition,
 		"round":              state.CurrentRound,
@@ -588,6 +659,36 @@ func (r *Runtime) emitDebug(round int, debugType string, content string) {
 		DebugType: debugType,
 		Content:   content,
 		Timestamp: time.Now(),
+	}
+}
+
+// CheckpointStart marks the start of a profiling checkpoint
+func (r *Runtime) CheckpointStart(name string) {
+	if r.checkpointTimes == nil {
+		r.checkpointTimes = make(map[string]time.Time)
+	}
+	r.checkpointTimes[name] = time.Now()
+}
+
+// CheckpointEnd marks the end of a checkpoint and emits a checkpoint event
+func (r *Runtime) CheckpointEnd(name string) {
+	if start, ok := r.checkpointTimes[name]; ok {
+		r.emitCheckpoint(name, start, time.Now(), time.Since(start))
+		delete(r.checkpointTimes, name)
+	}
+}
+
+func (r *Runtime) emitCheckpoint(name string, start, end time.Time, dur time.Duration) {
+	r.eventChan <- &Event{
+		ID:               uuid.New().String(),
+		Type:             EventTypeCheckpoint,
+		AgentName:        r.currentAgent.Name(),
+		AgentID:          r.currentAgent.ID(),
+		CheckpointName:   name,
+		CheckpointStart:  start,
+		CheckpointEnd:    end,
+		CheckpointDuration: dur,
+		Timestamp:        time.Now(),
 	}
 }
 

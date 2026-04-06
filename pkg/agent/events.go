@@ -37,9 +37,33 @@ const (
 	// Handoff
 	EventTypeHandoff EventType = "handoff" // Transferring to another agent
 
+	// Stop Hooks
+	EventTypeStop         EventType = "stop"          // Stop hook prevented continuation
+	EventTypeStopComplete EventType = "stop_complete"  // Stop hook executed successfully
+
 	// Debug (prompts/responses, emitted when debug=true)
 	EventTypeDebug EventType = "debug"
+
+	// Profiling & Analytics
+	EventTypeCheckpoint EventType = "checkpoint" // Profiling checkpoint event
+	EventTypeAnalytics  EventType = "analytics"  // Structured analytics event
 )
+
+// Analytics event names
+const (
+	AnalyticsAutocompactTriggered  = "tengu_autocompact_triggered"
+	AnalyticsLLMLatency           = "tengu_llm_latency"
+	AnalyticsToolExecutionLatency = "tengu_tool_execution_latency"
+	AnalyticsQueryCompleted       = "tengu_query_completed"
+	AnalyticsTokenBudgetExceeded  = "tengu_token_budget_exceeded"
+	AnalyticsRoundCompleted       = "tengu_round_completed"
+)
+
+// AnalyticsEvent represents structured analytics data
+type AnalyticsEvent struct {
+	Name string                 `json:"name"`
+	Data map[string]interface{} `json:"data"`
+}
 
 // Event represents a discrete occurrence in the agent execution loop
 type Event struct {
@@ -64,6 +88,15 @@ type Event struct {
 	Round     int    `json:"round,omitempty"`
 	DebugType string `json:"debug_type,omitempty"` // "prompt" or "response"
 
+	// Checkpoint data (EventTypeCheckpoint only)
+	CheckpointName    string        `json:"checkpoint_name,omitempty"`
+	CheckpointStart   time.Time     `json:"checkpoint_start,omitempty"`
+	CheckpointEnd     time.Time     `json:"checkpoint_end,omitempty"`
+	CheckpointDuration time.Duration `json:"checkpoint_duration,omitempty"`
+
+	// Analytics data (EventTypeAnalytics only)
+	AnalyticsEvent *AnalyticsEvent `json:"analytics_event,omitempty"`
+
 	Timestamp time.Time `json:"timestamp"`
 }
 
@@ -80,6 +113,18 @@ func NewEvent(evtType EventType, agent *Agent) *Event {
 		Type:      evtType,
 		AgentName: agentName,
 		AgentID:   agentID,
+		Timestamp: time.Now(),
+	}
+}
+
+// NewAnalyticsEvent creates a new analytics event
+func NewAnalyticsEvent(name string, data map[string]interface{}) *Event {
+	return &Event{
+		Type:      EventTypeAnalytics,
+		AnalyticsEvent: &AnalyticsEvent{
+			Name: name,
+			Data: data,
+		},
 		Timestamp: time.Now(),
 	}
 }

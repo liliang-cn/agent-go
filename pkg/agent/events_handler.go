@@ -42,6 +42,9 @@ type EventHandlers struct {
 	// OnDebug is called when debug information is available
 	OnDebug EventHandler
 
+	// OnAnalytics is called for structured analytics events
+	OnAnalytics EventHandler
+
 	// OnAny is called for all events (catch-all)
 	OnAny EventHandler
 }
@@ -72,6 +75,8 @@ func (h *EventHandlers) SetHandler(eventType EventType, handler EventHandler) {
 		h.OnError = handler
 	case EventTypeDebug:
 		h.OnDebug = handler
+	case EventTypeAnalytics:
+		h.OnAnalytics = handler
 	}
 }
 
@@ -125,6 +130,10 @@ func (h *EventHandlers) Handle(event *Event) {
 	case EventTypeDebug:
 		if h.OnDebug != nil {
 			h.OnDebug(event)
+		}
+	case EventTypeAnalytics:
+		if h.OnAnalytics != nil {
+			h.OnAnalytics(event)
 		}
 	}
 }
