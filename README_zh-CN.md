@@ -17,13 +17,13 @@ go get github.com/liliang-cn/agent-go/v2
 | 能力            | 说明                                                                      |
 | --------------- | ------------------------------------------------------------------------- |
 | **RAG**         | 文档摄入 → 分块 → Embedding → SQLite 向量存储 → 混合检索                  |
-| **Agent**       | 多轮推理循环，支持工具调用、规划和会话记忆                                |
-| **Memory**      | **认知记忆层**: Hindsight 式演化 (事实 → 观察) + PageIndex 式推理导航     |
+| **Agent**       | 多轮推理循环，支持规划、**自动续航 (Auto-continuation)** 和 **异步上下文分叉 (Context Forking)** |
+| **Memory**      | **认知记忆层**: Hindsight 演化 + **LLM-as-a-Judge 裁判检索** + **潜意识后台固化 (Subconscious)** |
 | **工具**        | MCP（模型上下文协议）、Skills（YAML+Markdown）、自定义内联工具            |
 | **PTC**         | LLM 写 JavaScript，工具在 Goja 沙箱中运行 — 减少模型往返次数              |
-| **Streaming**   | 逐 Token 通道输出；完整事件流可见工具调用过程                             |
+| **Streaming**   | 逐 Token 输出；支持 **极低延迟的流式工具触发** 和 **Tombstone (墓碑) 错误恢复** |
 | **多 Provider** | OpenAI、Anthropic、Azure、DeepSeek、Ollama — 运行时可切换                 |
-| **Team**        | 持久化 captain / specialist、异步团队任务队列、运行态状态与跨进程任务追踪 |
+| **Team**        | 团队队长/专家机制，**Actor 模式 SubAgent 通信**，异步队列与跨进程追踪 |
 | **Operator**    | 内置执行型 Agent，带文件系统/网页工具以及 PTY / coding-agent 会话能力     |
 
 ---
@@ -117,6 +117,15 @@ Team 是建立在 Agent 之上的持久化团队层。
 - team task 状态会持久化，所以新的 CLI 进程也能继续查看和跟踪
 
 可以理解为：`带队列和状态的持久化多 Agent 协作`
+
+### Agent 操作系统类比 (Microkernel OS)
+
+在架构设计上，可以把 AgentGo 映射为现代操作系统的概念：
+- **Team = 进程 (Process)**：资源隔离的边界，拥有独立的团队共享记忆和任务队列。
+- **Agent = 线程 (Thread)**：携带特定人设和技能包的执行实体，共享所属 Team 的资源。
+- **SubAgent = 协程 (Coroutine)**：由主 Agent 动态 `spawn` 的轻量级执行上下文，支持异步并行和信道通信。
+- **Memory = 虚拟内存 (VFS/Paging)**：通过 LLM 裁判路由实现上下文的无缝“换页 (Page In/Out)”。
+- **Subconscious = 守护进程 (Daemon/GC)**：在对话结束后静默运行的后台进程，负责抽取经验并清理上下文垃圾。
 
 ### API 形状
 

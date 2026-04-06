@@ -19,13 +19,13 @@ go get github.com/liliang-cn/agent-go/v2
 | Capability    | Details                                                                                                    |
 | ------------- | ---------------------------------------------------------------------------------------------------------- |
 | **RAG**       | Ingest docs → chunk → embed → SQLite vector store → hybrid search                                          |
-| **Agent**     | Multi-turn reasoning loop with tool calls, planning, and session memory                                    |
-| **Memory**    | **Cognitive Layer**: Hindsight-style evolution (Fact → Observation) + PageIndex-style reasoning navigation |
+| **Agent**     | Multi-turn reasoning loop with planning, **Auto-continuation**, and **Asynchronous Context Forking**       |
+| **Memory**    | **Cognitive Layer**: Evolution (Fact → Observation) + **LLM-as-a-Judge Retrieval** + **Subconscious Worker** |
 | **Tools**     | MCP (Model Context Protocol), Skills (YAML+Markdown), custom inline tools                                  |
 | **PTC**       | LLM writes JavaScript; tools run in a Goja sandbox — cuts round-trips                                      |
-| **Streaming** | Token-by-token via channel; full event stream with tool call visibility                                    |
+| **Streaming** | Token-by-token channel; **Low-latency Streaming Tool Execution** and **Tombstone** recovery                |
 | **Providers** | OpenAI, Anthropic, Azure, DeepSeek, Ollama — switchable at runtime                                         |
-| **Teams**     | Persistent captains + specialists, async team task queues, runtime status, and cross-process task tracking |
+| **Teams**     | Persistent captains + specialists, **Actor-model subagent IPC**, async task queues, cross-process tracking |
 | **Operator**  | Built-in execution agent with filesystem/web tools plus PTY and coding-agent session tooling               |
 
 ---
@@ -119,6 +119,15 @@ A Team is the persistent team layer on top of agents.
 - Team task state is persisted, so new CLI processes can inspect or continue work.
 
 Think of it as: `persistent multi-agent coordination with queueing and status`.
+
+### Agent OS Analogy
+
+AgentGo can be mapped to modern operating system concepts:
+- **Team = Process**: A resource-isolated boundary with its own shared memory and task queue.
+- **Agent = Thread**: The execution entity with a specific role and prompt, sharing the team's resources.
+- **SubAgent = Coroutine**: Lightweight context forks dynamically spawned by the Agent for asynchronous, parallel tasks.
+- **Memory = Virtual Memory**: LLM-based intelligent retrieval acts as `Page In`, while auto-compaction acts as `Page Out`.
+- **Subconscious = Daemon**: A background worker pool that silently extracts and consolidates memories after a session ends.
 
 ### API Shape
 
