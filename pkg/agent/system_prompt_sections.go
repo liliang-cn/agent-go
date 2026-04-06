@@ -157,6 +157,12 @@ func (s *Service) ensureSystemPromptSectionRegistry() {
 		}
 		return prompt.Section{Name: "web_search", Content: data.service.buildWebSearchPromptNote(data.agent), Dynamic: true}, nil
 	})
+	s.promptManager.RegisterSection("frc", func(ctx context.Context, raw interface{}) (prompt.Section, error) {
+		return prompt.Section{Name: "frc", Content: "Do NOT provide a summary of the tool result in your response. Instead, immediately process the result and either make another tool call or provide the final answer."}, nil
+	})
+	s.promptManager.RegisterSection("numeric_length_anchors", func(ctx context.Context, raw interface{}) (prompt.Section, error) {
+		return prompt.Section{Name: "numeric_length_anchors", Content: "Length limits: keep text between tool calls to ≤25 words. Keep final responses to ≤100 words unless the task requires more detail."}, nil
+	})
 }
 
 func (s *Service) buildSystemPromptSections(ctx context.Context, agent *Agent, opts systemPromptOptions) []systemPromptSection {
@@ -191,6 +197,8 @@ func (s *Service) buildSystemPromptSections(ctx context.Context, agent *Agent, o
 		"identity",
 		"operational",
 		"system_context",
+		"frc",
+		"numeric_length_anchors",
 		"ptc",
 		"memory",
 		"messaging",
