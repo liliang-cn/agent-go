@@ -747,11 +747,18 @@ func (s *Service) fileMemoryPromptContext(ctx context.Context, query string, que
 		limit = 5
 	}
 	
-	// Use LLM-based selection if available, fallback to basic selection otherwise
-	if selected, err := fileStore.SelectRelevantHeadersWithLLM(ctx, s.llm, query, limit); err == nil {
-		headers = selected
-	} else if selected, err := fileStore.SelectRelevantHeaders(ctx, query, limit); err == nil {
-		headers = selected
+	// Use LLM-based selection if available, but skip if we already used the Navigator 
+	// to avoid redundant LLM calls and interference with navigator-based tests.
+	if s.llm != nil && s.navigator == nil {
+		if selected, err := fileStore.SelectRelevantHeadersWithLLM(ctx, s.llm, query, limit); err == nil {
+			headers = selected
+		}
+	} 
+	
+	if len(headers) == 0 {
+		if selected, err := fileStore.SelectRelevantHeaders(ctx, query, limit); err == nil {
+			headers = selected
+		}
 	}
 	return entrypoint, sessionMemory, headers
 }

@@ -1123,13 +1123,19 @@ func (s *FileMemoryStore) SelectRelevantHeadersWithLLM(ctx context.Context, llm 
 	for i, h := range headers {
 		filename := fmt.Sprintf("%s.md", h.ID)
 		validFilenames[filename] = h
-		manifest.WriteString(fmt.Sprintf("- %s: \"%s\"\n", filename, h.Summary))
+		
+		scopeInfo := string(h.ScopeType)
+		if h.ScopeID != "" {
+			scopeInfo += ":" + h.ScopeID
+		}
+		
+		manifest.WriteString(fmt.Sprintf("- %s [%s]: \"%s\"\n", filename, scopeInfo, h.Summary))
 		if i > 50 { // Cap manifest size
 			break
 		}
 	}
 
-	systemPrompt := `You are selecting memories that will be useful to the AI as it processes a user's query. You will be given the user's query and a list of available memory files with their filenames and descriptions.
+	systemPrompt := `You are selecting memories that will be useful to the AI as it processes a user's query. You will be given the user's query and a list of available memory files with their filenames, scopes, and descriptions.
 
 Return a list of filenames for the memories that will clearly be useful to the AI as it processes the user's query. Only include memories that you are certain will be helpful based on their name and description.
 - If you are unsure if a memory will be useful in processing the user's query, then do not include it in your list. Be selective and discerning.
