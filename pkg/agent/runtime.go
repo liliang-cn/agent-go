@@ -266,6 +266,8 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		r.ensureToolResultConsistency()
 
 		if len(result.ToolCalls) > 0 {
+			state.resetContinuation()
+			
 			// Double check for task_complete in case it was not intercepted during stream
 			for _, tc := range result.ToolCalls {
 				if tc.Function.Name == "task_complete" {
@@ -374,6 +376,24 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 				state.Messages = messages
 				state.noteRoundCompleted()
 				continue // next round → LLM synthesises answer
+			}
+
+			// --- TOKEN BUDGET AUTO-CONTINUATION ---
+			// If the model stops without calling any tools, check if we should auto-continue
+			state.incrementContinuation()
+			if state.shouldContinue() == budgetContinue {
+				pct := (state.Budget.CompletedRounds * 100) / state.Budget.MaxRounds
+				nudgeMsg := fmt.Sprintf("You have used %d%% of your budget (%d/%d rounds). If you have not completed the user's request, please continue the next steps directly without asking for permission or apologizing. Use tools if necessary. If you are finished, call the task_complete tool.", pct, state.Budget.CompletedRounds, state.Budget.MaxRounds)
+				
+				r.emit(EventTypeStateUpdate, fmt.Sprintf("Auto-continuing run (budget available: %d/%d)", state.Budget.CompletedRounds, state.Budget.MaxRounds))
+				
+				messages = append(messages, domain.Message{
+					Role:    "user",
+					Content: nudgeMsg,
+				})
+				state.Messages = messages
+				state.noteRoundCompleted()
+				continue
 			}
 
 			r.completeRun(goal, result.Content, messages, true)
