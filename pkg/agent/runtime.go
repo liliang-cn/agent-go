@@ -7,6 +7,7 @@ import (
 	"log"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -34,16 +35,23 @@ type Runtime struct {
 
 	// Checkpoint profiling
 	checkpointTimes map[string]time.Time
+
+	// Tool consistency tracking
+	pendingToolsMu sync.Mutex
+	pendingTools   map[string]domain.ToolCall // tool_call_id -> call
+	completedTools map[string]bool            // tool_call_id -> true
 }
 
 // NewRuntime creates a new runtime instance
 func NewRuntime(svc *Service, session *Session, cfg *RunConfig) *Runtime {
 	return &Runtime{
-		svc:          svc,
-		eventChan:    make(chan *Event, 100), // Buffer events
-		currentAgent: svc.resolveCurrentAgent(session),
-		session:      session,
-		cfg:          cfg,
+		svc:            svc,
+		eventChan:      make(chan *Event, 100), // Buffer events
+		currentAgent:   svc.resolveCurrentAgent(session),
+		session:        session,
+		cfg:            cfg,
+		pendingTools:   make(map[string]domain.ToolCall),
+		completedTools: make(map[string]bool),
 	}
 }
 
@@ -93,6 +101,8 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 	for round := 0; round < maxRounds; round++ {
 		// Check cancellation
 		if ctx.Err() != nil {
+			r.emitTombstone()
+			r.ensureToolResultConsistency()
 			r.emit(EventTypeError, "Execution cancelled")
 			return
 		}
@@ -139,6 +149,10 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		var taskCompleteResult string
 		taskCompleteTriggered := false
 
+		// Streaming Tool Execution Tracking
+		asyncResults := make(chan ToolExecutionResult, 50)
+		var asyncWG sync.WaitGroup
+
 		llmStart := time.Now()
 		r.CheckpointStart("llm_call")
 		result, lastResponseID, err := r.svc.streamToolTurn(ctx, genMessages, tools, r.svc.toolGenerationOptions(0.3, 2000, toolChoiceForIntent(state.Intent, round)), StreamTurnCallbacks{
@@ -151,6 +165,9 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 					taskCompleteTriggered = true
 					return errTaskComplete
 				}
+
+				// --- STREAMING TOOL EXECUTION (Low Latency) ---
+				go r.executeAsyncTool(ctx, tc, &asyncWG, asyncResults)
 				return nil
 			},
 			OnReasoning: func(text string) {
@@ -198,11 +215,14 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 				r.emitDebug(round+1, "response", respBuilder.String())
 			}
 			r.emitToolResult("task_complete", final, nil, "")
+			r.trackToolResult("task_complete") // Mark complete
 			r.completeRun(goal, final, messages, true)
 			return
 		}
 
 		if err != nil {
+			r.emitTombstone()
+			r.ensureToolResultConsistency()
 			r.emit(EventTypeError, fmt.Sprintf("LLM error: %v", err))
 			return
 		}
@@ -230,7 +250,21 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			r.emitDebug(round+1, "response", respBuilder.String())
 		}
 
-		// 6. Handle Result
+		// 6. Handle Result & Consolidate Tool Outputs
+		// Wait for all tools that were triggered during streaming
+		go func() {
+			asyncWG.Wait()
+			close(asyncResults)
+		}()
+
+		var toolResults []ToolExecutionResult
+		for tr := range asyncResults {
+			toolResults = append(toolResults, tr)
+		}
+
+		// Consistency check: ensure all tool calls emitted during LLM turn have results
+		r.ensureToolResultConsistency()
+
 		if len(result.ToolCalls) > 0 {
 			// Double check for task_complete in case it was not intercepted during stream
 			for _, tc := range result.ToolCalls {
@@ -254,6 +288,9 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 				Content:   result.Content,
 				ToolCalls: result.ToolCalls,
 			}
+
+			// In current streaming mode, prepareToolRound logic might need adjustment if tools
+			// were already executed. Here we reconcile LLM-reported calls with our execution results.
 			nextAgent, filteredToolCalls, duplicateToolResults, fallback, handoff := r.svc.prepareToolRound(ctx, &messages, r.currentAgent, r.session, streamResult, state.PrevToolCalls, round)
 			if handoff {
 				r.currentAgent = nextAgent
@@ -267,45 +304,45 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 				r.completeRun(goal, fallback, nil, false)
 				return
 			}
-			if len(filteredToolCalls) == 0 {
-				if len(duplicateToolResults) > 0 {
-					messages = r.svc.appendToolRoundToMessages(messages, streamResult, duplicateToolResults)
-					state.Messages = messages
-					state.recordToolResults(duplicateToolResults)
-				}
-				state.noteRoundCompleted()
-				continue
-			}
-			streamResult.ToolCalls = filteredToolCalls
-			state.setStage(TurnStageHandlingTools, "executing tool batch", len(filteredToolCalls))
-			r.emitLoopState(state)
 
-			toolStart := time.Now()
-			r.CheckpointStart("tool_execution")
-			toolResults, err := r.svc.executeToolCallsWithOptions(ctx, r.currentAgent, r.session, filteredToolCalls, ToolExecutionCallbacks{
-				OnToolCall: func(name string, args map[string]interface{}, interruptBehavior string) {
-					r.emitToolCall(name, args, interruptBehavior)
-				},
-				OnToolResult: func(name string, result interface{}, err error, interruptBehavior string) {
-					r.emitToolResult(name, result, err, interruptBehavior)
-				},
-				OnToolState: func(name string, state string, interruptBehavior string) {
-					r.emitToolState(name, state, interruptBehavior)
-				},
-				EventSink: r.forwardSubAgentEvent,
-				Debug:     r.debugEnabled(),
-			}, true)
-			if err != nil {
-				r.emit(EventTypeError, fmt.Sprintf("Tool execution error: %v", err))
-				return
+			// If LLM output tools that we haven't executed yet (though our OnToolCall should have caught all),
+			// execute them now synchronously as a fallback.
+			remainingCalls := []domain.ToolCall{}
+			for _, ftc := range filteredToolCalls {
+				r.pendingToolsMu.Lock()
+				alreadyDone := r.completedTools[ftc.ID]
+				r.pendingToolsMu.Unlock()
+				if !alreadyDone {
+					remainingCalls = append(remainingCalls, ftc)
+				}
 			}
-			r.CheckpointEnd("tool_execution")
-			toolDur := time.Since(toolStart)
-			r.eventChan <- NewAnalyticsEvent(AnalyticsToolExecutionLatency, map[string]interface{}{
-				"round":       round + 1,
-				"tool_count":  len(toolResults),
-				"duration_ms": toolDur.Milliseconds(),
-			})
+
+			if len(remainingCalls) > 0 {
+				state.setStage(TurnStageHandlingTools, "executing remaining tool batch", len(remainingCalls))
+				r.emitLoopState(state)
+
+				r.CheckpointStart("tool_execution")
+				syncToolResults, err := r.svc.executeToolCallsWithOptions(ctx, r.currentAgent, r.session, remainingCalls, ToolExecutionCallbacks{
+					OnToolCall: func(name string, args map[string]interface{}, interruptBehavior string) {
+						r.emitToolCall(name, args, interruptBehavior)
+					},
+					OnToolResult: func(name string, res interface{}, err error, interruptBehavior string) {
+						r.emitToolResult(name, res, err, interruptBehavior)
+					},
+					OnToolState: func(name string, state string, interruptBehavior string) {
+						r.emitToolState(name, state, interruptBehavior)
+					},
+					EventSink: r.forwardSubAgentEvent,
+					Debug:     r.debugEnabled(),
+				}, true)
+				if err != nil {
+					r.emit(EventTypeError, fmt.Sprintf("Tool execution error: %v", err))
+					return
+				}
+				r.CheckpointEnd("tool_execution")
+				toolResults = append(toolResults, syncToolResults...)
+			}
+
 			messages = r.svc.appendToolRoundToMessages(messages, streamResult, append(duplicateToolResults, toolResults...))
 			state.Messages = messages
 			state.recordToolResults(append(duplicateToolResults, toolResults...))
@@ -322,14 +359,14 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 				state.Messages = messages
 			}
 
-		// Execute stop hooks after tool execution (before continuation decision)
-		if stopResult := r.executeStopHooks(ctx, state, messages, toolResults); stopResult != nil {
-			if stopResult.PreventContinuation {
-				r.emit(EventTypeStop, fmt.Sprintf("Stopped by hook: %s", stopResult.StopReason))
-				r.completeRun(goal, stopResult.StopReason, messages, false)
-				return
+			// Execute stop hooks after tool execution (before continuation decision)
+			if stopResult := r.executeStopHooks(ctx, state, messages, toolResults); stopResult != nil {
+				if stopResult.PreventContinuation {
+					r.emit(EventTypeStop, fmt.Sprintf("Stopped by hook: %s", stopResult.StopReason))
+					r.completeRun(goal, stopResult.StopReason, messages, false)
+					return
+				}
 			}
-		}
 
 		} else {
 			if nextMessages, handled := r.handlePTCTextFallback(ctx, result.Content, messages); handled {
@@ -689,6 +726,74 @@ func (r *Runtime) emitCheckpoint(name string, start, end time.Time, dur time.Dur
 		CheckpointEnd:    end,
 		CheckpointDuration: dur,
 		Timestamp:        time.Now(),
+	}
+}
+// emitTombstone signals the UI to clear any partial/unfinalized assistant output
+func (r *Runtime) emitTombstone() {
+	r.eventChan <- &Event{
+		ID:        uuid.New().String(),
+		Type:      EventTypeTombstone,
+		AgentName: r.currentAgent.Name(),
+		AgentID:   r.currentAgent.ID(),
+		Timestamp: time.Now(),
+	}
+}
+
+// trackToolCall records a tool call has been sent to the user/LLM
+func (r *Runtime) trackToolCall(tc domain.ToolCall) {
+	r.pendingToolsMu.Lock()
+	defer r.pendingToolsMu.Unlock()
+	r.pendingTools[tc.ID] = tc
+}
+
+// trackToolResult records that a tool result has been received and emitted
+func (r *Runtime) trackToolResult(callID string) {
+	r.pendingToolsMu.Lock()
+	defer r.pendingToolsMu.Unlock()
+	r.completedTools[callID] = true
+}
+
+// ensureToolResultConsistency ensures every tool_call has a corresponding tool_result.
+// If not, it emits a synthetic error result to maintain conversation integrity.
+func (r *Runtime) ensureToolResultConsistency() {
+	r.pendingToolsMu.Lock()
+	defer r.pendingToolsMu.Unlock()
+
+	for id, call := range r.pendingTools {
+		if !r.completedTools[id] {
+			// Synthetic error result for orphan tool call
+			r.emitToolResult(call.Function.Name, "Error: Execution interrupted or failed to return result.", nil, "")
+			r.completedTools[id] = true
+		}
+	}
+}
+
+// executeAsyncTool runs a tool in a separate goroutine and emits results
+func (r *Runtime) executeAsyncTool(ctx context.Context, tc domain.ToolCall, wg *sync.WaitGroup, results chan<- ToolExecutionResult) {
+	if wg != nil {
+		wg.Add(1)
+		defer wg.Done()
+	}
+
+	// 1. Emit the tool call event (if not already emitted)
+	behavior := r.svc.toolInterruptBehavior(tc.Function.Name, r.currentAgent)
+	r.emitToolCall(tc.Function.Name, tc.Function.Arguments, behavior)
+	r.trackToolCall(tc)
+
+	// 2. Execute
+	res, err, _ := r.executeToolOrHandoff(ctx, tc)
+
+	// 3. Emit result
+	r.emitToolResult(tc.Function.Name, res, err, behavior)
+	r.trackToolResult(tc.ID)
+
+	// 4. Send to results channel if provided
+	if results != nil {
+		results <- ToolExecutionResult{
+			ToolCallID: tc.ID,
+			ToolName:   tc.Function.Name,
+			Result:     res,
+		}
 	}
 }
 

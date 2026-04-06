@@ -26,6 +26,7 @@ const (
 	// Thinking & Streaming
 	EventTypeThinking EventType = "thinking" // Agent is processing
 	EventTypePartial  EventType = "partial"  // Streaming text output
+	EventTypeTombstone EventType = "tombstone" // Request to remove/clear partial content (e.g. after interruption)
 
 	// Tool Execution
 	EventTypeToolCall   EventType = "tool_call"   // Agent requests tool execution
