@@ -83,6 +83,9 @@ type Service struct {
 	// Subconscious background worker pool
 	subconscious *SubconsciousWorkerPool
 
+	// Async sub-agent coordinator
+	asyncTasks *SubAgentCoordinator
+
 	// Stop hooks for end-of-turn execution
 	stopHookService *StopHookService
 
@@ -169,6 +172,7 @@ func NewService(
 		memoryScopeAgentID: strings.TrimSpace(agent.Name()),
 		hooks:              NewHookRegistry(),
 		stopHookService:    NewStopHookService(),
+		asyncTasks:         NewSubAgentCoordinator(),
 		toolRegistry:       NewToolRegistry(),
 		tokenCounter:       usage.NewTokenCounter(),
 		inProgressTools:    make(map[string]int),
@@ -236,6 +240,58 @@ func (s *Service) registerBuiltInTools() {
 	s.toolRegistry.RegisterWithMetadata(delegateDef, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		return s.executeSubAgentDelegation(ctx, s.agent, args)
 	}, CategoryCustom, ToolMetadata{InterruptBehavior: InterruptBehaviorBlock})
+
+	// 1.5. delegate_async
+	delegateAsyncDef := domain.ToolDefinition{
+		Type: "function",
+		Function: domain.ToolFunction{
+			Name:        "delegate_async",
+			Description: "Spawn a sub-agent in the background to execute a task asynchronously. Returns immediately with a task ID. The sub-agent will run in isolation and notify you via a <task-notification> user message when it finishes or fails. Use this for parallel research or long-running independent tasks.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"goal": map[string]interface{}{
+						"type":        "string",
+						"description": "The specific task/goal for the sub-agent to accomplish",
+					},
+					"name": map[string]interface{}{
+						"type":        "string",
+						"description": "A short, descriptive name for the sub-agent (e.g., 'auth-researcher')",
+					},
+				},
+				"required": []string{"goal", "name"},
+			},
+		},
+	}
+	s.toolRegistry.RegisterWithMetadata(delegateAsyncDef, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+		return s.executeDelegateAsync(ctx, s.agent, args)
+	}, CategoryCustom, ToolMetadata{InterruptBehavior: InterruptBehaviorCancel})
+
+	// 1.6. send_message
+	sendMessageDef := domain.ToolDefinition{
+		Type: "function",
+		Function: domain.ToolFunction{
+			Name:        "send_message",
+			Description: "Send a message to an already running or paused sub-agent using its task ID. This is the only way to follow up on a completed async task or interact with an active sub-agent. Do not fabricate their responses.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"to": map[string]interface{}{
+						"type":        "string",
+						"description": "The task ID (agent ID) of the target sub-agent",
+					},
+					"message": map[string]interface{}{
+						"type":        "string",
+						"description": "The instruction, question, or follow-up task to send",
+					},
+				},
+				"required": []string{"to", "message"},
+			},
+		},
+	}
+	s.toolRegistry.RegisterWithMetadata(sendMessageDef, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+		return s.executeSendMessage(ctx, s.agent, args)
+	}, CategoryCustom, ToolMetadata{InterruptBehavior: InterruptBehaviorCancel})
 
 	// 2. task_complete (optional registration if needed by some paths)
 	completeDef := domain.ToolDefinition{
