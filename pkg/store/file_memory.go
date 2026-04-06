@@ -1104,6 +1104,88 @@ func (s *FileMemoryStore) SelectRelevantHeaders(ctx context.Context, query strin
 	return out, nil
 }
 
+// SelectRelevantHeadersWithLLM uses an LLM to select the most relevant memories based on their summaries.
+// This is an advanced, high-precision retrieval mechanism that avoids vector embeddings.
+func (s *FileMemoryStore) SelectRelevantHeadersWithLLM(ctx context.Context, llm domain.Generator, query string, topK int) ([]FileMemoryHeader, error) {
+	headers, err := s.ListHeaders(ctx, 0)
+	if err != nil {
+		return nil, err
+	}
+	if len(headers) == 0 {
+		return nil, nil
+	}
+	if llm == nil {
+		return s.SelectRelevantHeaders(ctx, query, topK)
+	}
+
+	var manifest strings.Builder
+	validFilenames := make(map[string]FileMemoryHeader)
+	for i, h := range headers {
+		filename := fmt.Sprintf("%s.md", h.ID)
+		validFilenames[filename] = h
+		manifest.WriteString(fmt.Sprintf("- %s: \"%s\"\n", filename, h.Summary))
+		if i > 50 { // Cap manifest size
+			break
+		}
+	}
+
+	systemPrompt := `You are selecting memories that will be useful to the AI as it processes a user's query. You will be given the user's query and a list of available memory files with their filenames and descriptions.
+
+Return a list of filenames for the memories that will clearly be useful to the AI as it processes the user's query. Only include memories that you are certain will be helpful based on their name and description.
+- If you are unsure if a memory will be useful in processing the user's query, then do not include it in your list. Be selective and discerning.
+- If there are no memories in the list that would clearly be useful, feel free to return an empty list.`
+
+	prompt := fmt.Sprintf(`Query: %s
+
+Available memories:
+%s`, query, manifest.String())
+
+	opts := &domain.GenerationOptions{
+		Temperature: 0.1,
+		MaxTokens:   500,
+	}
+
+	var parsed struct {
+		SelectedMemories []string `json:"selected_memories"`
+	}
+
+	schema := map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"selected_memories": map[string]interface{}{
+				"type": "array",
+				"items": map[string]interface{}{
+					"type": "string",
+				},
+			},
+		},
+		"required":             []string{"selected_memories"},
+		"additionalProperties": false,
+	}
+
+	promptWithSystem := fmt.Sprintf("%s\n\n%s", systemPrompt, prompt)
+	resp, err := llm.GenerateStructured(ctx, promptWithSystem, schema, opts)
+	if err != nil {
+		// Fallback to n-gram keyword match
+		return s.SelectRelevantHeaders(ctx, query, topK)
+	}
+
+	if err := json.Unmarshal([]byte(resp.Raw), &parsed); err != nil {
+		return s.SelectRelevantHeaders(ctx, query, topK)
+	}
+
+	var selected []FileMemoryHeader
+	for _, filename := range parsed.SelectedMemories {
+		if header, ok := validFilenames[filename]; ok {
+			selected = append(selected, header)
+			if len(selected) >= topK {
+				break
+			}
+		}
+	}
+	return selected, nil
+}
+
 // indexFilePath returns the per-type index file path, e.g. _index/types/observations.md.
 func (s *FileMemoryStore) indexFilePath(t domain.MemoryType) string {
 	return filepath.Join(s.typeIndexDir(), string(t)+"s.md")

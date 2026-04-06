@@ -746,7 +746,11 @@ func (s *Service) fileMemoryPromptContext(ctx context.Context, query string, que
 	if limit <= 0 || limit > 5 {
 		limit = 5
 	}
-	if selected, err := fileStore.SelectRelevantHeaders(ctx, query, limit); err == nil {
+	
+	// Use LLM-based selection if available, fallback to basic selection otherwise
+	if selected, err := fileStore.SelectRelevantHeadersWithLLM(ctx, s.llm, query, limit); err == nil {
+		headers = selected
+	} else if selected, err := fileStore.SelectRelevantHeaders(ctx, query, limit); err == nil {
 		headers = selected
 	}
 	return entrypoint, sessionMemory, headers
