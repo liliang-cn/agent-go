@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -86,6 +87,10 @@ func (e *StopHookExecutor) ExecuteStopHooks(ctx context.Context, hookData HookDa
 		// If blocking hook failed, record the blocking error
 		if result.BlockingError != "" {
 			aggregated.BlockingError = result.BlockingError
+			aggregated.PreventContinuation = true
+			if aggregated.StopReason == "" {
+				aggregated.StopReason = result.BlockingError
+			}
 		}
 	}
 
@@ -154,7 +159,32 @@ func (e *StopHookExecutor) executeSingleHook(ctx context.Context, cfg *StopHookC
 		}
 	}
 
+	applyStopHookControl(stdout.String(), result)
+
 	return result
+}
+
+func applyStopHookControl(output string, result *StopHookResult) {
+	if result == nil {
+		return
+	}
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return
+	}
+
+	var payload struct {
+		PreventContinuation bool   `json:"prevent_continuation"`
+		StopReason          string `json:"stop_reason"`
+	}
+	if err := json.Unmarshal([]byte(output), &payload); err == nil {
+		if payload.PreventContinuation {
+			result.PreventContinuation = true
+		}
+		if strings.TrimSpace(payload.StopReason) != "" {
+			result.StopReason = strings.TrimSpace(payload.StopReason)
+		}
+	}
 }
 
 // ExecuteToolResultsHooks formats tool results for stop hook context
@@ -212,7 +242,7 @@ func (s *StopHookService) ExecuteStopHooks(ctx context.Context, sessionID, agent
 		AgentID:   agentID,
 		Goal:      goal,
 		Metadata: map[string]interface{}{
-			"message_count":    len(messages),
+			"message_count":     len(messages),
 			"tool_result_count": len(lastToolResults),
 		},
 	}

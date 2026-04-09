@@ -59,6 +59,7 @@ func (m *TeamManager) ensureAsyncTaskForSharedTask(task *SharedTask, sessionID, 
 
 	asyncTask := &AsyncTask{
 		ID:          task.ID,
+		TaskID:      strings.TrimSpace(task.ID),
 		SessionID:   strings.TrimSpace(sessionID),
 		Kind:        AsyncTaskKindTeam,
 		Status:      asyncStatusFromSharedTask(task.Status),
@@ -240,6 +241,16 @@ func cloneAsyncTask(task *AsyncTask) *AsyncTask {
 	cloned.FinishedAt = cloneTimePtr(task.FinishedAt)
 	cloned.Events = cloneTaskEvents(task.Events)
 	return &cloned
+}
+
+func firstNonEmptyTaskID(task *AsyncTask) string {
+	if task == nil {
+		return ""
+	}
+	if strings.TrimSpace(task.TaskID) != "" {
+		return strings.TrimSpace(task.TaskID)
+	}
+	return strings.TrimSpace(task.ID)
 }
 
 func cloneTaskEvents(events []*TaskEvent) []*TaskEvent {

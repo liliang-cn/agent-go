@@ -53,13 +53,14 @@ func (s *Service) CompactMessages(ctx context.Context, messages []domain.Message
 	if len(messages) == 0 {
 		return messages, nil
 	}
+	discoveredTools := extractDiscoveredToolNames(messages, "")
 
 	// Build conversation text for summarization (similar to CompactSession)
 	var conversationText strings.Builder
 	for _, msg := range messages {
 		switch msg.Role {
 		case "user":
-			conversationText.WriteString(fmt.Sprintf("User: %s\n", msg.Content))
+			conversationText.WriteString(fmt.Sprintf("User: %s\n", stripDiscoveredToolsTag(msg.Content)))
 		case "assistant":
 			conversationText.WriteString(fmt.Sprintf("Assistant: %s\n", msg.Content))
 		}
@@ -83,6 +84,12 @@ func (s *Service) CompactMessages(ctx context.Context, messages []domain.Message
 	// Rebuild messages with summary as the first user message
 	compacted := []domain.Message{
 		{Role: "user", Content: fmt.Sprintf("[Earlier conversation summarized: %s]", summary)},
+	}
+	if len(discoveredTools) > 0 {
+		compacted = append(compacted, domain.Message{
+			Role:    "user",
+			Content: "<system-reminder>\n" + appendDiscoveredToolsSnapshot("", discoveredTools) + "\n</system-reminder>",
+		})
 	}
 
 	// Add recent messages (last 2 to maintain context)
@@ -126,9 +133,10 @@ type ToolExecutionCallbacks struct {
 }
 
 const (
-	recentConversationWindow = 6
-	olderConversationLimit   = 12
-	toolUseNudgePrompt       = "Do not describe what you would do. You have tools available — call them now to accomplish the goal. Use the tool functions provided to you."
+	recentConversationWindow  = 6
+	olderConversationLimit    = 12
+	toolUseNudgePrompt        = "Do not describe what you would do. You have tools available — call them now to accomplish the goal. Use the tool functions provided to you."
+	toolResultsAnalysisPrompt = "Analyze the tool results above. If you have fulfilled the user's request, provide your final answer and call task_complete. Otherwise, continue with the necessary next steps."
 )
 
 func isExplicitMemoryRecallQuery(goal string) bool {
@@ -350,6 +358,7 @@ func formatExplicitRecallMemories(memories []*domain.MemoryWithScore) string {
 
 // executeWithLLM lets LLM decide which tool to use and executes with multi-round support
 func (s *Service) executeWithLLM(ctx context.Context, goal string, intent *IntentRecognitionResult, session *Session, memoryContext string, ragContext string, cfg *RunConfig) (interface{}, *executionMetrics, error) {
+	ctx = withCurrentSession(ctx, session)
 	maxRounds := cfg.MaxTurns
 	if maxRounds <= 0 {
 		maxRounds = 20
@@ -361,9 +370,10 @@ func (s *Service) executeWithLLM(ctx context.Context, goal string, intent *Inten
 	prevToolCalls := make(map[string]int)
 	summary := ""
 	if session != nil {
-		summary = session.GetSummary()
+		summary = resolveConversationSummary(session)
 	}
-	messages := s.buildConversationMessages(session, goal, ragContext, memoryContext, summary)
+	skillReminder := s.buildRelevantSkillReminder(ctx, goal, session)
+	messages := s.buildConversationMessages(session, goal, ragContext, memoryContext, skillReminder, summary)
 	state := newServiceExecutionLoopState(goal, messages, intent, maxRounds, currentAgent)
 	state.PrevToolCalls = prevToolCalls
 
@@ -399,8 +409,9 @@ func (s *Service) executeWithLLM(ctx context.Context, goal string, intent *Inten
 		s.emitProgress("thinking", fmt.Sprintf("[%s] Thinking...", state.CurrentAgent.Name()), round+1, "")
 
 		cp.start("llm_call")
-		result, turnTokens, err := s.runOneLLMTurn(ctx, state.CurrentAgent, state.Messages, cfg, round, goal, intent)
+		result, turnTokens, recovery, err := s.runOneLLMTurn(ctx, state.CurrentAgent, state.Messages, cfg, round, goal, intent)
 		llmDur := cp.end("llm_call")
+		state.noteRecovery(recovery)
 		if err != nil {
 			return nil, state.metricsSnapshot(), err
 		}
@@ -414,10 +425,11 @@ func (s *Service) executeWithLLM(ctx context.Context, goal string, intent *Inten
 		})
 
 		if len(result.ToolCalls) > 0 {
-			nextAgent, filteredToolCalls, duplicateToolResults, fallback, handoff := s.prepareToolRound(ctx, &state.Messages, state.CurrentAgent, session, result, state.PrevToolCalls, round)
+			nextAgent, handoffReason, filteredToolCalls, duplicateToolResults, fallback, handoff := s.prepareToolRound(ctx, &state.Messages, state.CurrentAgent, session, result, state.PrevToolCalls, round)
 			if handoff {
-				state.setCurrentAgent(nextAgent)
-				state.continueWith(queryLoopTransitionHandoff, "agent handoff requested", state.Messages)
+				decision := decideHandoff(nextAgent, handoffReason)
+				state.setCurrentAgent(decision.NextAgent)
+				state.continueWith(decision.Transition, decision.Message, state.Messages)
 				continue
 			}
 			if fallback != "" {
@@ -427,7 +439,7 @@ func (s *Service) executeWithLLM(ctx context.Context, goal string, intent *Inten
 			}
 			if len(filteredToolCalls) == 0 {
 				if len(duplicateToolResults) > 0 {
-					state.setMessages(s.appendToolRoundToMessages(state.Messages, result, duplicateToolResults))
+					state.setMessages(s.appendToolRoundToMessages(state.Messages, currentTaskID(session), result, duplicateToolResults))
 					s.recordToolResults(ctx, session, state.CurrentAgent, goal, duplicateToolResults, cfg, round)
 					state.noteToolResults(duplicateToolResults)
 				}
@@ -460,12 +472,39 @@ func (s *Service) executeWithLLM(ctx context.Context, goal string, intent *Inten
 				"duration_ms": toolDur.Milliseconds(),
 			})
 
-			state.continueWith(queryLoopTransitionToolBatch, "tool batch completed; continue to next turn", state.Messages)
+			decision := s.decidePostToolRound(state.Messages, currentTaskID(session), result, duplicateToolResults, toolResults, s.isPTCEnabled(), filteredToolCalls)
+			state.setMessages(decision.Messages)
+			if final := decision.Terminal; final != "" {
+				state.setStage(TurnStageCompleted, decision.Reason, 0)
+				state.setLoopTransition(decision.Transition, decision.Reason)
+				return final, state.metricsSnapshot(), nil
+			}
+			if decision.AwaitAnswer {
+				state.setStage(TurnStageAwaitingAnswer, "waiting for final answer after tool results", len(filteredToolCalls))
+			}
+			if stopResult := s.executeStopHooks(ctx, session, state.CurrentAgent, state.Goal, state.Messages, decision.ToolResults); stopResult != nil && stopResult.PreventContinuation {
+				state.setStage(TurnStageCompleted, stopResult.StopReason, 0)
+				state.setLoopTransition(queryLoopTransitionTextResponse, stopResult.StopReason)
+				return stopResult.StopReason, state.metricsSnapshot(), nil
+			}
+			state.continueWith(decision.Transition, decision.Reason, state.Messages)
 			continue
 		}
 
-		state.setStage(TurnStageCompleted, "text response completed", 0)
-		state.setLoopTransition(queryLoopTransitionTextResponse, "text response completed")
+		toolsAvailable := len(s.collectAllAvailableToolsWithPolicy(ctx, state.CurrentAgent, s.buildToolPreparationPolicy(ctx))) > 0
+		textDecision := decideTextRound(state.queryLoopState, toolsAvailable, state.ToolUsed, state.Nudged, result.Content, true)
+		if textDecision.Kind == textRoundDecisionContinue {
+			state.Nudged = textDecision.Prompt == toolUseNudgePrompt
+			state.setMessages(append(state.Messages, domain.Message{
+				Role:    "user",
+				Content: textDecision.Prompt,
+			}))
+			state.continueWith(textDecision.Transition, textDecision.Reason, state.Messages)
+			continue
+		}
+
+		state.setStage(TurnStageCompleted, textDecision.Reason, 0)
+		state.setLoopTransition(textDecision.Transition, textDecision.Reason)
 		finalContent, err := s.completeTextOnlyTurn(ctx, session, state.CurrentAgent, goal, round+1, state.TotalToolCalls, cfg, result.Content)
 		return finalContent, state.metricsSnapshot(), err
 	}
@@ -475,20 +514,87 @@ func (s *Service) executeWithLLM(ctx context.Context, goal string, intent *Inten
 	return result, state.metricsSnapshot(), err
 }
 
-func (s *Service) prepareToolRound(ctx context.Context, messages *[]domain.Message, currentAgent *Agent, session *Session, result *domain.GenerationResult, prevToolCalls map[string]int, round int) (*Agent, []domain.ToolCall, []ToolExecutionResult, string, bool) {
+func (s *Service) prepareToolRound(ctx context.Context, messages *[]domain.Message, currentAgent *Agent, session *Session, result *domain.GenerationResult, prevToolCalls map[string]int, round int) (*Agent, interface{}, []domain.ToolCall, []ToolExecutionResult, string, bool) {
 	result.ToolCalls = normalizeToolCalls(result.ToolCalls)
 
-	if newAgent, updated := s.applyHandoff(ctx, messages, currentAgent, result, session, round); updated {
-		return newAgent, nil, nil, "", true
+	if newAgent, reason, updated := s.applyHandoff(ctx, messages, currentAgent, result, session, round); updated {
+		return newAgent, reason, nil, nil, "", true
 	}
 
 	filteredToolCalls, duplicateToolResults, fallback := s.handleDuplicateToolCalls(*messages, result, prevToolCalls)
 	result.ToolCalls = filteredToolCalls
-	return currentAgent, filteredToolCalls, duplicateToolResults, fallback, false
+	return currentAgent, nil, filteredToolCalls, duplicateToolResults, fallback, false
 }
 
-func shouldNudgeForMissingToolUse(toolsAvailable bool, toolUsed bool, nudged bool) bool {
-	return toolsAvailable && !toolUsed && !nudged
+func shouldNudgeForMissingToolUse(toolsAvailable bool, toolUsed bool, nudged bool, content string) bool {
+	return toolsAvailable && !toolUsed && !nudged && looksLikeToolAvoidanceText(content)
+}
+
+func shouldAutoContinueAfterTextResponse(content string) bool {
+	return strings.TrimSpace(content) == ""
+}
+
+func buildAutoContinuePrompt(state *queryLoopState) (string, bool) {
+	if state == nil || state.shouldContinue() != budgetContinue {
+		return "", false
+	}
+	pct := 0
+	if state.Budget.MaxRounds > 0 {
+		pct = (state.Budget.CompletedRounds * 100) / state.Budget.MaxRounds
+	}
+	return fmt.Sprintf(
+		"You have used %d%% of your budget (%d/%d rounds). If you have not completed the user's request, please continue the next steps directly without asking for permission or apologizing. Use tools if necessary. If you are finished, call the task_complete tool.",
+		pct, state.Budget.CompletedRounds, state.Budget.MaxRounds,
+	), true
+}
+
+func handleMissingToolUseNudge(state *serviceExecutionLoopState, toolsAvailable bool, content string) bool {
+	if state == nil || !shouldNudgeForMissingToolUse(toolsAvailable, state.ToolUsed, state.Nudged, content) {
+		return false
+	}
+	state.Nudged = true
+	state.setMessages(appendToolUseNudgeMessages(state.Messages, content))
+	state.continueWith(queryLoopTransitionNextTurn, "nudged model to use available tools", state.Messages)
+	return true
+}
+
+func looksLikeToolAvoidanceText(content string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(content))
+	if normalized == "" {
+		return false
+	}
+
+	acknowledgements := []string{
+		"ok",
+		"okay",
+		"understood.",
+		"understood",
+		"i'll remember that.",
+		"i will remember that.",
+		"done",
+	}
+	for _, ack := range acknowledgements {
+		if normalized == ack {
+			return false
+		}
+	}
+
+	patterns := []string{
+		"i would ",
+		"i'll ",
+		"i will ",
+		"let me ",
+		"i can ",
+		"i'm going to ",
+		"calling the tool",
+		"use the tool",
+	}
+	for _, pattern := range patterns {
+		if strings.Contains(normalized, pattern) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) completeTextOnlyTurn(ctx context.Context, session *Session, agent *Agent, goal string, round int, toolCallCount int, cfg *RunConfig, content string) (string, error) {
@@ -508,6 +614,49 @@ func appendToolUseNudgeMessages(messages []domain.Message, content string) []dom
 		Content: toolUseNudgePrompt,
 	})
 	return messages
+}
+
+func isPTCToolRound(ptcEnabled bool, filteredToolCalls []domain.ToolCall) bool {
+	return ptcEnabled && len(filteredToolCalls) == 1 && filteredToolCalls[0].Function.Name == "execute_javascript"
+}
+
+func appendToolResultsAnalysisPrompt(messages []domain.Message) []domain.Message {
+	return append(messages, domain.Message{
+		Role:    "user",
+		Content: toolResultsAnalysisPrompt,
+	})
+}
+
+func terminalAnswerFromToolRound(ptcEnabled bool, filteredToolCalls []domain.ToolCall, toolResults []ToolExecutionResult) string {
+	if !isPTCToolRound(ptcEnabled, filteredToolCalls) {
+		return ""
+	}
+	return extractPTCTerminalAnswer(toolResults)
+}
+
+type toolRoundOutcome struct {
+	Messages    []domain.Message
+	ToolResults []ToolExecutionResult
+	Terminal    string
+	AwaitAnswer bool
+}
+
+func (s *Service) buildToolRoundOutcome(messages []domain.Message, taskID string, result *domain.GenerationResult, duplicateToolResults, toolResults []ToolExecutionResult, ptcEnabled bool, filteredToolCalls []domain.ToolCall) toolRoundOutcome {
+	allResults := append(append([]ToolExecutionResult(nil), duplicateToolResults...), toolResults...)
+	nextMessages := s.appendToolRoundToMessages(messages, taskID, result, allResults)
+	outcome := toolRoundOutcome{
+		Messages:    nextMessages,
+		ToolResults: allResults,
+	}
+	if final := terminalAnswerFromToolRound(ptcEnabled, filteredToolCalls, allResults); final != "" {
+		outcome.Terminal = final
+		return outcome
+	}
+	if !isPTCToolRound(ptcEnabled, filteredToolCalls) {
+		outcome.Messages = appendToolResultsAnalysisPrompt(outcome.Messages)
+		outcome.AwaitAnswer = true
+	}
+	return outcome
 }
 
 func buildUserContextMetaMessage(userCtx *UserContext) *domain.Message {
@@ -530,29 +679,60 @@ func (s *Service) executePreparedToolRound(ctx context.Context, currentAgent *Ag
 	if err != nil {
 		return messages, nil, err
 	}
-	messages = s.appendToolRoundToMessages(messages, result, append(duplicateToolResults, toolResults...))
+	messages = s.appendToolRoundToMessages(messages, currentTaskID(session), result, append(duplicateToolResults, toolResults...))
 	return messages, toolResults, nil
 }
 
 // buildConversationMessages constructs the next-turn user message and prepends prior session history when available.
-func (s *Service) buildConversationMessages(session *Session, goal, ragContext, memoryContext, summary string) []domain.Message {
+func buildSkillReminderMessage(session *Session, reminder *skillReminder) *domain.Message {
+	if reminder == nil || strings.TrimSpace(reminder.Text) == "" {
+		return nil
+	}
+	markRelevantSkillsSent(session, reminder.Names)
+	return &domain.Message{
+		Role:    "user",
+		Content: "<system-reminder>\n" + strings.TrimSpace(reminder.Text) + "\n</system-reminder>",
+		TaskID:  currentTaskID(session),
+	}
+}
+
+func (s *Service) buildConversationMessages(session *Session, goal, ragContext, memoryContext string, skillReminder *skillReminder, summary string) []domain.Message {
 	history := make([]domain.Message, 0)
 	if session != nil {
-		history = session.GetMessages()
+		history = historyForTask(session.GetMessages(), currentTaskID(session))
 	}
 
 	olderMessages, recentMessages := splitConversationHistory(history, recentConversationWindow, olderConversationLimit)
-	messages := make([]domain.Message, 0, len(olderMessages)+len(recentMessages)+3)
+	messages := make([]domain.Message, 0, len(olderMessages)+len(recentMessages)+4)
 	if userCtxMsg := buildUserContextMetaMessage(s.buildUserContext()); userCtxMsg != nil {
 		messages = append(messages, *userCtxMsg)
+	}
+	if skillMsg := buildSkillReminderMessage(session, skillReminder); skillMsg != nil {
+		messages = append(messages, *skillMsg)
 	}
 	if contextMsg := buildConversationContextMessage(summary, memoryContext, ragContext); contextMsg != nil {
 		messages = append(messages, *contextMsg)
 	}
 	messages = append(messages, olderMessages...)
 	messages = append(messages, recentMessages...)
-	messages = append(messages, domain.Message{Role: "user", Content: goal})
+	messages = append(messages, withTaskID(domain.Message{Role: "user", Content: goal}, currentTaskID(session)))
 	return messages
+}
+
+func historyForTask(history []domain.Message, taskID string) []domain.Message {
+	if strings.TrimSpace(taskID) == "" || len(history) == 0 {
+		return history
+	}
+	filtered := make([]domain.Message, 0, len(history))
+	for _, msg := range history {
+		if strings.TrimSpace(msg.TaskID) == taskID {
+			filtered = append(filtered, msg)
+		}
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	return filtered
 }
 
 func splitConversationHistory(history []domain.Message, recentWindow, olderLimit int) ([]domain.Message, []domain.Message) {
@@ -599,11 +779,12 @@ func buildConversationContextMessage(summary, memoryContext, ragContext string) 
 	return &domain.Message{
 		Role:    "user",
 		Content: content,
+		TaskID:  "",
 	}
 }
 
 // runOneLLMTurn builds the prompt for this round and calls the LLM once.
-func (s *Service) runOneLLMTurn(ctx context.Context, currentAgent *Agent, messages []domain.Message, cfg *RunConfig, round int, goal string, intent *IntentRecognitionResult) (*domain.GenerationResult, int, error) {
+func (s *Service) runOneLLMTurn(ctx context.Context, currentAgent *Agent, messages []domain.Message, cfg *RunConfig, round int, goal string, intent *IntentRecognitionResult) (*domain.GenerationResult, int, recoveryMeta, error) {
 	tools, genMessages := s.prepareTurnInputs(ctx, currentAgent, messages, goal)
 
 	if s.debug || cfg.Debug {
@@ -642,20 +823,24 @@ func (s *Service) runOneLLMTurn(ctx context.Context, currentAgent *Agent, messag
 				// Retry with compacted messages
 				retryResult, retryErr := s.llmService.GenerateWithTools(ctx, compacted, tools, s.toolGenerationOptions(temperature, maxTokens, toolChoiceForIntent(intent, round)))
 				if retryErr == nil && retryResult != nil {
-					return retryResult, s.estimateGenerationTokens(compacted, retryResult), nil
+					return retryResult, s.estimateGenerationTokens(compacted, retryResult), recoveryMeta{Compacted: true, Recovered: true}, nil
 				}
+				if retryErr != nil {
+					return nil, 0, recoveryMeta{Compacted: true}, fmt.Errorf("LLM generation failed after compaction retry: %w", retryErr)
+				}
+				return nil, 0, recoveryMeta{Compacted: true}, fmt.Errorf("LLM generation failed after compaction retry: nil result")
 			}
 		}
-		return nil, 0, fmt.Errorf("LLM generation failed: %w", err)
+		return nil, 0, recoveryMeta{}, fmt.Errorf("LLM generation failed: %w", err)
 	}
 	if result == nil {
-		return nil, 0, fmt.Errorf("LLM generation returned nil result")
+		return nil, 0, recoveryMeta{}, fmt.Errorf("LLM generation returned nil result")
 	}
 
 	if (s.debug || cfg.Debug) && err == nil {
 		s.logDebugResponse(result, round)
 	}
-	return result, s.estimateGenerationTokens(genMessages, result), nil
+	return result, s.estimateGenerationTokens(genMessages, result), recoveryMeta{}, nil
 }
 
 func appendToolNames(existing []string, results []ToolExecutionResult) []string {
@@ -669,7 +854,8 @@ func appendToolNames(existing []string, results []ToolExecutionResult) []string 
 }
 
 // applyHandoff checks if any tool call is a handoff, applies it, and returns (newAgent, true) if so.
-func (s *Service) applyHandoff(ctx context.Context, messages *[]domain.Message, currentAgent *Agent, result *domain.GenerationResult, session *Session, round int) (*Agent, bool) {
+func (s *Service) applyHandoff(ctx context.Context, messages *[]domain.Message, currentAgent *Agent, result *domain.GenerationResult, session *Session, round int) (*Agent, interface{}, bool) {
+	taskID := currentTaskID(session)
 	for _, tc := range result.ToolCalls {
 		if !strings.HasPrefix(tc.Function.Name, "transfer_to_") {
 			continue
@@ -686,22 +872,22 @@ func (s *Service) applyHandoff(ctx context.Context, messages *[]domain.Message, 
 				session.AgentID = targetAgent.ID()
 			}
 			*messages = append(*messages,
-				domain.Message{
+				withTaskID(domain.Message{
 					Role:             "assistant",
 					Content:          result.Content,
 					ReasoningContent: result.ReasoningContent,
 					ToolCalls:        result.ToolCalls,
-				},
-				domain.Message{
+				}, taskID),
+				withTaskID(domain.Message{
 					Role:       "tool",
 					ToolCallID: tc.ID,
 					Content:    fmt.Sprintf("Transferred to %s. Reason: %v", targetAgent.Name(), reason),
-				},
+				}, taskID),
 			)
-			return targetAgent, true
+			return targetAgent, reason, true
 		}
 	}
-	return currentAgent, false
+	return currentAgent, nil, false
 }
 
 func normalizeToolCalls(toolCalls []domain.ToolCall) []domain.ToolCall {
@@ -838,21 +1024,21 @@ func filterToolDefinitions(tools []domain.ToolDefinition, keep func(tool domain.
 }
 
 // appendToolRoundToMessages appends the assistant message and tool result messages.
-func (s *Service) appendToolRoundToMessages(messages []domain.Message, result *domain.GenerationResult, toolResults []ToolExecutionResult) []domain.Message {
-	messages = append(messages, domain.Message{
+func (s *Service) appendToolRoundToMessages(messages []domain.Message, taskID string, result *domain.GenerationResult, toolResults []ToolExecutionResult) []domain.Message {
+	messages = append(messages, withTaskID(domain.Message{
 		Role:             "assistant",
 		Content:          result.Content,
 		ReasoningContent: result.ReasoningContent,
 		ToolCalls:        result.ToolCalls,
 		ResponseID:       result.ID,
-	})
+	}, taskID))
 	for _, tr := range toolResults {
 		resStr := toolResultToString(tr.Result)
-		messages = append(messages, domain.Message{
+		messages = append(messages, withTaskID(domain.Message{
 			Role:       "tool",
 			Content:    resStr,
 			ToolCallID: tr.ToolCallID,
-		})
+		}, taskID))
 	}
 	return messages
 }

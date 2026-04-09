@@ -885,6 +885,15 @@ func (w *llmServiceWrapper) GetBaseURL() string {
 	return client.GetBaseURL()
 }
 
+func (w *llmServiceWrapper) IsFastModel() bool {
+	client, err := w.pool.GetWithHint(w.hint)
+	if err != nil {
+		return domain.IsFastModelName(w.hint.PreferredModel)
+	}
+	defer w.pool.Release(client)
+	return client.IsFastModel()
+}
+
 func (w *llmServiceWrapper) Generate(ctx context.Context, prompt string, opts *domain.GenerationOptions) (string, error) {
 	client, err := w.pool.GetWithHint(w.hint)
 	if err != nil {

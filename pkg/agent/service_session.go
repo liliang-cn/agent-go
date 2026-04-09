@@ -190,13 +190,20 @@ func (s *Service) CompactSession(ctx context.Context, sessionID string) (string,
 	if len(messages) == 0 {
 		return "", nil
 	}
+	taskID := currentTaskID(session)
+	if taskID != "" {
+		if filtered := historyForTask(messages, taskID); len(filtered) > 0 {
+			messages = filtered
+		}
+	}
+	discoveredTools := extractDiscoveredToolNames(messages, resolveConversationSummary(session))
 
 	// Build conversation text for summarization
 	var conversationText strings.Builder
 	for _, msg := range messages {
 		switch msg.Role {
 		case "user":
-			conversationText.WriteString(fmt.Sprintf("User: %s\n", msg.Content))
+			conversationText.WriteString(fmt.Sprintf("User: %s\n", stripDiscoveredToolsTag(msg.Content)))
 		case "assistant":
 			conversationText.WriteString(fmt.Sprintf("Assistant: %s\n", msg.Content))
 		}
@@ -218,12 +225,17 @@ func (s *Service) CompactSession(ctx context.Context, sessionID string) (string,
 	}
 
 	// Update session
-	session.SetSummary(summary)
+	summary = appendDiscoveredToolsSnapshot(summary, discoveredTools)
+	if taskID != "" {
+		setTaskSummary(session, taskID, summary)
+	} else {
+		session.SetSummary(summary)
+	}
 	if err := s.store.SaveSession(session); err != nil {
 		return "", fmt.Errorf("failed to save session summary: %w", err)
 	}
 
-	return summary, nil
+	return resolveConversationSummary(session), nil
 }
 
 // Execute executes a plan by ID and returns the result

@@ -127,6 +127,9 @@ func (s *Service) dispatchResolvedTool(ctx context.Context, currentAgent *Agent,
 		if err != nil {
 			return nil, err
 		}
+		if session := getCurrentSession(ctx); session != nil {
+			s.markRelevantSkillSatisfied(session.GetID(), currentTaskID(session))
+		}
 		return res.Output, nil
 	}
 	if toolName == "execute_javascript" && s.ptcIntegration != nil {

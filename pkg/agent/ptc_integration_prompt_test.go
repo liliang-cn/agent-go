@@ -14,6 +14,7 @@ func TestGetPTCSystemPrompt_RemovesSearchGuidance(t *testing.T) {
 
 	prompt := p.GetPTCSystemPrompt([]ptc.ToolInfo{
 		{Name: "mcp_filesystem_write_file"},
+		{Name: "search_available_tools"},
 	})
 
 	if strings.Contains(prompt, "searchAndCallTool") {
@@ -21,6 +22,9 @@ func TestGetPTCSystemPrompt_RemovesSearchGuidance(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "Use `callTool(name, args)`") {
 		t.Fatalf("expected prompt to keep callTool guidance, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "first call `search_available_tools`") {
+		t.Fatalf("expected prompt to recommend search_available_tools discovery, got %q", prompt)
 	}
 }
 
@@ -42,5 +46,8 @@ func TestGetPTCTools_OnlyExposeExecuteJavascript(t *testing.T) {
 	}
 	if strings.Contains(tools[0].Function.Description, "searchAndCallTool") {
 		t.Fatalf("expected execute_javascript description to avoid searchAndCallTool, got %q", tools[0].Function.Description)
+	}
+	if !strings.Contains(tools[0].Function.Description, "search_available_tools") {
+		t.Fatalf("expected execute_javascript description to mention tool discovery, got %q", tools[0].Function.Description)
 	}
 }

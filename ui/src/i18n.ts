@@ -420,6 +420,9 @@ const resources = {
       setupOpenSettings: "Open settings",
       setupProviderHint:
         "Use an OpenAI-compatible endpoint, or point to Ollama at http://127.0.0.1:11434/v1.",
+      setupEmbeddingsOptionalTitle: "Optional: embeddings and RAG",
+      setupEmbeddingOptionalHint:
+        "Leave embedding model empty unless you explicitly want RAG or vector retrieval.",
       skillsPathsHelp: "Optional additional skill directories, one per line.",
       ragDbPathHelp: "Local database path for document indexing.",
       memoryPathHelp: "File-backed memory store path.",
@@ -851,6 +854,9 @@ const resources = {
       setupOpenSettings: "打开设置",
       setupProviderHint:
         "可填写 OpenAI 兼容接口，或直接使用 Ollama 地址 http://127.0.0.1:11434/v1 。",
+      setupEmbeddingsOptionalTitle: "可选：Embedding 与 RAG",
+      setupEmbeddingOptionalHint:
+        "除非你明确需要 RAG 或向量检索，否则 embedding model 可以留空。",
       skillsPathsHelp: "可选的额外技能目录，每行一个。",
       ragDbPathHelp: "文档索引使用的本地数据库路径。",
       memoryPathHelp: "文件型记忆存储路径。",

@@ -69,6 +69,7 @@ type Plan struct {
 type ExecutionResult struct {
 	PlanID          string                    `json:"plan_id"`
 	SessionID       string                    `json:"session_id"`
+	TaskID          string                    `json:"task_id,omitempty"`
 	Success         bool                      `json:"success"`
 	StepsTotal      int                       `json:"steps_total"`
 	StepsDone       int                       `json:"steps_done"`
@@ -96,6 +97,7 @@ type AgentInfo struct {
 	Status        string   `json:"status"` // "running", "idle"
 	Model         string   `json:"model,omitempty"`
 	BaseURL       string   `json:"base_url,omitempty"`
+	FastModel     bool     `json:"fast_model,omitempty"`
 	Debug         bool     `json:"debug"`
 	RAGEnabled    bool     `json:"rag_enabled"`
 	PTCEnabled    bool     `json:"ptc_enabled"`
@@ -185,10 +187,13 @@ type RunConfig struct {
 	// SessionID specifies a session ID for multi-turn conversations
 	SessionID string
 
+	// TaskID identifies the execution task boundary inside a session.
+	TaskID string
+
 	// Inherited memory scope lets a delegated run keep the caller's durable memory namespace
 	// without reusing the same session ID.
 	InheritedMemoryAgentID string
-	InheritedMemoryTeamID string
+	InheritedMemoryTeamID  string
 	InheritedMemoryUserID  string
 
 	// Stream enables streaming mode for real-time events
@@ -279,6 +284,11 @@ func WithHistoryDBPath(path string) RunOption {
 // WithSessionID sets a specific session ID for the run
 func WithSessionID(sessionID string) RunOption {
 	return func(c *RunConfig) { c.SessionID = sessionID }
+}
+
+// WithTaskID sets a specific task ID for the run.
+func WithTaskID(taskID string) RunOption {
+	return func(c *RunConfig) { c.TaskID = taskID }
 }
 
 // WithInheritedMemoryScope carries the caller's memory scope into a delegated run.

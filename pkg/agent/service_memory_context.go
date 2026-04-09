@@ -12,6 +12,8 @@ const (
 	sessionContextMemoryAgentScope = "memory.agent_scope_id"
 	sessionContextMemoryTeamScope  = "memory.team_scope_id"
 	sessionContextMemoryUserScope  = "memory.user_scope_id"
+	sessionContextTaskID           = "runtime.task_id"
+	sessionContextTaskSummaries    = "runtime.task_summaries"
 )
 
 // SetMemoryScope configures the higher-level memory scopes used during retrieval.
@@ -106,4 +108,74 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func taskSummaries(session *Session) map[string]string {
+	if session == nil {
+		return nil
+	}
+	raw, ok := session.GetContext(sessionContextTaskSummaries)
+	if !ok || raw == nil {
+		return nil
+	}
+	switch v := raw.(type) {
+	case map[string]string:
+		out := make(map[string]string, len(v))
+		for key, value := range v {
+			key = strings.TrimSpace(key)
+			value = strings.TrimSpace(value)
+			if key != "" && value != "" {
+				out[key] = value
+			}
+		}
+		return out
+	case map[string]interface{}:
+		out := make(map[string]string, len(v))
+		for key, value := range v {
+			key = strings.TrimSpace(key)
+			text := memoryContextString(value)
+			if key != "" && text != "" {
+				out[key] = text
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func taskSummary(session *Session, taskID string) string {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" || session == nil {
+		return ""
+	}
+	return strings.TrimSpace(taskSummaries(session)[taskID])
+}
+
+func setTaskSummary(session *Session, taskID, summary string) {
+	taskID = strings.TrimSpace(taskID)
+	summary = strings.TrimSpace(summary)
+	if session == nil || taskID == "" {
+		return
+	}
+	summaries := taskSummaries(session)
+	if summaries == nil {
+		summaries = make(map[string]string)
+	}
+	if summary == "" {
+		delete(summaries, taskID)
+	} else {
+		summaries[taskID] = summary
+	}
+	session.SetContext(sessionContextTaskSummaries, summaries)
+}
+
+func resolveConversationSummary(session *Session) string {
+	if session == nil {
+		return ""
+	}
+	if summary := taskSummary(session, currentTaskID(session)); summary != "" {
+		return summary
+	}
+	return strings.TrimSpace(session.GetSummary())
 }

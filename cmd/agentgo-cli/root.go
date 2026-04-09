@@ -34,10 +34,11 @@ var RootCmd = &cobra.Command{
 	Short: "AgentGo - AI Agent SDK & CLI for Go developers",
 	Long: `AgentGo is a modular AI development platform that empowers Go applications with:
   • Agent  - Autonomous planning and execution with multi-turn reasoning
-  • RAG    - Hybrid retrieval using Vector search and Knowledge Graphs
-  • LLM    - Unified API for Ollama, OpenAI, DeepSeek, and more
   • MCP    - Standardized tool integration via Model Context Protocol
- • Skills - Expert capabilities via Claude-compatible markdown skills
+  • Skills - Expert capabilities via Claude-compatible markdown skills
+  • Memory - Durable local memory that works even without embeddings
+  • LLM    - Unified API for Ollama, OpenAI, DeepSeek, and more
+  • RAG    - Optional retrieval and document indexing when you configure an embedding model
   • Status - Real-time monitoring of provider health and system status`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		if cmd.Name() == "version" {

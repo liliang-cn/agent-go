@@ -124,6 +124,48 @@ func TestListCollectionsGroupsNestedSkills(t *testing.T) {
 	}
 }
 
+func TestResolveForModelUsesWhenToUseAndPaths(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	writeSkillFileWithFrontmatter(t, filepath.Join(dir, ".skills", "docs-review", "SKILL.md"), `name: docs-review
+description: Review docs
+when_to_use: Use when editing markdown docs or README files.
+paths:
+  - docs/*.md
+  - README.md`, "# Review docs\n")
+	writeSkillFileWithFrontmatter(t, filepath.Join(dir, ".skills", "backend-audit", "SKILL.md"), `name: backend-audit
+description: Audit backend services
+when_to_use: Use when changing Go backend code.`, "# Audit backend\n")
+
+	prev, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(prev) })
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	svc, err := NewService(&Config{Enabled: true, Paths: []string{".skills"}})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	if err := svc.LoadAll(context.Background()); err != nil {
+		t.Fatalf("LoadAll: %v", err)
+	}
+
+	results, err := svc.ResolveForModel(context.Background(), "please improve these markdown docs", []string{"docs/intro.md"})
+	if err != nil {
+		t.Fatalf("ResolveForModel: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected at least one matching skill")
+	}
+	if results[0].ID != "docs-review" {
+		t.Fatalf("expected docs-review first, got %q", results[0].ID)
+	}
+}
+
 func writeSkillFile(t *testing.T, path, name, description, body string) {
 	t.Helper()
 
@@ -132,6 +174,19 @@ func writeSkillFile(t *testing.T, path, name, description, body string) {
 	}
 
 	content := "---\nname: " + name + "\ndescription: " + description + "\n---\n\n" + body
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write skill: %v", err)
+	}
+}
+
+func writeSkillFileWithFrontmatter(t *testing.T, path, frontmatter, body string) {
+	t.Helper()
+
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	content := "---\n" + frontmatter + "\n---\n\n" + body
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("write skill: %v", err)
 	}

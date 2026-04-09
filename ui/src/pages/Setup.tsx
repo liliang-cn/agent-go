@@ -36,6 +36,7 @@ export function Setup() {
   const [embeddingModel, setEmbeddingModel] = useState('')
   const [maxConcurrency, setMaxConcurrency] = useState('5')
   const [capability, setCapability] = useState('4')
+  const [showOptionalKnowledge, setShowOptionalKnowledge] = useState(false)
 
   useEffect(() => {
     if (!data) return
@@ -56,27 +57,37 @@ export function Setup() {
   const derivedRagDb = useMemo(() => derivePath(home, 'data/cortex.db'), [home])
   const derivedMemoryPath = useMemo(() => deriveMemoryPath(home, memoryStoreType), [home, memoryStoreType])
   const reviewItems = useMemo(
-    () => [
-      [t('home'), home],
-      [t('workingDirectory'), derivedWorkspace],
-      [t('serverHost'), serverHost],
-      [t('serverPort'), serverPort],
-      [t('ragDatabasePath'), derivedRagDb || '-'],
-      [t('memoryStoreType'), memoryStoreType || '-'],
-      [t('memoryPath'), derivedMemoryPath || '-'],
-    ],
-    [t, home, derivedWorkspace, serverHost, serverPort, derivedRagDb, memoryStoreType, derivedMemoryPath],
+    () => {
+      const items: Array<[string, string]> = [
+        [t('home'), home],
+        [t('workingDirectory'), derivedWorkspace],
+        [t('serverHost'), serverHost],
+        [t('serverPort'), serverPort],
+        [t('memoryStoreType'), memoryStoreType || '-'],
+        [t('memoryPath'), derivedMemoryPath || '-'],
+      ]
+      if (embeddingModel.trim()) {
+        items.push([t('ragDatabasePath'), derivedRagDb || '-'])
+      }
+      return items
+    },
+    [t, home, derivedWorkspace, serverHost, serverPort, derivedRagDb, memoryStoreType, derivedMemoryPath, embeddingModel],
   )
 
   const providerItems = useMemo(
-    () => [
-      [t('providerName'), providerName],
-      [t('providerBaseUrl'), providerBaseUrl],
-      [t('modelName'), modelName],
-      [t('embeddingModel'), embeddingModel || '-'],
-      [t('maxConcurrency'), maxConcurrency],
-      [t('capabilityLevel'), capability],
-    ],
+    () => {
+      const items: Array<[string, string]> = [
+        [t('providerName'), providerName],
+        [t('providerBaseUrl'), providerBaseUrl],
+        [t('modelName'), modelName],
+        [t('maxConcurrency'), maxConcurrency],
+        [t('capabilityLevel'), capability],
+      ]
+      if (embeddingModel.trim()) {
+        items.push([t('embeddingModel'), embeddingModel])
+      }
+      return items
+    },
     [t, providerName, providerBaseUrl, modelName, embeddingModel, maxConcurrency, capability],
   )
 
@@ -156,8 +167,8 @@ export function Setup() {
                   <p className="mt-2 break-all text-sm">{derivedWorkspace || '-'}</p>
                 </div>
                 <div className="dashboard-muted-card rounded-[20px] px-4 py-3 text-slate-700">
-                  <p className="text-xs uppercase tracking-[0.2em] text-slate-500">{t('ragDatabasePath')}</p>
-                  <p className="mt-2 break-all text-sm">{derivedRagDb || '-'}</p>
+                  <p className="text-xs uppercase tracking-[0.2em] text-slate-500">{t('memoryPath')}</p>
+                  <p className="mt-2 break-all text-sm">{derivedMemoryPath || '-'}</p>
                 </div>
               </div>
               <p className="text-xs text-slate-500">{t('pathsDerivedFromHome')}</p>
@@ -194,10 +205,32 @@ export function Setup() {
                   <span className="text-sm font-medium text-slate-700">{t('modelName')}</span>
                   <input value={modelName} onChange={(e) => setModelName(e.target.value)} className="dashboard-input" />
                 </label>
-                <label className="space-y-2">
-                  <span className="text-sm font-medium text-slate-700">{t('embeddingModel')}</span>
-                  <input value={embeddingModel} onChange={(e) => setEmbeddingModel(e.target.value)} className="dashboard-input" />
-                </label>
+                <div className="rounded-[20px] border border-sky-100 bg-sky-50 px-4 py-3 text-sm text-slate-600">
+                  {t('setupEmbeddingOptionalHint')}
+                </div>
+              </div>
+              <div className="rounded-[20px] border border-sky-100 bg-white px-4 py-3">
+                <button
+                  type="button"
+                  onClick={() => setShowOptionalKnowledge((current) => !current)}
+                  className="flex w-full items-center justify-between text-left"
+                  data-testid="setup-toggle-optional-knowledge"
+                >
+                  <span className="text-sm font-medium text-slate-700">{t('setupEmbeddingsOptionalTitle')}</span>
+                  <span className="text-sm text-slate-400">{showOptionalKnowledge ? '−' : '+'}</span>
+                </button>
+                {showOptionalKnowledge && (
+                  <div className="mt-4 space-y-4">
+                    <label className="space-y-2">
+                      <span className="text-sm font-medium text-slate-700">{t('embeddingModel')}</span>
+                      <input value={embeddingModel} onChange={(e) => setEmbeddingModel(e.target.value)} className="dashboard-input" />
+                    </label>
+                    <div className="dashboard-muted-card rounded-[20px] px-4 py-3 text-slate-700">
+                      <p className="text-xs uppercase tracking-[0.2em] text-slate-500">{t('ragDatabasePath')}</p>
+                      <p className="mt-2 break-all text-sm">{derivedRagDb || '-'}</p>
+                    </div>
+                  </div>
+                )}
               </div>
               <div className="grid gap-4 md:grid-cols-2">
                 <label className="space-y-2">

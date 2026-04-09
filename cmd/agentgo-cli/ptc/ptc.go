@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/liliang-cn/agent-go/v2/pkg/config"
@@ -17,6 +20,7 @@ import (
 	"github.com/liliang-cn/agent-go/v2/pkg/ptc/runtime/goja"
 	"github.com/liliang-cn/agent-go/v2/pkg/ptc/runtime/wazero"
 	ptcstore "github.com/liliang-cn/agent-go/v2/pkg/ptc/store"
+	"github.com/liliang-cn/agent-go/v2/pkg/search"
 	"github.com/liliang-cn/agent-go/v2/pkg/skills"
 	"github.com/spf13/cobra"
 )
@@ -78,7 +82,232 @@ func createRouterWithServices(ctx context.Context) *ptc.AgentGoRouter {
 		opts = append(opts, ptc.WithSkillsService(&skillsExecutorAdapter{service: skillsService}), ptc.WithSkillToolInfos(skillToolInfos))
 	}
 
-	return ptc.NewAgentGoRouter(opts...)
+	router := ptc.NewAgentGoRouter(opts...)
+	registerCLIToolSearchTools(router)
+	return router
+}
+
+func registerCLIToolSearchTools(router *ptc.AgentGoRouter) {
+	if router == nil {
+		return
+	}
+
+	register := func(name, description string, handler ptc.ToolHandler) {
+		_ = router.RegisterTool(name, &ptc.ToolInfo{
+			Name:        name,
+			Description: description,
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"query": map[string]interface{}{
+						"type":        "string",
+						"description": "Search query",
+					},
+				},
+				"required": []string{"query"},
+			},
+			Category: "search",
+		}, handler)
+	}
+
+	register("search_available_tools", "Search the available tool catalog using keywords and return tool references.", func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+		query, _ := args["query"].(string)
+		return cliSearchTools(ctx, router, query, "keyword")
+	})
+
+	register("tool_search_tool_regex", "Search for tools by regex over tool names and descriptions and return tool references.", func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+		query, _ := args["query"].(string)
+		return cliSearchTools(ctx, router, query, "regex")
+	})
+
+	register("tool_search_tool_bm25", "Search for tools using natural language and return tool references.", func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+		query, _ := args["query"].(string)
+		return cliSearchTools(ctx, router, query, "bm25")
+	})
+}
+
+func cliSearchTools(ctx context.Context, router *ptc.AgentGoRouter, query string, searchType string) (interface{}, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, fmt.Errorf("tool search requires a non-empty query")
+	}
+
+	tools, err := router.ListAvailableTools(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	filtered := make([]ptc.ToolInfo, 0, len(tools))
+	for _, tool := range tools {
+		if tool.Name == "search_available_tools" || domain.IsToolSearchTool(tool.Name) {
+			continue
+		}
+		filtered = append(filtered, tool)
+	}
+
+	matches := make([]ptc.ToolInfo, 0)
+	keywords := cliToolSearchKeywords(query)
+	switch searchType {
+	case "bm25":
+		candidates := filterToolInfosByKeywords(filtered, keywords)
+		if len(candidates) == 0 {
+			candidates = filtered
+		}
+		documents := make([]search.Document, 0, len(candidates))
+		toolByName := make(map[string]ptc.ToolInfo, len(candidates))
+		for _, tool := range candidates {
+			toolByName[tool.Name] = tool
+			documents = append(documents, search.Document{
+				ID: tool.Name,
+				Text: strings.Join([]string{
+					tool.Name,
+					strings.ReplaceAll(tool.Name, "_", " "),
+					tool.Description,
+				}, " "),
+			})
+		}
+		for _, item := range search.Rank(query, documents, 5, nil) {
+			if tool, ok := toolByName[item.ID]; ok {
+				matches = append(matches, tool)
+			}
+		}
+		matches = rerankToolInfosByKeywordAffinity(matches, keywords)
+	case "regex":
+		var re *regexp.Regexp
+		if compiled, err := regexp.Compile("(?i)" + query); err == nil {
+			re = compiled
+		}
+		queryLower := strings.ToLower(query)
+		for _, tool := range filtered {
+			name := tool.Name
+			desc := tool.Description
+			matched := false
+			if re != nil {
+				matched = re.MatchString(name) || re.MatchString(desc)
+			} else {
+				nameLower := strings.ToLower(name)
+				descLower := strings.ToLower(desc)
+				matched = strings.Contains(nameLower, queryLower) || strings.Contains(descLower, queryLower)
+			}
+			if matched {
+				matches = append(matches, tool)
+			}
+			if len(matches) >= 5 {
+				break
+			}
+		}
+		matches = rerankToolInfosByKeywordAffinity(matches, keywords)
+	default:
+		for _, tool := range filtered {
+			if matchesToolInfoKeywords(tool, keywords) {
+				matches = append(matches, tool)
+			}
+			if len(matches) >= 5 {
+				break
+			}
+		}
+		matches = rerankToolInfosByKeywordAffinity(matches, keywords)
+	}
+
+	refs := make([]domain.ToolReference, 0, len(matches))
+	for _, tool := range matches {
+		refs = append(refs, domain.ToolReference{ToolName: tool.Name})
+	}
+	return domain.ToolSearchResult{ToolReferences: refs}, nil
+}
+
+func cliToolSearchKeywords(text string) []string {
+	normalized := strings.ToLower(strings.TrimSpace(text))
+	if normalized == "" {
+		return nil
+	}
+	stopwords := map[string]struct{}{
+		"get": {}, "show": {}, "tell": {}, "find": {}, "search": {}, "lookup": {},
+		"tool": {}, "tools": {}, "please": {}, "help": {}, "with": {}, "for": {},
+		"the": {}, "a": {}, "an": {}, "my": {}, "me": {}, "need": {},
+	}
+	raw := strings.Fields(normalized)
+	keywords := make([]string, 0, len(raw))
+	for _, token := range raw {
+		token = strings.Trim(token, ".,!?;:()[]{}\"'")
+		if len(token) < 3 {
+			continue
+		}
+		if _, skip := stopwords[token]; skip {
+			continue
+		}
+		keywords = append(keywords, token)
+	}
+	return keywords
+}
+
+func matchesToolInfoKeywords(tool ptc.ToolInfo, keywords []string) bool {
+	if len(keywords) == 0 {
+		return false
+	}
+	nameLower := strings.ToLower(tool.Name)
+	descLower := strings.ToLower(tool.Description)
+	for _, kw := range keywords {
+		if strings.Contains(nameLower, kw) || strings.Contains(descLower, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+func filterToolInfosByKeywords(tools []ptc.ToolInfo, keywords []string) []ptc.ToolInfo {
+	if len(keywords) == 0 {
+		return nil
+	}
+	filtered := make([]ptc.ToolInfo, 0, len(tools))
+	for _, tool := range tools {
+		if matchesToolInfoKeywords(tool, keywords) {
+			filtered = append(filtered, tool)
+		}
+	}
+	return filtered
+}
+
+func rerankToolInfosByKeywordAffinity(tools []ptc.ToolInfo, keywords []string) []ptc.ToolInfo {
+	if len(tools) <= 1 || len(keywords) == 0 {
+		return tools
+	}
+	type scored struct {
+		tool  ptc.ToolInfo
+		score int
+	}
+	scoredTools := make([]scored, 0, len(tools))
+	for _, tool := range tools {
+		nameLower := strings.ToLower(tool.Name)
+		descLower := strings.ToLower(tool.Description)
+		score := 0
+		for _, kw := range keywords {
+			if strings.Contains(nameLower, kw) {
+				score += 30
+			}
+			if strings.Contains(descLower, kw) {
+				score += 10
+			}
+		}
+		if strings.HasPrefix(nameLower, "mcp_") {
+			score += 5
+		}
+		scoredTools = append(scoredTools, scored{tool: tool, score: score})
+	}
+	slices.SortStableFunc(scoredTools, func(a, b scored) int {
+		if a.score == b.score {
+			return strings.Compare(a.tool.Name, b.tool.Name)
+		}
+		if a.score > b.score {
+			return -1
+		}
+		return 1
+	})
+	result := make([]ptc.ToolInfo, 0, len(scoredTools))
+	for _, item := range scoredTools {
+		result = append(result, item.tool)
+	}
+	return result
 }
 
 // mcpExecutorAdapter adapts mcp.Service to ptc.MCPProvider interface

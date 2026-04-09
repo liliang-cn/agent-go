@@ -135,7 +135,7 @@ func (s *AgentGoDB) initSchema() error {
 			skills TEXT,
 			enable_rag BOOLEAN DEFAULT 0,
 			enable_memory BOOLEAN DEFAULT 0,
-			enable_ptc BOOLEAN DEFAULT 0,
+			enable_ptc BOOLEAN DEFAULT 1,
 			enable_mcp BOOLEAN DEFAULT 0,
 			enable_a2a BOOLEAN DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -520,6 +520,7 @@ type ChatMessage struct {
 	ReasoningContent string            `json:"reasoning_content,omitempty"`
 	ToolCalls        []domain.ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID       string            `json:"tool_call_id,omitempty"`
+	TaskID           string            `json:"task_id,omitempty"`
 	ResponseID       string            `json:"response_id,omitempty"`
 }
 

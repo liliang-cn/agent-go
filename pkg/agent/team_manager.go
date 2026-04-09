@@ -1274,7 +1274,7 @@ func (m *TeamManager) dispatchTaskWithOptions(ctx context.Context, agentName str
 		return "", fmt.Errorf("cannot start agent %s: %w", agentName, err)
 	}
 
-	wrappedInstruction, runOptions := m.prepareDispatchRequest(agentName, instruction, sessionID, extraOpts)
+	wrappedInstruction, runOptions := m.prepareDispatchRequest(agentName, instruction, sessionID, "", extraOpts)
 
 	var (
 		res *ExecutionResult
@@ -1345,7 +1345,7 @@ func (m *TeamManager) dispatchTaskStream(ctx context.Context, agentName string, 
 		return nil, fmt.Errorf("cannot start agent %s: %w", agentName, err)
 	}
 
-	wrappedInstruction, runOptions := m.prepareDispatchRequest(agentName, instruction, sessionID, extraOpts)
+	wrappedInstruction, runOptions := m.prepareDispatchRequest(agentName, instruction, sessionID, "", extraOpts)
 	if isBuiltInRuntimeAgentName(agentName) {
 		return m.dispatchStreamViaBuiltInRuntime(ctx, agentName, wrappedInstruction, runOptions)
 	}

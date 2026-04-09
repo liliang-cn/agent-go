@@ -37,44 +37,49 @@ type ProgressCallback func(ProgressEvent)
 // Service is the main agent service that handles planning and execution
 // This matches the interface expected by the CLI in cmd/agentgo-cli/agent/agent.go
 type Service struct {
-	debug              bool
-	llmService         domain.Generator
-	mcpService         MCPToolExecutor
-	ragProcessor       domain.Processor
-	memoryService      domain.MemoryService
-	skillsService      *skills.Service
-	routerService      *router.Service // Semantic Router for fast intent recognition
-	promptManager      *prompt.Manager // Central prompt management
-	planner            *Planner
-	executor           *Executor
-	store              *Store
-	agent              *Agent
-	registry           *Registry
-	logger             *slog.Logger
-	cancelMu           sync.RWMutex
-	cancelFunc         context.CancelFunc
-	progressCb         ProgressCallback
-	currentSessionID   string // Auto-generated UUID for Chat() method
-	sessionMu          sync.RWMutex
-	memoryStoreType    string
-	memoryScopeAgentID string
-	memoryScopeTeamID  string
-	memoryScopeUserID  string
-	memorySaveMu       sync.RWMutex
-	memorySavedInRun   bool
-	ragSourcesMu       sync.RWMutex
-	ragSources         []domain.Chunk // Collect RAG sources during execution
-	isRunning          bool
-	statusMu           sync.RWMutex
-	permissionMu       sync.RWMutex
-	permissionHandler  PermissionHandler
-	permissionPolicy   PermissionPolicy
-	inProgressToolsMu  sync.RWMutex
-	inProgressTools    map[string]int
+	debug                 bool
+	llmService            domain.Generator
+	mcpService            MCPToolExecutor
+	ragProcessor          domain.Processor
+	memoryService         domain.MemoryService
+	skillsService         *skills.Service
+	routerService         *router.Service // Semantic Router for fast intent recognition
+	promptManager         *prompt.Manager // Central prompt management
+	planner               *Planner
+	executor              *Executor
+	store                 *Store
+	agent                 *Agent
+	registry              *Registry
+	logger                *slog.Logger
+	cancelMu              sync.RWMutex
+	cancelFunc            context.CancelFunc
+	progressCb            ProgressCallback
+	currentSessionID      string // Auto-generated UUID for Chat() method
+	sessionMu             sync.RWMutex
+	memoryStoreType       string
+	memoryScopeAgentID    string
+	memoryScopeTeamID     string
+	memoryScopeUserID     string
+	memorySaveMu          sync.RWMutex
+	memorySavedInRun      bool
+	ragSourcesMu          sync.RWMutex
+	ragSources            []domain.Chunk // Collect RAG sources during execution
+	isRunning             bool
+	statusMu              sync.RWMutex
+	permissionMu          sync.RWMutex
+	permissionHandler     PermissionHandler
+	permissionPolicy      PermissionPolicy
+	inProgressToolsMu     sync.RWMutex
+	inProgressTools       map[string]int
+	relevantSkillsMu      sync.RWMutex
+	sessionRelevantSkills map[string][]string
+	skillPolicyMu         sync.RWMutex
+	taskSkillSatisfied    map[string]bool
 
 	// Model metadata for Info()
 	modelName     string
 	baseURL       string
+	isFastModel   bool
 	contextWindow int // Optional: context window size (0 = unknown, use default)
 
 	// Hook system for lifecycle events
@@ -160,22 +165,24 @@ func NewService(
 
 	// Create service first (so we can pass it to planner/executor)
 	s := &Service{
-		llmService:         llmService,
-		mcpService:         mcpService,
-		ragProcessor:       ragProcessor,
-		memoryService:      memoryService,
-		promptManager:      promptMgr,
-		store:              store,
-		agent:              agent,
-		registry:           registry,
-		logger:             logger,
-		memoryScopeAgentID: strings.TrimSpace(agent.Name()),
-		hooks:              NewHookRegistry(),
-		stopHookService:    NewStopHookService(),
-		asyncTasks:         NewSubAgentCoordinator(),
-		toolRegistry:       NewToolRegistry(),
-		tokenCounter:       usage.NewTokenCounter(),
-		inProgressTools:    make(map[string]int),
+		llmService:            llmService,
+		mcpService:            mcpService,
+		ragProcessor:          ragProcessor,
+		memoryService:         memoryService,
+		promptManager:         promptMgr,
+		store:                 store,
+		agent:                 agent,
+		registry:              registry,
+		logger:                logger,
+		memoryScopeAgentID:    strings.TrimSpace(agent.Name()),
+		hooks:                 NewHookRegistry(),
+		stopHookService:       NewStopHookService(),
+		asyncTasks:            NewSubAgentCoordinator(),
+		toolRegistry:          NewToolRegistry(),
+		tokenCounter:          usage.NewTokenCounter(),
+		inProgressTools:       make(map[string]int),
+		sessionRelevantSkills: make(map[string][]string),
+		taskSkillSatisfied:    make(map[string]bool),
 		// Public fields
 		LLM:     llmService,
 		RAG:     ragProcessor,
@@ -456,6 +463,7 @@ func (s *Service) RunStreamWithOptions(ctx context.Context, goal string, opts ..
 	if err != nil {
 		session = NewSessionWithID(sessionID, s.agent.ID())
 	}
+	ensureTaskID(session, cfg)
 	if inherited := strings.TrimSpace(cfg.InheritedMemoryAgentID); inherited != "" {
 		session.SetContext(sessionContextMemoryAgentScope, inherited)
 	}
@@ -532,6 +540,7 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 	} else {
 		session = NewSession(s.agent.ID())
 	}
+	taskID := ensureTaskID(session, cfg)
 	if inherited := strings.TrimSpace(cfg.InheritedMemoryAgentID); inherited != "" {
 		session.SetContext(sessionContextMemoryAgentScope, inherited)
 	}
@@ -551,15 +560,16 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 		completedAt := time.Now()
 		routedResult.CompletedAt = &completedAt
 		routedResult.EstimatedTokens = s.estimateRunTokens(goal, routedResult.FinalResult)
-		session.AddMessage(domain.Message{
+		session.AddMessage(withTaskID(domain.Message{
 			Role:    "user",
 			Content: goal,
-		})
-		session.AddMessage(domain.Message{
+		}, taskID))
+		session.AddMessage(withTaskID(domain.Message{
 			Role:    "assistant",
 			Content: fmt.Sprintf("%v", routedResult.FinalResult),
-		})
+		}, taskID))
 		_ = s.store.SaveSession(session)
+		routedResult.TaskID = taskID
 		return routedResult, nil
 	}
 	if directMCPResult, ok, err := s.tryDirectOperatorMCPExecution(runCtx, goal); ok {
@@ -567,18 +577,19 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 			return nil, err
 		}
 		completedAt := time.Now()
-		session.AddMessage(domain.Message{
+		session.AddMessage(withTaskID(domain.Message{
 			Role:    "user",
 			Content: goal,
-		})
-		session.AddMessage(domain.Message{
+		}, taskID))
+		session.AddMessage(withTaskID(domain.Message{
 			Role:    "assistant",
 			Content: directMCPResult,
-		})
+		}, taskID))
 		_ = s.store.SaveSession(session)
 		return &ExecutionResult{
 			PlanID:          uuid.New().String(),
 			SessionID:       session.GetID(),
+			TaskID:          taskID,
 			Success:         true,
 			StepsTotal:      1,
 			StepsDone:       1,
@@ -643,15 +654,15 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 	currentResult := finalResult
 
 	// Add messages to session before saving
-	session.AddMessage(domain.Message{
+	session.AddMessage(withTaskID(domain.Message{
 		Role:    "user",
 		Content: goal,
-	})
+	}, taskID))
 	if currentResult != nil {
-		session.AddMessage(domain.Message{
+		session.AddMessage(withTaskID(domain.Message{
 			Role:    "assistant",
 			Content: fmt.Sprintf("%v", currentResult),
-		})
+		}, taskID))
 	}
 
 	// Create a simple plan to track this execution
@@ -686,6 +697,7 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 	if err != nil {
 		return nil, err
 	}
+	result.TaskID = taskID
 	completedAt := time.Now()
 	result.StartedAt = &startTime
 	result.CompletedAt = &completedAt
@@ -805,6 +817,7 @@ func (s *Service) Info() AgentInfo {
 		Status:        s.Status(),
 		Model:         s.modelName,
 		BaseURL:       s.baseURL,
+		FastModel:     s.isFastModel,
 		RAGEnabled:    s.ragProcessor != nil,
 		PTCEnabled:    s.isPTCEnabled(),
 		MemoryEnabled: s.memoryService != nil,

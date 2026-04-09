@@ -125,6 +125,7 @@ type Message struct {
 	ReasoningContent string     `json:"reasoning_content,omitempty"`
 	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID       string     `json:"tool_call_id,omitempty"`
+	TaskID           string     `json:"task_id,omitempty"`
 	ResponseID       string     `json:"response_id,omitempty"` // For stateful Response API
 }
 
@@ -293,6 +294,7 @@ type ChatMessage struct {
 	Role      string                 `json:"role"` // 'user', 'assistant', 'system'
 	Content   string                 `json:"content"`
 	Vector    []float64              `json:"vector,omitempty"`
+	TaskID    string                 `json:"task_id,omitempty"`
 	Metadata  map[string]interface{} `json:"metadata,omitempty"`
 	CreatedAt time.Time              `json:"created_at"`
 }

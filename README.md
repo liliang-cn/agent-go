@@ -8,6 +8,8 @@
 
 AgentGo is a Go framework for building Agent / Team based systems. Providers, MCP, skills, memory, RAG, router, and PTC extend the same runtime core, while CLI and UI remain optional adapters.
 
+You do not need an embedding model for the default experience. Basic agent runtime, MCP, skills, file-backed memory, and PTC work without vector search. Configure embeddings only when you explicitly want RAG or vector-heavy retrieval.
+
 ```bash
 go get github.com/liliang-cn/agent-go/v2
 ```
@@ -18,13 +20,13 @@ go get github.com/liliang-cn/agent-go/v2
 
 | Capability    | Details                                                                                                    |
 | ------------- | ---------------------------------------------------------------------------------------------------------- |
-| **RAG**       | Ingest docs → chunk → embed → SQLite vector store → hybrid search                                          |
 | **Agent**     | Multi-turn reasoning loop with planning, **Auto-continuation**, and **Asynchronous Context Forking**       |
 | **Memory**    | **Cognitive Layer**: Evolution (Fact → Observation) + **LLM-as-a-Judge Retrieval** + **Subconscious Worker** |
 | **Tools**     | MCP (Model Context Protocol), Skills (YAML+Markdown), custom inline tools                                  |
 | **PTC**       | LLM writes JavaScript; tools run in a Goja sandbox — cuts round-trips                                      |
 | **Streaming** | Token-by-token channel; **Low-latency Streaming Tool Execution** and **Tombstone** recovery                |
 | **Providers** | OpenAI, Anthropic, Azure, DeepSeek, Ollama — switchable at runtime                                         |
+| **RAG**       | Optional document ingestion → chunk → embed → SQLite vector store → hybrid search                          |
 | **Teams**     | Persistent captains + specialists, **Actor-model subagent IPC**, async task queues, cross-process tracking |
 | **Operator**  | Built-in execution agent with filesystem/web tools plus PTY and coding-agent session tooling               |
 

@@ -612,6 +612,26 @@ func TestBuilder_NameSet(t *testing.T) {
 	}
 }
 
+func TestBuilder_DefaultsPTCEnabled(t *testing.T) {
+	b := New("ptc-default-agent")
+	if !b.enablePTC {
+		t.Fatal("expected PTC to be enabled by default")
+	}
+	if b.ptcCfg == nil || !b.ptcCfg.Enabled {
+		t.Fatal("expected default PTC config to be initialized and enabled")
+	}
+}
+
+func TestBuilder_WithPTCFalseOverridesDefault(t *testing.T) {
+	b := New("no-ptc-agent").WithPTC(false)
+	if b.enablePTC {
+		t.Fatal("expected WithPTC(false) to disable PTC")
+	}
+	if b.ptcCfg != nil {
+		t.Fatal("expected WithPTC(false) to clear ptc config")
+	}
+}
+
 // ── HookRegistry isolation ────────────────────────────────────────────────────
 
 func TestNewService_HasIsolatedHookRegistry(t *testing.T) {

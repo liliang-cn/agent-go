@@ -105,6 +105,7 @@ func (s *Store) SaveSession(session *Session) error {
 			ReasoningContent: m.ReasoningContent,
 			ToolCalls:        m.ToolCalls,
 			ToolCallID:       m.ToolCallID,
+			TaskID:           m.TaskID,
 			ResponseID:       m.ResponseID,
 		}
 	}
@@ -147,6 +148,7 @@ func (s *Store) GetSession(id string) (*Session, error) {
 			ReasoningContent: m.ReasoningContent,
 			ToolCalls:        m.ToolCalls,
 			ToolCallID:       m.ToolCallID,
+			TaskID:           m.TaskID,
 			ResponseID:       m.ResponseID,
 		}
 	}
@@ -181,6 +183,7 @@ func (s *Store) ListSessions(limit int) ([]*Session, error) {
 				ReasoningContent: m.ReasoningContent,
 				ToolCalls:        m.ToolCalls,
 				ToolCallID:       m.ToolCallID,
+				TaskID:           m.TaskID,
 				ResponseID:       m.ResponseID,
 			}
 		}

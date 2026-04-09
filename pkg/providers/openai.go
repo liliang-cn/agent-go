@@ -164,6 +164,14 @@ func (p *OpenAILLMProvider) UsageModel() string {
 	return p.config.LLMModel
 }
 
+// IsFastModel reports whether the configured chat model is latency-optimized.
+func (p *OpenAILLMProvider) IsFastModel() bool {
+	if p == nil || p.config == nil {
+		return false
+	}
+	return domain.IsFastModelName(p.config.LLMModel)
+}
+
 // toOpenAIMessages converts domain messages to the OpenAI API format
 func toOpenAIMessages(messages []domain.Message) ([]openai.ChatCompletionMessageParamUnion, error) {
 	openAIMessages := make([]openai.ChatCompletionMessageParamUnion, len(messages))

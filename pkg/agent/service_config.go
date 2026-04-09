@@ -129,9 +129,10 @@ func (s *Service) SetPTC(ptcIntegration *PTCIntegration) {
 }
 
 // SetModelInfo sets the model metadata for Info()
-func (s *Service) SetModelInfo(modelName, baseURL string) {
+func (s *Service) SetModelInfo(modelName, baseURL string, isFastModel bool) {
 	s.modelName = modelName
 	s.baseURL = baseURL
+	s.isFastModel = isFastModel
 }
 
 // SetContextWindow sets the context window size for the model.

@@ -125,9 +125,13 @@ type Builder struct {
 	err error
 }
 
-type modelInfoProvider interface {
+type modelIdentityProvider interface {
 	GetModelName() string
 	GetBaseURL() string
+}
+
+type fastModelProvider interface {
+	IsFastModel() bool
 }
 
 // New creates a new agent builder for chainable configuration.
@@ -141,7 +145,15 @@ type modelInfoProvider interface {
 //	// Chainable configuration
 //	svc, err := agent.New("my-agent").WithRAG().WithMemory().WithMCP()
 func New(name string) *Builder {
-	return &Builder{name: name}
+	return &Builder{
+		name:      name,
+		enablePTC: true,
+		ptcCfg: &PTCConfig{
+			Enabled:      true,
+			MaxToolCalls: 20,
+			Timeout:      600 * time.Second,
+		},
+	}
 }
 
 // WithRAG enables RAG processor
@@ -199,13 +211,38 @@ func (b *Builder) WithSkills(opts ...SkillsOption) *Builder {
 	return b
 }
 
-// WithPTC enables PTC
-func (b *Builder) WithPTC(opts ...PTCOption) *Builder {
-	b.enablePTC = true
+// WithPTC configures PTC.
+//
+// Supported forms:
+//   - WithPTC()                     -> enable with defaults
+//   - WithPTC(false)                -> disable
+//   - WithPTC(WithPTCTimeout(...))  -> enable with options
+//   - WithPTC(false, ...)           -> disable (options ignored)
+func (b *Builder) WithPTC(args ...interface{}) *Builder {
+	enabled := true
 	cfg := &PTCConfig{Enabled: true, MaxToolCalls: 20, Timeout: 600 * time.Second}
-	for _, opt := range opts {
-		opt(cfg)
+
+	for _, arg := range args {
+		switch v := arg.(type) {
+		case bool:
+			enabled = v
+		case PTCOption:
+			v(cfg)
+		case nil:
+			continue
+		default:
+			panic(fmt.Sprintf("agent.Builder.WithPTC: unsupported argument type %T", arg))
+		}
 	}
+
+	if !enabled {
+		b.enablePTC = false
+		b.ptcCfg = nil
+		return b
+	}
+
+	b.enablePTC = true
+	cfg.Enabled = true
 	b.ptcCfg = cfg
 	return b
 }
@@ -571,8 +608,8 @@ func (b *Builder) build() (*Service, error) {
 		svc.Register(t)
 	}
 
-	if modelName, baseURL := resolveServiceModelInfo(llmSvc, agentgoCfg); modelName != "" || baseURL != "" {
-		svc.SetModelInfo(modelName, baseURL)
+	if modelName, baseURL, isFastModel := resolveServiceModelInfo(llmSvc, agentgoCfg); modelName != "" || baseURL != "" {
+		svc.SetModelInfo(modelName, baseURL, isFastModel)
 	}
 
 	svc.agent.SetName(b.name)
@@ -602,6 +639,7 @@ func (b *Builder) build() (*Service, error) {
 
 		// Register tool search tools in PTC router for deferred tool discovery
 		for _, ts := range GetToolSearchTools() {
+			searchToolName := ts.Function.Name
 			ptcRouter.RegisterTool(ts.Function.Name, &ptc.ToolInfo{
 				Name:        ts.Function.Name,
 				Description: ts.Function.Description,
@@ -612,10 +650,10 @@ func (b *Builder) build() (*Service, error) {
 					return nil, fmt.Errorf("tool search requires a 'query' argument")
 				}
 				searchType := "regex"
-				if ts.Function.Name == "tool_search_tool_bm25" {
+				if searchToolName == "tool_search_tool_bm25" {
 					searchType = "bm25"
 				}
-				results, err := svc.toolRegistry.ExecuteToolSearch(query, searchType)
+				results, err := svc.SearchDeferredCatalog(ctx, query, searchType)
 				if err != nil {
 					return nil, err
 				}
@@ -623,8 +661,6 @@ func (b *Builder) build() (*Service, error) {
 				var refs []domain.ToolReference
 				for _, t := range results {
 					refs = append(refs, domain.ToolReference{ToolName: t.Function.Name})
-					// Auto-activate the tool for this session (using empty session ID for PTC)
-					svc.toolRegistry.ActivateForSession("", t.Function.Name)
 				}
 				return domain.ToolSearchResult{ToolReferences: refs}, nil
 			})
@@ -651,17 +687,22 @@ func (b *Builder) build() (*Service, error) {
 	return svc, nil
 }
 
-func resolveServiceModelInfo(llmSvc domain.Generator, cfg *config.Config) (string, string) {
-	if provider, ok := llmSvc.(modelInfoProvider); ok {
-		return provider.GetModelName(), provider.GetBaseURL()
+func resolveServiceModelInfo(llmSvc domain.Generator, cfg *config.Config) (string, string, bool) {
+	if provider, ok := llmSvc.(modelIdentityProvider); ok {
+		modelName := provider.GetModelName()
+		baseURL := provider.GetBaseURL()
+		if fastProvider, ok := llmSvc.(fastModelProvider); ok {
+			return modelName, baseURL, fastProvider.IsFastModel()
+		}
+		return modelName, baseURL, domain.IsFastModelName(modelName)
 	}
 
 	if cfg != nil && len(cfg.LLM.Providers) > 0 {
 		p := cfg.LLM.Providers[0]
-		return p.ModelName, p.BaseURL
+		return p.ModelName, p.BaseURL, domain.IsFastModelName(p.ModelName)
 	}
 
-	return "", ""
+	return "", "", false
 }
 
 func (b *Builder) buildMemoryService(agentgoCfg *config.Config, embedSvc domain.Embedder, llmSvc domain.Generator) (domain.MemoryService, string, error) {

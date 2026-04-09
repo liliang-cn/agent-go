@@ -292,3 +292,15 @@ func TestRuntimeEmitToolState_IncludesQueuedExecutingCompleted(t *testing.T) {
 		}
 	}
 }
+
+func TestShouldAutoContinueAfterTextResponse(t *testing.T) {
+	if !shouldAutoContinueAfterTextResponse("") {
+		t.Fatal("expected empty text to trigger auto-continue")
+	}
+	if !shouldAutoContinueAfterTextResponse("   ") {
+		t.Fatal("expected whitespace-only text to trigger auto-continue")
+	}
+	if shouldAutoContinueAfterTextResponse("EXACT_SKILL_SECRET_789") {
+		t.Fatal("expected concrete text response to stop auto-continue")
+	}
+}

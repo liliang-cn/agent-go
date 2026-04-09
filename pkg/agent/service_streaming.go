@@ -14,17 +14,17 @@ type StreamTurnCallbacks struct {
 	OnToolCall      func(tc domain.ToolCall) error
 }
 
-func (s *Service) streamToolTurn(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions, callbacks StreamTurnCallbacks) (*domain.GenerationResult, string, error) {
+func (s *Service) streamToolTurn(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions, callbacks StreamTurnCallbacks) (*domain.GenerationResult, string, recoveryMeta, error) {
 	return s.streamToolTurnWithRecovery(ctx, messages, tools, opts, callbacks, 0)
 }
 
 // streamToolTurnWithRecovery attempts streaming, and if a withholdable error occurs,
 // compacts messages and retries once.
-func (s *Service) streamToolTurnWithRecovery(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions, callbacks StreamTurnCallbacks, attempt int) (*domain.GenerationResult, string, error) {
+func (s *Service) streamToolTurnWithRecovery(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions, callbacks StreamTurnCallbacks, attempt int) (*domain.GenerationResult, string, recoveryMeta, error) {
 	var (
 		fullContent      strings.Builder
-		toolCalls       []domain.ToolCall
-		lastResponseID  string
+		toolCalls        []domain.ToolCall
+		lastResponseID   string
 		toolCallDetected bool
 	)
 
@@ -67,14 +67,19 @@ func (s *Service) streamToolTurnWithRecovery(ctx context.Context, messages []dom
 			compacted, compErr := s.CompactMessages(ctx, messages)
 			if compErr == nil {
 				// Retry with compacted messages
-				return s.streamToolTurnWithRecovery(ctx, compacted, tools, opts, callbacks, attempt+1)
+				result, responseID, meta, retryErr := s.streamToolTurnWithRecovery(ctx, compacted, tools, opts, callbacks, attempt+1)
+				meta.Compacted = true
+				if retryErr == nil {
+					meta.Recovered = true
+				}
+				return result, responseID, meta, retryErr
 			}
 		}
-		return nil, lastResponseID, err
+		return nil, lastResponseID, recoveryMeta{}, err
 	}
 	return &domain.GenerationResult{
 		ID:        lastResponseID,
 		Content:   fullContent.String(),
 		ToolCalls: toolCalls,
-	}, lastResponseID, nil
+	}, lastResponseID, recoveryMeta{}, nil
 }

@@ -64,6 +64,11 @@ func (c *Client) GetBaseURL() string {
 	return c.baseURL
 }
 
+// IsFastModel reports whether the selected model is likely optimized for latency.
+func (c *Client) IsFastModel() bool {
+	return domain.IsFastModelName(c.modelName)
+}
+
 // Generate generates text
 func (c *Client) Generate(ctx context.Context, prompt string, opts *domain.GenerationOptions) (string, error) {
 	if opts == nil {

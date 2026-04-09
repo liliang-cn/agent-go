@@ -104,6 +104,7 @@ func (m *TeamManager) submitSyntheticFollowUpTask(sessionID, agentName, text str
 
 	task := &AsyncTask{
 		ID:         uuid.NewString(),
+		TaskID:     uuid.NewString(),
 		SessionID:  strings.TrimSpace(sessionID),
 		Kind:       AsyncTaskKindAgent,
 		Status:     AsyncTaskStatusQueued,

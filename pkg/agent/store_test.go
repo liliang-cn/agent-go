@@ -17,10 +17,12 @@ func TestStoreSessionPreservesToolCallingMetadata(t *testing.T) {
 	session.AddMessage(domain.Message{
 		Role:    "user",
 		Content: "hi",
+		TaskID:  "task-1",
 	})
 	session.AddMessage(domain.Message{
 		Role:    "assistant",
 		Content: "",
+		TaskID:  "task-1",
 		ToolCalls: []domain.ToolCall{
 			{
 				ID:   "call_1",
@@ -39,6 +41,7 @@ func TestStoreSessionPreservesToolCallingMetadata(t *testing.T) {
 		Role:       "tool",
 		Content:    `{"result":"Hi! How can I help?"}`,
 		ToolCallID: "call_1",
+		TaskID:     "task-1",
 	})
 
 	if err := store.SaveSession(session); err != nil {
@@ -58,6 +61,9 @@ func TestStoreSessionPreservesToolCallingMetadata(t *testing.T) {
 	if assistant.ResponseID != "resp_1" {
 		t.Fatalf("expected response id to round-trip, got %q", assistant.ResponseID)
 	}
+	if assistant.TaskID != "task-1" {
+		t.Fatalf("expected task id to round-trip, got %q", assistant.TaskID)
+	}
 	if len(assistant.ToolCalls) != 1 {
 		t.Fatalf("expected 1 tool call, got %d", len(assistant.ToolCalls))
 	}
@@ -71,5 +77,8 @@ func TestStoreSessionPreservesToolCallingMetadata(t *testing.T) {
 	toolResult := loaded.Messages[2]
 	if toolResult.ToolCallID != "call_1" {
 		t.Fatalf("expected tool result to keep tool_call_id, got %q", toolResult.ToolCallID)
+	}
+	if toolResult.TaskID != "task-1" {
+		t.Fatalf("expected tool result to keep task_id, got %q", toolResult.TaskID)
 	}
 }

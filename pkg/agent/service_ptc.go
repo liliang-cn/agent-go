@@ -66,6 +66,9 @@ Example format:
 ` + "<code>\nconst data = callTool('some_tool', { arg: 'value' });\nconsole.log(\"Processing:\", data);\nreturn { result: data };\n</code>"
 
 	currentAgent := s.resolveCurrentAgent(session)
+	if session != nil {
+		s.syncDiscoveredToolsFromHistory(session.GetMessages(), resolveConversationSummary(session))
+	}
 
 	// Prepend system prompt so the LLM has full context (memory, env, PTC instructions, etc.)
 	systemMsg := s.buildSystemPrompt(ctx, currentAgent)
@@ -162,7 +165,7 @@ Example format:
 			Content:   content,
 			ToolCalls: toolCalls,
 		}
-		nextAgent, filteredToolCalls, duplicateToolResults, fallback, handoff := s.prepareToolRound(ctx, &messages, currentAgent, session, result, make(map[string]int), 0)
+		nextAgent, _, filteredToolCalls, duplicateToolResults, fallback, handoff := s.prepareToolRound(ctx, &messages, currentAgent, session, result, make(map[string]int), 0)
 		if handoff {
 			currentAgent = nextAgent
 		}

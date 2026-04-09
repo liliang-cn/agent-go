@@ -184,7 +184,7 @@ func (s *Service) matchesFilter(skill *Skill, filter SkillFilter) bool {
 	}
 	if filter.SearchTerm != "" {
 		searchTerm := strings.ToLower(filter.SearchTerm)
-		combined := strings.ToLower(skill.Name + " " + skill.Description)
+		combined := strings.ToLower(skill.Name + " " + skill.Description + " " + skill.WhenToUse)
 		if !strings.Contains(combined, searchTerm) {
 			return false
 		}
@@ -239,6 +239,22 @@ func (s *Service) Resolve(ctx context.Context, query string) ([]*Skill, error) {
 	}
 
 	return matched, nil
+}
+
+// ResolveForModel finds model-invocable skills relevant to the current task.
+func (s *Service) ResolveForModel(ctx context.Context, query string, touchedPaths []string) ([]*Skill, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	resolved, err := s.registry.ResolveForModel(ctx, query, touchedPaths)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*Skill, 0, len(resolved))
+	for _, sk := range resolved {
+		out = append(out, convertFromSkillGo(sk))
+	}
+	return out, nil
 }
 
 // Execute executes a skill
@@ -653,9 +669,11 @@ func convertFromSkillGo(sk *skillgo.Skill) *Skill {
 		ID:                     sk.Name,
 		Name:                   sk.Name,
 		Description:            sk.Meta.Description,
+		WhenToUse:              sk.Meta.WhenToUse,
 		Version:                sk.Version,
 		Collection:             sk.Collection,
 		CollectionPath:         sk.CollectionPath,
+		Paths:                  append([]string(nil), sk.Meta.Paths...),
 		Path:                   sk.Path,
 		Enabled:                true,
 		UserInvocable:          sk.IsUserInvocable(),

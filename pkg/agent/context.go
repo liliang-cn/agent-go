@@ -95,7 +95,7 @@ func (s *Service) buildSystemContext() *SystemContext {
 		}
 	}
 
-	// Skill names
+	// Skill availability
 	if s.skillsService != nil {
 		skillsList, _ := s.skillsService.ListSkills(bgCtx, skills.SkillFilter{})
 		for _, sk := range skillsList {
@@ -148,7 +148,7 @@ func (c *SystemContext) FormatForPrompt() string {
 	}
 
 	if len(c.SkillNames) > 0 {
-		sb.WriteString("Skills: " + strings.Join(c.SkillNames, ", ") + "\n")
+		sb.WriteString(fmt.Sprintf("Skills: dynamic skill discovery enabled (%d available)\n", len(c.SkillNames)))
 	}
 
 	return sb.String()

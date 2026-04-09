@@ -66,6 +66,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 	defer func() {
 		close(r.eventChan)
 	}()
+	ctx = withCurrentSession(ctx, r.session)
 
 	r.emit(EventTypeStart, fmt.Sprintf("Starting task: %s", goal))
 
@@ -92,12 +93,14 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 	// 2. Build initial messages using the same layered assembly strategy as the non-streaming path.
 	const maxRounds = 20
 	state := newQueryLoopState(goal, prepared.messages, prepared.intent, maxRounds)
+	taskID := currentTaskID(r.session)
+	state.TaskID = taskID
 	state.setStage(TurnStagePreparingContext, "starting turn setup", 0)
 	r.emitLoopState(state)
 
 	messages := state.Messages
 	// Ensure the current user message is in the session before starting
-	r.session.AddMessage(domain.Message{Role: "user", Content: goal})
+	r.session.AddMessage(withTaskID(domain.Message{Role: "user", Content: goal}, taskID))
 	for round := 0; round < maxRounds; round++ {
 		// Check cancellation
 		if ctx.Err() != nil {
@@ -141,7 +144,6 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		}
 
 		// 5. LLM Call (Streaming)
-		toolCallDetected := false
 		// taskCompleteTriggered signals task_complete was detected mid-stream.
 		// We break out of StreamWithTools early by returning an error from the
 		// callback; the runtime then checks this flag to avoid treating it as a
@@ -149,49 +151,23 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		var taskCompleteResult string
 		taskCompleteTriggered := false
 
-		// Streaming Tool Execution Tracking
-		asyncResults := make(chan ToolExecutionResult, 50)
-		var asyncWG sync.WaitGroup
+		collector := newRuntimeAsyncToolCollector()
 
 		llmStart := time.Now()
 		r.CheckpointStart("llm_call")
-		result, lastResponseID, err := r.svc.streamToolTurn(ctx, genMessages, tools, r.svc.toolGenerationOptions(0.3, 2000, toolChoiceForIntent(state.Intent, round)), StreamTurnCallbacks{
-			OnToolCall: func(tc domain.ToolCall) error {
-				if tc.Function.Name == "task_complete" {
-					r.emitToolCall(tc.Function.Name, tc.Function.Arguments, "")
-					if res, ok := tc.Function.Arguments["result"].(string); ok && res != "" {
-						taskCompleteResult = res
-					}
-					taskCompleteTriggered = true
-					return errTaskComplete
-				}
-
-				// --- STREAMING TOOL EXECUTION (Low Latency) ---
-				go r.executeAsyncTool(ctx, tc, &asyncWG, asyncResults)
-				return nil
-			},
-			OnReasoning: func(text string) {
-				r.emit(EventTypeThinking, text)
-			},
-			OnPartial: func(text string) {
-				r.emit(EventTypePartial, text)
-			},
-			OnFirstToolCall: func() {
-				if !toolCallDetected {
-					r.emit(EventTypeThinking, "Planning tool usage...")
-					toolCallDetected = true
-				}
-			},
-		})
+		result, lastResponseID, recovery, err := r.svc.streamToolTurn(
+			ctx,
+			genMessages,
+			tools,
+			r.svc.toolGenerationOptions(0.3, 2000, toolChoiceForIntent(state.Intent, round)),
+			r.buildStreamingTurnCallbacks(ctx, &taskCompleteResult, &taskCompleteTriggered, collector),
+		)
 		r.CheckpointEnd("llm_call")
+		state.noteRecovery(recovery)
 
 		// Emit LLM latency analytics
 		llmDur := time.Since(llmStart)
-		r.eventChan <- NewAnalyticsEvent(AnalyticsLLMLatency, map[string]interface{}{
-			"round":       round + 1,
-			"tokens":      state.Budget.EstimatedTokens,
-			"duration_ms": llmDur.Milliseconds(),
-		})
+		r.emitLLMLatency(round+1, state.Budget.EstimatedTokens, llmDur)
 
 		// task_complete detected in stream — terminate immediately.
 		if taskCompleteTriggered {
@@ -251,23 +227,14 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		}
 
 		// 6. Handle Result & Consolidate Tool Outputs
-		// Wait for all tools that were triggered during streaming
-		go func() {
-			asyncWG.Wait()
-			close(asyncResults)
-		}()
-
-		var toolResults []ToolExecutionResult
-		for tr := range asyncResults {
-			toolResults = append(toolResults, tr)
-		}
+		toolResults := collector.collect()
 
 		// Consistency check: ensure all tool calls emitted during LLM turn have results
 		r.ensureToolResultConsistency()
 
 		if len(result.ToolCalls) > 0 {
 			state.resetContinuation()
-			
+
 			// Double check for task_complete in case it was not intercepted during stream
 			for _, tc := range result.ToolCalls {
 				if tc.Function.Name == "task_complete" {
@@ -278,6 +245,10 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 					r.completeRun(goal, final, nil, false)
 					return
 				}
+			}
+			if final, ok := r.shouldShortCircuitPTCToolRound(result.Content, result.ToolCalls); ok {
+				r.completeRun(goal, final, messages, true)
+				return
 			}
 
 			// Note: task_complete is intercepted at stream level above and never
@@ -293,11 +264,12 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 
 			// In current streaming mode, prepareToolRound logic might need adjustment if tools
 			// were already executed. Here we reconcile LLM-reported calls with our execution results.
-			nextAgent, filteredToolCalls, duplicateToolResults, fallback, handoff := r.svc.prepareToolRound(ctx, &messages, r.currentAgent, r.session, streamResult, state.PrevToolCalls, round)
+			nextAgent, handoffReason, filteredToolCalls, duplicateToolResults, fallback, handoff := r.svc.prepareToolRound(ctx, &messages, r.currentAgent, r.session, streamResult, state.PrevToolCalls, round)
 			if handoff {
-				r.currentAgent = nextAgent
-				state.Transition = "handoff"
-				state.TransitionReason = "agent handoff requested"
+				decision := decideHandoff(nextAgent, handoffReason)
+				r.currentAgent = decision.NextAgent
+				state.Transition = decision.Transition
+				state.TransitionReason = decision.Message
 				r.emit(EventTypeHandoff, fmt.Sprintf("Transferred to %s", r.currentAgent.Name()))
 				state.noteRoundCompleted()
 				continue
@@ -324,19 +296,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 				r.emitLoopState(state)
 
 				r.CheckpointStart("tool_execution")
-				syncToolResults, err := r.svc.executeToolCallsWithOptions(ctx, r.currentAgent, r.session, remainingCalls, ToolExecutionCallbacks{
-					OnToolCall: func(name string, args map[string]interface{}, interruptBehavior string) {
-						r.emitToolCall(name, args, interruptBehavior)
-					},
-					OnToolResult: func(name string, res interface{}, err error, interruptBehavior string) {
-						r.emitToolResult(name, res, err, interruptBehavior)
-					},
-					OnToolState: func(name string, state string, interruptBehavior string) {
-						r.emitToolState(name, state, interruptBehavior)
-					},
-					EventSink: r.forwardSubAgentEvent,
-					Debug:     r.debugEnabled(),
-				}, true)
+				syncToolResults, err := r.svc.executeToolCallsWithOptions(ctx, r.currentAgent, r.session, remainingCalls, r.buildStreamingToolExecutionCallbacks(), true)
 				if err != nil {
 					r.emit(EventTypeError, fmt.Sprintf("Tool execution error: %v", err))
 					return
@@ -345,24 +305,25 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 				toolResults = append(toolResults, syncToolResults...)
 			}
 
-			messages = r.svc.appendToolRoundToMessages(messages, streamResult, append(duplicateToolResults, toolResults...))
+			decision := r.svc.decidePostToolRound(messages, taskID, streamResult, duplicateToolResults, toolResults, r.svc.isPTCEnabled(), filteredToolCalls)
+			messages = decision.Messages
 			state.Messages = messages
-			state.recordToolResults(append(duplicateToolResults, toolResults...))
+			state.recordToolResults(decision.ToolResults)
 
-			// In non-PTC mode, encourage the model to process results and move towards completion
-			isPTCToolRound := r.svc.isPTCEnabled() && len(filteredToolCalls) == 1 && filteredToolCalls[0].Function.Name == "execute_javascript"
-			if !isPTCToolRound {
+			if final := decision.Terminal; final != "" {
+				r.completeRun(goal, final, messages, true)
+				return
+			}
+			if decision.AwaitAnswer {
 				state.setStage(TurnStageAwaitingAnswer, "waiting for final answer after tool results", len(filteredToolCalls))
 				r.emitLoopState(state)
-				messages = append(messages, domain.Message{
-					Role:    "user",
-					Content: "Analyze the tool results above. If you have fulfilled the user's request, provide your final answer and call task_complete. Otherwise, continue with the necessary next steps.",
-				})
-				state.Messages = messages
 			}
 
 			// Execute stop hooks after tool execution (before continuation decision)
-			if stopResult := r.executeStopHooks(ctx, state, messages, toolResults); stopResult != nil {
+			if stopResult := r.svc.executeStopHooks(ctx, r.session, r.currentAgent, state.Goal, messages, decision.ToolResults); stopResult != nil {
+				if stopResult.HookOutput != "" && r.debugEnabled() {
+					r.emitDebug(state.CurrentRound, "stop_hook", stopResult.HookOutput)
+				}
 				if stopResult.PreventContinuation {
 					r.emit(EventTypeStop, fmt.Sprintf("Stopped by hook: %s", stopResult.StopReason))
 					r.completeRun(goal, stopResult.StopReason, messages, false)
@@ -379,19 +340,17 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			}
 
 			// --- TOKEN BUDGET AUTO-CONTINUATION ---
-			// If the model stops without calling any tools, check if we should auto-continue
-			state.incrementContinuation()
-			if state.shouldContinue() == budgetContinue {
-				pct := (state.Budget.CompletedRounds * 100) / state.Budget.MaxRounds
-				nudgeMsg := fmt.Sprintf("You have used %d%% of your budget (%d/%d rounds). If you have not completed the user's request, please continue the next steps directly without asking for permission or apologizing. Use tools if necessary. If you are finished, call the task_complete tool.", pct, state.Budget.CompletedRounds, state.Budget.MaxRounds)
-				
-				r.emit(EventTypeStateUpdate, fmt.Sprintf("Auto-continuing run (budget available: %d/%d)", state.Budget.CompletedRounds, state.Budget.MaxRounds))
-				
+			// Only auto-continue when the model produced no meaningful text yet.
+			textDecision := decideTextRound(state, false, false, false, result.Content, false)
+			if textDecision.Kind == textRoundDecisionContinue {
+				r.emitAutoContinueNotice(state)
+
 				messages = append(messages, domain.Message{
 					Role:    "user",
-					Content: nudgeMsg,
+					Content: textDecision.Prompt,
 				})
 				state.Messages = messages
+				state.setLoopTransition(textDecision.Transition, textDecision.Reason)
 				state.noteRoundCompleted()
 				continue
 			}
@@ -402,11 +361,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 
 		state.noteRoundCompleted()
 		r.CheckpointEnd("round_completed")
-		r.eventChan <- NewAnalyticsEvent(AnalyticsRoundCompleted, map[string]interface{}{
-			"round":         state.CurrentRound,
-			"total_tokens":  state.Budget.EstimatedTokens,
-			"total_tools":   state.TotalToolCalls,
-		})
+		r.emitRoundCompletedAnalytics(state)
 	}
 }
 
@@ -421,35 +376,6 @@ func (r *Runtime) executeToolOrHandoff(ctx context.Context, tc domain.ToolCall) 
 			r.currentAgent = targetAgent
 		},
 	})
-}
-
-// executeStopHooks runs stop hooks and returns the result
-// Returns nil if no hooks prevented continuation
-func (r *Runtime) executeStopHooks(ctx context.Context, state *queryLoopState, messages []domain.Message, toolResults []ToolExecutionResult) *StopHookResult {
-	if r.svc.stopHookService == nil {
-		return nil
-	}
-
-	sessionID := r.session.ID
-	if sessionID == "" {
-		sessionID = r.svc.currentSessionID
-	}
-
-	agentID := ""
-	if r.currentAgent != nil {
-		agentID = r.currentAgent.ID()
-	}
-
-	result := r.svc.stopHookService.ExecuteStopHooks(ctx, sessionID, agentID, state.Goal, messages, toolResults)
-
-	if result != nil && result.HookOutput != "" {
-		// Emit stop hook output as debug info
-		if r.debugEnabled() {
-			r.emitDebug(state.CurrentRound, "stop_hook", result.HookOutput)
-		}
-	}
-
-	return result
 }
 
 func (r *Runtime) saveToMemory(ctx context.Context, goal, result string) {
@@ -572,6 +498,7 @@ func (r *Runtime) emitLoopState(state *queryLoopState) {
 		return
 	}
 	stateDelta := map[string]interface{}{
+		"task_id":            state.TaskID,
 		"turn_stage":         state.Stage,
 		"loop_transition":    state.LoopTransition,
 		"transition_reason":  state.TransitionReason,
@@ -747,18 +674,9 @@ func (r *Runtime) CheckpointEnd(name string) {
 }
 
 func (r *Runtime) emitCheckpoint(name string, start, end time.Time, dur time.Duration) {
-	r.eventChan <- &Event{
-		ID:               uuid.New().String(),
-		Type:             EventTypeCheckpoint,
-		AgentName:        r.currentAgent.Name(),
-		AgentID:          r.currentAgent.ID(),
-		CheckpointName:   name,
-		CheckpointStart:  start,
-		CheckpointEnd:    end,
-		CheckpointDuration: dur,
-		Timestamp:        time.Now(),
-	}
+	r.emitCheckpointEvent(name, start, end, dur)
 }
+
 // emitTombstone signals the UI to clear any partial/unfinalized assistant output
 func (r *Runtime) emitTombstone() {
 	r.eventChan <- &Event{

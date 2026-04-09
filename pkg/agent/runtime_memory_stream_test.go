@@ -55,6 +55,7 @@ func TestRunStreamPersistsImplicitScheduleMemorySave(t *testing.T) {
 	home := t.TempDir()
 
 	svc, err := New("memory-agent").
+		WithPTC(false).
 		WithConfig(testAgentConfig(home)).
 		WithLLM(&streamMemorySaveTestLLM{}).
 		WithMemory().

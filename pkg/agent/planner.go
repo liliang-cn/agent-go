@@ -594,9 +594,9 @@ func (p *Planner) buildIntentRecognitionPrompt(goal string, session *Session) st
 	// Add session context if available
 	if session != nil {
 		var context strings.Builder
-		if session.GetSummary() != "" {
+		if resolveConversationSummary(session) != "" {
 			context.WriteString("Conversation Summary:\n")
-			context.WriteString(session.GetSummary())
+			context.WriteString(resolveConversationSummary(session))
 			context.WriteString("\n\n")
 		}
 

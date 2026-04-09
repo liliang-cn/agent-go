@@ -6,6 +6,8 @@
 
 AgentGo 是一个 Go 框架，用于构建 Agent / Team 系统。providers、MCP、skills、memory、RAG、router 和 PTC 都是挂在同一套运行时核心上的能力层，CLI / UI 只是可选适配器。
 
+默认体验并不依赖 embedding model。基础 Agent runtime、MCP、skills、文件记忆和 PTC 都可以在没有向量检索的情况下工作。只有在你明确需要 RAG 或向量型检索时，才需要配置 embedding model。
+
 ```bash
 go get github.com/liliang-cn/agent-go/v2
 ```
@@ -16,13 +18,13 @@ go get github.com/liliang-cn/agent-go/v2
 
 | 能力            | 说明                                                                      |
 | --------------- | ------------------------------------------------------------------------- |
-| **RAG**         | 文档摄入 → 分块 → Embedding → SQLite 向量存储 → 混合检索                  |
 | **Agent**       | 多轮推理循环，支持规划、**自动续航 (Auto-continuation)** 和 **异步上下文分叉 (Context Forking)** |
 | **Memory**      | **认知记忆层**: Hindsight 演化 + **LLM-as-a-Judge 裁判检索** + **潜意识后台固化 (Subconscious)** |
 | **工具**        | MCP（模型上下文协议）、Skills（YAML+Markdown）、自定义内联工具            |
 | **PTC**         | LLM 写 JavaScript，工具在 Goja 沙箱中运行 — 减少模型往返次数              |
 | **Streaming**   | 逐 Token 输出；支持 **极低延迟的流式工具触发** 和 **Tombstone (墓碑) 错误恢复** |
 | **多 Provider** | OpenAI、Anthropic、Azure、DeepSeek、Ollama — 运行时可切换                 |
+| **RAG**         | 可选能力：文档摄入 → 分块 → Embedding → SQLite 向量存储 → 混合检索        |
 | **Team**        | 团队队长/专家机制，**Actor 模式 SubAgent 通信**，异步队列与跨进程追踪 |
 | **Operator**    | 内置执行型 Agent，带文件系统/网页工具以及 PTY / coding-agent 会话能力     |
 

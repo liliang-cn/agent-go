@@ -4,13 +4,33 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 	"github.com/liliang-cn/agent-go/v2/pkg/ptc"
 	"github.com/liliang-cn/agent-go/v2/pkg/skills"
 )
+
+const sessionContextSentSkillReminders = "skills.sent_relevant_names"
+
+type skillReminder struct {
+	Names []string
+	Text  string
+}
+
+type toolPreparationPolicy struct {
+	SessionID           string
+	TaskID              string
+	PTCEnabled          bool
+	SearchMode          bool
+	ExposeSearchTools   bool
+	HideNativeWebSearch bool
+	RelevantSkillNames  []string
+	ForceSkillFirst     bool
+}
 
 func (s *Service) resolveCurrentAgent(session *Session) *Agent {
 	currentAgent := s.agent
@@ -22,8 +42,157 @@ func (s *Service) resolveCurrentAgent(session *Session) *Agent {
 	return currentAgent
 }
 
+func currentTaskID(session *Session) string {
+	if session == nil {
+		return ""
+	}
+	if value, ok := session.GetContext(sessionContextTaskID); ok {
+		if taskID, ok := value.(string); ok {
+			return strings.TrimSpace(taskID)
+		}
+	}
+	return ""
+}
+
+func ensureTaskID(session *Session, cfg *RunConfig) string {
+	if cfg != nil && strings.TrimSpace(cfg.TaskID) != "" {
+		taskID := strings.TrimSpace(cfg.TaskID)
+		if session != nil {
+			session.SetContext(sessionContextTaskID, taskID)
+		}
+		return taskID
+	}
+	if existing := currentTaskID(session); existing != "" {
+		if cfg != nil {
+			cfg.TaskID = existing
+		}
+		return existing
+	}
+	taskID := uuid.NewString()
+	if cfg != nil {
+		cfg.TaskID = taskID
+	}
+	if session != nil {
+		session.SetContext(sessionContextTaskID, taskID)
+	}
+	return taskID
+}
+
+func withTaskID(msg domain.Message, taskID string) domain.Message {
+	msg.TaskID = strings.TrimSpace(taskID)
+	return msg
+}
+
+func (s *Service) rememberRelevantSkillsForSession(sessionID string, names []string) {
+	if s == nil || strings.TrimSpace(sessionID) == "" {
+		return
+	}
+	trimmed := make([]string, 0, len(names))
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" || slices.Contains(trimmed, name) {
+			continue
+		}
+		trimmed = append(trimmed, name)
+	}
+
+	s.relevantSkillsMu.Lock()
+	defer s.relevantSkillsMu.Unlock()
+	if s.sessionRelevantSkills == nil {
+		s.sessionRelevantSkills = make(map[string][]string)
+	}
+	s.sessionRelevantSkills[sessionID] = trimmed
+}
+
+func (s *Service) relevantSkillsForSession(sessionID string) []string {
+	if s == nil || strings.TrimSpace(sessionID) == "" {
+		return nil
+	}
+	s.relevantSkillsMu.RLock()
+	defer s.relevantSkillsMu.RUnlock()
+	names := s.sessionRelevantSkills[sessionID]
+	if len(names) == 0 {
+		return nil
+	}
+	return append([]string(nil), names...)
+}
+
+func skillPolicyKey(sessionID, taskID string) string {
+	sessionID = strings.TrimSpace(sessionID)
+	taskID = strings.TrimSpace(taskID)
+	if sessionID == "" {
+		return ""
+	}
+	if taskID == "" {
+		return sessionID
+	}
+	return sessionID + "::" + taskID
+}
+
+func (s *Service) markRelevantSkillSatisfied(sessionID, taskID string) {
+	key := skillPolicyKey(sessionID, taskID)
+	if key == "" {
+		return
+	}
+	s.skillPolicyMu.Lock()
+	defer s.skillPolicyMu.Unlock()
+	if s.taskSkillSatisfied == nil {
+		s.taskSkillSatisfied = make(map[string]bool)
+	}
+	s.taskSkillSatisfied[key] = true
+}
+
+func (s *Service) isRelevantSkillSatisfied(sessionID, taskID string) bool {
+	key := skillPolicyKey(sessionID, taskID)
+	if key == "" {
+		return false
+	}
+	s.skillPolicyMu.RLock()
+	defer s.skillPolicyMu.RUnlock()
+	return s.taskSkillSatisfied[key]
+}
+
+func (s *Service) buildToolPreparationPolicy(ctx context.Context) toolPreparationPolicy {
+	policy := toolPreparationPolicy{
+		PTCEnabled:          s.isPTCEnabled(),
+		SearchMode:          s.shouldExposeSearchTools(),
+		ExposeSearchTools:   s.shouldExposeSearchTools(),
+		HideNativeWebSearch: s.shouldHideMCPWebSearchTools(),
+	}
+	if session := getCurrentSession(ctx); session != nil {
+		policy.SessionID = strings.TrimSpace(session.GetID())
+		policy.TaskID = currentTaskID(session)
+	}
+	if policy.SessionID == "" {
+		policy.SessionID = s.CurrentSessionID()
+	}
+	policy.RelevantSkillNames = s.relevantSkillsForSession(policy.SessionID)
+	if len(policy.RelevantSkillNames) > 0 && !s.isRelevantSkillSatisfied(policy.SessionID, policy.TaskID) {
+		policy.ForceSkillFirst = true
+	}
+	return policy
+}
+
+func shouldKeepToolForSkillFirst(toolName string, relevantSkillNames []string) bool {
+	toolName = strings.TrimSpace(toolName)
+	switch {
+	case toolName == "":
+		return false
+	case toolName == "task_complete":
+		return true
+	case toolName == "search_available_tools" || domain.IsToolSearchTool(toolName):
+		return true
+	case strings.HasPrefix(toolName, "skill_"):
+		skillID := strings.TrimPrefix(toolName, "skill_")
+		return len(relevantSkillNames) == 0 || slices.Contains(relevantSkillNames, skillID)
+	default:
+		return false
+	}
+}
+
 func (s *Service) prepareTurnInputs(ctx context.Context, currentAgent *Agent, messages []domain.Message, goal string) ([]domain.ToolDefinition, []domain.Message) {
-	tools := s.collectAllAvailableTools(ctx, currentAgent)
+	s.syncDiscoveredToolsFromHistory(messages, "")
+	tools := s.collectAllAvailableToolsWithPolicy(ctx, currentAgent, s.buildToolPreparationPolicy(ctx))
 	if looksLikeInformationSeekingQuery(goal) {
 		tools = filterToolDefinitions(tools, func(tool domain.ToolDefinition) bool {
 			return tool.Function.Name != "memory_save"
@@ -33,6 +202,19 @@ func (s *Service) prepareTurnInputs(ctx context.Context, currentAgent *Agent, me
 	systemMsg := s.buildSystemPrompt(ctx, currentAgent)
 	genMessages := append([]domain.Message{{Role: "system", Content: systemMsg}}, messages...)
 	return tools, genMessages
+}
+
+func (s *Service) syncDiscoveredToolsFromHistory(messages []domain.Message, summary string) {
+	if s == nil || s.toolRegistry == nil {
+		return
+	}
+	sessionID := s.CurrentSessionID()
+	if sessionID == "" {
+		return
+	}
+	for _, name := range extractDiscoveredToolNames(messages, summary) {
+		s.toolRegistry.ActivateForSession(sessionID, name)
+	}
 }
 
 // addRAGSources adds sources with deduplication by ID
@@ -63,14 +245,23 @@ func (s *Service) addRAGSources(sources []domain.Chunk) {
 // the LLM must call them through execute_javascript + callTool(), mirroring Anthropic's
 // allowed_callers: ["code_execution"] behaviour where direct model invocation is removed.
 func (s *Service) collectAllAvailableTools(ctx context.Context, currentAgent *Agent) []domain.ToolDefinition {
+	return s.collectAllAvailableToolsWithPolicy(ctx, currentAgent, s.buildToolPreparationPolicy(ctx))
+}
+
+func (s *Service) collectAllAvailableToolsWithPolicy(ctx context.Context, currentAgent *Agent, policy toolPreparationPolicy) []domain.ToolDefinition {
 	toolsMap := make(map[string]domain.ToolDefinition)
-	ptcEnabled := s.isPTCEnabled()
-	sessionID := s.CurrentSessionID()
-	searchMode := s.shouldExposeSearchTools()
+	ptcEnabled := policy.PTCEnabled
+	sessionID := policy.SessionID
+	searchMode := policy.SearchMode
+	relevantSkillNames := policy.RelevantSkillNames
+	hasRelevantSkillFilter := len(relevantSkillNames) > 0
 
 	// Helper to add tools with deduplication
 	addTools := func(defs []domain.ToolDefinition) {
 		for _, d := range defs {
+			if policy.ForceSkillFirst && !shouldKeepToolForSkillFirst(d.Function.Name, relevantSkillNames) {
+				continue
+			}
 			toolsMap[d.Function.Name] = d
 		}
 	}
@@ -80,7 +271,7 @@ func (s *Service) collectAllAvailableTools(ctx context.Context, currentAgent *Ag
 	addTools(s.toolRegistry.ListForLLM(ptcEnabled, sessionID))
 
 	// In saving mode, expose search tools instead of sending large MCP/skill catalogs directly.
-	if searchMode && !ptcEnabled {
+	if policy.ExposeSearchTools && !ptcEnabled {
 		for _, ts := range GetToolSearchTools() {
 			toolsMap[ts.Function.Name] = ts
 		}
@@ -89,6 +280,9 @@ func (s *Service) collectAllAvailableTools(ctx context.Context, currentAgent *Ag
 	// Agent Handoffs — always visible so the LLM can route between agents.
 	if currentAgent != nil {
 		for _, handoff := range currentAgent.Handoffs() {
+			if policy.ForceSkillFirst {
+				continue
+			}
 			tool := handoff.ToToolDefinition().ToDomainTool()
 			toolsMap[tool.Function.Name] = tool
 		}
@@ -109,7 +303,7 @@ func (s *Service) collectAllAvailableTools(ctx context.Context, currentAgent *Ag
 		allMCP := s.mcpService.ListTools()
 		activeMap := s.toolRegistry.sessionActivated[sessionID]
 		deferAllMCP := searchMode
-		hideNativeWebSearchTools := s.shouldHideMCPWebSearchTools()
+		hideNativeWebSearchTools := policy.HideNativeWebSearch
 
 		if currentAgent == nil || isAllAllowed(currentAgent.mcpTools) {
 			for _, tool := range allMCP {
@@ -156,9 +350,13 @@ func (s *Service) collectAllAvailableTools(ctx context.Context, currentAgent *Ag
 			if !sk.Enabled || sk.DisableModelInvocation {
 				continue
 			}
+			if hasRelevantSkillFilter && !slices.Contains(relevantSkillNames, sk.ID) {
+				continue
+			}
 
 			if allowedAll || containsStr(currentAgent.skills, sk.ID) {
-				if !deferAllSkills || (activeMap != nil && activeMap[sk.ID]) {
+				toolName := "skill_" + sk.ID
+				if !deferAllSkills || (activeMap != nil && (activeMap[toolName] || activeMap[sk.ID])) {
 					// Build variable schema from skill definition
 					properties := make(map[string]interface{})
 					required := make([]string, 0)
@@ -184,7 +382,6 @@ func (s *Service) collectAllAvailableTools(ctx context.Context, currentAgent *Ag
 					desc = "Skill workflow: " + desc + ". Call this tool to receive step-by-step instructions for this task; you MUST then follow those instructions to complete the work."
 
 					// Use "skill_" prefix to match RegisterAsMCPTools and isSkill check
-					toolName := "skill_" + sk.ID
 					// Set DeferLoading based on whether we're deferring skills
 					deferLoading := deferAllSkills
 					toolsMap[toolName] = domain.ToolDefinition{
@@ -208,7 +405,7 @@ func (s *Service) collectAllAvailableTools(ctx context.Context, currentAgent *Ag
 	// PTC: expose execute_javascript as a direct LLM tool. Embed the dynamic
 	// callTool() list so the model knows exactly what it can call.
 	if s.ptcIntegration != nil {
-		availableCallTools := s.ptcAvailableCallTools(ctx)
+		availableCallTools := s.ptcAvailableCallToolsWithPolicy(ctx, policy)
 		addTools(s.ptcIntegration.GetPTCTools(availableCallTools))
 	}
 
@@ -265,22 +462,93 @@ func (s *Service) toolGenerationOptions(temperature float64, maxTokens int, tool
 }
 
 func (s *Service) ptcAvailableCallTools(ctx context.Context) []ptc.ToolInfo {
+	return s.ptcAvailableCallToolsWithPolicy(ctx, s.buildToolPreparationPolicy(ctx))
+}
+
+func (s *Service) ptcAvailableCallToolsWithPolicy(ctx context.Context, policy toolPreparationPolicy) []ptc.ToolInfo {
 	if s.ptcIntegration == nil {
 		return nil
 	}
 	tools := s.ptcIntegration.GetAvailableCallTools(ctx)
-	if s.shouldExposeSearchTools() {
-		return tools
-	}
+	sessionID := policy.SessionID
+	exposeSearch := s.shouldExposePTCToolSearch(ctx)
+	relevantSkillNames := policy.RelevantSkillNames
+	hasRelevantSkillFilter := len(relevantSkillNames) > 0
 
 	filtered := make([]ptc.ToolInfo, 0, len(tools))
 	for _, tool := range tools {
 		if tool.Name == "search_available_tools" || domain.IsToolSearchTool(tool.Name) {
+			if exposeSearch {
+				filtered = append(filtered, tool)
+			}
 			continue
 		}
-		filtered = append(filtered, tool)
+		if policy.ForceSkillFirst && !shouldKeepToolForSkillFirst(tool.Name, relevantSkillNames) {
+			continue
+		}
+		if hasRelevantSkillFilter && strings.HasPrefix(tool.Name, "skill_") {
+			skillID := strings.TrimPrefix(tool.Name, "skill_")
+			if !slices.Contains(relevantSkillNames, skillID) {
+				continue
+			}
+		}
+
+		if !s.isDeferredPTCCallTool(tool.Name) || s.toolRegistry.IsActivatedForSession(sessionID, tool.Name) {
+			filtered = append(filtered, tool)
+		}
 	}
 	return filtered
+}
+
+func (s *Service) shouldExposePTCToolSearch(ctx context.Context) bool {
+	if s == nil || s.toolRegistry == nil {
+		return false
+	}
+	sessionID := s.CurrentSessionID()
+	for _, tool := range s.toolRegistry.ListDeferredTools() {
+		if !s.toolRegistry.IsActivatedForSession(sessionID, tool.Function.Name) {
+			return true
+		}
+	}
+	if s.mcpService != nil {
+		for _, tool := range s.mcpService.ListTools() {
+			if s.shouldHideMCPWebSearchTools() && isMCPWebSearchToolName(tool.Function.Name) {
+				continue
+			}
+			if !s.toolRegistry.IsActivatedForSession(sessionID, tool.Function.Name) {
+				return true
+			}
+		}
+	}
+	if s.skillsService != nil {
+		skillsList, _ := s.skillsService.ListSkills(ctx, skills.SkillFilter{})
+		for _, sk := range skillsList {
+			if !sk.Enabled || sk.DisableModelInvocation {
+				continue
+			}
+			toolName := "skill_" + sk.ID
+			if !s.toolRegistry.IsActivatedForSession(sessionID, toolName) {
+				return true
+			}
+		}
+	}
+	return s.shouldExposeSearchTools()
+}
+
+func (s *Service) isDeferredPTCCallTool(toolName string) bool {
+	if toolName == "" {
+		return false
+	}
+	if def, ok := s.toolRegistry.DefinitionOf(toolName); ok {
+		return def.DeferLoading
+	}
+	if strings.HasPrefix(toolName, "mcp_") {
+		return true
+	}
+	if strings.HasPrefix(toolName, "skill_") {
+		return true
+	}
+	return false
 }
 
 func (s *Service) buildToolCatalogSummary(ctx context.Context) string {
@@ -352,6 +620,154 @@ func (s *Service) buildToolCatalogSummary(ctx context.Context) string {
 		"- Tool schemas are minimized to save tokens.\n" +
 		"- Use search tools when you need an exact callable name.\n" +
 		strings.Join(lines, "\n")
+}
+
+func (s *Service) buildRelevantSkillReminder(ctx context.Context, goal string, session *Session) *skillReminder {
+	if s == nil || s.skillsService == nil || strings.TrimSpace(goal) == "" {
+		return nil
+	}
+
+	skillsList, err := s.skillsService.ResolveForModel(ctx, goal, extractTouchedPathsForSkills(goal, session))
+	if err != nil || len(skillsList) == 0 {
+		return nil
+	}
+
+	if len(skillsList) > 5 {
+		skillsList = skillsList[:5]
+	}
+
+	sent := sentRelevantSkillNames(session)
+	newNames := make([]string, 0, len(skillsList))
+	for _, sk := range skillsList {
+		if !slices.Contains(sent, sk.ID) {
+			newNames = append(newNames, sk.ID)
+		}
+	}
+	if len(newNames) == 0 {
+		return nil
+	}
+	sessionID := ""
+	if session != nil {
+		sessionID = session.GetID()
+	}
+	currentNames := make([]string, 0, len(skillsList))
+	for _, sk := range skillsList {
+		currentNames = append(currentNames, sk.ID)
+	}
+	if sessionID != "" {
+		s.rememberRelevantSkillsForSession(sessionID, currentNames)
+	}
+	for _, name := range newNames {
+		if sessionID != "" && s.toolRegistry != nil {
+			s.toolRegistry.ActivateForSession(sessionID, "skill_"+name)
+		}
+	}
+
+	var sb strings.Builder
+	sb.WriteString("<skill-discovery>\n")
+	sb.WriteString("Skills relevant to your task:\n")
+	for _, sk := range skillsList {
+		if !slices.Contains(newNames, sk.ID) {
+			continue
+		}
+		line := "- skill_" + sk.ID
+		if strings.TrimSpace(sk.Description) != "" {
+			line += ": " + strings.TrimSpace(sk.Description)
+		}
+		if strings.TrimSpace(sk.WhenToUse) != "" {
+			line += " | use when: " + strings.TrimSpace(sk.WhenToUse)
+		}
+		if len(line) > 320 {
+			line = line[:319] + "…"
+		}
+		sb.WriteString(line + "\n")
+	}
+	sb.WriteString("</skill-discovery>")
+	text := strings.TrimSpace(sb.String())
+	if text == "" {
+		return nil
+	}
+	return &skillReminder{
+		Names: newNames,
+		Text:  text,
+	}
+}
+
+func extractTouchedPathsForSkills(goal string, session *Session) []string {
+	seen := make(map[string]struct{})
+	add := func(candidate string) {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			return
+		}
+		candidate = strings.Trim(candidate, ".,!?;:()[]{}\"'")
+		if candidate == "" {
+			return
+		}
+		if strings.Contains(candidate, "/") || strings.Contains(candidate, ".") {
+			seen[filepath.Clean(candidate)] = struct{}{}
+		}
+	}
+
+	for _, token := range strings.Fields(goal) {
+		add(token)
+	}
+
+	if session != nil {
+		for _, msg := range session.GetLastNMessages(6) {
+			for _, token := range strings.Fields(msg.Content) {
+				add(token)
+			}
+		}
+	}
+
+	out := make([]string, 0, len(seen))
+	for path := range seen {
+		out = append(out, path)
+	}
+	slices.Sort(out)
+	return out
+}
+
+func sentRelevantSkillNames(session *Session) []string {
+	if session == nil {
+		return nil
+	}
+	raw, ok := session.GetContext(sessionContextSentSkillReminders)
+	if !ok || raw == nil {
+		return nil
+	}
+	switch v := raw.(type) {
+	case []string:
+		return append([]string(nil), v...)
+	case []interface{}:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
+				out = append(out, strings.TrimSpace(s))
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func markRelevantSkillsSent(session *Session, names []string) {
+	if session == nil || len(names) == 0 {
+		return
+	}
+	existing := sentRelevantSkillNames(session)
+	merged := append([]string(nil), existing...)
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" || slices.Contains(merged, name) {
+			continue
+		}
+		merged = append(merged, name)
+	}
+	slices.Sort(merged)
+	session.SetContext(sessionContextSentSkillReminders, merged)
 }
 
 func (s *Service) buildWebSearchPromptNote(currentAgent *Agent) string {

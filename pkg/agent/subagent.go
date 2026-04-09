@@ -431,20 +431,14 @@ func (sa *SubAgent) execute(ctx context.Context) (interface{}, error) {
 
 	sa.emitProgress("Starting execution")
 
-	// Track whether any tool has actually been invoked.
-	// This is used to decide whether to nudge the LLM when it responds
-	// with text only — a common issue where the model describes what it
-	// *would* do instead of actually calling the tools.
-	toolUsed := false
-	// Only nudge once per execution to avoid infinite nudge loops.
-	nudged := false
 	var subIntent *IntentRecognitionResult
 	if sa.config.Service != nil && sa.config.Service.planner != nil {
 		subIntent = sa.config.Service.planner.ruleBasedIntentRecognition(sa.config.Goal)
 	}
-	state := newQueryLoopState(sa.config.Goal, sa.buildInitialMessages(tools), subIntent, sa.config.MaxTurns)
+	state := newServiceExecutionLoopState(sa.config.Goal, sa.buildInitialMessages(tools), subIntent, sa.config.MaxTurns, currentAgent)
+	state.TaskID = currentTaskID(sa.session)
 	state.setStage(TurnStagePreparingContext, "starting subagent execution", 0)
-	sa.emitLoopState(state)
+	sa.emitLoopState(state.queryLoopState)
 
 	// Execute with turn limit
 	for round := 0; round < sa.config.MaxTurns; round++ {
@@ -462,7 +456,7 @@ func (sa *SubAgent) execute(ctx context.Context) (interface{}, error) {
 
 		sa.emitProgress(fmt.Sprintf("Turn %d/%d", sa.currentTurn, sa.config.MaxTurns))
 		state.setStage(TurnStageAwaitingModel, "requesting model output", 0)
-		sa.emitLoopState(state)
+		sa.emitLoopState(state.queryLoopState)
 
 		// Build system prompt with SubAgent-specific tool instructions
 		systemMsg := sa.buildSystemPrompt(ctx, tools)
@@ -475,7 +469,7 @@ func (sa *SubAgent) execute(ctx context.Context) (interface{}, error) {
 		// ("auto") — forcing "required" beyond Turn 1 can cause some proxies to
 		// return non-standard binary responses.
 		genOpts := sa.config.Service.toolGenerationOptions(0.3, 2000, toolChoiceForIntent(subIntent, round))
-		if genOpts.ToolChoice == "" && len(tools) > 0 && !toolUsed && !nudged {
+		if genOpts.ToolChoice == "" && len(tools) > 0 && !state.ToolUsed && !state.Nudged {
 			genOpts.ToolChoice = "required"
 		}
 
@@ -489,7 +483,7 @@ func (sa *SubAgent) execute(ctx context.Context) (interface{}, error) {
 			sa.emitDebug(round+1, "prompt", promptContent.String())
 		}
 
-		result, responseID, err := sa.config.Service.streamToolTurn(ctx, genMessages, tools, genOpts, StreamTurnCallbacks{
+		result, responseID, recovery, err := sa.config.Service.streamToolTurn(ctx, genMessages, tools, genOpts, StreamTurnCallbacks{
 			OnReasoning: func(text string) {
 				sa.emitThinking(text)
 			},
@@ -497,6 +491,7 @@ func (sa *SubAgent) execute(ctx context.Context) (interface{}, error) {
 				sa.emitPartial(text)
 			},
 		})
+		state.noteRecovery(recovery)
 		if err != nil {
 			return nil, fmt.Errorf("LLM error: %w", err)
 		}
@@ -508,12 +503,13 @@ func (sa *SubAgent) execute(ctx context.Context) (interface{}, error) {
 
 		// Handle tool calls
 		if len(result.ToolCalls) > 0 {
-			toolUsed = true
-			nextAgent, filteredToolCalls, duplicateToolResults, fallback, handoff := sa.config.Service.prepareToolRound(ctx, &state.Messages, currentAgent, sa.session, result, state.PrevToolCalls, round)
+			nextAgent, handoffReason, filteredToolCalls, duplicateToolResults, fallback, handoff := sa.config.Service.prepareToolRound(ctx, &state.Messages, state.CurrentAgent, sa.session, result, state.PrevToolCalls, round)
 			if handoff {
-				currentAgent = nextAgent
-				sa.config.Agent = nextAgent
-				tools = sa.collectFilteredTools(ctx, currentAgent)
+				decision := decideHandoff(nextAgent, handoffReason)
+				state.setCurrentAgent(decision.NextAgent)
+				sa.config.Agent = decision.NextAgent
+				tools = sa.collectFilteredTools(ctx, state.CurrentAgent)
+				state.continueWith(decision.Transition, "subagent handoff requested", state.Messages)
 				continue
 			}
 			if fallback != "" {
@@ -522,15 +518,17 @@ func (sa *SubAgent) execute(ctx context.Context) (interface{}, error) {
 			}
 			if len(filteredToolCalls) == 0 {
 				if len(duplicateToolResults) > 0 {
-					state.Messages = sa.config.Service.appendToolRoundToMessages(state.Messages, result, duplicateToolResults)
+					state.Messages = sa.config.Service.appendToolRoundToMessages(state.Messages, currentTaskID(sa.session), result, duplicateToolResults)
+					state.noteToolResults(duplicateToolResults)
 				}
+				state.continueWith(queryLoopTransitionDuplicateToolResults, "reused duplicate tool results", state.Messages)
 				continue
 			}
 
 			state.setStage(TurnStageHandlingTools, "executing tool batch", len(filteredToolCalls))
-			sa.emitLoopState(state)
+			sa.emitLoopState(state.queryLoopState)
 			var toolResults []ToolExecutionResult
-			state.Messages, toolResults, err = sa.config.Service.executePreparedToolRound(ctx, currentAgent, sa.session, state.Messages, result, filteredToolCalls, duplicateToolResults, ToolExecutionCallbacks{
+			state.Messages, toolResults, err = sa.config.Service.executePreparedToolRound(ctx, state.CurrentAgent, sa.session, state.Messages, result, filteredToolCalls, duplicateToolResults, ToolExecutionCallbacks{
 				OnToolCall: func(name string, args map[string]interface{}, interruptBehavior string) {
 					sa.emitProgress(fmt.Sprintf("Executing tool: %s", name))
 					sa.emitToolCall(name, args)
@@ -538,16 +536,16 @@ func (sa *SubAgent) execute(ctx context.Context) (interface{}, error) {
 				OnToolResult: func(name string, result interface{}, err error, interruptBehavior string) {
 					sa.emitToolResult(name, result, err)
 				},
-				OnToolState: func(name string, state string, interruptBehavior string) {
+				OnToolState: func(name string, toolState string, interruptBehavior string) {
 					sa.emitEvent(&Event{
 						ID:        uuid.NewString(),
 						Type:      EventTypeStateUpdate,
-						AgentID:   currentAgent.ID(),
-						AgentName: currentAgent.Name(),
-						Content:   fmt.Sprintf("Tool %s is %s", name, state),
+						AgentID:   state.CurrentAgent.ID(),
+						AgentName: state.CurrentAgent.Name(),
+						Content:   fmt.Sprintf("Tool %s is %s", name, toolState),
 						StateDelta: map[string]interface{}{
 							"tool_name":          name,
-							"tool_state":         state,
+							"tool_state":         toolState,
 							"interrupt_behavior": interruptBehavior,
 						},
 						Timestamp: time.Now(),
@@ -559,20 +557,39 @@ func (sa *SubAgent) execute(ctx context.Context) (interface{}, error) {
 			if err != nil {
 				return nil, fmt.Errorf("tool execution failed: %w", err)
 			}
-			state.recordToolResults(toolResults)
+			decision := sa.config.Service.decidePostToolRound(state.Messages, currentTaskID(sa.session), result, duplicateToolResults, toolResults, sa.config.Service.isPTCEnabled(), filteredToolCalls)
+			state.setMessages(decision.Messages)
+			state.noteToolResults(decision.ToolResults)
+			if final := decision.Terminal; final != "" {
+				sa.emitProgress("Execution completed")
+				state.setStage(TurnStageCompleted, decision.Reason, 0)
+				state.setLoopTransition(decision.Transition, decision.Reason)
+				sa.emitLoopState(state.queryLoopState)
+				return final, nil
+			}
+			if decision.AwaitAnswer {
+				state.setStage(TurnStageAwaitingAnswer, "waiting for final answer after tool results", len(filteredToolCalls))
+			}
+			state.continueWith(decision.Transition, decision.Reason, state.Messages)
 			continue
 		}
 
-		if shouldNudgeForMissingToolUse(len(tools) > 0, toolUsed, nudged) {
-			nudged = true
+		textDecision := decideTextRound(state.queryLoopState, len(tools) > 0, state.ToolUsed, state.Nudged, result.Content, true)
+		if textDecision.Kind == textRoundDecisionContinue {
+			state.Nudged = textDecision.Prompt == toolUseNudgePrompt
+			state.setMessages(append(state.Messages, domain.Message{
+				Role:    "user",
+				Content: textDecision.Prompt,
+			}))
 			sa.emitProgress("Nudging LLM to use available tools")
-			state.Messages = appendToolUseNudgeMessages(state.Messages, result.Content)
+			state.continueWith(textDecision.Transition, textDecision.Reason, state.Messages)
 			continue
 		}
 
 		sa.emitProgress("Execution completed")
-		state.setStage(TurnStageCompleted, "subagent completed", 0)
-		sa.emitLoopState(state)
+		state.setStage(TurnStageCompleted, textDecision.Reason, 0)
+		state.setLoopTransition(textDecision.Transition, "subagent text response completed")
+		sa.emitLoopState(state.queryLoopState)
 		return result.Content, nil
 	}
 

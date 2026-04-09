@@ -130,9 +130,9 @@ func (p *Planner) buildPlannerUserPromptSections(goal string, session *Session, 
 	}
 	if session != nil {
 		var sb strings.Builder
-		if session.GetSummary() != "" {
+		if resolveConversationSummary(session) != "" {
 			sb.WriteString("Conversation Summary:\n")
-			sb.WriteString(session.GetSummary())
+			sb.WriteString(resolveConversationSummary(session))
 			sb.WriteString("\n\n")
 		}
 		messages := session.GetLastNMessages(5)

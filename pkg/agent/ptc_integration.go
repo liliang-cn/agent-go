@@ -361,15 +361,22 @@ func (p *PTCIntegration) GetPTCTools(availableTools []ptc.ToolInfo) []domain.Too
 		return nil
 	}
 
-	// Collect all available tool names grouped by category
-	var allToolNames []string
+	var directToolNames []string
+	var searchToolNames []string
 	for _, t := range availableTools {
-		allToolNames = append(allToolNames, t.Name)
+		if t.Name == "search_available_tools" || domain.IsToolSearchTool(t.Name) {
+			searchToolNames = append(searchToolNames, t.Name)
+			continue
+		}
+		directToolNames = append(directToolNames, t.Name)
 	}
 
 	var toolListHint string
-	if len(allToolNames) > 0 {
-		toolListHint = "\n\nALL available callTool() names: " + strings.Join(allToolNames, ", ")
+	if len(directToolNames) > 0 {
+		toolListHint += "\n\nCurrently loaded callTool() names: " + strings.Join(directToolNames, ", ")
+	}
+	if len(searchToolNames) > 0 {
+		toolListHint += "\n\nDiscovery tools: " + strings.Join(searchToolNames, ", ") + ". Use these first when you do not know the exact tool name."
 	}
 
 	return []domain.ToolDefinition{
@@ -379,6 +386,7 @@ func (p *PTCIntegration) GetPTCTools(availableTools []ptc.ToolInfo) []domain.Too
 				Name: "execute_javascript",
 				Description: "Execute JavaScript code in a secure sandbox. Call multiple tools, process results, or orchestrate complex logic. " +
 					"Use callTool(name, args) to invoke a tool by exact name. " +
+					"If you do not know the exact tool name, first call search_available_tools or a tool_search_tool_* discovery tool, then call the selected exact tool name. " +
 					"MCP tools usually return an object like {success, data, error}; inspect data or use toolData(result) in JS. " +
 					"NOTE: task_complete is NOT callable inside the sandbox — call it directly." + toolListHint,
 				Parameters: map[string]interface{}{
@@ -434,6 +442,8 @@ func (p *PTCIntegration) GetPTCSystemPrompt(availableTools []ptc.ToolInfo) strin
 	sb.WriteString("Respond ONLY with `<code>...</code>` containing synchronous ES5 JavaScript.\n")
 	sb.WriteString("- Use `callTool(name, args)` to invoke any tool. No direct tool calls.\n")
 	sb.WriteString("- Prefer `callTool(name, args)` whenever you already know the exact tool name.\n")
+	sb.WriteString("- If you do NOT know the exact tool name, first call `search_available_tools` or `tool_search_tool_bm25`, inspect the returned tool references, then call the exact tool name.\n")
+	sb.WriteString("- Do not invent fuzzy tool names or return keyword lists instead of performing tool discovery.\n")
 	sb.WriteString("- MCP tool results are commonly wrapped as `{ success, data, error }`.\n")
 	sb.WriteString("- Use `toolOk(result)` to check success and `toolData(result)` to read the payload safely.\n")
 	sb.WriteString("- `mcp_filesystem_list_directory` returns `toolData(result)` as a structured array of `{ name, type, path, uri, size_bytes? }` entries.\n")
@@ -444,12 +454,17 @@ func (p *PTCIntegration) GetPTCSystemPrompt(availableTools []ptc.ToolInfo) strin
 
 	// Add complete list of available tools with exact names
 	if len(availableTools) > 0 {
-		sb.WriteString("\n## Available Tools (callTool names)\n")
+		sb.WriteString("\n## Currently Loaded Tools (callTool names)\n")
 		// Group by category
 		mcpTools := make([]string, 0)
 		skillTools := make([]string, 0)
 		otherTools := make([]string, 0)
+		discoveryTools := make([]string, 0)
 		for _, t := range availableTools {
+			if t.Name == "search_available_tools" || domain.IsToolSearchTool(t.Name) {
+				discoveryTools = append(discoveryTools, t.Name)
+				continue
+			}
 			switch t.Category {
 			case "mcp":
 				mcpTools = append(mcpTools, t.Name)
@@ -467,6 +482,9 @@ func (p *PTCIntegration) GetPTCSystemPrompt(availableTools []ptc.ToolInfo) strin
 		}
 		if len(otherTools) > 0 {
 			sb.WriteString("\nOther tools: " + strings.Join(otherTools, ", ") + "\n")
+		}
+		if len(discoveryTools) > 0 {
+			sb.WriteString("\nDiscovery tools: " + strings.Join(discoveryTools, ", ") + "\n")
 		}
 	}
 

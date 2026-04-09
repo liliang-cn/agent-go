@@ -7,13 +7,15 @@ import (
 
 // Skill represents a loaded skill from SKILL.md
 type Skill struct {
-	ID             string `json:"id"`
-	Name           string `json:"name"`
-	Description    string `json:"description"`
-	Version        string `json:"version"`
-	Author         string `json:"author,omitempty"`
-	Collection     string `json:"collection,omitempty"`
-	CollectionPath string `json:"collection_path,omitempty"`
+	ID             string   `json:"id"`
+	Name           string   `json:"name"`
+	Description    string   `json:"description"`
+	WhenToUse      string   `json:"when_to_use,omitempty"`
+	Version        string   `json:"version"`
+	Author         string   `json:"author,omitempty"`
+	Collection     string   `json:"collection,omitempty"`
+	CollectionPath string   `json:"collection_path,omitempty"`
+	Paths          []string `json:"paths,omitempty"`
 
 	// Progressive disclosure
 	Steps []SkillStep `json:"steps"`

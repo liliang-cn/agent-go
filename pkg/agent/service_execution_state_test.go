@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 	"github.com/liliang-cn/agent-go/v2/pkg/prompt"
@@ -13,6 +15,7 @@ import (
 type serviceExecutionStateTestLLM struct {
 	results       []*domain.GenerationResult
 	generateCalls int
+	seenMessages  [][]domain.Message
 }
 
 func (l *serviceExecutionStateTestLLM) Generate(ctx context.Context, prompt string, opts *domain.GenerationOptions) (string, error) {
@@ -27,6 +30,8 @@ func (l *serviceExecutionStateTestLLM) GenerateWithTools(ctx context.Context, me
 	if l.generateCalls >= len(l.results) {
 		return nil, fmt.Errorf("unexpected GenerateWithTools call %d", l.generateCalls+1)
 	}
+	clonedMessages := append([]domain.Message(nil), messages...)
+	l.seenMessages = append(l.seenMessages, clonedMessages)
 	result := l.results[l.generateCalls]
 	l.generateCalls++
 	if result == nil {
@@ -158,5 +163,246 @@ func TestExecuteWithLLM_StateMachineCarriesToolRoundForward(t *testing.T) {
 	}
 	if metrics.estimatedTokens <= 0 {
 		t.Fatalf("metrics.estimatedTokens = %d, want > 0", metrics.estimatedTokens)
+	}
+}
+
+func TestExecuteWithLLM_NudgesWhenToolsAvailableButUnused(t *testing.T) {
+	llm := &serviceExecutionStateTestLLM{
+		results: []*domain.GenerationResult{
+			{Content: "I would inspect the repository."},
+			{Content: "done"},
+		},
+	}
+
+	agent := NewAgent("Assistant")
+	agent.AddToolWithMetadata(
+		"echo_tool",
+		"Echo input",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"msg": map[string]interface{}{"type": "string"},
+			},
+		},
+		func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+			return fmt.Sprintf("echo:%v", args["msg"]), nil
+		},
+		ToolMetadata{ReadOnly: true, ConcurrencySafe: true},
+	)
+
+	svc := &Service{
+		llmService:      llm,
+		agent:           agent,
+		registry:        NewRegistry(),
+		logger:          slog.Default(),
+		promptManager:   prompt.NewManager(),
+		toolRegistry:    NewToolRegistry(),
+		inProgressTools: make(map[string]int),
+	}
+	svc.registry.Register(agent)
+
+	result, _, err := svc.executeWithLLM(context.Background(), "inspect repo", nil, NewSession(agent.ID()), "", "", DefaultRunConfig())
+	if err != nil {
+		t.Fatalf("executeWithLLM error: %v", err)
+	}
+	if result != "done" {
+		t.Fatalf("result = %#v, want %q", result, "done")
+	}
+	if llm.generateCalls != 2 {
+		t.Fatalf("GenerateWithTools calls = %d, want 2", llm.generateCalls)
+	}
+	if len(llm.seenMessages) < 2 {
+		t.Fatalf("expected captured messages for both rounds, got %d", len(llm.seenMessages))
+	}
+
+	foundNudge := false
+	for _, msg := range llm.seenMessages[1] {
+		if msg.Role == "user" && msg.Content == toolUseNudgePrompt {
+			foundNudge = true
+			break
+		}
+	}
+	if !foundNudge {
+		t.Fatalf("expected second turn to include tool use nudge, got %#v", llm.seenMessages[1])
+	}
+}
+
+func TestExecuteWithLLM_AutoContinuesAfterEmptyTextResponse(t *testing.T) {
+	llm := &serviceExecutionStateTestLLM{
+		results: []*domain.GenerationResult{
+			{Content: ""},
+			{Content: "done"},
+		},
+	}
+
+	agent := NewAgent("Assistant")
+	svc := &Service{
+		llmService:      llm,
+		agent:           agent,
+		registry:        NewRegistry(),
+		logger:          slog.Default(),
+		promptManager:   prompt.NewManager(),
+		toolRegistry:    NewToolRegistry(),
+		inProgressTools: make(map[string]int),
+	}
+	svc.registry.Register(agent)
+
+	result, _, err := svc.executeWithLLM(context.Background(), "inspect repo", nil, NewSession(agent.ID()), "", "", DefaultRunConfig())
+	if err != nil {
+		t.Fatalf("executeWithLLM error: %v", err)
+	}
+	if result != "done" {
+		t.Fatalf("result = %#v, want %q", result, "done")
+	}
+	if llm.generateCalls != 2 {
+		t.Fatalf("GenerateWithTools calls = %d, want 2", llm.generateCalls)
+	}
+	if len(llm.seenMessages) < 2 {
+		t.Fatalf("expected captured messages for both rounds, got %d", len(llm.seenMessages))
+	}
+
+	foundAutoContinue := false
+	for _, msg := range llm.seenMessages[1] {
+		if msg.Role == "user" && strings.Contains(msg.Content, "You have used") && strings.Contains(msg.Content, "continue the next steps directly") {
+			foundAutoContinue = true
+			break
+		}
+	}
+	if !foundAutoContinue {
+		t.Fatalf("expected second turn to include auto-continue message, got %#v", llm.seenMessages[1])
+	}
+}
+
+func TestExecuteWithLLM_AppendsAnalysisPromptAfterToolRound(t *testing.T) {
+	llm := &serviceExecutionStateTestLLM{
+		results: []*domain.GenerationResult{
+			{
+				Content: "Calling the tool.",
+				ToolCalls: []domain.ToolCall{
+					{
+						ID:   "call-1",
+						Type: "function",
+						Function: domain.FunctionCall{
+							Name:      "echo_tool",
+							Arguments: map[string]interface{}{"msg": "hello"},
+						},
+					},
+				},
+			},
+			{Content: "done"},
+		},
+	}
+
+	agent := NewAgent("Assistant")
+	agent.AddToolWithMetadata(
+		"echo_tool",
+		"Echo input",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"msg": map[string]interface{}{"type": "string"},
+			},
+		},
+		func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+			return fmt.Sprintf("echo:%v", args["msg"]), nil
+		},
+		ToolMetadata{ReadOnly: true, ConcurrencySafe: true},
+	)
+
+	svc := &Service{
+		llmService:      llm,
+		agent:           agent,
+		registry:        NewRegistry(),
+		logger:          slog.Default(),
+		promptManager:   prompt.NewManager(),
+		toolRegistry:    NewToolRegistry(),
+		inProgressTools: make(map[string]int),
+	}
+	svc.registry.Register(agent)
+
+	result, _, err := svc.executeWithLLM(context.Background(), "inspect repo", nil, NewSession(agent.ID()), "", "", DefaultRunConfig())
+	if err != nil {
+		t.Fatalf("executeWithLLM error: %v", err)
+	}
+	if result != "done" {
+		t.Fatalf("result = %#v, want %q", result, "done")
+	}
+	if len(llm.seenMessages) < 2 {
+		t.Fatalf("expected captured messages for both rounds, got %d", len(llm.seenMessages))
+	}
+
+	foundAnalysisPrompt := false
+	for _, msg := range llm.seenMessages[1] {
+		if msg.Role == "user" && msg.Content == toolResultsAnalysisPrompt {
+			foundAnalysisPrompt = true
+			break
+		}
+	}
+	if !foundAnalysisPrompt {
+		t.Fatalf("expected second turn to include tool analysis prompt, got %#v", llm.seenMessages[1])
+	}
+}
+
+func TestExecuteWithLLM_StopHookPreventsContinuationAfterToolRound(t *testing.T) {
+	llm := &serviceExecutionStateTestLLM{
+		results: []*domain.GenerationResult{
+			{
+				Content: "Calling the tool.",
+				ToolCalls: []domain.ToolCall{
+					{
+						ID:   "call-1",
+						Type: "function",
+						Function: domain.FunctionCall{
+							Name:      "echo_tool",
+							Arguments: map[string]interface{}{"msg": "hello"},
+						},
+					},
+				},
+			},
+			{Content: "should-not-run"},
+		},
+	}
+
+	agent := NewAgent("Assistant")
+	agent.AddToolWithMetadata(
+		"echo_tool",
+		"Echo input",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"msg": map[string]interface{}{"type": "string"},
+			},
+		},
+		func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+			return fmt.Sprintf("echo:%v", args["msg"]), nil
+		},
+		ToolMetadata{ReadOnly: true, ConcurrencySafe: true},
+	)
+
+	svc := &Service{
+		llmService:      llm,
+		agent:           agent,
+		registry:        NewRegistry(),
+		logger:          slog.Default(),
+		promptManager:   prompt.NewManager(),
+		toolRegistry:    NewToolRegistry(),
+		inProgressTools: make(map[string]int),
+		stopHookService: NewStopHookService(),
+	}
+	svc.registry.Register(agent)
+	svc.RegisterStopHook(StopHookConfig{
+		Command: "printf '{\"prevent_continuation\":true,\"stop_reason\":\"blocked by test hook\"}'",
+		Timeout: time.Second,
+	})
+
+	result, _, err := svc.executeWithLLM(context.Background(), "inspect repo", nil, NewSession(agent.ID()), "", "", DefaultRunConfig())
+	if err != nil {
+		t.Fatalf("executeWithLLM error: %v", err)
+	}
+	if result != "blocked by test hook" {
+		t.Fatalf("result = %#v, want %q", result, "blocked by test hook")
+	}
+	if llm.generateCalls != 1 {
+		t.Fatalf("GenerateWithTools calls = %d, want 1", llm.generateCalls)
 	}
 }

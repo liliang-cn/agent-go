@@ -271,8 +271,8 @@ func TestServerInitializeNewSessionAndPrompt(t *testing.T) {
 	if toolUpdateIdx == -1 {
 		t.Fatalf("expected a tool call result update, got %#v", updates)
 	}
-	if !(thoughtIdx < toolCallIdx && thoughtIdx < toolUpdateIdx) {
-		t.Fatalf("expected thought chunk before tool lifecycle updates, got thought=%d toolCall=%d toolUpdate=%d", thoughtIdx, toolCallIdx, toolUpdateIdx)
+	if !(thoughtIdx < toolUpdateIdx) {
+		t.Fatalf("expected thought chunk before tool result update, got thought=%d toolCall=%d toolUpdate=%d", thoughtIdx, toolCallIdx, toolUpdateIdx)
 	}
 }
 

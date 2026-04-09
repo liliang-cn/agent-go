@@ -43,6 +43,7 @@ const (
 // AsyncTask is a background task created by Concierge or direct pkg callers.
 type AsyncTask struct {
 	ID          string          `json:"id"`
+	TaskID      string          `json:"task_id,omitempty"`
 	SessionID   string          `json:"session_id,omitempty"`
 	Kind        AsyncTaskKind   `json:"kind"`
 	Status      AsyncTaskStatus `json:"status"`
@@ -93,6 +94,7 @@ func (m *TeamManager) SubmitAgentTask(ctx context.Context, sessionID, agentName,
 
 	task := &AsyncTask{
 		ID:        uuid.NewString(),
+		TaskID:    uuid.NewString(),
 		SessionID: strings.TrimSpace(sessionID),
 		Kind:      AsyncTaskKindAgent,
 		Status:    AsyncTaskStatusQueued,
@@ -261,6 +263,9 @@ func (m *TeamManager) runAsyncAgentTask(ctx context.Context, taskID string) {
 	task = m.updateAsyncTask(task.ID, func(existing *AsyncTask) {
 		existing.Status = AsyncTaskStatusRunning
 		existing.StartedAt = &startedAt
+		if strings.TrimSpace(existing.TaskID) == "" {
+			existing.TaskID = existing.ID
+		}
 	})
 	m.emitTaskEvent(task.ID, &TaskEvent{
 		TaskID:    task.ID,
@@ -273,7 +278,7 @@ func (m *TeamManager) runAsyncAgentTask(ctx context.Context, taskID string) {
 		Timestamp: startedAt,
 	}, false)
 
-	events, err := m.ChatWithMemberStream(runCtx, task.SessionID, task.AgentName, task.Prompt)
+	events, err := m.ChatWithMemberStreamWithOptions(runCtx, task.SessionID, task.AgentName, task.Prompt, WithTaskID(firstNonEmptyTaskID(task)))
 	if err != nil {
 		m.failAsyncTask(task.ID, task.AgentName, err)
 		return
@@ -333,7 +338,7 @@ func (m *TeamManager) executeSharedTaskStream(ctx context.Context, task *SharedT
 						task.Prompt,
 				)
 			}
-			events, err := m.ChatWithMemberStream(ctx, task.ID, agentName, instruction)
+			events, err := m.ChatWithMemberStreamWithOptions(ctx, task.ID, agentName, instruction, WithTaskID(firstNonEmptyTaskID(asyncTask)))
 			if err != nil {
 				resultCh <- dispatchResult{AgentName: agentName, Err: err}
 				return

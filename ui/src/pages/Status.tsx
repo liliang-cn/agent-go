@@ -95,7 +95,7 @@ export function Status() {
   }
 
   const llmProviders = data?.providers?.filter((p: Provider) => p.type === 'llm') || []
-  const embedProviders = data?.providers?.filter((p: Provider) => p.type === 'embedding') || []
+  const embedProviders = data?.providers?.filter((p: Provider) => p.type === 'embedding' && p.status === 'enabled') || []
   const otherProviders = data?.providers?.filter((p: Provider) => !['llm', 'embedding'].includes(p.type)) || []
 
   return (
@@ -182,7 +182,7 @@ export function Status() {
             </div>
           )}
 
-          {data.rag?.enabled && (
+          {data.rag?.enabled && (data.rag.documents ?? 0) > 0 && (
             <div className="glass-panel rounded-[24px] p-4" data-testid="status-rag">
               <h3 className="mb-2 text-lg font-medium text-slate-900">{t('ragDatabase')}</h3>
               <p className="text-sm text-slate-500">

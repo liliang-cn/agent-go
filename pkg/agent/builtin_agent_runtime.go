@@ -425,7 +425,7 @@ func (m *TeamManager) executeDispatchStream(ctx context.Context, agentName, inst
 	return svc.RunStreamWithOptions(ctx, instruction, runOptions...)
 }
 
-func (m *TeamManager) prepareDispatchRequest(agentName, instruction string, sessionID string, extraOpts []RunOption) (string, []RunOption) {
+func (m *TeamManager) prepareDispatchRequest(agentName, instruction string, sessionID string, taskID string, extraOpts []RunOption) (string, []RunOption) {
 	wrappedInstruction := instruction
 	if cfg := m.configuredAgentGoConfig(); cfg != nil {
 		wrappedInstruction = buildTeamTaskEnvelope(cfg, agentName, instruction)
@@ -434,6 +434,9 @@ func (m *TeamManager) prepareDispatchRequest(agentName, instruction string, sess
 	runOptions := dispatchRunOptions(agentName)
 	if strings.TrimSpace(sessionID) != "" {
 		runOptions = append(runOptions, WithSessionID(sessionID))
+	}
+	if strings.TrimSpace(taskID) != "" {
+		runOptions = append(runOptions, WithTaskID(taskID))
 	}
 	runOptions = append(runOptions, extraOpts...)
 	return wrappedInstruction, runOptions

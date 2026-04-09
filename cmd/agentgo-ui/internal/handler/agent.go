@@ -168,7 +168,7 @@ func (h *Handler) HandleAgents(w http.ResponseWriter, r *http.Request) {
 			Skills                []string `json:"skills"`
 			EnableRAG             bool     `json:"enable_rag"`
 			EnableMemory          bool     `json:"enable_memory"`
-			EnablePTC             bool     `json:"enable_ptc"`
+			EnablePTC             *bool    `json:"enable_ptc"`
 			EnableMCP             bool     `json:"enable_mcp"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -178,6 +178,11 @@ func (h *Handler) HandleAgents(w http.ResponseWriter, r *http.Request) {
 		if strings.TrimSpace(req.Name) == "" {
 			JSONError(w, "Agent name required", http.StatusBadRequest)
 			return
+		}
+
+		enablePTC := true
+		if req.EnablePTC != nil {
+			enablePTC = *req.EnablePTC
 		}
 
 		agentModel, err := h.teamManager.CreateAgent(r.Context(), &agent.AgentModel{
@@ -195,7 +200,7 @@ func (h *Handler) HandleAgents(w http.ResponseWriter, r *http.Request) {
 			Skills:                req.Skills,
 			EnableRAG:             req.EnableRAG,
 			EnableMemory:          req.EnableMemory,
-			EnablePTC:             req.EnablePTC,
+			EnablePTC:             enablePTC,
 			EnableMCP:             req.EnableMCP,
 			CreatedAt:             time.Now(),
 			UpdatedAt:             time.Now(),

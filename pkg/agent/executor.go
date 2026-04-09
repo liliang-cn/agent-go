@@ -376,9 +376,9 @@ func (e *Executor) buildPromptWithContext(prompt string, session *Session) strin
 	var sb strings.Builder
 
 	// Add summary if available
-	if session.GetSummary() != "" {
+	if resolveConversationSummary(session) != "" {
 		sb.WriteString("Conversation Summary:\n")
-		sb.WriteString(session.GetSummary())
+		sb.WriteString(resolveConversationSummary(session))
 		sb.WriteString("\n\n")
 	}
 

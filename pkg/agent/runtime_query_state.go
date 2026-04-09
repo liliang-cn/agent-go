@@ -11,9 +11,14 @@ type queryLoopBudget struct {
 	RemainingRounds int
 
 	// Diminishing returns detection
-	continuationCount int     // rounds without meaningful progress
-	lastDeltaTokens  int     // tokens from previous round
-	tokensPerRound   []int   // rolling window of tokens per round
+	continuationCount int   // rounds without meaningful progress
+	lastDeltaTokens   int   // tokens from previous round
+	tokensPerRound    []int // rolling window of tokens per round
+}
+
+type recoveryMeta struct {
+	Compacted bool
+	Recovered bool
 }
 
 // budgetDecision indicates whether the query loop should continue
@@ -28,7 +33,7 @@ const (
 // Diminishing returns detection thresholds
 const (
 	diminishingReturnsWindow  = 3  // Number of rounds to track
-	diminishingReturnsPercent = 50  // Percentage threshold (50 = 50%)
+	diminishingReturnsPercent = 50 // Percentage threshold (50 = 50%)
 	maxContinuations          = 5  // Max rounds without meaningful progress
 )
 
@@ -44,6 +49,7 @@ const (
 
 type queryLoopState struct {
 	Goal             string
+	TaskID           string
 	Messages         []domain.Message
 	PrevToolCalls    map[string]int
 	Intent           *IntentRecognitionResult
@@ -110,6 +116,15 @@ func (s *queryLoopState) noteTokens(tokens int) {
 		return
 	}
 	s.Budget.EstimatedTokens += tokens
+}
+
+func (s *queryLoopState) noteRecovery(meta recoveryMeta) {
+	if meta.Compacted {
+		s.Budget.CompactionCount++
+	}
+	if meta.Recovered {
+		s.Budget.RecoveryCount++
+	}
 }
 
 func (s *queryLoopState) noteRoundCompleted() {

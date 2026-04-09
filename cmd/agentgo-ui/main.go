@@ -77,21 +77,29 @@ func runServer(cmd *cobra.Command, args []string) error {
 	// Get pool service
 	poolService := services.GetGlobalPoolService()
 
-	// Get LLM and Embedder from pool
+	// Get LLM from pool
 	llm, err := poolService.GetLLMService()
 	if err != nil {
 		return fmt.Errorf("failed to get LLM service: %w", err)
 	}
 
-	embedder, err := poolService.GetEmbeddingService(context.Background())
+	// Embedder is optional. Many users do not configure an embedding model
+	// unless they explicitly need RAG or vector-heavy retrieval.
+	var embedder domain.Embedder
+	embedder, err = poolService.GetEmbeddingService(context.Background())
 	if err != nil {
-		return fmt.Errorf("failed to get embedding service: %w", err)
+		agentgolog.Warn("Embedding service not available; continuing without RAG/vector features: %v", err)
+		embedder = nil
 	}
 
-	// Create RAG client
-	ragClient, err := rag.NewClient(cfg, embedder, llm, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create RAG client: %w", err)
+	// Create RAG client only when RAG is enabled and an embedder exists.
+	var ragClient *rag.Client
+	if cfg.RAG.Enabled && embedder != nil {
+		ragClient, err = rag.NewClient(cfg, embedder, llm, nil)
+		if err != nil {
+			agentgolog.Warn("Failed to create RAG client; continuing without RAG UI features: %v", err)
+			ragClient = nil
+		}
 	}
 
 	// Create Skills service

@@ -174,6 +174,7 @@ func (s *Service) buildSystemPromptSections(ctx context.Context, agent *Agent, o
 		"- Treat the visible callable tool list as the authoritative source of what can actually be executed in this runtime.",
 		"- Do not invent hidden tool or API names such as generic run/status/start methods when concrete callable tool names are already exposed.",
 		"- If you are unsure which exact tool fits a request, call `search_available_tools` before claiming the capability is unavailable.",
+		"- If the conversation context includes a 'Relevant Skills For This Task' section and one of those skills clearly matches the request, call the corresponding `skill_*` tool before doing the task manually.",
 		"- Skills: calling a skill tool returns step-by-step instructions — follow them, then call task_complete.",
 		"- Never repeat the same tool call with identical arguments.",
 	}, "\n")

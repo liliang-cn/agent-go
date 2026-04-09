@@ -74,13 +74,14 @@ func main() {
 	fmt.Printf("PTC Enabled: %v\n", info.PTCEnabled)
 
 	// ============================================================
-	// 测试 searchAndCallTool 搜索+执行
+	// 测试 Claude Code 风格的两阶段发现：
+	// 先 search_available_tools / tool_search_tool_*，再按精确名字 callTool
 	// ============================================================
 
-	fmt.Println("\n=== Testing searchAndCallTool ===")
+	fmt.Println("\n=== Testing PTC tool discovery ===")
 	fmt.Println("Query: 'weather', Instruction: '查询北京的天气'")
 
-	// 手动调用 SearchAndExecute 来测试 - 带 instruction 会自动执行
+	// 手动调用 SearchAndExecute 来测试底层 discovery 行为。
 	result, err := agentSvc.SearchAndExecute(context.Background(), "weather", "查询北京的天气", "")
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
@@ -94,6 +95,7 @@ func main() {
 
 	fmt.Println("\n=== Running Agent (PTC Mode) ===")
 	fmt.Println("Query: '查询北京的天气'")
+	fmt.Println("Expected behavior: the model should search for a weather tool if it does not know the exact name, then call the exact tool inside execute_javascript.")
 
 	result2, err := agentSvc.Run(context.Background(), "查询北京的天气")
 	if err != nil {

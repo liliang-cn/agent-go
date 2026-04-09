@@ -13,7 +13,7 @@ func TestBuildConversationMessagesIncludesSessionHistory(t *testing.T) {
 	session.AddMessage(domainMessage("assistant", "我已经给你做了一版摘要。"))
 
 	svc := &Service{}
-	messages := svc.buildConversationMessages(session, "筛一版", "", "", "")
+	messages := svc.buildConversationMessages(session, "筛一版", "", "", nil, "")
 
 	if len(messages) != 4 {
 		t.Fatalf("expected 4 messages, got %d", len(messages))
@@ -34,7 +34,7 @@ func TestBuildConversationMessagesIncludesSessionHistory(t *testing.T) {
 
 func TestBuildConversationMessagesUsesSummaryWhenHistoryEmpty(t *testing.T) {
 	svc := &Service{}
-	messages := svc.buildConversationMessages(NewSession("agent-1"), "继续", "", "", "之前讨论了今天新闻摘要。")
+	messages := svc.buildConversationMessages(NewSession("agent-1"), "继续", "", "", nil, "之前讨论了今天新闻摘要。")
 
 	if len(messages) != 3 {
 		t.Fatalf("expected 3 messages, got %d", len(messages))
@@ -61,7 +61,7 @@ func TestBuildConversationMessagesUsesRecentWindowAndOlderChronologicalContext(t
 	}
 
 	svc := &Service{}
-	messages := svc.buildConversationMessages(session, "继续", "", "", "重点摘要")
+	messages := svc.buildConversationMessages(session, "继续", "", "", nil, "重点摘要")
 
 	// user meta context + summary context + 4 older chronological + 6 recent window + current user turn
 	if len(messages) != 13 {
@@ -80,7 +80,7 @@ func TestBuildConversationMessagesUsesRecentWindowAndOlderChronologicalContext(t
 
 func TestBuildConversationMessagesCreatesSeparateContextMessage(t *testing.T) {
 	svc := &Service{}
-	messages := svc.buildConversationMessages(NewSession("agent-1"), "继续", "RAG 片段", "Memory 片段", "摘要")
+	messages := svc.buildConversationMessages(NewSession("agent-1"), "继续", "RAG 片段", "Memory 片段", nil, "摘要")
 
 	if len(messages) != 3 {
 		t.Fatalf("expected 3 messages, got %d", len(messages))
@@ -96,8 +96,46 @@ func TestBuildConversationMessagesCreatesSeparateContextMessage(t *testing.T) {
 	}
 }
 
+func TestBuildConversationMessagesFiltersHistoryByTaskID(t *testing.T) {
+	session := NewSession("agent-1")
+	session.SetContext(sessionContextTaskID, "task-2")
+	session.AddMessage(domainMessageWithTask("user", "task-1-user", "task-1"))
+	session.AddMessage(domainMessageWithTask("assistant", "task-1-assistant", "task-1"))
+	session.AddMessage(domainMessageWithTask("user", "task-2-user", "task-2"))
+	session.AddMessage(domainMessageWithTask("assistant", "task-2-assistant", "task-2"))
+
+	svc := &Service{}
+	messages := svc.buildConversationMessages(session, "继续", "", "", nil, "")
+
+	joined := ""
+	for _, msg := range messages {
+		joined += msg.Content + "\n"
+	}
+	if strings.Contains(joined, "task-1-user") || strings.Contains(joined, "task-1-assistant") {
+		t.Fatalf("expected task-1 history to be excluded, got %q", joined)
+	}
+	if !strings.Contains(joined, "task-2-user") || !strings.Contains(joined, "task-2-assistant") {
+		t.Fatalf("expected task-2 history to remain, got %q", joined)
+	}
+}
+
+func TestResolveConversationSummaryPrefersTaskSummary(t *testing.T) {
+	session := NewSession("agent-1")
+	session.SetSummary("global-summary")
+	session.SetContext(sessionContextTaskID, "task-2")
+	setTaskSummary(session, "task-2", "task-summary")
+
+	if got := resolveConversationSummary(session); got != "task-summary" {
+		t.Fatalf("resolveConversationSummary() = %q, want %q", got, "task-summary")
+	}
+}
+
 func domainMessage(role, content string) domain.Message {
 	return domain.Message{Role: role, Content: content}
+}
+
+func domainMessageWithTask(role, content, taskID string) domain.Message {
+	return domain.Message{Role: role, Content: content, TaskID: taskID}
 }
 
 func containsText(text, needle string) bool {

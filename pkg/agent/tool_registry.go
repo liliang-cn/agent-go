@@ -70,6 +70,17 @@ func (r *ToolRegistry) ActivateForSession(sessionID, toolName string) {
 	r.sessionActivated[sessionID][toolName] = true
 }
 
+// IsActivatedForSession reports whether a deferred tool has been activated for the given session.
+func (r *ToolRegistry) IsActivatedForSession(sessionID, toolName string) bool {
+	if sessionID == "" || toolName == "" {
+		return false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	activeMap := r.sessionActivated[sessionID]
+	return activeMap != nil && activeMap[toolName]
+}
+
 // SearchDeferredTools searches for deferred tools matching the query.
 func (r *ToolRegistry) SearchDeferredTools(query string) []domain.ToolDefinition {
 	r.mu.RLock()
@@ -186,6 +197,16 @@ func (r *ToolRegistry) MetadataOf(name string) ToolMetadata {
 	return ToolMetadata{}
 }
 
+// DefinitionOf returns the registered tool definition, if present.
+func (r *ToolRegistry) DefinitionOf(name string) (domain.ToolDefinition, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if t, ok := r.tools[name]; ok {
+		return t.def, true
+	}
+	return domain.ToolDefinition{}, false
+}
+
 // ListForLLM returns the tool definitions that should be passed to the LLM.
 //
 //   - ptcEnabled=false: all registered tools (they appear as direct function calls)
@@ -225,6 +246,19 @@ func (r *ToolRegistry) ListForCallTool() []ptc.ToolInfo {
 			Parameters:  t.def.Function.Parameters,
 			Category:    t.category,
 		})
+	}
+	return out
+}
+
+// ListDeferredTools returns all deferred tool definitions currently registered.
+func (r *ToolRegistry) ListDeferredTools() []domain.ToolDefinition {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]domain.ToolDefinition, 0, len(r.tools))
+	for _, t := range r.tools {
+		if t.def.DeferLoading {
+			out = append(out, t.def)
+		}
 	}
 	return out
 }

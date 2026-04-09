@@ -3,9 +3,17 @@ package agent
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+)
+
+var (
+	ptcMarkdownFenceRe    = regexp.MustCompile("(?s)```.*?```")
+	ptcTaskCompleteLineRe = regexp.MustCompile(`(?im)^\s*task_complete\s*$`)
+	ptcReturnValueLineRe  = regexp.MustCompile(`(?m)^\*\*Return Value:\*\*\s*(.+?)\s*$`)
 )
 
 func (r *Runtime) overridePTCToolCallsFromContent(round int, content string, toolCalls []domain.ToolCall) []domain.ToolCall {
@@ -88,4 +96,96 @@ func (r *Runtime) handlePTCTextFallback(ctx context.Context, content string, mes
 		Content:    resultMsg,
 	})
 	return messages, true
+}
+
+func (r *Runtime) shouldShortCircuitPTCToolRound(content string, toolCalls []domain.ToolCall) (string, bool) {
+	if !r.svc.isPTCEnabled() || r.svc.ptcIntegration == nil || len(toolCalls) == 0 {
+		return "", false
+	}
+	for _, tc := range toolCalls {
+		if tc.Function.Name != "execute_javascript" {
+			return "", false
+		}
+	}
+
+	hasPlausibleCode := false
+	extracted := sanitiseJSCode(r.svc.ptcIntegration.ExtractCode(content))
+	if extracted != "" && r.svc.ptcIntegration.looksLikeCode(extracted) {
+		hasPlausibleCode = true
+	}
+	for _, tc := range toolCalls {
+		code, _ := tc.Function.Arguments["code"].(string)
+		code = sanitiseJSCode(code)
+		if code != "" && r.svc.ptcIntegration.looksLikeCode(code) {
+			hasPlausibleCode = true
+			break
+		}
+	}
+	if hasPlausibleCode {
+		return "", false
+	}
+
+	final := extractInlineTaskCompleteResult(content)
+	if final == "" {
+		return "", false
+	}
+	return final, true
+}
+
+func extractInlineTaskCompleteResult(content string) string {
+	cleaned := ptcMarkdownFenceRe.ReplaceAllString(content, " ")
+	cleaned = strings.ReplaceAll(cleaned, "<code>", " ")
+	cleaned = strings.ReplaceAll(cleaned, "</code>", " ")
+	cleaned = ptcTaskCompleteLineRe.ReplaceAllString(cleaned, " ")
+
+	lines := strings.Split(cleaned, "\n")
+	parts := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		switch line {
+		case "{}", "json", "```json", "```":
+			continue
+		}
+		parts = append(parts, line)
+	}
+
+	candidate := strings.TrimSpace(strings.Join(parts, " "))
+	if !isMeaningfulAnswerText(candidate) {
+		return ""
+	}
+	return candidate
+}
+
+func extractPTCTerminalAnswer(toolResults []ToolExecutionResult) string {
+	for i := len(toolResults) - 1; i >= 0; i-- {
+		tr := toolResults[i]
+		if tr.ToolName != "execute_javascript" {
+			continue
+		}
+
+		resultText, _ := tr.Result.(string)
+		resultText = strings.TrimSpace(resultText)
+		if resultText == "" {
+			continue
+		}
+		if strings.Contains(strings.ToLower(resultText), "failed") {
+			continue
+		}
+
+		match := ptcReturnValueLineRe.FindStringSubmatch(resultText)
+		if len(match) < 2 {
+			continue
+		}
+		candidate := strings.TrimSpace(match[1])
+		if candidate == "" || strings.HasPrefix(candidate, "(none") {
+			continue
+		}
+		if isMeaningfulAnswerText(candidate) {
+			return candidate
+		}
+	}
+	return ""
 }

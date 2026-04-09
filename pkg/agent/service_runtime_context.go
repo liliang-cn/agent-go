@@ -18,6 +18,7 @@ type preparedConversationContext struct {
 	intent         *IntentRecognitionResult
 	ragContext     string
 	memoryContext  string
+	skillReminder  *skillReminder
 	memoryMemories []*domain.MemoryWithScore
 	memoryLogic    string
 	queryContext   domain.MemoryQueryContext
@@ -31,7 +32,7 @@ func (s *Service) prepareConversationContext(ctx context.Context, goal string, s
 	}
 	if session != nil {
 		s.rememberMemoryQueryContext(session, prepared.queryContext)
-		prepared.summary = session.GetSummary()
+		prepared.summary = resolveConversationSummary(session)
 	}
 
 	g, groupCtx := errgroup.WithContext(ctx)
@@ -78,10 +79,17 @@ func (s *Service) prepareConversationContext(ctx context.Context, goal string, s
 		})
 	}
 
+	if s.skillsService != nil {
+		g.Go(func() error {
+			prepared.skillReminder = s.buildRelevantSkillReminder(groupCtx, goal, session)
+			return nil
+		})
+	}
+
 	if err := g.Wait(); err != nil {
 		s.logger.Warn("conversation context collection partial failure", slog.Any("error", err))
 	}
 
-	prepared.messages = s.buildConversationMessages(session, goal, prepared.ragContext, prepared.memoryContext, prepared.summary)
+	prepared.messages = s.buildConversationMessages(session, goal, prepared.ragContext, prepared.memoryContext, prepared.skillReminder, prepared.summary)
 	return prepared
 }
