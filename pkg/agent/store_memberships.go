@@ -21,7 +21,7 @@ func (s *Store) SaveTeamMembership(membership *TeamMembership) error {
 
 	return s.agentGoDB.SaveTeamMembership(&store.TeamMembership{
 		AgentID:   membership.AgentID,
-		TeamID:   membership.TeamID,
+		TeamID:    membership.TeamID,
 		Role:      string(normalizeMembershipRole(membership.Role)),
 		CreatedAt: membership.CreatedAt,
 		UpdatedAt: membership.UpdatedAt,
@@ -69,8 +69,8 @@ func convertToTeamMemberships(memberships []*store.TeamMembership) []TeamMembers
 	for i, m := range memberships {
 		result[i] = TeamMembership{
 			AgentID:   m.AgentID,
-			TeamID:   m.TeamID,
-			TeamName: m.TeamName,
+			TeamID:    m.TeamID,
+			TeamName:  m.TeamName,
 			Role:      normalizeMembershipRole(AgentKind(m.Role)),
 			CreatedAt: m.CreatedAt,
 			UpdatedAt: m.UpdatedAt,

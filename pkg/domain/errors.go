@@ -16,7 +16,7 @@ var (
 	ErrProviderNotFound    = errors.New("provider not found")
 
 	// Withholdable errors - these can be recovered from with compaction/retry
-	ErrContextTooLong   = errors.New("context too long")
+	ErrContextTooLong  = errors.New("context too long")
 	ErrMaxOutputTokens = errors.New("max output tokens exceeded")
 	ErrRateLimited     = errors.New("rate limited")
 )

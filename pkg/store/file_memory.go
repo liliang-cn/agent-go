@@ -1123,12 +1123,12 @@ func (s *FileMemoryStore) SelectRelevantHeadersWithLLM(ctx context.Context, llm 
 	for i, h := range headers {
 		filename := fmt.Sprintf("%s.md", h.ID)
 		validFilenames[filename] = h
-		
+
 		scopeInfo := string(h.ScopeType)
 		if h.ScopeID != "" {
 			scopeInfo += ":" + h.ScopeID
 		}
-		
+
 		manifest.WriteString(fmt.Sprintf("- %s [%s]: \"%s\"\n", filename, scopeInfo, h.Summary))
 		if i > 50 { // Cap manifest size
 			break

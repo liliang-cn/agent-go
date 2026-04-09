@@ -68,12 +68,12 @@ type HookData struct {
 	Metadata  map[string]interface{} `json:"metadata,omitempty"`
 
 	// Stop hook fields
-	PreventContinuation bool     `json:"prevent_continuation,omitempty"`
-	StopReason          string   `json:"stop_reason,omitempty"`
-	HookOutput          string   `json:"hook_output,omitempty"`
-	HookError           string   `json:"hook_error,omitempty"`
-	HookExitCode        int      `json:"hook_exit_code,omitempty"`
-	DurationMs          int64    `json:"duration_ms,omitempty"`
+	PreventContinuation bool   `json:"prevent_continuation,omitempty"`
+	StopReason          string `json:"stop_reason,omitempty"`
+	HookOutput          string `json:"hook_output,omitempty"`
+	HookError           string `json:"hook_error,omitempty"`
+	HookExitCode        int    `json:"hook_exit_code,omitempty"`
+	DurationMs          int64  `json:"duration_ms,omitempty"`
 }
 
 // StopHookResult is returned by stop hooks to control continuation behavior

@@ -17,8 +17,8 @@ func (s *Store) SaveSharedTask(task *SharedTask) error {
 	return s.agentGoDB.SaveSharedTask(&store.SharedTask{
 		ID:          task.ID,
 		SessionID:   task.SessionID,
-		TeamID:     task.TeamID,
-		TeamName:   task.TeamName,
+		TeamID:      task.TeamID,
+		TeamName:    task.TeamName,
 		CaptainName: task.CaptainName,
 		AgentNames:  task.AgentNames,
 		Prompt:      task.Prompt,
@@ -44,8 +44,8 @@ func (s *Store) ListSharedTasksPersisted() ([]*SharedTask, error) {
 		task := &SharedTask{
 			ID:          t.ID,
 			SessionID:   t.SessionID,
-			TeamID:     t.TeamID,
-			TeamName:   t.TeamName,
+			TeamID:      t.TeamID,
+			TeamName:    t.TeamName,
 			CaptainName: t.CaptainName,
 			AgentNames:  t.AgentNames,
 			Prompt:      t.Prompt,

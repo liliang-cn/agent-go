@@ -341,7 +341,17 @@ func configuredMCPServerRows(cfg *config.Config, serverFilter string) ([]mcpList
 		return nil, fmt.Errorf("config is required")
 	}
 
-	mcpCfg := cfg.MCP
+	mcpCfg := mcp.Config{
+		Enabled:               cfg.MCP.Enabled,
+		LogLevel:              cfg.MCP.LogLevel,
+		DefaultTimeout:        cfg.MCP.DefaultTimeout,
+		MaxConcurrentRequests: cfg.MCP.MaxConcurrentRequests,
+		HealthCheckInterval:   cfg.MCP.HealthCheckInterval,
+		Servers:               append([]string(nil), cfg.MCP.Servers...),
+		ServersConfigPath:     cfg.MCP.ServersConfigPath,
+		FilesystemDirs:        append([]string(nil), cfg.MCP.FilesystemDirs...),
+		FilesystemIgnore:      append([]string(nil), cfg.MCP.FilesystemIgnore...),
+	}
 	mcpCfg.LoadedServers = nil
 	if err := mcpCfg.LoadServersFromJSON(); err != nil {
 		return nil, fmt.Errorf("failed to load MCP server configurations: %w", err)

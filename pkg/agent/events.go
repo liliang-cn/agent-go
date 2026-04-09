@@ -24,8 +24,8 @@ const (
 	EventTypeError    EventType = "workflow_error"
 
 	// Thinking & Streaming
-	EventTypeThinking EventType = "thinking" // Agent is processing
-	EventTypePartial  EventType = "partial"  // Streaming text output
+	EventTypeThinking  EventType = "thinking"  // Agent is processing
+	EventTypePartial   EventType = "partial"   // Streaming text output
 	EventTypeTombstone EventType = "tombstone" // Request to remove/clear partial content (e.g. after interruption)
 
 	// Tool Execution
@@ -40,7 +40,7 @@ const (
 
 	// Stop Hooks
 	EventTypeStop         EventType = "stop"          // Stop hook prevented continuation
-	EventTypeStopComplete EventType = "stop_complete"  // Stop hook executed successfully
+	EventTypeStopComplete EventType = "stop_complete" // Stop hook executed successfully
 
 	// Debug (prompts/responses, emitted when debug=true)
 	EventTypeDebug EventType = "debug"
@@ -52,7 +52,7 @@ const (
 
 // Analytics event names
 const (
-	AnalyticsAutocompactTriggered  = "tengu_autocompact_triggered"
+	AnalyticsAutocompactTriggered = "tengu_autocompact_triggered"
 	AnalyticsLLMLatency           = "tengu_llm_latency"
 	AnalyticsToolExecutionLatency = "tengu_tool_execution_latency"
 	AnalyticsQueryCompleted       = "tengu_query_completed"
@@ -90,9 +90,9 @@ type Event struct {
 	DebugType string `json:"debug_type,omitempty"` // "prompt" or "response"
 
 	// Checkpoint data (EventTypeCheckpoint only)
-	CheckpointName    string        `json:"checkpoint_name,omitempty"`
-	CheckpointStart   time.Time     `json:"checkpoint_start,omitempty"`
-	CheckpointEnd     time.Time     `json:"checkpoint_end,omitempty"`
+	CheckpointName     string        `json:"checkpoint_name,omitempty"`
+	CheckpointStart    time.Time     `json:"checkpoint_start,omitempty"`
+	CheckpointEnd      time.Time     `json:"checkpoint_end,omitempty"`
 	CheckpointDuration time.Duration `json:"checkpoint_duration,omitempty"`
 
 	// Analytics data (EventTypeAnalytics only)
@@ -121,7 +121,7 @@ func NewEvent(evtType EventType, agent *Agent) *Event {
 // NewAnalyticsEvent creates a new analytics event
 func NewAnalyticsEvent(name string, data map[string]interface{}) *Event {
 	return &Event{
-		Type:      EventTypeAnalytics,
+		Type: EventTypeAnalytics,
 		AnalyticsEvent: &AnalyticsEvent{
 			Name: name,
 			Data: data,

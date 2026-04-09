@@ -11,7 +11,7 @@ func TestResolveMemoryQueryContext(t *testing.T) {
 	svc := &Service{
 		agent:              NewAgent("Assistant"),
 		memoryScopeAgentID: "Assistant",
-		memoryScopeTeamID: "team-alpha",
+		memoryScopeTeamID:  "team-alpha",
 	}
 	session := NewSession("agent-1")
 	session.SetContext(sessionContextMemoryUserScope, "user-1")
@@ -37,7 +37,7 @@ func TestRememberMemoryQueryContext(t *testing.T) {
 
 	svc.rememberMemoryQueryContext(session, domain.MemoryQueryContext{
 		AgentID: "Assistant",
-		TeamID: "team-alpha",
+		TeamID:  "team-alpha",
 		UserID:  "user-1",
 	})
 
@@ -56,7 +56,7 @@ func TestResolveMemoryQueryContextFromContextPreservesInheritedScopeForBuiltInAg
 	svc := &Service{
 		agent:              NewAgent("Concierge"),
 		memoryScopeAgentID: "Concierge",
-		memoryScopeTeamID: "team-alpha",
+		memoryScopeTeamID:  "team-alpha",
 	}
 
 	session := NewSession("session-1")

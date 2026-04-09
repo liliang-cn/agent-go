@@ -23,29 +23,29 @@ type StreamingToolExecutor interface {
 
 // TrackedTool represents a tool call being tracked by the streaming executor.
 type TrackedTool struct {
-	ID                 string
-	Call               domain.ToolCall
-	AssistantMessage   string
-	Status             ToolStatus
-	IsConcurrencySafe  bool
-	ResultCh           chan *ToolExecutionResult // buffered channel for async result
-	Result             *ToolExecutionResult
-	PendingProgress    []interface{} // progress messages stored separately
-	Err                error
+	ID                string
+	Call              domain.ToolCall
+	AssistantMessage  string
+	Status            ToolStatus
+	IsConcurrencySafe bool
+	ResultCh          chan *ToolExecutionResult // buffered channel for async result
+	Result            *ToolExecutionResult
+	PendingProgress   []interface{} // progress messages stored separately
+	Err               error
 }
 
 // streamingToolExecutor implements StreamingToolExecutor.
 type streamingToolExecutor struct {
-	svc            *Service
-	ctx            context.Context
-	session        *Session
-	currentAgent   *Agent
-	tracked        []*TrackedTool
-	mu             sync.Mutex
-	hasErrored     bool // set to true when a Bash tool produces an error
-	discarded      bool
+	svc             *Service
+	ctx             context.Context
+	session         *Session
+	currentAgent    *Agent
+	tracked         []*TrackedTool
+	mu              sync.Mutex
+	hasErrored      bool // set to true when a Bash tool produces an error
+	discarded       bool
 	siblingCancel   context.CancelFunc // cancels all sibling tools on Bash error
-	resultCh       chan *ToolExecutionResult
+	resultCh        chan *ToolExecutionResult
 	progressResolve func() // wakes up GetRemainingResults when progress is available
 }
 
@@ -53,15 +53,15 @@ type streamingToolExecutor struct {
 func NewStreamingToolExecutor(ctx context.Context, svc *Service, session *Session, currentAgent *Agent) *streamingToolExecutor {
 	siblingCtx, siblingCancel := context.WithCancel(ctx)
 	executor := &streamingToolExecutor{
-		svc:          svc,
-		ctx:          siblingCtx,
-		session:      session,
-		currentAgent: currentAgent,
-		tracked:      make([]*TrackedTool, 0),
-		discarded:    false,
-		hasErrored:   false,
+		svc:           svc,
+		ctx:           siblingCtx,
+		session:       session,
+		currentAgent:  currentAgent,
+		tracked:       make([]*TrackedTool, 0),
+		discarded:     false,
+		hasErrored:    false,
 		siblingCancel: siblingCancel,
-		resultCh:    make(chan *ToolExecutionResult, 10), // buffered
+		resultCh:      make(chan *ToolExecutionResult, 10), // buffered
 	}
 	return executor
 }

@@ -19,14 +19,13 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/liliang-cn/cortexdb/v2 v2.15.0
 	github.com/liliang-cn/mcp-swagger-server v0.4.0
-	github.com/liliang-cn/skills-go v1.6.0
+	github.com/liliang-cn/skills-go v1.7.0
 	github.com/mark3labs/mcp-filesystem-server v0.11.1
 	github.com/mark3labs/mcp-go v0.32.0
 	github.com/mattn/go-runewidth v0.0.16
 	github.com/mattn/go-sqlite3 v1.14.32
 	github.com/modelcontextprotocol/go-sdk v1.4.1
 	github.com/openai/openai-go/v3 v3.30.0
-	github.com/pelletier/go-toml/v2 v2.2.4
 	github.com/pkoukk/tiktoken-go v0.1.8
 	github.com/qdrant/go-client v1.15.2
 	github.com/robfig/cron/v3 v3.0.1
@@ -99,6 +98,7 @@ require (
 	github.com/muesli/termenv v0.16.0 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
 	github.com/pelletier/go-toml v1.9.5 // indirect
+	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
