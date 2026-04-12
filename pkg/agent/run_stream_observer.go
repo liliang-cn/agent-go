@@ -16,6 +16,7 @@ func (s *Service) observeRunStream(session *Session, taskID, goal string, starte
 		defer close(out)
 		for evt := range upstream {
 			if evt != nil {
+				s.persistRunTaskEvent(session, taskID, evt)
 				switch evt.Type {
 				case EventTypeComplete:
 					s.persistRunTaskState(session, taskID, taskRunStateOptions{

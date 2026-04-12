@@ -106,3 +106,7 @@ func (e PermissionDeniedError) Error() string {
 	}
 	return e.Reason
 }
+
+func (e PermissionDeniedError) BlockedReason() string {
+	return e.Error()
+}

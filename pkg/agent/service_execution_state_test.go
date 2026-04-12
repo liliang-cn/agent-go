@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -47,7 +48,10 @@ func (l *serviceExecutionStateTestLLM) StreamWithTools(ctx context.Context, mess
 }
 
 func (l *serviceExecutionStateTestLLM) GenerateStructured(ctx context.Context, prompt string, schema interface{}, opts *domain.GenerationOptions) (*domain.StructuredResult, error) {
-	return nil, nil
+	return &domain.StructuredResult{
+		Valid: true,
+		Raw:   `{"intent_type":"analysis","confidence":0.9}`,
+	}, nil
 }
 
 func (l *serviceExecutionStateTestLLM) RecognizeIntent(ctx context.Context, request string) (*domain.IntentResult, error) {
@@ -138,6 +142,7 @@ func TestExecuteWithLLM_StateMachineCarriesToolRoundForward(t *testing.T) {
 		llmService:      llm,
 		agent:           agent,
 		registry:        NewRegistry(),
+		hooks:           NewHookRegistry(),
 		logger:          slog.Default(),
 		promptManager:   prompt.NewManager(),
 		toolRegistry:    NewToolRegistry(),
@@ -163,6 +168,84 @@ func TestExecuteWithLLM_StateMachineCarriesToolRoundForward(t *testing.T) {
 	}
 	if metrics.estimatedTokens <= 0 {
 		t.Fatalf("metrics.estimatedTokens = %d, want > 0", metrics.estimatedTokens)
+	}
+}
+
+func TestRunPersistsNonStreamingTaskEventsAndFrames(t *testing.T) {
+	llm := &serviceExecutionStateTestLLM{
+		results: []*domain.GenerationResult{
+			{
+				Content: "Calling the tool.",
+				ToolCalls: []domain.ToolCall{
+					{
+						ID:   "call-1",
+						Type: "function",
+						Function: domain.FunctionCall{
+							Name: "echo_tool",
+							Arguments: map[string]interface{}{
+								"msg": "hello",
+							},
+						},
+					},
+				},
+			},
+			{Content: "done"},
+		},
+	}
+
+	agent := NewAgent("Assistant")
+	agent.AddToolWithMetadata(
+		"echo_tool",
+		"Echo input",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"msg": map[string]interface{}{"type": "string"},
+			},
+		},
+		func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+			return fmt.Sprintf("echo:%v", args["msg"]), nil
+		},
+		ToolMetadata{ReadOnly: true, ConcurrencySafe: true},
+	)
+
+	svc, err := NewService(llm, nil, nil, filepath.Join(t.TempDir(), "agent.db"), nil)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+	svc.agent = agent
+	svc.llmService = llm
+	svc.registry.Register(agent)
+
+	result, err := svc.Run(context.Background(), "inspect repo")
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if result.TaskID == "" {
+		t.Fatal("expected task id from Run")
+	}
+
+	task, err := svc.store.GetTask(result.TaskID)
+	if err != nil {
+		t.Fatalf("GetTask() error = %v", err)
+	}
+	if len(task.Events) == 0 {
+		t.Fatalf("expected persisted task events, got %+v", task)
+	}
+	var hasToolCall, hasToolResult bool
+	for _, evt := range task.Events {
+		if evt.Type == string(EventTypeToolCall) {
+			hasToolCall = true
+		}
+		if evt.Type == string(EventTypeToolResult) {
+			hasToolResult = true
+		}
+	}
+	if !hasToolCall || !hasToolResult {
+		t.Fatalf("expected tool call/result events, got %+v", task.Events)
+	}
+	if len(task.Frames) < 2 {
+		t.Fatalf("expected persisted task frames, got %+v", task.Frames)
 	}
 }
 

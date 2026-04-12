@@ -208,6 +208,15 @@ func (s *Service) executeSingleToolCall(ctx context.Context, currentAgent *Agent
 	if callbacks.OnToolResult != nil {
 		callbacks.OnToolResult(toolCall.Function.Name, execResult, err, behavior)
 	}
+	if blocked, ok := execResult.(terminalRunResult); ok && blocked.Blocked {
+		result.Result = blocked.Text
+		result.Error = blocked.Text
+		result.Blocked = true
+		if continueOnError {
+			return result, nil
+		}
+		return result, nil
+	}
 	if err != nil {
 		s.logger.Error("Tool execution failed",
 			slog.String("tool", toolName),
@@ -217,6 +226,10 @@ func (s *Service) executeSingleToolCall(ctx context.Context, currentAgent *Agent
 			s.EmitDebugPrint(0, "tool_result", fmt.Sprintf("TOOL: %s\nERROR: %v", toolName, err))
 		}
 		result.Result = fmt.Sprintf("Error: %v", err)
+		result.Error = err.Error()
+		if _, blocked := blockedReasonFromError(err); blocked {
+			result.Blocked = true
+		}
 		if continueOnError {
 			return result, nil
 		}

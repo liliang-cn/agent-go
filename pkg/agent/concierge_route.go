@@ -30,6 +30,8 @@ type builtInRouteResult struct {
 	Reason             string
 	OptimizedPrompt    string
 	Result             string
+	Blocked            bool
+	DispatchTaskID     string
 	VerificationResult string
 	RouterRaw          string
 	OptimizerRaw       string
@@ -42,9 +44,18 @@ func (m *TeamManager) routeBuiltInRequest(ctx context.Context, prompt string, qu
 			mcpToolNames = append(mcpToolNames, t.Function.Name+": "+t.Function.Description)
 		}
 	}
-	return routeBuiltInRequestWithDispatcher(ctx, prompt, queryContext, mcpToolNames, func(ctx context.Context, agentName, instruction string, opts []RunOption) (string, error) {
+	result, err := routeBuiltInRequestWithDispatcher(ctx, prompt, queryContext, mcpToolNames, func(ctx context.Context, agentName, instruction string, opts []RunOption) (string, error) {
 		return m.dispatchTaskWithOptions(ctx, agentName, instruction, "", opts)
 	})
+	if err != nil || result == nil {
+		return result, err
+	}
+	if strings.TrimSpace(result.DispatchTaskID) != "" {
+		if task, getErr := m.store.GetTask(result.DispatchTaskID); getErr == nil && task != nil {
+			result.Blocked = task.Status == "blocked"
+		}
+	}
+	return result, nil
 }
 
 func routeBuiltInRequestWithDispatcher(ctx context.Context, prompt string, queryContext domain.MemoryQueryContext, availableMCPTools []string, dispatch builtInDispatchFunc) (*builtInRouteResult, error) {
@@ -105,7 +116,8 @@ func routeBuiltInRequestWithDispatcher(ctx context.Context, prompt string, query
 	}
 
 	finalPrompt := buildFinalBuiltInDispatchPrompt(prompt, optimizedPrompt, decision)
-	result, err := dispatch(ctx, decision.TargetAgent, finalPrompt, append(runOptions, WithTaskID(parentTaskID+":dispatch")))
+	dispatchTaskID := parentTaskID + ":dispatch"
+	result, err := dispatch(ctx, decision.TargetAgent, finalPrompt, append(runOptions, WithTaskID(dispatchTaskID)))
 	if err != nil {
 		return nil, err
 	}
@@ -128,6 +140,7 @@ func routeBuiltInRequestWithDispatcher(ctx context.Context, prompt string, query
 		Reason:             decision.Reason,
 		OptimizedPrompt:    finalPrompt,
 		Result:             result,
+		DispatchTaskID:     dispatchTaskID,
 		VerificationResult: verificationResult,
 		RouterRaw:          routerRaw,
 		OptimizerRaw:       optimizerRaw,

@@ -49,6 +49,8 @@ func (m *TeamManager) RegisterConciergeTools(concierge *Service) {
 			"routing_reason":      routed.Reason,
 			"optimized_prompt":    routed.OptimizedPrompt,
 			"result":              routed.Result,
+			"blocked":             routed.Blocked,
+			"dispatch_task_id":    routed.DispatchTaskID,
 			"verification_result": routed.VerificationResult,
 		}, nil
 	})

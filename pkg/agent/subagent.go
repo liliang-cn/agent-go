@@ -565,6 +565,9 @@ func (sa *SubAgent) execute(ctx context.Context) (interface{}, error) {
 				state.setStage(TurnStageCompleted, decision.Reason, 0)
 				state.setLoopTransition(decision.Transition, decision.Reason)
 				sa.emitLoopState(state.queryLoopState)
+				if decision.Blocked {
+					return terminalRunResult{Text: final, Blocked: true}, nil
+				}
 				return final, nil
 			}
 			if decision.AwaitAnswer {

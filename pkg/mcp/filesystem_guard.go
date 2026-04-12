@@ -32,6 +32,18 @@ var defaultFilesystemIgnoreNames = []string{
 	"out",
 }
 
+type FilesystemPathBlockedError struct {
+	Path string
+}
+
+func (e FilesystemPathBlockedError) Error() string {
+	return fmt.Sprintf("filesystem path is blocked by blacklist: %s", e.Path)
+}
+
+func (e FilesystemPathBlockedError) BlockedReason() string {
+	return e.Error()
+}
+
 func DefaultFilesystemIgnoreNames() []string {
 	return append([]string(nil), defaultFilesystemIgnoreNames...)
 }
@@ -117,7 +129,7 @@ func validateFilesystemToolArgs(toolName string, arguments map[string]interface{
 
 	for _, p := range paths {
 		if isBlacklistedFilesystemPath(p, ignoreNames) {
-			return fmt.Errorf("filesystem path is blocked by blacklist: %s", p)
+			return FilesystemPathBlockedError{Path: p}
 		}
 	}
 	return nil

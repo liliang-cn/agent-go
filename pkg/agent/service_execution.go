@@ -407,6 +407,12 @@ func (s *Service) executeWithLLM(ctx context.Context, goal string, intent *Inten
 		}
 
 		state.beginRound()
+		s.persistRunTaskEvent(session, currentTaskID(session), &Event{
+			Type:      EventTypeStateUpdate,
+			AgentName: state.CurrentAgent.Name(),
+			Content:   "round awaiting model",
+			Timestamp: time.Now(),
+		})
 		state.setStage(TurnStageAwaitingModel, "requesting model output", 0)
 		s.emitProgress("thinking", fmt.Sprintf("[%s] Thinking...", state.CurrentAgent.Name()), round+1, "")
 
@@ -454,16 +460,47 @@ func (s *Service) executeWithLLM(ctx context.Context, goal string, intent *Inten
 			s.emitProgress("tool_call", fmt.Sprintf("Calling %d tool(s)", len(filteredToolCalls)), round+1, "")
 			cp.start("tool_execution")
 			var toolResults []ToolExecutionResult
-			state.Messages, toolResults, err = s.executePreparedToolRound(ctx, state.CurrentAgent, session, state.Messages, result, filteredToolCalls, duplicateToolResults, ToolExecutionCallbacks{}, false)
+			beforeLen := len(state.Messages)
+			state.Messages, toolResults, err = s.executePreparedToolRound(ctx, state.CurrentAgent, session, state.Messages, result, filteredToolCalls, duplicateToolResults, s.buildRunTaskExecutionCallbacks(session), false)
 			toolDur := cp.end("tool_execution")
 			if err != nil {
-				state.setMessages(append(state.Messages, domain.Message{
+				if blocker, blocked := blockedReasonFromError(err); blocked {
+					blockedMsg := withTaskID(domain.Message{
+						Role:    "assistant",
+						Content: blocker,
+					}, currentTaskID(session))
+					state.setMessages(append(state.Messages, blockedMsg))
+					s.persistRunMessages(session, blockedMsg)
+					s.persistRunTaskEvent(session, currentTaskID(session), &Event{
+						Type:      EventTypeBlocked,
+						AgentName: state.CurrentAgent.Name(),
+						Content:   blocker,
+						Timestamp: time.Now(),
+					})
+					state.setStage(TurnStageCompleted, "tool execution blocked", 0)
+					state.setLoopTransition(queryLoopTransitionToolExecutionError, "tool execution blocked")
+					return terminalRunResult{Text: blocker, Blocked: true}, state.metricsSnapshot(), nil
+				}
+				failureMsg := withTaskID(domain.Message{
 					Role:    "assistant",
 					Content: fmt.Sprintf("Tool execution failed: %v", err),
-				}))
+				}, currentTaskID(session))
+				state.setMessages(append(state.Messages, failureMsg))
+				s.persistRunMessages(session, failureMsg)
+				s.persistRunTaskEvent(session, currentTaskID(session), &Event{
+					Type:      EventTypeError,
+					AgentName: state.CurrentAgent.Name(),
+					Content:   err.Error(),
+					Timestamp: time.Now(),
+				})
 				state.setStage(TurnStageCompleted, "tool execution failed", 0)
 				state.setLoopTransition(queryLoopTransitionToolExecutionError, "tool execution failed")
 				return nil, state.metricsSnapshot(), fmt.Errorf("tool execution failed: %w", err)
+			}
+			if s.store != nil {
+				if delta := appendNewMessagesToSession(session, beforeLen, state.Messages); len(delta) > 0 {
+					_ = s.store.SaveSession(session)
+				}
 			}
 			s.recordToolResults(ctx, session, state.CurrentAgent, goal, toolResults, cfg, round)
 			state.noteToolResults(toolResults)
@@ -478,6 +515,26 @@ func (s *Service) executeWithLLM(ctx context.Context, goal string, intent *Inten
 			decision := s.decidePostToolRound(state.Messages, currentTaskID(session), result, duplicateToolResults, toolResults, s.isPTCEnabled(), filteredToolCalls)
 			state.setMessages(decision.Messages)
 			if final := decision.Terminal; final != "" {
+				if decision.Blocked {
+					s.persistRunMessages(session, withTaskID(domain.Message{Role: "assistant", Content: final}, currentTaskID(session)))
+					s.persistRunTaskEvent(session, currentTaskID(session), &Event{
+						Type:      EventTypeBlocked,
+						AgentName: state.CurrentAgent.Name(),
+						Content:   final,
+						Timestamp: time.Now(),
+					})
+					state.setStage(TurnStageCompleted, decision.Reason, 0)
+					state.setLoopTransition(decision.Transition, decision.Reason)
+					return terminalRunResult{Text: final, Blocked: true}, state.metricsSnapshot(), nil
+				}
+				finalMsg := withTaskID(domain.Message{Role: "assistant", Content: final}, currentTaskID(session))
+				s.persistRunMessages(session, finalMsg)
+				s.persistRunTaskEvent(session, currentTaskID(session), &Event{
+					Type:      EventTypeComplete,
+					AgentName: state.CurrentAgent.Name(),
+					Content:   final,
+					Timestamp: time.Now(),
+				})
 				state.setStage(TurnStageCompleted, decision.Reason, 0)
 				state.setLoopTransition(decision.Transition, decision.Reason)
 				return final, state.metricsSnapshot(), nil
@@ -486,6 +543,12 @@ func (s *Service) executeWithLLM(ctx context.Context, goal string, intent *Inten
 				state.setStage(TurnStageAwaitingAnswer, "waiting for final answer after tool results", len(filteredToolCalls))
 			}
 			if stopResult := s.executeStopHooks(ctx, session, state.CurrentAgent, state.Goal, state.Messages, decision.ToolResults); stopResult != nil && stopResult.PreventContinuation {
+				s.persistRunTaskEvent(session, currentTaskID(session), &Event{
+					Type:      EventTypeComplete,
+					AgentName: state.CurrentAgent.Name(),
+					Content:   stopResult.StopReason,
+					Timestamp: time.Now(),
+				})
 				state.setStage(TurnStageCompleted, stopResult.StopReason, 0)
 				state.setLoopTransition(queryLoopTransitionTextResponse, stopResult.StopReason)
 				return stopResult.StopReason, state.metricsSnapshot(), nil
@@ -498,16 +561,28 @@ func (s *Service) executeWithLLM(ctx context.Context, goal string, intent *Inten
 		textDecision := decideTextRound(state.queryLoopState, toolsAvailable, state.ToolUsed, state.Nudged, result.Content, true)
 		if textDecision.Kind == textRoundDecisionContinue {
 			state.Nudged = textDecision.Prompt == toolUseNudgePrompt
-			state.setMessages(append(state.Messages, domain.Message{
+			nudgeMsg := withTaskID(domain.Message{
 				Role:    "user",
 				Content: textDecision.Prompt,
-			}))
+			}, currentTaskID(session))
+			state.setMessages(append(state.Messages, nudgeMsg))
+			s.persistRunMessages(session, nudgeMsg)
 			state.continueWith(textDecision.Transition, textDecision.Reason, state.Messages)
 			continue
 		}
 
 		state.setStage(TurnStageCompleted, textDecision.Reason, 0)
 		state.setLoopTransition(textDecision.Transition, textDecision.Reason)
+		s.persistRunMessages(session, withTaskID(domain.Message{
+			Role:    "assistant",
+			Content: result.Content,
+		}, currentTaskID(session)))
+		s.persistRunTaskEvent(session, currentTaskID(session), &Event{
+			Type:      EventTypeComplete,
+			AgentName: state.CurrentAgent.Name(),
+			Content:   result.Content,
+			Timestamp: time.Now(),
+		})
 		finalContent, err := s.completeTextOnlyTurn(ctx, session, state.CurrentAgent, goal, round+1, state.TotalToolCalls, cfg, result.Content)
 		return finalContent, state.metricsSnapshot(), err
 	}
@@ -641,6 +716,7 @@ type toolRoundOutcome struct {
 	Messages    []domain.Message
 	ToolResults []ToolExecutionResult
 	Terminal    string
+	Blocked     bool
 	AwaitAnswer bool
 }
 
@@ -651,6 +727,16 @@ func (s *Service) buildToolRoundOutcome(messages []domain.Message, taskID string
 		Messages:    nextMessages,
 		ToolResults: allResults,
 	}
+	if blocked := blockedToolExecutionResult(allResults); blocked != "" {
+		outcome.Terminal = blocked
+		outcome.Blocked = true
+		return outcome
+	}
+	if final, blocked := terminalToolResultFromToolRound(filteredToolCalls, allResults); final != "" {
+		outcome.Terminal = final
+		outcome.Blocked = blocked
+		return outcome
+	}
 	if final := terminalAnswerFromToolRound(ptcEnabled, filteredToolCalls, allResults); final != "" {
 		outcome.Terminal = final
 		return outcome
@@ -660,6 +746,21 @@ func (s *Service) buildToolRoundOutcome(messages []domain.Message, taskID string
 		outcome.AwaitAnswer = true
 	}
 	return outcome
+}
+
+func terminalToolResultFromToolRound(filteredToolCalls []domain.ToolCall, toolResults []ToolExecutionResult) (string, bool) {
+	for _, toolCall := range filteredToolCalls {
+		if !isTaskTerminalToolName(toolCall.Function.Name) {
+			continue
+		}
+		for _, result := range toolResults {
+			if strings.TrimSpace(result.ToolCallID) == strings.TrimSpace(toolCall.ID) {
+				return strings.TrimSpace(toolResultToString(result.Result)), toolCall.Function.Name == "task_blocked"
+			}
+		}
+		return taskTerminalToolResult(toolCall.Function.Name, toolCall.Function.Arguments, ""), toolCall.Function.Name == "task_blocked"
+	}
+	return "", false
 }
 
 func buildUserContextMetaMessage(userCtx *UserContext) *domain.Message {
@@ -1217,6 +1318,8 @@ type ToolExecutionResult struct {
 	ToolName   string      `json:"tool_name"`
 	ToolType   string      `json:"tool_type"`
 	Result     interface{} `json:"result"`
+	Error      string      `json:"error,omitempty"`
+	Blocked    bool        `json:"blocked,omitempty"`
 }
 
 // formatToolResults formats tool execution results for LLM consumption

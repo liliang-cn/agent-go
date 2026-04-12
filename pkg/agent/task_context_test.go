@@ -269,3 +269,27 @@ func TestTaskServiceSubmitReturnsCanonicalTask(t *testing.T) {
 		t.Fatalf("unexpected submitted task: %+v", submitted)
 	}
 }
+
+func TestPersistRunTaskStateSetsParentTaskID(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "agentgo.db"))
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	svc := &Service{store: store}
+	session := NewSession("agent-1")
+	session.SetContext("runtime.parent_task_id", "parent-123")
+
+	svc.persistRunTaskState(session, "child-1", taskRunStateOptions{
+		status:    "running",
+		input:     "do work",
+		createdAt: time.Now(),
+	})
+
+	task, err := store.GetTask("child-1")
+	if err != nil {
+		t.Fatalf("GetTask() error = %v", err)
+	}
+	if task.ParentTaskID != "parent-123" {
+		t.Fatalf("expected parent task id to persist, got %q", task.ParentTaskID)
+	}
+}

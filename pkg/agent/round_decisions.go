@@ -57,6 +57,7 @@ type postToolRoundDecision struct {
 	Messages    []domain.Message
 	ToolResults []ToolExecutionResult
 	Terminal    string
+	Blocked     bool
 	AwaitAnswer bool
 	Reason      string
 	Transition  string
@@ -87,6 +88,7 @@ func (s *Service) decidePostToolRound(messages []domain.Message, taskID string, 
 		Messages:    outcome.Messages,
 		ToolResults: outcome.ToolResults,
 		Terminal:    outcome.Terminal,
+		Blocked:     outcome.Blocked,
 		AwaitAnswer: outcome.AwaitAnswer,
 		Reason:      "tool batch completed; continue to next turn",
 		Transition:  queryLoopTransitionToolBatch,

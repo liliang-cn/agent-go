@@ -12,6 +12,7 @@ type conciergeDirectRouteResult struct {
 	intentType   string
 	reason       string
 	optimized    string
+	blocked      bool
 	verification string
 	finalText    string
 	rawResult    map[string]interface{}
@@ -86,6 +87,7 @@ func (s *Service) executeDirectConciergeRoute(ctx context.Context, session *Sess
 			"dispatch_intent":      parsed.intentType,
 			"dispatch_reason":      parsed.reason,
 			"dispatch_result":      parsed.finalText,
+			"dispatch_blocked":     parsed.blocked,
 			"optimized_prompt":     parsed.optimized,
 			"verification_result":  parsed.verification,
 			"route_builtin_result": parsed.rawResult,
@@ -152,6 +154,9 @@ func parseConciergeDirectRouteResult(raw interface{}) conciergeDirectRouteResult
 	result.intentType = strings.TrimSpace(metadataString(payload, "intent_type"))
 	result.reason = strings.TrimSpace(metadataString(payload, "routing_reason"))
 	result.optimized = strings.TrimSpace(metadataString(payload, "optimized_prompt"))
+	if blocked, ok := payload["blocked"].(bool); ok {
+		result.blocked = blocked
+	}
 	result.verification = strings.TrimSpace(metadataString(payload, "verification_result"))
 	result.finalText = strings.TrimSpace(metadataString(payload, "result"))
 	if result.finalText == "" {

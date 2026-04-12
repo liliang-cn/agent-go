@@ -228,6 +228,10 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 
 		// 6. Handle Result & Consolidate Tool Outputs
 		toolResults := collector.collect()
+		if blocked := blockedToolExecutionResult(toolResults); blocked != "" {
+			r.blockRun(goal, blocked, messages, true)
+			return
+		}
 
 		// Consistency check: ensure all tool calls emitted during LLM turn have results
 		r.ensureToolResultConsistency()
@@ -304,6 +308,10 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 				}
 				r.CheckpointEnd("tool_execution")
 				toolResults = append(toolResults, syncToolResults...)
+				if blocked := blockedToolExecutionResult(toolResults); blocked != "" {
+					r.blockRun(goal, blocked, messages, true)
+					return
+				}
 			}
 
 			decision := r.svc.decidePostToolRound(messages, taskID, streamResult, duplicateToolResults, toolResults, r.svc.isPTCEnabled(), filteredToolCalls)
@@ -759,8 +767,36 @@ func (r *Runtime) executeAsyncTool(ctx context.Context, tc domain.ToolCall, wg *
 			ToolCallID: tc.ID,
 			ToolName:   tc.Function.Name,
 			Result:     res,
+			Error:      errorString(err),
+			Blocked:    isBlockedError(err),
 		}
 	}
+}
+
+func blockedToolExecutionResult(results []ToolExecutionResult) string {
+	for _, result := range results {
+		if result.Blocked {
+			if result.Error != "" {
+				return result.Error
+			}
+			if text := strings.TrimSpace(toolResultToString(result.Result)); text != "" {
+				return text
+			}
+		}
+	}
+	return ""
+}
+
+func isBlockedError(err error) bool {
+	_, ok := blockedReasonFromError(err)
+	return ok
+}
+
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 func (r *Runtime) debugEnabled() bool {

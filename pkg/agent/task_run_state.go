@@ -4,6 +4,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 	taskpkg "github.com/liliang-cn/agent-go/v2/pkg/task"
 )
@@ -22,6 +23,12 @@ func (s *Service) persistRunTaskState(session *Session, taskID string, opts task
 	if s == nil || s.store == nil || strings.TrimSpace(taskID) == "" {
 		return
 	}
+	parentTaskID := ""
+	if session != nil {
+		if raw, ok := session.Context["runtime.parent_task_id"].(string); ok {
+			parentTaskID = strings.TrimSpace(raw)
+		}
+	}
 	task, err := s.store.GetTask(taskID)
 	if err != nil || task == nil {
 		task = &taskpkg.Task{
@@ -29,10 +36,14 @@ func (s *Service) persistRunTaskState(session *Session, taskID string, opts task
 			Kind:             taskpkg.KindAgent,
 			SessionID:        sessionIDOrEmpty(session),
 			RuntimeSessionID: sessionIDOrEmpty(session),
+			ParentTaskID:     parentTaskID,
 			CreatedAt:        firstNonZeroTime(opts.createdAt, time.Now()),
 			Source:           "run",
 			SourceID:         sessionIDOrEmpty(session),
 		}
+	}
+	if task.ParentTaskID == "" && parentTaskID != "" {
+		task.ParentTaskID = parentTaskID
 	}
 	task.Status = opts.status
 	if text := strings.TrimSpace(opts.input); text != "" {
@@ -58,4 +69,95 @@ func (s *Service) persistRunTaskState(session *Session, taskID string, opts task
 	if session != nil && opts.appendError {
 		_ = s.store.SaveSession(session)
 	}
+}
+
+func (s *Service) persistRunTaskEvent(session *Session, taskID string, evt *Event) {
+	if s == nil || s.store == nil || strings.TrimSpace(taskID) == "" || evt == nil {
+		return
+	}
+	if strings.TrimSpace(evt.ID) == "" {
+		evt.ID = uuid.NewString()
+	}
+	parentTaskID := ""
+	if session != nil {
+		if raw, ok := session.Context["runtime.parent_task_id"].(string); ok {
+			parentTaskID = strings.TrimSpace(raw)
+		}
+	}
+	task, err := s.store.GetTask(taskID)
+	if err != nil || task == nil {
+		s.persistRunTaskState(session, taskID, taskRunStateOptions{
+			status:    taskpkg.StatusRunning,
+			createdAt: evt.Timestamp,
+		})
+		task, _ = s.store.GetTask(taskID)
+	}
+	if task == nil {
+		return
+	}
+
+	status := task.Status
+	switch evt.Type {
+	case EventTypeComplete:
+		status = taskpkg.StatusCompleted
+	case EventTypeBlocked:
+		status = taskpkg.StatusBlocked
+	case EventTypeError:
+		status = taskpkg.StatusFailed
+	}
+
+	task.Events = append(task.Events, taskpkg.Event{
+		ID:        evt.ID,
+		TaskID:    strings.TrimSpace(taskID),
+		SessionID: sessionIDOrEmpty(session),
+		Kind:      taskpkg.KindAgent,
+		Status:    status,
+		Type:      string(evt.Type),
+		AgentName: strings.TrimSpace(evt.AgentName),
+		Message:   strings.TrimSpace(evt.Content),
+		Runtime: map[string]any{
+			"tool_name":   evt.ToolName,
+			"tool_args":   evt.ToolArgs,
+			"tool_result": evt.ToolResult,
+		},
+		Timestamp: firstNonZeroTime(evt.Timestamp, time.Now()),
+	})
+	task.Status = status
+	if evt.Type == EventTypeComplete || evt.Type == EventTypeBlocked {
+		task.Output = strings.TrimSpace(evt.Content)
+	}
+	if evt.Type == EventTypeError {
+		task.Error = strings.TrimSpace(evt.Content)
+	}
+	if task.ParentTaskID == "" && parentTaskID != "" {
+		task.ParentTaskID = parentTaskID
+	}
+	_ = s.store.SaveTask(task)
+}
+
+func (s *Service) persistRunMessages(session *Session, messages ...domain.Message) {
+	if s == nil || s.store == nil || session == nil || len(messages) == 0 {
+		return
+	}
+	for _, message := range messages {
+		session.AddMessage(message)
+	}
+	_ = s.store.SaveSession(session)
+}
+
+func appendNewMessagesToSession(session *Session, previousLen int, messages []domain.Message) []domain.Message {
+	if session == nil {
+		return nil
+	}
+	if previousLen < 0 {
+		previousLen = 0
+	}
+	if previousLen >= len(messages) {
+		return nil
+	}
+	delta := append([]domain.Message(nil), messages[previousLen:]...)
+	for _, message := range delta {
+		session.AddMessage(message)
+	}
+	return delta
 }

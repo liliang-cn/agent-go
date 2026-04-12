@@ -575,6 +575,12 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 		input:     goal,
 		createdAt: startTime,
 	})
+	s.persistRunTaskEvent(session, taskID, &Event{
+		Type:      EventTypeStart,
+		AgentName: s.agent.Name(),
+		Content:   goal,
+		Timestamp: startTime,
+	})
 	defer func() {
 		if runErr == nil {
 			return
@@ -605,8 +611,23 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 			runErr = err
 			return nil, runErr
 		}
-		routedResult.StartedAt = &startTime
 		completedAt := time.Now()
+		s.persistRunTaskEvent(session, taskID, &Event{
+			Type:      EventTypeToolCall,
+			AgentName: s.agent.Name(),
+			ToolName:  "route_builtin_request",
+			ToolArgs:  map[string]interface{}{"prompt": normalizeTaskPrompt(goal)},
+			Timestamp: time.Now(),
+		})
+		s.persistRunTaskEvent(session, taskID, &Event{
+			Type:       EventTypeToolResult,
+			AgentName:  s.agent.Name(),
+			ToolName:   "route_builtin_request",
+			ToolResult: routedResult.Metadata["route_builtin_result"],
+			Content:    fmt.Sprintf("%v", routedResult.FinalResult),
+			Timestamp:  completedAt,
+		})
+		routedResult.StartedAt = &startTime
 		routedResult.CompletedAt = &completedAt
 		routedResult.EstimatedTokens = s.estimateRunTokens(goal, routedResult.FinalResult)
 		session.AddMessage(withTaskID(domain.Message{
@@ -619,8 +640,12 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 		}, taskID))
 		_ = s.store.SaveSession(session)
 		routedResult.TaskID = taskID
+		status := taskpkg.StatusCompleted
+		if blocked, ok := routedResult.Metadata["dispatch_blocked"].(bool); ok && blocked {
+			status = taskpkg.StatusBlocked
+		}
 		s.persistRunTaskState(session, taskID, taskRunStateOptions{
-			status:     taskpkg.StatusCompleted,
+			status:     status,
 			input:      goal,
 			output:     fmt.Sprintf("%v", routedResult.FinalResult),
 			createdAt:  startTime,
@@ -674,6 +699,11 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 
 	// Skip verification for faster response
 	currentResult := finalResult
+	blockedResult := false
+	if terminal, ok := finalResult.(terminalRunResult); ok {
+		currentResult = terminal.Text
+		blockedResult = terminal.Blocked
+	}
 
 	// Add messages to session before saving
 	session.AddMessage(withTaskID(domain.Message{
@@ -689,11 +719,15 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 
 	// Create a simple plan to track this execution
 	now := time.Now()
+	planStatus := StatusCompleted
+	if blockedResult {
+		planStatus = StatusFailed
+	}
 	plan := &Plan{
 		ID:        uuid.New().String(),
 		SessionID: session.GetID(),
 		Goal:      goal,
-		Status:    StatusCompleted,
+		Status:    planStatus,
 		CreatedAt: now,
 		UpdatedAt: now,
 		Steps: []Step{
@@ -738,8 +772,12 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 		result.ToolsUsed = uniqueStrings(toolNamesFromPTC(ptcRes))
 		result.EstimatedTokens = s.estimateRunTokens(goal, currentResult) + s.estimatePTCTokens(ptcRes)
 	}
+	finalStatus := taskpkg.StatusCompleted
+	if blockedResult {
+		finalStatus = taskpkg.StatusBlocked
+	}
 	s.persistRunTaskState(session, taskID, taskRunStateOptions{
-		status:     taskpkg.StatusCompleted,
+		status:     finalStatus,
 		input:      goal,
 		output:     result.Text(),
 		createdAt:  startTime,
