@@ -11,6 +11,7 @@ import (
 
 	"github.com/liliang-cn/agent-go/v2/pkg/mcp"
 	"github.com/liliang-cn/agent-go/v2/pkg/pool"
+	"github.com/liliang-cn/agent-go/v2/pkg/resource"
 	"github.com/liliang-cn/agent-go/v2/pkg/store"
 )
 
@@ -259,6 +260,7 @@ func (c *Config) resetDBBackedRuntime() {
 	c.RAG.Embedding = EmbeddingConfig{}
 	c.Memory.StoreType = MemoryStoreTypeFile
 	c.MCP.Servers = nil
+	c.MCP.InlineServers = nil
 	c.Skills.Paths = nil
 }
 
@@ -279,6 +281,7 @@ func (c *Config) LoadDBBackedRuntimeFrom(db *store.AgentGoDB) error {
 		return fmt.Errorf("agentgo db is required")
 	}
 
+	initialMemoryStoreType := c.Memory.StoreType
 	c.resetDBBackedRuntime()
 
 	debugValue, err := ensureDBConfigValue(db, "debug", boolString(c.Debug))
@@ -293,7 +296,7 @@ func (c *Config) LoadDBBackedRuntimeFrom(db *store.AgentGoDB) error {
 	if err != nil {
 		return err
 	}
-	memoryStoreType, err := ensureDBConfigValue(db, "memory.store_type", string(c.Memory.StoreType))
+	memoryStoreType, err := ensureDBConfigValue(db, "memory.store_type", string(initialMemoryStoreType))
 	if err != nil {
 		return err
 	}
@@ -348,15 +351,204 @@ func (c *Config) LoadDBBackedRuntimeFrom(db *store.AgentGoDB) error {
 	c.RAG.Embedding.Strategy = pool.SelectionStrategy(embeddingStrategy)
 	c.RAG.Embedding.Providers = enabledEmbeddingProviders(embeddingProviders)
 
+	if resources, resErr := db.ListResources(); resErr == nil {
+		c.applyRuntimeResources(resources)
+	}
+
 	if paths, err := dbConfigStringSlice(db, "skills.paths"); err == nil {
-		c.Skills.Paths = paths
+		for _, path := range paths {
+			c.Skills.Paths = appendIfMissing(c.Skills.Paths, path)
+		}
 	}
 	if paths, err := dbConfigStringSlice(db, "mcp.paths"); err == nil {
-		c.MCP.Servers = paths
+		for _, path := range paths {
+			c.MCP.Servers = appendIfMissing(c.MCP.Servers, path)
+		}
 	}
 	c.resolveMCPServerPaths()
 
 	return nil
+}
+
+func (c *Config) applyRuntimeResources(resources []resource.Resource) {
+	for _, res := range resources {
+		switch res.Kind {
+		case resource.KindLLM:
+			if provider, ok := llmProviderFromResource(res); ok {
+				c.LLM.Providers = appendOrReplaceProvider(c.LLM.Providers, provider)
+			}
+		case resource.KindMemory:
+			if err := c.SetMemoryStoreTypeString(res.Name); err == nil {
+				c.applyMemoryLayout()
+			}
+		case resource.KindRAG:
+			if embeddingModel := resourceString(res.Metadata, "embedding_model"); embeddingModel != "" {
+				c.RAG.EmbeddingModel = embeddingModel
+				c.RAG.Enabled = true
+			}
+		case resource.KindMCP:
+			if path := firstNonEmptyConfig(resourceString(res.Metadata, "config_path"), res.Provider); path != "" {
+				c.MCP.Servers = appendIfMissing(c.MCP.Servers, path)
+			}
+			if server, ok := mcpServerFromResource(res); ok {
+				c.MCP.InlineServers = append(c.MCP.InlineServers, server)
+			}
+		case resource.KindSkill:
+			if path := firstNonEmptyConfig(resourceString(res.Metadata, "path"), res.Provider); path != "" {
+				c.Skills.Paths = appendIfMissing(c.Skills.Paths, path)
+			}
+		}
+	}
+}
+
+func llmProviderFromResource(res resource.Resource) (pool.Provider, bool) {
+	model := firstNonEmptyConfig(resourceString(res.Metadata, "model_name"), res.Name)
+	baseURL := strings.TrimSpace(res.Provider)
+	key := resourceString(res.Metadata, "key")
+	if strings.TrimSpace(model) == "" || baseURL == "" {
+		return pool.Provider{}, false
+	}
+	enabled := resourceBool(res.Metadata, "enabled", true)
+	if !enabled {
+		return pool.Provider{}, false
+	}
+	maxConcurrency := resourceInt(res.Metadata, "max_concurrency", 5)
+	capability := resourceInt(res.Metadata, "capability", 3)
+	name := firstNonEmptyConfig(resourceString(res.Metadata, "provider_name"), res.Name, strings.TrimPrefix(res.ID, "llm:"))
+	return pool.Provider{
+		Name:           name,
+		BaseURL:        baseURL,
+		Key:            key,
+		ModelName:      model,
+		Models:         resourceStringSlice(res.Metadata, "models"),
+		MaxConcurrency: maxConcurrency,
+		Capability:     capability,
+	}, true
+}
+
+func mcpServerFromResource(res resource.Resource) (mcp.ServerConfig, bool) {
+	raw, ok := res.Metadata["server_config"]
+	if !ok {
+		return mcp.ServerConfig{}, false
+	}
+	payload, err := json.Marshal(raw)
+	if err != nil {
+		return mcp.ServerConfig{}, false
+	}
+	var server mcp.ServerConfig
+	if err := json.Unmarshal(payload, &server); err != nil {
+		return mcp.ServerConfig{}, false
+	}
+	server.Name = firstNonEmptyConfig(server.Name, res.Name, strings.TrimPrefix(res.ID, "mcp:"))
+	if server.Name == "" {
+		return mcp.ServerConfig{}, false
+	}
+	if server.Type == "" {
+		server.Type = mcp.ServerTypeStdio
+	}
+	if !server.AutoStart {
+		server.AutoStart = resourceBool(res.Metadata, "auto_start", true)
+	}
+	return server, true
+}
+
+func appendOrReplaceProvider(providers []pool.Provider, provider pool.Provider) []pool.Provider {
+	for i := range providers {
+		if strings.EqualFold(providers[i].Name, provider.Name) {
+			providers[i] = provider
+			return providers
+		}
+	}
+	return append(providers, provider)
+}
+
+func appendIfMissing(values []string, value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return values
+	}
+	for _, existing := range values {
+		if strings.TrimSpace(existing) == value {
+			return values
+		}
+	}
+	return append(values, value)
+}
+
+func resourceString(metadata map[string]any, key string) string {
+	if metadata == nil {
+		return ""
+	}
+	value, _ := metadata[key].(string)
+	return strings.TrimSpace(value)
+}
+
+func resourceBool(metadata map[string]any, key string, fallback bool) bool {
+	if metadata == nil {
+		return fallback
+	}
+	switch value := metadata[key].(type) {
+	case bool:
+		return value
+	case string:
+		parsed, err := strconv.ParseBool(value)
+		if err == nil {
+			return parsed
+		}
+	}
+	return fallback
+}
+
+func resourceInt(metadata map[string]any, key string, fallback int) int {
+	if metadata == nil {
+		return fallback
+	}
+	switch value := metadata[key].(type) {
+	case int:
+		return value
+	case float64:
+		return int(value)
+	case string:
+		parsed, err := strconv.Atoi(value)
+		if err == nil {
+			return parsed
+		}
+	}
+	return fallback
+}
+
+func resourceStringSlice(metadata map[string]any, key string) []string {
+	if metadata == nil {
+		return nil
+	}
+	switch value := metadata[key].(type) {
+	case []string:
+		return append([]string(nil), value...)
+	case []any:
+		out := make([]string, 0, len(value))
+		for _, item := range value {
+			if str, ok := item.(string); ok && strings.TrimSpace(str) != "" {
+				out = append(out, strings.TrimSpace(str))
+			}
+		}
+		return out
+	case string:
+		if strings.TrimSpace(value) == "" {
+			return nil
+		}
+		return []string{strings.TrimSpace(value)}
+	default:
+		return nil
+	}
+}
+
+func firstNonEmptyConfig(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func ensureDBConfigValue(db *store.AgentGoDB, key, fallback string) (string, error) {

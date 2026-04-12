@@ -2,8 +2,12 @@ package agent
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 )
 
 func newTaskTestManager() *TeamManager {
@@ -51,6 +55,40 @@ func TestSubscribeTaskReplaysBacklogForTerminalTask(t *testing.T) {
 	}
 	if got[0] != TaskEventTypeCreated || got[1] != TaskEventTypeCompleted {
 		t.Fatalf("unexpected event sequence: %v", got)
+	}
+}
+
+func TestSubscribeTaskReplaysBlockedTerminalTask(t *testing.T) {
+	manager := newTaskTestManager()
+	task := &AsyncTask{
+		ID:        "task-blocked",
+		SessionID: "session-blocked",
+		Kind:      AsyncTaskKindAgent,
+		Status:    AsyncTaskStatusQueued,
+		AgentName: "Operator",
+		CreatedAt: time.Now(),
+	}
+	manager.upsertAsyncTask(task)
+	manager.blockAsyncTask(task.ID, "missing permission", "Operator")
+
+	events, _, err := manager.SubscribeTask(task.ID)
+	if err != nil {
+		t.Fatalf("SubscribeTask() error = %v", err)
+	}
+	var got []TaskEventType
+	for evt := range events {
+		got = append(got, evt.Type)
+	}
+
+	if len(got) != 1 || got[0] != TaskEventTypeBlocked {
+		t.Fatalf("unexpected replayed events: %v", got)
+	}
+	unified, err := manager.GetUnifiedTask(task.ID)
+	if err != nil {
+		t.Fatalf("GetUnifiedTask() error = %v", err)
+	}
+	if unified.Status != "blocked" || unified.Error != "missing permission" {
+		t.Fatalf("expected blocked canonical task, got %+v", unified)
 	}
 }
 
@@ -126,5 +164,65 @@ func TestEnsureAsyncTaskForSharedTaskIndexesSession(t *testing.T) {
 	sessionTasks := manager.ListSessionTasks("session-3", 10)
 	if len(sessionTasks) != 1 || sessionTasks[0].ID != shared.ID {
 		t.Fatalf("unexpected session tasks: %#v", sessionTasks)
+	}
+}
+
+func TestExecuteSharedTaskStreamCreatesChildTasksPerAgent(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "agent.db"))
+	if err != nil {
+		t.Fatalf("new store failed: %v", err)
+	}
+	manager := NewTeamManager(store)
+	manager.builtInStreamDispatchOverride = func(ctx context.Context, agentName, instruction string, runOptions []RunOption) (<-chan *Event, error) {
+		session := NewSession(uuid.NewString())
+		cfg := DefaultRunConfig()
+		for _, opt := range runOptions {
+			opt(cfg)
+		}
+		if cfg.SessionID != "" {
+			session.ID = cfg.SessionID
+		}
+		taskID := cfg.TaskID
+		events := make(chan *Event, 2)
+		go func() {
+			defer close(events)
+			session.AddMessage(domain.Message{Role: "user", Content: instruction, TaskID: taskID})
+			_ = store.SaveSession(session)
+			session.AddMessage(domain.Message{Role: "assistant", Content: "done by " + agentName, TaskID: taskID})
+			_ = store.SaveSession(session)
+			events <- &Event{Type: EventTypeComplete, AgentName: agentName, Content: "done by " + agentName, Timestamp: time.Now()}
+		}()
+		return events, nil
+	}
+
+	shared := &SharedTask{
+		ID:          "shared-root",
+		SessionID:   "team-session",
+		TeamID:      "team-1",
+		TeamName:    "AgentGo Team",
+		CaptainName: "Captain",
+		AgentNames:  []string{"Assistant", "Operator"},
+		Prompt:      "do shared work",
+		Status:      SharedTaskStatusQueued,
+		CreatedAt:   time.Now(),
+	}
+
+	manager.executeSharedTaskStream(context.Background(), shared)
+
+	tasks, err := store.ListTasks(20)
+	if err != nil {
+		t.Fatalf("ListTasks() error = %v", err)
+	}
+	var childCount int
+	for _, task := range tasks {
+		if task == nil {
+			continue
+		}
+		if task.ParentTaskID == "shared-root" {
+			childCount++
+		}
+	}
+	if childCount != 2 {
+		t.Fatalf("expected 2 child tasks for shared team task, got %d", childCount)
 	}
 }

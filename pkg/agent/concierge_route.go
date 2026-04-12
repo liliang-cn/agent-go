@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/google/uuid"
 	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 )
 
@@ -57,7 +58,10 @@ func routeBuiltInRequestWithDispatcher(ctx context.Context, prompt string, query
 
 	runOptions := []RunOption{
 		WithInheritedMemoryScope(queryContext.AgentID, queryContext.TeamID, queryContext.UserID),
+		WithPTCEnabled(false),
 	}
+	parentTaskID := uuid.NewString()
+	runOptions = append(runOptions, WithParentTaskID(parentTaskID))
 
 	var (
 		routerRaw    string
@@ -71,12 +75,12 @@ func routeBuiltInRequestWithDispatcher(ctx context.Context, prompt string, query
 
 	go func() {
 		defer wg.Done()
-		routerRaw, routerErr = dispatch(ctx, defaultIntentRouterAgentName, buildIntentRouterTaskPrompt(prompt, availableMCPTools), runOptions)
+		routerRaw, routerErr = dispatch(ctx, defaultIntentRouterAgentName, buildIntentRouterTaskPrompt(prompt, availableMCPTools), append(runOptions, WithTaskID(parentTaskID+":router")))
 	}()
 
 	go func() {
 		defer wg.Done()
-		optimizerRaw, optimizerErr = dispatch(ctx, defaultPromptOptimizerAgentName, buildPromptOptimizerTaskPrompt(prompt), runOptions)
+		optimizerRaw, optimizerErr = dispatch(ctx, defaultPromptOptimizerAgentName, buildPromptOptimizerTaskPrompt(prompt), append(runOptions, WithTaskID(parentTaskID+":optimizer")))
 	}()
 
 	wg.Wait()
@@ -101,7 +105,7 @@ func routeBuiltInRequestWithDispatcher(ctx context.Context, prompt string, query
 	}
 
 	finalPrompt := buildFinalBuiltInDispatchPrompt(prompt, optimizedPrompt, decision)
-	result, err := dispatch(ctx, decision.TargetAgent, finalPrompt, runOptions)
+	result, err := dispatch(ctx, decision.TargetAgent, finalPrompt, append(runOptions, WithTaskID(parentTaskID+":dispatch")))
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +113,7 @@ func routeBuiltInRequestWithDispatcher(ctx context.Context, prompt string, query
 	if shouldVerifyBuiltInDispatchCompletion(prompt, decision) {
 		verifyPrompt := buildBuiltInCompletionVerificationPrompt(prompt, finalPrompt, result, decision)
 		if strings.TrimSpace(verifyPrompt) != "" {
-			if verifyRaw, verifyErr := dispatch(ctx, defaultVerifierAgentName, verifyPrompt, runOptions); verifyErr == nil {
+			if verifyRaw, verifyErr := dispatch(ctx, defaultVerifierAgentName, verifyPrompt, append(runOptions, WithTaskID(parentTaskID+":verify"))); verifyErr == nil {
 				verificationResult = strings.TrimSpace(verifyRaw)
 				if verified := applyBuiltInVerificationResult(result, verificationResult); strings.TrimSpace(verified) != "" {
 					result = verified
@@ -325,7 +329,7 @@ func buildFinalBuiltInDispatchPrompt(originalPrompt, optimizedPrompt string, dec
 		return "记住：" + optimizedPrompt
 	}
 	if strings.EqualFold(decision.TargetAgent, defaultOperatorAgentName) && !looksLikeInformationSeekingQuery(originalPrompt) {
-		return strings.TrimSpace(optimizedPrompt + "\n\nExecution contract:\n- Execute the request directly using available tools or MCP capabilities when possible.\n- Do not bounce the task back to Concierge or say you are routing it.\n- If the request is actionable and reasonable defaults suffice, choose practical defaults instead of asking unnecessary follow-up questions.\n- Before giving your final answer, explicitly verify from tool results or observed effects whether the request is actually complete, and state the concrete evidence in your answer.\n- If blocked, say exactly what blocked execution.")
+		return strings.TrimSpace(optimizedPrompt + "\n\nExecution contract:\n- Execute the request directly using available tools or MCP capabilities when possible.\n- Do not bounce the task back to Concierge or say you are routing it.\n- If the request is actionable and reasonable defaults suffice, choose practical defaults instead of asking unnecessary follow-up questions.\n- Before giving your final answer, explicitly verify from tool results or observed effects whether the request is actually complete, and state the concrete evidence in your answer.\n- If blocked, call task_blocked with exactly what blocked execution and what was attempted.\n\n" + FinishOrBlockContract)
 	}
 	return optimizedPrompt
 }
@@ -334,7 +338,8 @@ func shouldVerifyBuiltInDispatchCompletion(originalPrompt string, decision built
 	if !strings.EqualFold(decision.TargetAgent, defaultOperatorAgentName) {
 		return false
 	}
-	return promptLooksLikeOperatorControlRequest(originalPrompt) || strings.EqualFold(strings.TrimSpace(decision.IntentType), "tool_execution") || strings.EqualFold(strings.TrimSpace(decision.IntentType), "device_or_robot_control")
+	intentType := strings.TrimSpace(decision.IntentType)
+	return strings.EqualFold(intentType, "tool_execution") || strings.EqualFold(intentType, "device_or_robot_control")
 }
 
 func buildBuiltInCompletionVerificationPrompt(originalPrompt, executedPrompt, previousResult string, decision builtInRouteDecision) string {

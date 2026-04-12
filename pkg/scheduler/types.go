@@ -110,6 +110,8 @@ type Scheduler interface {
 type SchedulerConfig struct {
 	// DatabasePath is the path to the SQLite database
 	DatabasePath string `mapstructure:"database_path"`
+	// CanonicalDatabasePath mirrors scheduler tasks into AgentGo's canonical tasks table.
+	CanonicalDatabasePath string `mapstructure:"canonical_database_path"`
 
 	// MaxConcurrentTasks is the maximum number of tasks that can run concurrently
 	MaxConcurrentTasks int `mapstructure:"max_concurrent_tasks"`

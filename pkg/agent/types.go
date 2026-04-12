@@ -189,6 +189,8 @@ type RunConfig struct {
 
 	// TaskID identifies the execution task boundary inside a session.
 	TaskID string
+	// ParentTaskID links nested/child task invocations back to their caller task.
+	ParentTaskID string
 
 	// Inherited memory scope lets a delegated run keep the caller's durable memory namespace
 	// without reusing the same session ID.
@@ -198,6 +200,10 @@ type RunConfig struct {
 
 	// Stream enables streaming mode for real-time events
 	Stream bool
+
+	// DisablePTC forces this run through direct function calling even if the
+	// service has PTC enabled.
+	DisablePTC bool
 }
 
 // ErrorHandlerFunc handles errors during agent execution
@@ -291,6 +297,10 @@ func WithTaskID(taskID string) RunOption {
 	return func(c *RunConfig) { c.TaskID = taskID }
 }
 
+func WithParentTaskID(parentTaskID string) RunOption {
+	return func(c *RunConfig) { c.ParentTaskID = parentTaskID }
+}
+
 // WithInheritedMemoryScope carries the caller's memory scope into a delegated run.
 func WithInheritedMemoryScope(agentID, teamID, userID string) RunOption {
 	return func(c *RunConfig) {
@@ -303,4 +313,8 @@ func WithInheritedMemoryScope(agentID, teamID, userID string) RunOption {
 // WithStream enables streaming mode, returns events via the returned channel
 func WithStream() RunOption {
 	return func(c *RunConfig) { c.Stream = true }
+}
+
+func WithPTCEnabled(enabled bool) RunOption {
+	return func(c *RunConfig) { c.DisablePTC = !enabled }
 }

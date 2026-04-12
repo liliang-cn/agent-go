@@ -158,6 +158,10 @@ func runServer(cmd *cobra.Command, args []string) error {
 	switch cfg.GetMemoryStoreType() {
 	case config.MemoryStoreTypeCortex:
 		memoryStore, err = store.NewCortexMemoryStore(cfg.MemoryPrimaryPath())
+	case config.MemoryStoreTypeMemoryFlow:
+		memoryStore, err = store.NewMemoryFlowStore(cfg.MemoryPrimaryPath())
+	case config.MemoryStoreTypeGraphFlow:
+		memoryStore, err = store.NewGraphFlowStore(cfg.MemoryPrimaryPath())
 	default:
 		memoryStore, err = store.NewFileMemoryStore(cfg.Memory.MemoryPath)
 	}
@@ -230,6 +234,8 @@ func runServer(cmd *cobra.Command, args []string) error {
 	mux.HandleFunc("/api/chat/sessions", h.HandleChatSessions)
 	mux.HandleFunc("/api/chat/session/", h.HandleChatSessionMessages)
 	mux.HandleFunc("/api/chat/multi", h.HandleMultiAgentChat)
+	mux.HandleFunc("/api/tasks", h.HandleTasks)
+	mux.HandleFunc("/api/tasks/", h.HandleTaskOperation)
 	mux.HandleFunc("/api/teams/tasks", h.HandleTeamTasks)
 	mux.HandleFunc("/api/teams", h.HandleTeams)
 	mux.HandleFunc("/api/ingest", h.HandleIngest)

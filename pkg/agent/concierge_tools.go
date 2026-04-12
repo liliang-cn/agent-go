@@ -17,9 +17,6 @@ func (m *TeamManager) RegisterConciergeTools(concierge *Service) {
 	m.configureConciergeVerifierHook(concierge)
 
 	register := func(name, description string, parameters map[string]interface{}, metadata ToolMetadata, handler func(context.Context, map[string]interface{}) (interface{}, error)) {
-		if concierge.toolRegistry != nil && concierge.toolRegistry.Has(name) {
-			return
-		}
 		concierge.AddToolWithMetadata(name, description, parameters, handler, metadata)
 	}
 
@@ -30,10 +27,14 @@ func (m *TeamManager) RegisterConciergeTools(concierge *Service) {
 				"type":        "string",
 				"description": "The user's substantive request to route.",
 			},
+			"request": map[string]interface{}{
+				"type":        "string",
+				"description": "Alias for prompt; accepted for compatibility with model/tool-call variants.",
+			},
 		},
 		"required": []string{"prompt"},
 	}, ToolMetadata{InterruptBehavior: InterruptBehaviorBlock}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-		prompt := getStringArg(args, "prompt")
+		prompt := firstNonEmpty(getStringArg(args, "prompt"), getStringArg(args, "request"))
 		if prompt == "" {
 			return nil, fmt.Errorf("prompt is required")
 		}
@@ -318,6 +319,7 @@ func (m *TeamManager) RegisterConciergeTools(concierge *Service) {
 
 var conciergeBaseAllowedToolNames = map[string]struct{}{
 	"task_complete":         {},
+	"task_blocked":          {},
 	"llm":                   {},
 	"route_builtin_request": {},
 	"send_agent_message":    {},

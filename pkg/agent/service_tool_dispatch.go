@@ -14,7 +14,7 @@ type DirectToolExecutionOptions struct {
 }
 
 func (s *Service) resolveExecutableToolNameForAgent(name string, currentAgent *Agent) string {
-	if name == "" || name == "task_complete" || strings.HasPrefix(name, "transfer_to_") {
+	if name == "" || isTaskTerminalToolName(name) || strings.HasPrefix(name, "transfer_to_") {
 		return name
 	}
 
@@ -102,12 +102,8 @@ func (s *Service) executeDirectToolCall(ctx context.Context, currentAgent *Agent
 func (s *Service) dispatchResolvedTool(ctx context.Context, currentAgent *Agent, resolvedToolName string, tc domain.ToolCall) (interface{}, error) {
 	toolName := tc.Function.Name
 
-	if toolName == "task_complete" {
-		res, _ := tc.Function.Arguments["result"].(string)
-		if res == "" {
-			return "Task complete", nil
-		}
-		return res, nil
+	if isTaskTerminalToolName(toolName) {
+		return taskTerminalToolResult(toolName, tc.Function.Arguments, "Task complete"), nil
 	}
 	if handler, ok := currentAgent.GetHandler(resolvedToolName); ok {
 		return handler(ctx, tc.Function.Arguments)

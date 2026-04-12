@@ -51,3 +51,13 @@ func TestGetPTCTools_OnlyExposeExecuteJavascript(t *testing.T) {
 		t.Fatalf("expected execute_javascript description to mention tool discovery, got %q", tools[0].Function.Description)
 	}
 }
+
+func TestPreferredPTCReturnValueUsesResultField(t *testing.T) {
+	got := preferredPTCReturnValue(map[string]interface{}{
+		"result": "final answer",
+		"other":  "metadata",
+	})
+	if got != "final answer" {
+		t.Fatalf("preferredPTCReturnValue() = %q, want %q", got, "final answer")
+	}
+}

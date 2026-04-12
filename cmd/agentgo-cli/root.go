@@ -37,6 +37,7 @@ var RootCmd = &cobra.Command{
   • MCP    - Standardized tool integration via Model Context Protocol
   • Skills - Expert capabilities via Claude-compatible markdown skills
   • Memory - Durable local memory that works even without embeddings
+  • PTC    - Default-on JavaScript tool orchestration via a sandboxed runtime
   • LLM    - Unified API for Ollama, OpenAI, DeepSeek, and more
   • RAG    - Optional retrieval and document indexing when you configure an embedding model
   • Status - Real-time monitoring of provider health and system status`,
@@ -145,6 +146,11 @@ func init() {
 	RootCmd.AddCommand(llmCmd)
 	RootCmd.AddCommand(embeddingCmd)
 	RootCmd.AddCommand(statusCmd)
+	RootCmd.AddCommand(tasksCmd)
+	RootCmd.AddCommand(configCmd)
+	RootCmd.AddCommand(explainRoutingCmd)
+	RootCmd.AddCommand(sessionCmd)
+	RootCmd.AddCommand(resourcesCmd)
 
 	// Add Memory command
 	memoryOpts := &memory.CommandOptions{}

@@ -20,9 +20,9 @@ type backgroundMemoryWriter interface {
 	EnqueueStoreIfWorthwhile(req *domain.MemoryStoreRequest) bool
 }
 
-// errTaskComplete is a sentinel returned from the StreamWithTools callback to
-// stop streaming as soon as task_complete is detected. It is NOT a real error.
-var errTaskComplete = errors.New("task_complete signalled")
+// errTaskTerminal is a sentinel returned from the StreamWithTools callback to
+// stop streaming as soon as a terminal task signal is detected. It is NOT a real error.
+var errTaskTerminal = errors.New("task terminal signal")
 
 // Runtime orchestrates the event loop for agent execution
 type Runtime struct {
@@ -144,12 +144,8 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		}
 
 		// 5. LLM Call (Streaming)
-		// taskCompleteTriggered signals task_complete was detected mid-stream.
-		// We break out of StreamWithTools early by returning an error from the
-		// callback; the runtime then checks this flag to avoid treating it as a
-		// real error.
-		var taskCompleteResult string
-		taskCompleteTriggered := false
+		var taskTerminalName string
+		var taskTerminalResult string
 
 		collector := newRuntimeAsyncToolCollector()
 
@@ -160,7 +156,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			genMessages,
 			tools,
 			r.svc.toolGenerationOptions(0.3, 2000, toolChoiceForIntent(state.Intent, round)),
-			r.buildStreamingTurnCallbacks(ctx, &taskCompleteResult, &taskCompleteTriggered, collector),
+			r.buildStreamingTurnCallbacks(ctx, &taskTerminalName, &taskTerminalResult, collector),
 		)
 		r.CheckpointEnd("llm_call")
 		state.noteRecovery(recovery)
@@ -169,9 +165,9 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		llmDur := time.Since(llmStart)
 		r.emitLLMLatency(round+1, state.Budget.EstimatedTokens, llmDur)
 
-		// task_complete detected in stream — terminate immediately.
-		if taskCompleteTriggered {
-			final := taskCompleteResult
+		// Terminal task signal detected in stream — terminate immediately.
+		if taskTerminalName != "" {
+			final := taskTerminalResult
 			if final == "" && result != nil {
 				final = result.Content
 			}
@@ -190,8 +186,12 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 				}
 				r.emitDebug(round+1, "response", respBuilder.String())
 			}
-			r.emitToolResult("task_complete", final, nil, "")
-			r.trackToolResult("task_complete") // Mark complete
+			r.emitToolResult(taskTerminalName, final, nil, "")
+			r.trackToolResult(taskTerminalName)
+			if taskTerminalName == "task_blocked" {
+				r.blockRun(goal, final, messages, true)
+				return
+			}
 			r.completeRun(goal, final, messages, true)
 			return
 		}
@@ -235,12 +235,13 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		if len(result.ToolCalls) > 0 {
 			state.resetContinuation()
 
-			// Double check for task_complete in case it was not intercepted during stream
+			// Double check terminal tools in case they were not intercepted during stream.
 			for _, tc := range result.ToolCalls {
-				if tc.Function.Name == "task_complete" {
-					final := result.Content
-					if res, ok := tc.Function.Arguments["result"].(string); ok && res != "" {
-						final = res
+				if isTaskTerminalToolName(tc.Function.Name) {
+					final := taskTerminalToolResult(tc.Function.Name, tc.Function.Arguments, result.Content)
+					if tc.Function.Name == "task_blocked" {
+						r.blockRun(goal, final, nil, false)
+						return
 					}
 					r.completeRun(goal, final, nil, false)
 					return
@@ -493,6 +494,23 @@ func (r *Runtime) completeRun(goal, content string, messages []domain.Message, p
 	}
 }
 
+func (r *Runtime) blockRun(goal, blocker string, messages []domain.Message, persistHistory bool) {
+	r.emitTurnState(TurnStageCompleted, "run blocked", 0, 0, nil)
+	r.eventChan <- &Event{
+		ID:        uuid.New().String(),
+		Type:      EventTypeBlocked,
+		AgentName: r.currentAgent.Name(),
+		AgentID:   r.currentAgent.ID(),
+		Content:   strings.TrimSpace(blocker),
+		Sources:   r.collectAllSources(),
+		Timestamp: time.Now(),
+	}
+	if persistHistory {
+		r.persistMessages(messages)
+	}
+	r.clearCollectedSources()
+}
+
 func (r *Runtime) emitLoopState(state *queryLoopState) {
 	if state == nil {
 		return
@@ -720,7 +738,6 @@ func (r *Runtime) ensureToolResultConsistency() {
 // executeAsyncTool runs a tool in a separate goroutine and emits results
 func (r *Runtime) executeAsyncTool(ctx context.Context, tc domain.ToolCall, wg *sync.WaitGroup, results chan<- ToolExecutionResult) {
 	if wg != nil {
-		wg.Add(1)
 		defer wg.Done()
 	}
 

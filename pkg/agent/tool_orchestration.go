@@ -36,7 +36,7 @@ func (s *Service) isConcurrencySafeToolCall(toolCall domain.ToolCall, session *S
 	if name == "" {
 		return false
 	}
-	if name == "task_complete" || strings.HasPrefix(name, "transfer_to_") {
+	if isTaskTerminalToolName(name) || strings.HasPrefix(name, "transfer_to_") {
 		return false
 	}
 
@@ -157,7 +157,7 @@ func inferGenericToolMetadata(name string) (ToolMetadata, bool) {
 	}
 
 	switch lower {
-	case "rag_query", "memory_recall", "memory_list", "search_available_tools", "task_complete":
+	case "rag_query", "memory_recall", "memory_list", "search_available_tools", "task_complete", "task_blocked":
 		return ToolMetadata{ReadOnly: true, ConcurrencySafe: true, InterruptBehavior: InterruptBehaviorCancel}, true
 	}
 

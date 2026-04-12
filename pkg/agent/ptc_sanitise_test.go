@@ -121,6 +121,17 @@ func TestSanitiseJSCode_CRLFLineEndings(t *testing.T) {
 	}
 }
 
+func TestSanitiseJSCode_NoTrailingNewlineDoesNotPanic(t *testing.T) {
+	code := `const req = "write file";
+const r = callTool('route_builtin_request', { request: req });
+console.log(r);
+return r;`
+	got := sanitiseJSCode(code)
+	if got != code {
+		t.Errorf("clean JS without trailing newline was modified:\ngot:  %q\nwant: %q", got, code)
+	}
+}
+
 func TestIsNaturalLanguageLine(t *testing.T) {
 	tests := []struct {
 		line string

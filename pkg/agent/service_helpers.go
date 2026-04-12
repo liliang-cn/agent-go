@@ -59,6 +59,9 @@ func ensureTaskID(session *Session, cfg *RunConfig) string {
 		taskID := strings.TrimSpace(cfg.TaskID)
 		if session != nil {
 			session.SetContext(sessionContextTaskID, taskID)
+			if strings.TrimSpace(cfg.ParentTaskID) != "" {
+				session.SetContext("runtime.parent_task_id", strings.TrimSpace(cfg.ParentTaskID))
+			}
 		}
 		return taskID
 	}
@@ -178,7 +181,7 @@ func shouldKeepToolForSkillFirst(toolName string, relevantSkillNames []string) b
 	switch {
 	case toolName == "":
 		return false
-	case toolName == "task_complete":
+	case isTaskTerminalToolName(toolName):
 		return true
 	case toolName == "search_available_tools" || domain.IsToolSearchTool(toolName):
 		return true

@@ -20,7 +20,8 @@ var (
 	Cfg            *config.Config
 	Verbose        bool
 	Debug          bool // New debug flag
-	EnablePTC      bool // Enable Programmatic Tool Calling
+	EnablePTC      bool // Legacy compatibility flag; PTC is enabled by default.
+	DisablePTC     bool // Disable Programmatic Tool Calling
 	skillsService  *skills.Service
 	skillsInitOnce sync.Once
 	skillsInitErr  error
@@ -45,8 +46,15 @@ An agent can work independently, or it can join a team with a captain or special
 var runCmd = &cobra.Command{
 	Use:   "run [goal]",
 	Short: "Run an agent task",
-	Args:  cobra.ExactArgs(1),
+	Long: `Run one agent task through the AgentGo runtime.
+
+PTC (Programmatic Tool Calling) is enabled by default. Use --no-ptc only when
+you need legacy direct function-calling behavior.`,
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if EnablePTC && DisablePTC {
+			return fmt.Errorf("use either --ptc or --no-ptc, not both")
+		}
 		goal := args[0]
 		ctx := context.Background()
 
@@ -343,7 +351,10 @@ var ptcChatCmd = &cobra.Command{
 instead of JSON tool calls, which will be executed in a secure sandbox.
 
 Example:
-  agentgo agent ptc-chat "Write code to search for documents and process results"`,
+  agentgo agent ptc-chat "Write code to search for documents and process results"
+
+Note: PTC is already enabled by default for agent run/chat; this command is a
+compatibility shortcut that always forces PTC mode.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		message := args[0]
@@ -403,9 +414,11 @@ Example:
 
 func init() {
 	runCmd.Flags().BoolVarP(&Debug, "debug", "D", false, "Enable verbose debugging output (show full prompts)")
-	runCmd.Flags().BoolVar(&EnablePTC, "ptc", false, "Enable Programmatic Tool Calling (JS sandbox)")
+	runCmd.Flags().BoolVar(&EnablePTC, "ptc", false, "Force Programmatic Tool Calling on (default; compatibility flag)")
+	runCmd.Flags().BoolVar(&DisablePTC, "no-ptc", false, "Disable Programmatic Tool Calling and use direct function calling")
 	runCmd.Flags().StringVar(&runAgentName, "agent", "", "run a stored agent by name")
-	executeCmd.Flags().BoolVar(&EnablePTC, "ptc", false, "Enable Programmatic Tool Calling (JS sandbox)")
+	executeCmd.Flags().BoolVar(&EnablePTC, "ptc", false, "Force Programmatic Tool Calling on (default; compatibility flag)")
+	executeCmd.Flags().BoolVar(&DisablePTC, "no-ptc", false, "Disable Programmatic Tool Calling and use direct function calling")
 	AgentCmd.AddCommand(runCmd)
 	AgentCmd.AddCommand(agentListCmd)
 	AgentCmd.AddCommand(agentShowCmd)
@@ -473,7 +486,12 @@ func initAgentServices(ctx context.Context) (*rag.Client, *agent.Service, error)
 		WithRouter().
 		WithSkills()
 
-	if EnablePTC {
+	switch {
+	case EnablePTC && DisablePTC:
+		return nil, nil, fmt.Errorf("use either --ptc or --no-ptc, not both")
+	case DisablePTC:
+		b = b.WithPTC(false)
+	case EnablePTC:
 		b = b.WithPTC()
 	}
 
@@ -522,8 +540,8 @@ func renderStreamEvent(w io.Writer, evt *agent.Event, state *streamRenderState) 
 	case agent.EventTypeToolCall:
 		fmt.Fprintf(w, "🛠️  Using Tool: %s (args: %v)\n", evt.ToolName, evt.ToolArgs)
 	case agent.EventTypeToolResult:
-		// task_complete already maps to the final assistant answer shown on complete.
-		if evt.ToolName == "task_complete" {
+		// Terminal task tools map to final task events.
+		if evt.ToolName == "task_complete" || evt.ToolName == "task_blocked" {
 			return
 		}
 		fmt.Fprintf(w, "✅ Tool Success: %s\n", evt.ToolName)
@@ -540,6 +558,11 @@ func renderStreamEvent(w io.Writer, evt *agent.Event, state *streamRenderState) 
 			fmt.Fprintf(w, "\n%s", evt.Content)
 		}
 		fmt.Fprint(w, "\n\n🏁 Task Completed!\n")
+	case agent.EventTypeBlocked:
+		if !state.hasPartialOutput && evt.Content != "" {
+			fmt.Fprintf(w, "\n%s", evt.Content)
+		}
+		fmt.Fprint(w, "\n\n⛔ Task Blocked.\n")
 		if len(evt.Sources) > 0 {
 			fmt.Fprint(w, "\n📚 Sources:\n")
 			for i, src := range evt.Sources {
@@ -593,6 +616,9 @@ func initRunnableAgentService(ctx context.Context, selectedAgentName string) (*r
 	if selectedAgentName == "" {
 		return initAgentServices(ctx)
 	}
+	if EnablePTC && DisablePTC {
+		return nil, nil, fmt.Errorf("use either --ptc or --no-ptc, not both")
+	}
 	manager, err := getManager()
 	if err != nil {
 		return nil, nil, err
@@ -602,5 +628,8 @@ func initRunnableAgentService(ctx context.Context, selectedAgentName string) (*r
 		return nil, nil, err
 	}
 	svc.SetDebug(Debug)
+	if DisablePTC {
+		svc.SetPTC(nil)
+	}
 	return nil, svc, nil
 }

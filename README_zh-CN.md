@@ -4,9 +4,9 @@
 
 [English](README.md) · [API 参考](references/API.md) · [架构文档](references/ARCHITECTURE.md)
 
-AgentGo 是一个 Go 框架，用于构建 Agent / Team 系统。providers、MCP、skills、memory、RAG、router 和 PTC 都是挂在同一套运行时核心上的能力层，CLI / UI 只是可选适配器。
+AgentGo 是一个 Go 框架，用于构建 Agent / Team 系统。Team、Agent、Task、Memory、MCP/tools、Skills 和 PTC 构成核心 runtime；CLI / UI 是可选适配器。RAG 是可选的外部知识检索插件，只在配置 embedding 后才进入主路径。
 
-默认体验并不依赖 embedding model。基础 Agent runtime、MCP、skills、文件记忆和 PTC 都可以在没有向量检索的情况下工作。只有在你明确需要 RAG 或向量型检索时，才需要配置 embedding model。
+默认体验并不依赖 embedding model。基础 Agent runtime、MCP、skills、文件记忆、task 和 PTC 都可以在没有向量检索的情况下工作。只有在你明确需要 RAG、语义向量召回或向量型检索时，才需要配置 embedding model。
 
 ```bash
 go get github.com/liliang-cn/agent-go/v2
@@ -24,7 +24,6 @@ go get github.com/liliang-cn/agent-go/v2
 | **PTC**         | LLM 写 JavaScript，工具在 Goja 沙箱中运行 — 减少模型往返次数              |
 | **Streaming**   | 逐 Token 输出；支持 **极低延迟的流式工具触发** 和 **Tombstone (墓碑) 错误恢复** |
 | **多 Provider** | OpenAI、Anthropic、Azure、DeepSeek、Ollama — 运行时可切换                 |
-| **RAG**         | 可选能力：文档摄入 → 分块 → Embedding → SQLite 向量存储 → 混合检索        |
 | **Team**        | 团队队长/专家机制，**Actor 模式 SubAgent 通信**，异步队列与跨进程追踪 |
 | **Operator**    | 内置执行型 Agent，带文件系统/网页工具以及 PTY / coding-agent 会话能力     |
 
@@ -32,27 +31,30 @@ go get github.com/liliang-cn/agent-go/v2
 
 ## 概念模型
 
-理解 AgentGo，最简单的方法是把它看成 8 个协同子系统：
+理解 AgentGo，最简单的方法是把它看成一个 runtime core 加上可选知识插件：
 
 ### 1. LLM
 
 LLM 是执行核心，其他能力都围绕它组织。
 
-- 它提供统一的生成接口，Agent、RAG、PTC、工具选择都基于它工作。
+- 它提供统一的生成接口，Agent、PTC、工具选择以及可选 RAG 回答都基于它工作。
 - Provider 通过全局 pool 在运行时切换。
 - standalone agent、captain、specialist、built-in agent 最终都跑在同一套 LLM 抽象上。
 
 可以理解为：`prompt + tools + policy -> model call`
 
-### 2. RAG
+### 2. Task
 
-RAG 是知识检索层。
+Task 是一等执行单元。
 
-- 负责文档摄入、分块、embedding、向量存储和检索。
-- 查询时把相关上下文注入 Agent 或查询流程。
-- 它解决的是“外部知识/项目知识”，不是长期用户偏好。
+- Team 是 process，Agent 是 thread，Task 是 function invocation / activation frame。
+- 一个 task 可以包含多轮 LLM/tool frames，但仍然是一次逻辑调用。
+- Task 会持久化 frames、events、continuation、awaiting state 和 queue class（`task` 或 `microtask`）。
+- Task 遵守 Finish-Or-Block contract：终态应该是 `completed`、`blocked`、`failed` 或 `yielded`，而不是含糊的“下一步可以”或“我会做”。
 
-可以理解为：`documents -> retrieval context`
+可以理解为：`input -> frames/events -> output`
+
+Finish-Or-Block 是默认 runtime prompt 和内置 agent policy 的一部分。Agent 应该持续执行直到可验证完成；如果无法继续，调用 `task_blocked` 写明具体 blocker；如果运行错误，则带 trace 失败；如果确实需要外部输入，则进入 yield。
 
 ### 3. Memory
 
@@ -120,11 +122,23 @@ Team 是建立在 Agent 之上的持久化团队层。
 
 可以理解为：`带队列和状态的持久化多 Agent 协作`
 
+
+### 可选能力：RAG
+
+RAG 不属于默认 runtime 主路径。它是外部/项目文档的可选知识检索插件。
+
+- 负责文档摄入、分块、embedding、向量存储和检索。
+- 真正有用的向量检索路径需要 embedding。
+- 它解决外部文档和项目知识，不负责长期内部 agent memory。
+
+可以理解为：`documents + embeddings -> retrieval context`。
+
 ### Agent 操作系统类比 (Microkernel OS)
 
 在架构设计上，可以把 AgentGo 映射为现代操作系统的概念：
 - **Team = 进程 (Process)**：资源隔离的边界，拥有独立的团队共享记忆和任务队列。
 - **Agent = 线程 (Thread)**：携带特定人设和技能包的执行实体，共享所属 Team 的资源。
+- **Task = 函数调用 (Function Call)**：一等 invocation frame，包含 input、output、frames、events 和 continuation 状态。
 - **SubAgent = 协程 (Coroutine)**：由主 Agent 动态 `spawn` 的轻量级执行上下文，支持异步并行和信道通信。
 - **Memory = 虚拟内存 (VFS/Paging)**：通过 LLM 裁判路由实现上下文的无缝“换页 (Page In/Out)”。
 - **Subconscious = 守护进程 (Daemon/GC)**：在对话结束后静默运行的后台进程，负责抽取经验并清理上下文垃圾。
@@ -135,8 +149,6 @@ Team 是建立在 Agent 之上的持久化团队层。
 
 - **LLM / Agent 运行时**
   - `Ask`, `Chat`, `Run`, `RunStream`
-- **RAG**
-  - `WithRAG`, `rag_query`，以及文档摄入/查询流程
 - **Memory**
   - `WithMemory`, `memory_save`, `memory_recall`
 - **MCP**
@@ -145,14 +157,18 @@ Team 是建立在 Agent 之上的持久化团队层。
   - `WithSkills`，skill 注册与调用
 - **PTC**
   - `WithPTC`, `execute_javascript`, `callTool()`
+- **Task**
+  - `manager.Tasks().Get/List/Await/Yield/Resume/Cancel`, `agentgo task trace`, `agentgo task inspect`
 - **Team**
   - `CreateTeam`, `JoinTeam`, `DispatchTask`, `SubmitTeamTask`, `GetTask`
+- **可选 RAG**
+  - `WithRAG`, `rag_query`，以及文档摄入/查询流程
 
 实际分层可以简单记成：
 
 `LLM -> tools/PTC -> Agent -> Team`
 
-而 `RAG / Memory / MCP / Skills` 都是可以挂到 Agent 上的能力层。
+而 `Memory / MCP / Skills` 是核心可挂载能力；`RAG` 是配置 embedding 后启用的可选外部知识插件。
 
 ---
 
@@ -694,10 +710,21 @@ result, _ := svc.Execute(ctx, plan.ID)
 
 ### Memory 存储类型
 
-| `store_type`    | 存储方式                                                        | 是否需要 Embedder |
-| --------------- | --------------------------------------------------------------- | ----------------- |
-| `file` _(默认)_ | `data/memories/entities/*.md` 和 `data/memories/streams/*.md` | 否                |
-| `cortex`        | `data/cortex.db`                                                | 否                |
+| `store_type`           | 存储位置          | 适用场景                                      | Embedder 要求 |
+| ---------------------- | ----------------- | --------------------------------------------- | ------------- |
+| `file` _(默认)_        | `data/memories/`  | 最可靠的默认模式、本地调试、可读可改的记忆      | 不需要 |
+| `cortex`               | `data/cortex.db`  | DB-backed memory bucket、生产式本地持久化       | 可选；没有时走 lexical/text fallback |
+| `memoryflow`           | `data/cortex.db`  | CortexDB MemoryFlow 的 diary/session workflow、agent memory 生命周期 | 可选；无 embedding 也可工作 |
+| `graphflow`            | `data/cortex.db`  | 记忆内容还需要抽取实体/关系并形成图谱           | 可选；当前图抽取是确定性的 |
+
+推荐方式：
+
+- 默认使用 `file`。它最透明，最容易排查问题，也最适合没有 embedding 的本地使用。
+- 需要 DB-backed memory 时再使用 `cortex`。如果要语义向量召回，请配置 embedding provider；没有 embedding 时它只是 lexical/text recall，不是完整语义检索。
+- 需要会话型、日记型、wake-up/recall 生命周期语义时使用 `memoryflow`。
+- 需要把 memory 同时变成实体关系图谱时使用 `graphflow`。
+
+运行时类型建议通过 CLI/UI 设置，或直接写入 `agentgo.db` 的 `memory.store_type`。当前 CLI 的运行时配置以 `agentgo.db` 为准；一旦 DB 中存在该值，`agentgo.toml` 不再是唯一 source of truth。
 
 ### 运行时设置
 
@@ -706,7 +733,7 @@ AgentGo 会根据 `AGENTGO_HOME` 自动派生运行期存储布局：
 - 工作区：`$home/workspace`
 - MCP 文件系统白名单：`$home/workspace`
 - 大脑数据库：`$home/data/cortex.db`
-- 记忆存储：`$home/data/memories`，当 `memory.store_type = "cortex"` 时改为 `$home/data/cortex.db`
+- 记忆存储：`file` 使用 `$home/data/memories`；`cortex`、`memoryflow`、`graphflow` 使用 `$home/data/cortex.db`
 - 缓存目录：`$home/data/cache`
 
 其余结构化运行时设置保存在 `agentgo.db`，包括：

@@ -19,7 +19,7 @@ func (a *mcpToolAdapter) CallTool(ctx context.Context, toolName string, args map
 		return nil, err
 	}
 	if !result.Success {
-		return nil, fmt.Errorf("MCP tool error: %s", result.Error)
+		return nil, fmt.Errorf("MCP tool error: %s (tool=%s args=%v)", result.Error, toolName, args)
 	}
 	return result.Data, nil
 }

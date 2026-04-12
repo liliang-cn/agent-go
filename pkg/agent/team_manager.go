@@ -31,6 +31,7 @@ type TeamManager struct {
 	memberSessions                map[string]string
 	queueMu                       sync.Mutex
 	taskQueues                    map[string][]string
+	microtaskQueues               map[string][]string
 	sharedTasks                   map[string]*SharedTask
 	queueRunning                  map[string]bool
 	taskMu                        sync.RWMutex
@@ -189,6 +190,7 @@ func NewTeamManager(s *Store) *TeamManager {
 		services:        make(map[string]*Service),
 		memberSessions:  make(map[string]string),
 		taskQueues:      make(map[string][]string),
+		microtaskQueues: make(map[string][]string),
 		sharedTasks:     make(map[string]*SharedTask),
 		queueRunning:    make(map[string]bool),
 		asyncTasks:      make(map[string]*AsyncTask),
@@ -301,6 +303,7 @@ func (m *TeamManager) EnqueueSharedTaskForTeam(ctx context.Context, teamID, capt
 
 	m.queueMu.Lock()
 	queuedAhead := len(m.taskQueues[team.ID])
+	queuedAhead += len(m.microtaskQueues[team.ID])
 	if m.queueRunning[team.ID] {
 		queuedAhead++
 	}
@@ -395,6 +398,27 @@ func (m *TeamManager) nextQueuedTask(teamID string) *SharedTask {
 	defer m.queueMu.Unlock()
 
 	queue := m.taskQueues[teamID]
+	if len(m.microtaskQueues[teamID]) > 0 {
+		queue = m.microtaskQueues[teamID]
+		taskID := queue[0]
+		if len(queue) == 1 {
+			delete(m.microtaskQueues, teamID)
+		} else {
+			m.microtaskQueues[teamID] = queue[1:]
+		}
+		task := m.sharedTasks[taskID]
+		if task == nil {
+			return nil
+		}
+		now := time.Now()
+		task.Status = SharedTaskStatusRunning
+		task.StartedAt = &now
+		task.QueuedAhead = 0
+		_ = m.store.SaveSharedTask(task)
+		return cloneSharedTask(task)
+	}
+
+	queue = m.taskQueues[teamID]
 	if len(queue) == 0 {
 		delete(m.queueRunning, teamID)
 		return nil
@@ -783,6 +807,8 @@ func (m *TeamManager) buildServiceForModel(model *AgentModel) (*Service, error) 
 	}
 	if model.EnablePTC {
 		builder.WithPTC()
+	} else {
+		builder.WithPTC(false)
 	}
 	if model.EnableMCP {
 		builder.WithMCP()

@@ -35,19 +35,6 @@ func (s *Service) tryDirectOperatorMCPExecution(ctx context.Context, goal string
 		return "", false, nil
 	}
 
-	if chosenTool := s.chooseDirectMCPToolName(ctx, coreGoal, available); chosenTool != "" {
-		return summarizeDirectMCPToolCalls(ctx, s.mcpService, []domain.ToolCall{
-			{
-				ID:   "direct-mcp-call",
-				Type: "function",
-				Function: domain.FunctionCall{
-					Name:      chosenTool,
-					Arguments: map[string]interface{}{},
-				},
-			},
-		})
-	}
-
 	messages := []domain.Message{
 		{
 			Role: "system",
@@ -69,7 +56,9 @@ Visible callable tools:
 		},
 	}
 
-	result, err := s.llmService.GenerateWithTools(ctx, messages, available, s.toolGenerationOptions(0.1, 800, "required"))
+	llmCtx, cancel := withLLMTurnTimeout(ctx)
+	defer cancel()
+	result, err := s.llmService.GenerateWithTools(llmCtx, messages, available, s.toolGenerationOptions(0.1, 800, "required"))
 	if err != nil {
 		return "", false, err
 	}
@@ -105,7 +94,9 @@ Available tools:
 User request:
 ` + goal)
 
-	raw, err := s.llmService.Generate(ctx, prompt, &domain.GenerationOptions{
+	llmCtx, cancel := withLLMTurnTimeout(ctx)
+	defer cancel()
+	raw, err := s.llmService.Generate(llmCtx, prompt, &domain.GenerationOptions{
 		Temperature: 0.1,
 		MaxTokens:   80,
 	})

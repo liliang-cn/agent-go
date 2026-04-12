@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/liliang-cn/agent-go/v2/pkg/config"
+	storepkg "github.com/liliang-cn/agent-go/v2/pkg/store"
 )
 
 // TaskScheduler implements the Scheduler interface
@@ -40,6 +41,7 @@ func NewScheduler(cfg *config.Config) *TaskScheduler {
 	// Use the unified database path if available
 	if cfg != nil {
 		schedulerConfig.DatabasePath = cfg.CortexDBPath()
+		schedulerConfig.CanonicalDatabasePath = cfg.AgentDBPath()
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -74,7 +76,11 @@ func (s *TaskScheduler) Start() error {
 	}
 
 	// Initialize storage
-	storage, err := NewStorage(s.config.DatabasePath)
+	var canonical *storepkg.AgentGoDB
+	if s.config.CanonicalDatabasePath != "" {
+		canonical, _ = storepkg.NewAgentGoDB(s.config.CanonicalDatabasePath)
+	}
+	storage, err := NewStorageWithCanonical(s.config.DatabasePath, canonical)
 	if err != nil {
 		return fmt.Errorf("failed to initialize storage: %w", err)
 	}

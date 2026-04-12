@@ -240,6 +240,33 @@ func TestRegisterConciergeToolsExposesStatusAndSubmission(t *testing.T) {
 	}
 }
 
+func TestBuiltInServiceRespectsModelPTCSetting(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "agent.db"))
+	if err != nil {
+		t.Fatalf("new store failed: %v", err)
+	}
+	manager := NewTeamManager(store)
+	if err := manager.SeedDefaultMembers(); err != nil {
+		t.Fatalf("seed default members failed: %v", err)
+	}
+
+	concierge, err := manager.GetAgentService(BuiltInConciergeAgentName)
+	if err != nil {
+		t.Fatalf("get concierge service failed: %v", err)
+	}
+	if concierge.isPTCEnabled() {
+		t.Fatal("expected Concierge service PTC to be disabled")
+	}
+
+	operator, err := manager.GetAgentService(defaultOperatorAgentName)
+	if err != nil {
+		t.Fatalf("get operator service failed: %v", err)
+	}
+	if operator.isPTCEnabled() {
+		t.Fatal("expected Operator service PTC to be disabled")
+	}
+}
+
 func TestRegisterCaptainTools_Metadata(t *testing.T) {
 	store, err := NewStore(filepath.Join(t.TempDir(), "agent.db"))
 	if err != nil {

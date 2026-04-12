@@ -176,6 +176,7 @@ func runMCPAdd(cmd *cobra.Command, args []string) error {
 		fmt.Printf("   URL: %s\n", serverCfg.URL)
 	}
 	fmt.Printf("   Config: %s\n\n", configFile)
+	saveMCPResource(serverName, configFile, serverCfg)
 	fmt.Printf("💡 Test with: agentgo mcp list\n")
 
 	return nil
@@ -265,6 +266,7 @@ func runMCPAddJSON(cmd *cobra.Command, args []string) error {
 		}
 	}
 	fmt.Printf("   Config: %s\n\n", configFile)
+	saveMCPResource(serverName, configFile, serverCfg)
 	fmt.Printf("💡 Test with: agentgo mcp list\n")
 
 	return nil
@@ -305,6 +307,7 @@ func runMCPRemove(cmd *cobra.Command, args []string) error {
 
 	// Remove server
 	delete(jsonConfig.MCPServers, serverName)
+	deleteMCPResource(serverName)
 
 	// Write back to file
 	if err := saveConfigFile(configFile, &jsonConfig); err != nil {
@@ -327,25 +330,17 @@ func getConfigFilePath() string {
 
 	// 2. Use unified path from config
 	if Cfg != nil {
-		configFile = Cfg.MCPServersPath()
-		if _, err := os.Stat(configFile); err == nil {
-			return configFile
-		}
+		return Cfg.MCPServersPath()
 	}
 
-	// 3. Check old ~/.agentgo/mcpServers.json
+	// 3. Check old ~/.agentgo/mcpServers.json only when runtime config is not loaded.
 	homeDir, _ := os.UserHomeDir()
 	oldHomeConfig := filepath.Join(homeDir, ".agentgo", "mcpServers.json")
 	if _, err := os.Stat(oldHomeConfig); err == nil {
 		return oldHomeConfig
 	}
 
-	// 4. Default to unified path (will be created)
-	if Cfg != nil {
-		return Cfg.MCPServersPath()
-	}
-
-	// 5. Final fallback
+	// 4. Final fallback
 	return filepath.Join(homeDir, ".agentgo", "mcpServers.json")
 }
 

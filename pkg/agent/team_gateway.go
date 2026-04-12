@@ -18,6 +18,7 @@ const (
 	TeamResponseStatusQueued    TeamResponseStatus = "queued"
 	TeamResponseStatusRunning   TeamResponseStatus = "running"
 	TeamResponseStatusCompleted TeamResponseStatus = "completed"
+	TeamResponseStatusBlocked   TeamResponseStatus = "blocked"
 	TeamResponseStatusFailed    TeamResponseStatus = "failed"
 	TeamResponseStatusCancelled TeamResponseStatus = "cancelled"
 )
@@ -31,6 +32,7 @@ const (
 	TeamResponseEventTypeRuntime   TeamResponseEventType = "runtime"
 	TeamResponseEventTypeProgress  TeamResponseEventType = "progress"
 	TeamResponseEventTypeCompleted TeamResponseEventType = "completed"
+	TeamResponseEventTypeBlocked   TeamResponseEventType = "blocked"
 	TeamResponseEventTypeFailed    TeamResponseEventType = "failed"
 	TeamResponseEventTypeCancelled TeamResponseEventType = "cancelled"
 )
@@ -309,6 +311,8 @@ func teamResponseStatusFromAsyncTask(status AsyncTaskStatus) TeamResponseStatus 
 		return TeamResponseStatusRunning
 	case AsyncTaskStatusCompleted:
 		return TeamResponseStatusCompleted
+	case AsyncTaskStatusBlocked:
+		return TeamResponseStatusBlocked
 	case AsyncTaskStatusFailed:
 		return TeamResponseStatusFailed
 	case AsyncTaskStatusCancelled:
@@ -328,6 +332,8 @@ func teamResponseStatusFromTaskEvent(evt *TaskEvent) TeamResponseStatus {
 	switch evt.Type {
 	case TaskEventTypeCompleted:
 		return TeamResponseStatusCompleted
+	case TaskEventTypeBlocked:
+		return TeamResponseStatusBlocked
 	case TaskEventTypeFailed:
 		return TeamResponseStatusFailed
 	case TaskEventTypeCancelled:
@@ -352,12 +358,14 @@ func teamResponseEventTypeFromTaskEvent(evt *TaskEvent) TeamResponseEventType {
 		return TeamResponseEventTypeStarted
 	case TaskEventTypeCompleted:
 		return TeamResponseEventTypeCompleted
+	case TaskEventTypeBlocked:
+		return TeamResponseEventTypeBlocked
 	case TaskEventTypeFailed:
 		return TeamResponseEventTypeFailed
 	case TaskEventTypeCancelled:
 		return TeamResponseEventTypeCancelled
 	case TaskEventTypeRuntime:
-		if evt.Runtime != nil && (evt.Runtime.Type == EventTypePartial || evt.Runtime.Type == EventTypeComplete) {
+		if evt.Runtime != nil && (evt.Runtime.Type == EventTypePartial || evt.Runtime.Type == EventTypeComplete || evt.Runtime.Type == EventTypeBlocked) {
 			return TeamResponseEventTypeProgress
 		}
 		return TeamResponseEventTypeRuntime

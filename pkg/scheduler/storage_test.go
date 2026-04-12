@@ -2,10 +2,12 @@ package scheduler
 
 import (
 	"fmt"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
+	storepkg "github.com/liliang-cn/agent-go/v2/pkg/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -96,6 +98,42 @@ func TestStorageTaskOperations(t *testing.T) {
 
 	_, err = storage.GetTask(task.ID)
 	assert.Error(t, err)
+}
+
+func TestStorageMirrorsCanonicalTasks(t *testing.T) {
+	tempDir := t.TempDir()
+	canonical, err := storepkg.NewAgentGoDB(filepath.Join(tempDir, "agentgo.db"))
+	require.NoError(t, err)
+	defer canonical.Close()
+
+	storage, err := NewStorageWithCanonical(filepath.Join(tempDir, "scheduler.db"), canonical)
+	require.NoError(t, err)
+	defer storage.Close()
+
+	task := &Task{
+		ID:          "scheduler-task-1",
+		Type:        string(TaskTypeQuery),
+		Schedule:    "0 * * * *",
+		Parameters:  map[string]string{"query": "test"},
+		Description: "Canonical scheduler mirror",
+		Priority:    1,
+		Enabled:     true,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+	require.NoError(t, storage.CreateTask(task))
+
+	canonicalTask, err := canonical.GetTask(task.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "scheduler", string(canonicalTask.Kind))
+	assert.Equal(t, "queued", string(canonicalTask.Status))
+	assert.Equal(t, task.Description, canonicalTask.Input)
+
+	exec := &TaskExecution{TaskID: task.ID, StartTime: time.Now(), Status: TaskStatusRunning}
+	require.NoError(t, storage.CreateExecution(exec))
+	canonicalTask, err = canonical.GetTask(task.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "running", string(canonicalTask.Status))
 }
 
 func TestStorageExecutionOperations(t *testing.T) {

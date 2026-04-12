@@ -9,6 +9,7 @@ import (
 
 	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 	"github.com/liliang-cn/agent-go/v2/pkg/ptc"
+	"github.com/liliang-cn/agent-go/v2/pkg/resource"
 	"github.com/liliang-cn/agent-go/v2/pkg/search"
 )
 
@@ -20,6 +21,20 @@ type ToolMetadata struct {
 	ConcurrencySafe   bool
 	Destructive       bool
 	InterruptBehavior string
+	ExposureMode      ToolExposureMode
+}
+
+type ToolExposureMode string
+
+const (
+	ToolExposureDual       ToolExposureMode = "dual"
+	ToolExposureDirectOnly ToolExposureMode = "direct_only"
+	ToolExposureCodeOnly   ToolExposureMode = "code_only"
+)
+
+type ToolExecutionPolicy struct {
+	Default ToolExposureMode
+	Rules   map[string]ToolExposureMode
 }
 
 // Tool categories used by ToolRegistry.
@@ -47,6 +62,7 @@ type ToolRegistry struct {
 	mu               sync.RWMutex
 	tools            map[string]*registeredTool
 	sessionActivated map[string]map[string]bool // sessionID -> toolName -> bool
+	policy           ToolExecutionPolicy
 }
 
 // NewToolRegistry creates an empty ToolRegistry.
@@ -54,6 +70,15 @@ func NewToolRegistry() *ToolRegistry {
 	return &ToolRegistry{
 		tools:            make(map[string]*registeredTool),
 		sessionActivated: make(map[string]map[string]bool),
+	}
+}
+
+func (r *ToolRegistry) SetExecutionPolicy(policy ToolExecutionPolicy) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.policy = policy
+	for name, tool := range r.tools {
+		tool.metadata.ExposureMode = r.resolveExposureModeLocked(name, tool.category, tool.metadata.ExposureMode)
 	}
 }
 
@@ -154,11 +179,55 @@ func (r *ToolRegistry) Register(def domain.ToolDefinition, handler ToolHandler, 
 func (r *ToolRegistry) RegisterWithMetadata(def domain.ToolDefinition, handler ToolHandler, category string, metadata ToolMetadata) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if metadata.ExposureMode == "" {
+		metadata.ExposureMode = r.resolveExposureModeLocked(def.Function.Name, category, "")
+	}
 	r.tools[def.Function.Name] = &registeredTool{
 		def:      def,
 		handler:  handler,
 		category: category,
 		metadata: metadata,
+	}
+}
+
+func (r *ToolRegistry) resolveExposureModeLocked(name, category string, explicit ToolExposureMode) ToolExposureMode {
+	if explicit != "" {
+		return explicit
+	}
+	for pattern, mode := range r.policy.Rules {
+		if toolPolicyPatternMatches(pattern, name) {
+			return mode
+		}
+	}
+	if r.policy.Default != "" {
+		return r.policy.Default
+	}
+	return defaultToolExposureMode(category)
+}
+
+func toolPolicyPatternMatches(pattern, name string) bool {
+	pattern = strings.TrimSpace(pattern)
+	name = strings.TrimSpace(name)
+	if pattern == "" || name == "" {
+		return false
+	}
+	if pattern == name {
+		return true
+	}
+	if strings.HasSuffix(pattern, "*") {
+		return strings.HasPrefix(name, strings.TrimSuffix(pattern, "*"))
+	}
+	return false
+}
+
+func defaultToolExposureMode(category string) ToolExposureMode {
+	switch category {
+	case CategoryMemory:
+		return ToolExposureDirectOnly
+	case CategoryRAG, CategoryMCP, CategorySkill:
+		return ToolExposureCodeOnly
+	default:
+		return ToolExposureDual
 	}
 }
 
@@ -197,6 +266,29 @@ func (r *ToolRegistry) MetadataOf(name string) ToolMetadata {
 	return ToolMetadata{}
 }
 
+func (r *ToolRegistry) Resources() []resource.Resource {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]resource.Resource, 0, len(r.tools))
+	for _, tool := range r.tools {
+		out = append(out, resource.Resource{
+			ID:          "tool:" + tool.def.Function.Name,
+			Kind:        resource.KindTool,
+			Name:        tool.def.Function.Name,
+			Description: tool.def.Function.Description,
+			Execution:   resource.ExecutionMode(tool.metadata.ExposureMode),
+			Metadata: map[string]any{
+				"category":           tool.category,
+				"read_only":          tool.metadata.ReadOnly,
+				"concurrency_safe":   tool.metadata.ConcurrencySafe,
+				"destructive":        tool.metadata.Destructive,
+				"interrupt_behavior": tool.metadata.InterruptBehavior,
+			},
+		})
+	}
+	return out
+}
+
 // DefinitionOf returns the registered tool definition, if present.
 func (r *ToolRegistry) DefinitionOf(name string) (domain.ToolDefinition, bool) {
 	r.mu.RLock()
@@ -210,14 +302,9 @@ func (r *ToolRegistry) DefinitionOf(name string) (domain.ToolDefinition, bool) {
 // ListForLLM returns the tool definitions that should be passed to the LLM.
 //
 //   - ptcEnabled=false: all registered tools (they appear as direct function calls)
-//   - ptcEnabled=true:  none (tools are hidden; only execute_javascript is shown,
-//     which is added separately by PTCIntegration)
+//   - ptcEnabled=true: direct_only and dual tools remain visible as direct
+//     function calls; code_only tools move behind execute_javascript/callTool.
 func (r *ToolRegistry) ListForLLM(ptcEnabled bool, sessionID string) []domain.ToolDefinition {
-	if ptcEnabled {
-		// In PTC mode all module tools are hidden from direct LLM function calls;
-		// they are only accessible via callTool() inside execute_javascript.
-		return nil
-	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -225,6 +312,9 @@ func (r *ToolRegistry) ListForLLM(ptcEnabled bool, sessionID string) []domain.To
 
 	out := make([]domain.ToolDefinition, 0, len(r.tools))
 	for _, t := range r.tools {
+		if ptcEnabled && t.metadata.ExposureMode == ToolExposureCodeOnly {
+			continue
+		}
 		// Include if not deferred, or if explicitly activated for this session
 		if !t.def.DeferLoading || (activeMap != nil && activeMap[t.def.Function.Name]) {
 			out = append(out, t.def)
@@ -240,6 +330,9 @@ func (r *ToolRegistry) ListForCallTool() []ptc.ToolInfo {
 	defer r.mu.RUnlock()
 	out := make([]ptc.ToolInfo, 0, len(r.tools))
 	for _, t := range r.tools {
+		if t.metadata.ExposureMode == ToolExposureDirectOnly {
+			continue
+		}
 		out = append(out, ptc.ToolInfo{
 			Name:        t.def.Function.Name,
 			Description: t.def.Function.Description,
@@ -284,6 +377,9 @@ func (r *ToolRegistry) SyncToPTCRouter(router *ptc.AgentGoRouter) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	for name, t := range r.tools {
+		if t.metadata.ExposureMode == ToolExposureDirectOnly {
+			continue
+		}
 		toolName := name
 		handler := t.handler
 		info := &ptc.ToolInfo{

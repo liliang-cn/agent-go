@@ -20,6 +20,7 @@ import (
 	"github.com/liliang-cn/agent-go/v2/pkg/ptc"
 	"github.com/liliang-cn/agent-go/v2/pkg/router"
 	"github.com/liliang-cn/agent-go/v2/pkg/skills"
+	taskpkg "github.com/liliang-cn/agent-go/v2/pkg/task"
 	"github.com/liliang-cn/agent-go/v2/pkg/usage"
 )
 
@@ -147,7 +148,7 @@ func NewService(
 	tools := collectAvailableTools(mcpService, ragProcessor, nil)
 
 	// Concise agent instructions — key behaviors only
-	instructions := "You are AgentGo, a helpful AI assistant. Use available tools to complete tasks efficiently. Call task_complete when done."
+	instructions := "You are AgentGo, a helpful AI assistant. Use available tools to complete tasks efficiently. Finish the task or explicitly block it; call task_complete when done and task_blocked when a concrete blocker prevents completion."
 
 	// Create default agent
 	agent := NewAgentWithConfig(
@@ -322,6 +323,27 @@ func (s *Service) registerBuiltInTools() {
 		res, _ := args["result"].(string)
 		return res, nil
 	}, CategoryCustom, ToolMetadata{ReadOnly: true, ConcurrencySafe: true, InterruptBehavior: InterruptBehaviorCancel})
+
+	blockedDef := domain.ToolDefinition{
+		Type: "function",
+		Function: domain.ToolFunction{
+			Name:        "task_blocked",
+			Description: "Mark the current task as blocked. Call this only when you cannot complete the task now because of a concrete external blocker, missing permission, missing input, unavailable resource, or unsafe action.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"blocker": map[string]interface{}{
+						"type":        "string",
+						"description": "The concrete blocker and what was attempted before blocking.",
+					},
+				},
+				"required": []string{"blocker"},
+			},
+		},
+	}
+	s.toolRegistry.RegisterWithMetadata(blockedDef, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+		return taskTerminalToolResult("task_blocked", args, "Task blocked."), nil
+	}, CategoryCustom, ToolMetadata{ReadOnly: true, ConcurrencySafe: true, InterruptBehavior: InterruptBehaviorCancel})
 }
 
 // Plan generates an execution plan for the given goal
@@ -474,13 +496,20 @@ func (s *Service) RunStreamWithOptions(ctx context.Context, goal string, opts ..
 		session.SetContext(sessionContextMemoryUserScope, inherited)
 	}
 	s.rememberMemoryQueryContext(session, s.resolveMemoryQueryContext(session))
+	taskID := ensureTaskID(session, cfg)
+	startedAt := time.Now()
+	s.persistRunTaskState(session, taskID, taskRunStateOptions{
+		status:    taskpkg.StatusRunning,
+		input:     goal,
+		createdAt: startedAt,
+	})
 
 	if routedEvents, ok, err := s.streamDirectConciergeRoute(ctx, session, goal); ok {
-		return routedEvents, err
+		return s.observeRunStream(session, taskID, goal, startedAt, routedEvents), err
 	}
 
 	runtime := NewRuntime(s, session, cfg)
-	return runtime.RunStream(ctx, goal), nil
+	return s.observeRunStream(session, taskID, goal, startedAt, runtime.RunStream(ctx, goal)), nil
 }
 
 // Run executes a goal with optional configuration.
@@ -506,7 +535,7 @@ func (s *Service) Run(ctx context.Context, goal string, opts ...RunOption) (*Exe
 }
 
 // runWithConfig is the internal implementation
-func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig) (*ExecutionResult, error) {
+func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig) (_ *ExecutionResult, runErr error) {
 	if cfg == nil {
 		cfg = DefaultRunConfig()
 	}
@@ -541,6 +570,25 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 		session = NewSession(s.agent.ID())
 	}
 	taskID := ensureTaskID(session, cfg)
+	s.persistRunTaskState(session, taskID, taskRunStateOptions{
+		status:    taskpkg.StatusRunning,
+		input:     goal,
+		createdAt: startTime,
+	})
+	defer func() {
+		if runErr == nil {
+			return
+		}
+		s.persistRunTaskState(session, taskID, taskRunStateOptions{
+			status:      taskpkg.StatusFailed,
+			input:       goal,
+			output:      "",
+			errorText:   runErr.Error(),
+			createdAt:   startTime,
+			finishedAt:  time.Now(),
+			appendError: true,
+		})
+	}()
 	if inherited := strings.TrimSpace(cfg.InheritedMemoryAgentID); inherited != "" {
 		session.SetContext(sessionContextMemoryAgentScope, inherited)
 	}
@@ -554,7 +602,8 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 
 	if routedResult, ok, err := s.executeDirectConciergeRoute(runCtx, session, goal); ok {
 		if err != nil {
-			return nil, err
+			runErr = err
+			return nil, runErr
 		}
 		routedResult.StartedAt = &startTime
 		completedAt := time.Now()
@@ -570,42 +619,15 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 		}, taskID))
 		_ = s.store.SaveSession(session)
 		routedResult.TaskID = taskID
+		s.persistRunTaskState(session, taskID, taskRunStateOptions{
+			status:     taskpkg.StatusCompleted,
+			input:      goal,
+			output:     fmt.Sprintf("%v", routedResult.FinalResult),
+			createdAt:  startTime,
+			finishedAt: completedAt,
+		})
 		return routedResult, nil
 	}
-	if directMCPResult, ok, err := s.tryDirectOperatorMCPExecution(runCtx, goal); ok {
-		if err != nil {
-			return nil, err
-		}
-		completedAt := time.Now()
-		session.AddMessage(withTaskID(domain.Message{
-			Role:    "user",
-			Content: goal,
-		}, taskID))
-		session.AddMessage(withTaskID(domain.Message{
-			Role:    "assistant",
-			Content: directMCPResult,
-		}, taskID))
-		_ = s.store.SaveSession(session)
-		return &ExecutionResult{
-			PlanID:          uuid.New().String(),
-			SessionID:       session.GetID(),
-			TaskID:          taskID,
-			Success:         true,
-			StepsTotal:      1,
-			StepsDone:       1,
-			StepsFailed:     0,
-			StartedAt:       &startTime,
-			CompletedAt:     &completedAt,
-			ToolCalls:       1,
-			EstimatedTokens: s.estimateRunTokens(goal, directMCPResult),
-			FinalResult:     directMCPResult,
-			Duration:        "completed",
-			Metadata: map[string]interface{}{
-				"dispatch_mode": "direct_operator_mcp_execution",
-			},
-		}, nil
-	}
-
 	prepared := s.prepareConversationContext(runCtx, goal, session, prepareConversationOptions{
 		includeIntent: true,
 		emitProgress:  true,
@@ -621,22 +643,21 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 	var ptcRes *PTCResult
 	var execMetrics *executionMetrics
 
-	if !s.isPTCEnabled() {
-		if recalledAnswer, ok, err := s.answerExplicitMemoryRecall(runCtx, goal, intent, memoryContext, memoryMemories, cfg); err != nil {
-			s.logger.Warn("Explicit memory recall shortcut failed", slog.Any("error", err))
-		} else if ok {
-			finalResult = recalledAnswer
-			execMetrics = &executionMetrics{}
-		}
+	if recalledAnswer, ok, err := s.answerExplicitMemoryRecall(runCtx, goal, intent, memoryContext, memoryMemories, cfg); err != nil {
+		s.logger.Warn("Explicit memory recall shortcut failed", slog.Any("error", err))
+	} else if ok {
+		finalResult = recalledAnswer
+		execMetrics = &executionMetrics{}
 	}
 
 	if finalResult != nil {
 		// Shortcut path already produced the answer.
-	} else if s.isPTCEnabled() {
+	} else if s.isPTCEnabled() && !cfg.DisablePTC && !isMemoryToolIntent(intent) && len(memoryMemories) == 0 {
 		var err error
 		finalResult, ptcRes, err = s.runPTCExecution(runCtx, goal, session, cfg)
 		if err != nil {
-			return nil, err
+			runErr = err
+			return nil, runErr
 		}
 		// Use execution result if available
 		if ptcRes != nil && ptcRes.Output != "" {
@@ -646,7 +667,8 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 		var err error
 		finalResult, execMetrics, err = s.executeWithLLM(runCtx, goal, intent, session, memoryContext, ragContext, cfg)
 		if err != nil {
-			return nil, err
+			runErr = err
+			return nil, runErr
 		}
 	}
 
@@ -695,7 +717,8 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 
 	result, err := s.finalizeExecution(runCtx, session, goal, intent, memoryMemories, memoryLogic, "", currentResult)
 	if err != nil {
-		return nil, err
+		runErr = err
+		return nil, runErr
 	}
 	result.TaskID = taskID
 	completedAt := time.Now()
@@ -715,7 +738,26 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 		result.ToolsUsed = uniqueStrings(toolNamesFromPTC(ptcRes))
 		result.EstimatedTokens = s.estimateRunTokens(goal, currentResult) + s.estimatePTCTokens(ptcRes)
 	}
+	s.persistRunTaskState(session, taskID, taskRunStateOptions{
+		status:     taskpkg.StatusCompleted,
+		input:      goal,
+		output:     result.Text(),
+		createdAt:  startTime,
+		finishedAt: completedAt,
+	})
 	return result, nil
+}
+
+func isMemoryToolIntent(intent *IntentRecognitionResult) bool {
+	if intent == nil {
+		return false
+	}
+	switch strings.TrimSpace(intent.IntentType) {
+	case "memory_save", "memory_recall", "memory_update", "memory_delete":
+		return true
+	default:
+		return false
+	}
 }
 
 // Cancel forcefully stops the current agent execution

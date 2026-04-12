@@ -68,6 +68,9 @@ func isBlacklistedFilesystemPath(path string, ignoreNames []string) bool {
 	if cleaned == "" || cleaned == "." {
 		return false
 	}
+	if isAgentGoWorkspacePath(cleaned) {
+		return false
+	}
 	ignoreNames = normalizeFilesystemIgnoreNames(ignoreNames)
 	parts := strings.Split(filepath.ToSlash(cleaned), "/")
 	for _, part := range parts {
@@ -80,6 +83,11 @@ func isBlacklistedFilesystemPath(path string, ignoreNames []string) bool {
 		}
 	}
 	return false
+}
+
+func isAgentGoWorkspacePath(path string) bool {
+	normalized := filepath.ToSlash(filepath.Clean(path))
+	return strings.Contains(normalized, "/.agentgo/workspace/") || strings.HasSuffix(normalized, "/.agentgo/workspace")
 }
 
 func validateFilesystemToolArgs(toolName string, arguments map[string]interface{}, ignoreNames []string) error {
@@ -120,6 +128,7 @@ func sanitizeFilesystemToolArgs(toolName string, arguments map[string]interface{
 		return arguments
 	}
 
+	arguments = normalizeFilesystemPathAliases(arguments)
 	switch toolName {
 	case "mcp_filesystem_write_file":
 		return sanitizeFilesystemWriteArgs(arguments)
@@ -128,6 +137,20 @@ func sanitizeFilesystemToolArgs(toolName string, arguments map[string]interface{
 	default:
 		return arguments
 	}
+}
+
+func normalizeFilesystemPathAliases(arguments map[string]interface{}) map[string]interface{} {
+	if _, ok := arguments["path"].(string); ok {
+		return arguments
+	}
+	for _, key := range []string{"file_path", "filepath", "filePath", "filename", "file_name", "fileName", "file", "name", "target_path", "targetPath", "target", "uri"} {
+		if value, ok := arguments[key].(string); ok && strings.TrimSpace(value) != "" {
+			cloned := cloneToolArgs(arguments)
+			cloned["path"] = strings.TrimSpace(value)
+			return cloned
+		}
+	}
+	return arguments
 }
 
 func sanitizeFilesystemWriteArgs(arguments map[string]interface{}) map[string]interface{} {

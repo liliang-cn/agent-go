@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/liliang-cn/agent-go/v2/pkg/resource"
 	_ "modernc.org/sqlite"
 )
 
@@ -60,6 +61,33 @@ func TestCountMessages(t *testing.T) {
 	}
 	if count != 2 {
 		t.Fatalf("expected 2 messages, got %d", count)
+	}
+}
+
+func TestResourceRegistryCRUD(t *testing.T) {
+	db := newTestAgentGoDB(t)
+	res := resource.Resource{
+		ID:        "tool:test",
+		Kind:      resource.KindTool,
+		Name:      "test",
+		Execution: resource.ExecutionDirectOnly,
+		Metadata:  map[string]any{"category": "custom"},
+	}
+	if err := db.SaveResource(res); err != nil {
+		t.Fatalf("save resource: %v", err)
+	}
+	resources, err := db.ListResources()
+	if err != nil {
+		t.Fatalf("list resources: %v", err)
+	}
+	if len(resources) != 1 {
+		t.Fatalf("expected 1 resource, got %d", len(resources))
+	}
+	if resources[0].ID != res.ID || resources[0].Execution != resource.ExecutionDirectOnly {
+		t.Fatalf("unexpected resource: %+v", resources[0])
+	}
+	if resources[0].Metadata["category"] != "custom" {
+		t.Fatalf("metadata did not round-trip: %+v", resources[0].Metadata)
 	}
 }
 

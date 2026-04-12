@@ -98,7 +98,9 @@ Example format:
 	var fullContent strings.Builder
 	var toolCalls []domain.ToolCall
 
-	err := s.llmService.StreamWithTools(ctx, messages, ptcTools, s.toolGenerationOptions(temperature, maxTokens, ""), func(delta *domain.GenerationResult) error {
+	llmCtx, cancel := withLLMTurnTimeout(ctx)
+	defer cancel()
+	err := s.llmService.StreamWithTools(llmCtx, messages, ptcTools, s.toolGenerationOptions(temperature, maxTokens, ""), func(delta *domain.GenerationResult) error {
 		if delta.Content != "" {
 			fullContent.WriteString(delta.Content)
 			s.emitProgress("partial", delta.Content, 0, "")
@@ -202,6 +204,9 @@ Example format:
 	ptcResult, err := s.ptcIntegration.ProcessLLMResponse(ctx, content, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("PTC processing failed: %w", err)
+	}
+	if ptcResult != nil && ptcResult.Type == PTCResultTypeError {
+		return nil, ptcResult, fmt.Errorf("PTC execution failed: %s", strings.TrimSpace(ptcResult.Error))
 	}
 
 	return content, ptcResult, nil

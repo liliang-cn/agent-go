@@ -26,6 +26,7 @@ type Tool struct {
 	concurrencySafe   bool
 	destructive       bool
 	interruptBehavior string
+	executionMode     ToolExposureMode
 }
 
 // Name returns the tool name.
@@ -38,11 +39,12 @@ func (t *Tool) Description() string { return t.description }
 func (t *Tool) Parameters() map[string]interface{} { return t.parameters }
 
 // DeferLoading returns whether the tool should be excluded from initial context.
-func (t *Tool) DeferLoading() bool        { return t.deferLoading }
-func (t *Tool) ReadOnly() bool            { return t.readOnly }
-func (t *Tool) ConcurrencySafe() bool     { return t.concurrencySafe }
-func (t *Tool) Destructive() bool         { return t.destructive }
-func (t *Tool) InterruptBehavior() string { return t.interruptBehavior }
+func (t *Tool) DeferLoading() bool              { return t.deferLoading }
+func (t *Tool) ReadOnly() bool                  { return t.readOnly }
+func (t *Tool) ConcurrencySafe() bool           { return t.concurrencySafe }
+func (t *Tool) Destructive() bool               { return t.destructive }
+func (t *Tool) InterruptBehavior() string       { return t.interruptBehavior }
+func (t *Tool) ExecutionMode() ToolExposureMode { return t.executionMode }
 
 // Handler returns the raw map-based handler (used internally by agent/ptc router).
 func (t *Tool) Handler() func(context.Context, map[string]interface{}) (interface{}, error) {
@@ -82,6 +84,11 @@ func (t *Tool) WithDestructive(destructive bool) *Tool {
 
 func (t *Tool) WithInterruptBehavior(interruptBehavior string) *Tool {
 	t.interruptBehavior = strings.TrimSpace(interruptBehavior)
+	return t
+}
+
+func (t *Tool) WithExecutionMode(mode ToolExposureMode) *Tool {
+	t.executionMode = mode
 	return t
 }
 

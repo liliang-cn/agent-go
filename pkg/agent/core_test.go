@@ -10,6 +10,9 @@ import (
 	"time"
 
 	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v2/pkg/ptc"
+	"github.com/liliang-cn/agent-go/v2/pkg/resource"
+	storepkg "github.com/liliang-cn/agent-go/v2/pkg/store"
 )
 
 type metadataTestMCP struct{}
@@ -101,11 +104,75 @@ func TestToolRegistry_ListForLLM_PTCMode(t *testing.T) {
 		func(_ context.Context, _ map[string]interface{}) (interface{}, error) { return nil, nil },
 		CategoryCustom,
 	)
+	reg.Register(
+		makeToolDef("memory_recall", "Memory recall"),
+		func(_ context.Context, _ map[string]interface{}) (interface{}, error) { return nil, nil },
+		CategoryMemory,
+	)
 
-	// ptcEnabled=true → hidden from LLM (JS sandbox exposes them via callTool)
+	// ptcEnabled=true → direct/dual tools remain direct; code-only tools move to PTC.
 	defs := reg.ListForLLM(true, "")
-	if defs != nil {
-		t.Errorf("expected nil tool list for PTC mode, got %v", defs)
+	names := map[string]bool{}
+	for _, def := range defs {
+		names[def.Function.Name] = true
+	}
+	if !names["memory_recall"] || !names["tool1"] {
+		t.Fatalf("expected memory_recall and dual custom tool in PTC mode, got %+v", defs)
+	}
+}
+
+func TestToolRegistry_MemoryToolsExcludedFromPTCCallTool(t *testing.T) {
+	reg := NewToolRegistry()
+	reg.Register(
+		makeToolDef("memory_recall", "Memory recall"),
+		func(_ context.Context, _ map[string]interface{}) (interface{}, error) { return nil, nil },
+		CategoryMemory,
+	)
+	reg.Register(
+		makeToolDef("rag_query", "RAG query"),
+		func(_ context.Context, _ map[string]interface{}) (interface{}, error) { return nil, nil },
+		CategoryRAG,
+	)
+
+	callTools := reg.ListForCallTool()
+	if len(callTools) != 1 {
+		t.Fatalf("expected one PTC callTool, got %d", len(callTools))
+	}
+	if callTools[0].Name != "rag_query" {
+		t.Fatalf("expected rag_query in PTC callTool list, got %s", callTools[0].Name)
+	}
+
+	router := ptc.NewAgentGoRouter()
+	reg.SyncToPTCRouter(router)
+	tools, err := router.ListAvailableTools(context.Background())
+	if err != nil {
+		t.Fatalf("ListAvailableTools failed: %v", err)
+	}
+	for _, tool := range tools {
+		if tool.Name == "memory_recall" {
+			t.Fatal("memory_recall should not be registered in PTC router")
+		}
+	}
+}
+
+func TestToolRegistry_ExecutionPolicyOverridesExposure(t *testing.T) {
+	reg := NewToolRegistry()
+	reg.SetExecutionPolicy(ToolExecutionPolicy{
+		Rules: map[string]ToolExposureMode{
+			"custom_direct": ToolExposureDirectOnly,
+			"custom_code":   ToolExposureCodeOnly,
+		},
+	})
+	reg.Register(makeToolDef("custom_direct", "direct"), func(context.Context, map[string]interface{}) (interface{}, error) { return nil, nil }, CategoryCustom)
+	reg.Register(makeToolDef("custom_code", "code"), func(context.Context, map[string]interface{}) (interface{}, error) { return nil, nil }, CategoryCustom)
+
+	directTools := reg.ListForLLM(true, "")
+	if len(directTools) != 1 || directTools[0].Function.Name != "custom_direct" {
+		t.Fatalf("expected custom_direct as direct PTC-mode tool, got %+v", directTools)
+	}
+	callTools := reg.ListForCallTool()
+	if len(callTools) != 1 || callTools[0].Name != "custom_code" {
+		t.Fatalf("expected custom_code as code tool, got %+v", callTools)
 	}
 }
 
@@ -435,6 +502,10 @@ func TestRegisterBuiltInTools_Metadata(t *testing.T) {
 	if !completeMeta.ReadOnly || !completeMeta.ConcurrencySafe || completeMeta.InterruptBehavior != InterruptBehaviorCancel {
 		t.Fatalf("unexpected task_complete metadata: %+v", completeMeta)
 	}
+	blockedMeta := svc.toolRegistry.MetadataOf("task_blocked")
+	if !blockedMeta.ReadOnly || !blockedMeta.ConcurrencySafe || blockedMeta.InterruptBehavior != InterruptBehaviorCancel {
+		t.Fatalf("unexpected task_blocked metadata: %+v", blockedMeta)
+	}
 }
 
 func TestAgentToolMetadata_IsVisibleToServiceLookup(t *testing.T) {
@@ -629,6 +700,37 @@ func TestBuilder_WithPTCFalseOverridesDefault(t *testing.T) {
 	}
 	if b.ptcCfg != nil {
 		t.Fatal("expected WithPTC(false) to clear ptc config")
+	}
+}
+
+func TestBuilder_LoadsToolExecutionPolicyFromResourceRegistry(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "agentgo.db")
+	db, err := storepkg.NewAgentGoDB(dbPath)
+	if err != nil {
+		t.Fatalf("NewAgentGoDB() error = %v", err)
+	}
+	if err := db.SaveResource(resource.Resource{
+		ID:        "tool:custom_code",
+		Kind:      resource.KindTool,
+		Name:      "custom_code",
+		Execution: resource.ExecutionCodeOnly,
+	}); err != nil {
+		t.Fatalf("SaveResource() error = %v", err)
+	}
+	_ = db.Close()
+
+	svc, err := New("policy-agent").
+		WithDBPath(dbPath).
+		WithLLM(&serviceExecutionStateTestLLM{}).
+		WithTool(BuildTool("custom_code").Description("code only").Handler(func(context.Context, map[string]interface{}) (interface{}, error) {
+			return "ok", nil
+		}).Build()).
+		Build()
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got := svc.toolRegistry.MetadataOf("custom_code").ExposureMode; got != ToolExposureCodeOnly {
+		t.Fatalf("expected code_only exposure from resource registry, got %q", got)
 	}
 }
 

@@ -21,6 +21,7 @@ const (
 	// Workflow Events
 	EventTypeStart    EventType = "workflow_start"
 	EventTypeComplete EventType = "workflow_complete"
+	EventTypeBlocked  EventType = "workflow_blocked"
 	EventTypeError    EventType = "workflow_error"
 
 	// Thinking & Streaming

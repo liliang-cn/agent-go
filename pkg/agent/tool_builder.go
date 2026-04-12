@@ -95,6 +95,7 @@ type ToolBuilder struct {
 	concurrencySafe   bool
 	destructive       bool
 	interruptBehavior string
+	executionMode     ToolExposureMode
 }
 
 // BuildTool starts a new ToolBuilder chain for a tool with the given name.
@@ -134,6 +135,11 @@ func (b *ToolBuilder) Destructive(destructive bool) *ToolBuilder {
 
 func (b *ToolBuilder) InterruptBehavior(interruptBehavior string) *ToolBuilder {
 	b.interruptBehavior = interruptBehavior
+	return b
+}
+
+func (b *ToolBuilder) ExecutionMode(mode ToolExposureMode) *ToolBuilder {
+	b.executionMode = mode
 	return b
 }
 
@@ -180,6 +186,7 @@ func (b *ToolBuilder) Build() *Tool {
 		concurrencySafe:   b.concurrencySafe,
 		destructive:       b.destructive,
 		interruptBehavior: b.interruptBehavior,
+		executionMode:     b.executionMode,
 	}
 }
 

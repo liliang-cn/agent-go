@@ -28,7 +28,9 @@ func (s *Service) streamToolTurnWithRecovery(ctx context.Context, messages []dom
 		toolCallDetected bool
 	)
 
-	err := s.llmService.StreamWithTools(ctx, messages, tools, opts, func(delta *domain.GenerationResult) error {
+	llmCtx, cancel := withLLMTurnTimeout(ctx)
+	defer cancel()
+	err := s.llmService.StreamWithTools(llmCtx, messages, tools, opts, func(delta *domain.GenerationResult) error {
 		if delta.ID != "" {
 			lastResponseID = delta.ID
 		}

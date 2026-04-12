@@ -11,6 +11,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v2/pkg/resource"
+	taskpkg "github.com/liliang-cn/agent-go/v2/pkg/task"
 	_ "modernc.org/sqlite"
 )
 
@@ -280,6 +282,72 @@ func (s *AgentGoDB) initSchema() error {
 		return fmt.Errorf("failed to migrate shared_tasks table: %w", err)
 	}
 
+	_, err = s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS tasks (
+			id TEXT PRIMARY KEY,
+			kind TEXT NOT NULL,
+			status TEXT NOT NULL,
+			session_id TEXT,
+			runtime_session_id TEXT,
+			parent_task_id TEXT,
+			continuation_id TEXT,
+			queue_class TEXT,
+			awaiting TEXT,
+			team_id TEXT,
+			team_name TEXT,
+			agent_name TEXT,
+			agent_names TEXT,
+			input TEXT,
+			output TEXT,
+			error TEXT,
+			frames TEXT,
+			events TEXT,
+			source TEXT,
+			source_id TEXT,
+			created_at DATETIME NOT NULL,
+			started_at DATETIME,
+			finished_at DATETIME
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create tasks table: %w", err)
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_session_id ON tasks(session_id)`); err != nil {
+		return fmt.Errorf("failed to create tasks session index: %w", err)
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`); err != nil {
+		return fmt.Errorf("failed to create tasks status index: %w", err)
+	}
+	if err := s.ensureColumnExistsLocked("tasks", "continuation_id", "TEXT"); err != nil {
+		return err
+	}
+	if err := s.ensureColumnExistsLocked("tasks", "queue_class", "TEXT"); err != nil {
+		return err
+	}
+	if err := s.ensureColumnExistsLocked("tasks", "awaiting", "TEXT"); err != nil {
+		return err
+	}
+
+	_, err = s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS resources (
+			id TEXT PRIMARY KEY,
+			kind TEXT NOT NULL,
+			name TEXT NOT NULL,
+			provider TEXT,
+			description TEXT,
+			execution TEXT,
+			metadata TEXT,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create resources table: %w", err)
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_resources_kind ON resources(kind)`); err != nil {
+		return fmt.Errorf("failed to create resources kind index: %w", err)
+	}
+
 	// Chat session messages table (for granular message history)
 	_, err = s.db.Exec(`
 		CREATE TABLE IF NOT EXISTS chat_messages (
@@ -435,6 +503,20 @@ func (s *AgentGoDB) tableColumnSetLocked(tableName string) (map[string]bool, err
 		return nil, fmt.Errorf("iterate %s column info: %w", tableName, err)
 	}
 	return columns, nil
+}
+
+func (s *AgentGoDB) ensureColumnExistsLocked(tableName, columnName, columnType string) error {
+	columns, err := s.tableColumnSetLocked(tableName)
+	if err != nil {
+		return err
+	}
+	if columns[columnName] {
+		return nil
+	}
+	if _, err := s.db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", tableName, columnName, columnType)); err != nil && !isSQLiteDuplicateColumnError(err) {
+		return fmt.Errorf("add %s to %s: %w", columnName, tableName, err)
+	}
+	return nil
 }
 
 // GetDB returns the underlying sql.DB.
@@ -1401,6 +1483,197 @@ func (s *AgentGoDB) ListSharedTasks() ([]*SharedTask, error) {
 		result = append(result, &task)
 	}
 	return result, nil
+}
+
+func (s *AgentGoDB) SaveTask(task *taskpkg.Task) error {
+	if task == nil {
+		return fmt.Errorf("task is required")
+	}
+	if strings.TrimSpace(task.ID) == "" {
+		return fmt.Errorf("task id is required")
+	}
+
+	agentNamesJSON, _ := json.Marshal(task.AgentNames)
+	framesJSON, _ := json.Marshal(task.Frames)
+	eventsJSON, _ := json.Marshal(task.Events)
+	awaitingJSON, _ := json.Marshal(task.Awaiting)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.db.Exec(`
+		INSERT INTO tasks (
+			id, kind, status, session_id, runtime_session_id, parent_task_id,
+			continuation_id, queue_class, awaiting, team_id, team_name, agent_name, agent_names, input, output, error,
+			frames, events, source, source_id, created_at, started_at, finished_at
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			kind = excluded.kind,
+			status = excluded.status,
+			session_id = excluded.session_id,
+			runtime_session_id = excluded.runtime_session_id,
+			parent_task_id = excluded.parent_task_id,
+			continuation_id = excluded.continuation_id,
+			queue_class = excluded.queue_class,
+			awaiting = excluded.awaiting,
+			team_id = excluded.team_id,
+			team_name = excluded.team_name,
+			agent_name = excluded.agent_name,
+			agent_names = excluded.agent_names,
+			input = excluded.input,
+			output = excluded.output,
+			error = excluded.error,
+			frames = excluded.frames,
+			events = excluded.events,
+			source = excluded.source,
+			source_id = excluded.source_id,
+			created_at = excluded.created_at,
+			started_at = excluded.started_at,
+			finished_at = excluded.finished_at
+	`, task.ID, task.Kind, task.Status, task.SessionID, task.RuntimeSessionID, task.ParentTaskID, task.ContinuationID, task.QueueClass, string(awaitingJSON),
+		task.TeamID, task.TeamName, task.AgentName, string(agentNamesJSON), task.Input, task.Output, task.Error,
+		string(framesJSON), string(eventsJSON), task.Source, task.SourceID, task.CreatedAt, task.StartedAt, task.FinishedAt)
+	return err
+}
+
+func (s *AgentGoDB) GetTask(id string) (*taskpkg.Task, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	row := s.db.QueryRow(`
+		SELECT id, kind, status, session_id, runtime_session_id, parent_task_id,
+		       continuation_id, queue_class, awaiting, team_id, team_name, agent_name, agent_names, input, output, error,
+		       frames, events, source, source_id, created_at, started_at, finished_at
+		FROM tasks WHERE id = ?
+	`, id)
+	return scanTask(row)
+}
+
+func (s *AgentGoDB) ListTasks(limit int) ([]*taskpkg.Task, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := s.db.Query(`
+		SELECT id, kind, status, session_id, runtime_session_id, parent_task_id,
+		       continuation_id, queue_class, awaiting, team_id, team_name, agent_name, agent_names, input, output, error,
+		       frames, events, source, source_id, created_at, started_at, finished_at
+		FROM tasks
+		ORDER BY created_at ASC
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tasks []*taskpkg.Task
+	for rows.Next() {
+		task, err := scanTask(rows)
+		if err == nil {
+			tasks = append(tasks, task)
+		}
+	}
+	return tasks, rows.Err()
+}
+
+type taskScanner interface {
+	Scan(dest ...interface{}) error
+}
+
+func scanTask(scanner taskScanner) (*taskpkg.Task, error) {
+	var task taskpkg.Task
+	var agentNamesJSON, framesJSON, eventsJSON, awaitingJSON []byte
+	var sessionID, runtimeSessionID, parentTaskID, continuationID, queueClass, teamID, teamName, agentName, input, output, errorText, source, sourceID sql.NullString
+	var startedAt, finishedAt sql.NullTime
+	if err := scanner.Scan(
+		&task.ID, &task.Kind, &task.Status, &sessionID, &runtimeSessionID, &parentTaskID,
+		&continuationID, &queueClass, &awaitingJSON, &teamID, &teamName, &agentName, &agentNamesJSON, &input, &output, &errorText,
+		&framesJSON, &eventsJSON, &source, &sourceID, &task.CreatedAt, &startedAt, &finishedAt,
+	); err != nil {
+		return nil, err
+	}
+	task.SessionID = sessionID.String
+	task.RuntimeSessionID = runtimeSessionID.String
+	task.ParentTaskID = parentTaskID.String
+	task.ContinuationID = continuationID.String
+	task.QueueClass = taskpkg.QueueClass(queueClass.String)
+	task.TeamID = teamID.String
+	task.TeamName = teamName.String
+	task.AgentName = agentName.String
+	task.Input = input.String
+	task.Output = output.String
+	task.Error = errorText.String
+	task.Source = source.String
+	task.SourceID = sourceID.String
+	_ = json.Unmarshal(agentNamesJSON, &task.AgentNames)
+	_ = json.Unmarshal(awaitingJSON, &task.Awaiting)
+	_ = json.Unmarshal(framesJSON, &task.Frames)
+	_ = json.Unmarshal(eventsJSON, &task.Events)
+	if startedAt.Valid {
+		task.StartedAt = &startedAt.Time
+	}
+	if finishedAt.Valid {
+		task.FinishedAt = &finishedAt.Time
+	}
+	return &task, nil
+}
+
+func (s *AgentGoDB) SaveResource(res resource.Resource) error {
+	if strings.TrimSpace(res.ID) == "" {
+		return fmt.Errorf("resource id is required")
+	}
+	metadataJSON, _ := json.Marshal(res.Metadata)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.db.Exec(`
+		INSERT INTO resources (id, kind, name, provider, description, execution, metadata, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(id) DO UPDATE SET
+			kind = excluded.kind,
+			name = excluded.name,
+			provider = excluded.provider,
+			description = excluded.description,
+			execution = excluded.execution,
+			metadata = excluded.metadata,
+			updated_at = CURRENT_TIMESTAMP
+	`, res.ID, res.Kind, res.Name, res.Provider, res.Description, res.Execution, string(metadataJSON))
+	return err
+}
+
+func (s *AgentGoDB) ListResources() ([]resource.Resource, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	rows, err := s.db.Query(`
+		SELECT id, kind, name, provider, description, execution, metadata
+		FROM resources
+		ORDER BY kind, name
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []resource.Resource
+	for rows.Next() {
+		var res resource.Resource
+		var metadataJSON []byte
+		if err := rows.Scan(&res.ID, &res.Kind, &res.Name, &res.Provider, &res.Description, &res.Execution, &metadataJSON); err != nil {
+			continue
+		}
+		if len(metadataJSON) > 0 {
+			_ = json.Unmarshal(metadataJSON, &res.Metadata)
+		}
+		out = append(out, res)
+	}
+	return out, rows.Err()
+}
+
+func (s *AgentGoDB) DeleteResource(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.db.Exec(`DELETE FROM resources WHERE id = ?`, id)
+	return err
 }
 
 // DeleteMembershipsByAgent deletes all memberships for an agent

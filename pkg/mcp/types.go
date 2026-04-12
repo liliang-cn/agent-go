@@ -70,6 +70,7 @@ type Config struct {
 	FilesystemDirs        []string       `toml:"filesystem_dirs" json:"filesystem_dirs" mapstructure:"filesystem_dirs"`             // Allowed dirs for built-in filesystem server; defaults to home dir
 	FilesystemIgnore      []string       `toml:"filesystem_ignore" json:"filesystem_ignore" mapstructure:"filesystem_ignore"`       // Blacklisted directory names filtered from filesystem MCP operations
 	LoadedServers         []ServerConfig `toml:"-" json:"-" mapstructure:"-"`                                                       // Internal: loaded server configurations
+	InlineServers         []ServerConfig `toml:"-" json:"-" mapstructure:"-"`                                                       // Internal: resource-registry backed server configurations
 	mu                    sync.Mutex     `toml:"-" json:"-" mapstructure:"-"`                                                       // Protects LoadedServers
 }
 
@@ -146,8 +147,9 @@ func (c *Config) LoadServersFromJSON() error {
 	// Clear loaded servers
 	c.LoadedServers = []ServerConfig{}
 
-	// Add back built-in servers first
+	// Add back built-in and resource-registry servers first.
 	c.LoadedServers = append(c.LoadedServers, builtinServers...)
+	c.LoadedServers = append(c.LoadedServers, c.InlineServers...)
 
 	// Load from new Servers array
 	for _, serverFile := range c.Servers {

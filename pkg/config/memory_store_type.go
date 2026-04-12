@@ -9,8 +9,10 @@ import (
 type MemoryStoreType string
 
 const (
-	MemoryStoreTypeFile   MemoryStoreType = "file"
-	MemoryStoreTypeCortex MemoryStoreType = "cortex"
+	MemoryStoreTypeFile       MemoryStoreType = "file"
+	MemoryStoreTypeCortex     MemoryStoreType = "cortex"
+	MemoryStoreTypeMemoryFlow MemoryStoreType = "memoryflow"
+	MemoryStoreTypeGraphFlow  MemoryStoreType = "graphflow"
 )
 
 func NormalizeMemoryStoreType(raw string) MemoryStoreType {
@@ -19,6 +21,10 @@ func NormalizeMemoryStoreType(raw string) MemoryStoreType {
 		return MemoryStoreTypeFile
 	case "cortex":
 		return MemoryStoreTypeCortex
+	case "memoryflow", "cortex-memoryflow":
+		return MemoryStoreTypeMemoryFlow
+	case "graphflow", "cortex-graphflow":
+		return MemoryStoreTypeGraphFlow
 	default:
 		return MemoryStoreType(strings.ToLower(strings.TrimSpace(raw)))
 	}
@@ -38,7 +44,7 @@ func (t MemoryStoreType) String() string {
 
 func (t MemoryStoreType) Valid() bool {
 	switch NormalizeMemoryStoreType(t.String()) {
-	case MemoryStoreTypeFile, MemoryStoreTypeCortex:
+	case MemoryStoreTypeFile, MemoryStoreTypeCortex, MemoryStoreTypeMemoryFlow, MemoryStoreTypeGraphFlow:
 		return true
 	default:
 		return false
@@ -56,7 +62,7 @@ func (t MemoryStoreType) UsesFile() bool {
 
 func (t MemoryStoreType) UsesVector() bool {
 	switch NormalizeMemoryStoreType(t.String()) {
-	case MemoryStoreTypeCortex:
+	case MemoryStoreTypeCortex, MemoryStoreTypeMemoryFlow, MemoryStoreTypeGraphFlow:
 		return true
 	default:
 		return false
@@ -131,7 +137,7 @@ func (c *Config) applyMemoryLayout() {
 	filePath := filepath.Join(c.DataDir(), "memories")
 
 	switch storeType {
-	case MemoryStoreTypeCortex:
+	case MemoryStoreTypeCortex, MemoryStoreTypeMemoryFlow, MemoryStoreTypeGraphFlow:
 		c.Memory.MemoryPath = vectorPath
 	case MemoryStoreTypeFile:
 		if c.Memory.MemoryPath == "" || !filepath.IsAbs(c.Memory.MemoryPath) || sameAbsPath(c.Memory.MemoryPath, vectorPath) {

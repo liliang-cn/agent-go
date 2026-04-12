@@ -105,6 +105,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	fmt.Printf("✅ Created skill: %s\n", skillName)
 	fmt.Printf("   Path: %s\n", outputDir)
 	fmt.Printf("   File: %s\n\n", skillFile)
+	saveSkillResource(skillName, outputDir)
 	fmt.Printf("💡 Edit the skill file, then run: agentgo skills load\n")
 
 	return nil
@@ -133,6 +134,7 @@ func runRemove(cmd *cobra.Command, args []string) error {
 	if err := os.RemoveAll(skillDir); err != nil {
 		return fmt.Errorf("failed to remove skill directory: %w", err)
 	}
+	deleteSkillResource(skillName)
 
 	fmt.Printf("✅ Removed skill: %s\n", skillName)
 

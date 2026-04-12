@@ -31,7 +31,8 @@ func delegatedResultLooksFailed(result string) bool {
 var (
 	chatSessionID  string
 	chatStream     bool
-	chatWithPTC    bool
+	chatWithPTC    bool // Legacy compatibility flag; PTC is enabled by default.
+	chatNoPTC      bool
 	chatNoMemory   bool
 	chatShowMemory bool
 )
@@ -63,7 +64,7 @@ The agent has access to:
 
 Examples:
   agentgo chat "你好"
-  agentgo chat --with-ptc "比较三个城市的旅行预算"
+  agentgo chat --no-ptc "临时使用直接函数调用"
   agentgo chat --show-memory "我之前说过我喜欢什么颜色？"
   agentgo chat --no-memory "临时不要记得这次对话内容"
   agentgo chat  # Interactive mode`,
@@ -74,7 +75,8 @@ func init() {
 	RootCmd.AddCommand(chatCmd)
 	chatCmd.Flags().StringVarP(&chatSessionID, "session", "s", "", "Session ID for conversation (default: auto-generated)")
 	chatCmd.Flags().BoolVarP(&chatStream, "stream", "", false, "Stream the response")
-	chatCmd.Flags().BoolVar(&chatWithPTC, "with-ptc", false, "Enable Programmatic Tool Calling (JS sandbox)")
+	chatCmd.Flags().BoolVar(&chatWithPTC, "with-ptc", false, "Force Programmatic Tool Calling on (default; compatibility flag)")
+	chatCmd.Flags().BoolVar(&chatNoPTC, "no-ptc", false, "Disable Programmatic Tool Calling and use direct function calling")
 	chatCmd.Flags().BoolVar(&chatNoMemory, "no-memory", false, "Disable long-term memory for this chat")
 	chatCmd.Flags().BoolVar(&chatShowMemory, "show-memory", false, "Show retrieved memories in output")
 }
@@ -162,7 +164,11 @@ func runChat(cmd *cobra.Command, args []string) error {
 }
 
 func buildChatConciergeService(chatCfg *config.Config, agentDBPath string, manager *agent.TeamManager) (*agent.Service, error) {
-	if manager != nil && !chatNoMemory && !chatWithPTC && !chatCfg.GetMemoryStoreType().UsesVector() {
+	if chatWithPTC && chatNoPTC {
+		return nil, fmt.Errorf("use either --with-ptc or --no-ptc, not both")
+	}
+
+	if manager != nil && !chatNoMemory && !chatWithPTC && !chatNoPTC && !chatCfg.GetMemoryStoreType().UsesVector() {
 		if svc, err := manager.GetAgentService(agent.BuiltInConciergeAgentName); err == nil {
 			svc.SetDebug(debug)
 			svc.SetProgressCallback(progressCallback)
@@ -185,7 +191,10 @@ func buildChatConciergeService(chatCfg *config.Config, agentDBPath string, manag
 		WithDebug(debug).
 		WithProgress(progressCallback)
 
-	if chatWithPTC {
+	switch {
+	case chatNoPTC:
+		builder.WithPTC(false)
+	case chatWithPTC:
 		builder.WithPTC()
 	}
 
@@ -410,7 +419,7 @@ func runInteractiveChat(ctx context.Context, svc *agent.Service, manager *agent.
 	defer cancel()
 
 	fmt.Printf("%s AgentGo Concierge Chat\n", cliui.Concierge)
-	if chatWithPTC {
+	if !chatNoPTC {
 		fmt.Printf("%s PTC Mode: Enabled (JS sandbox for complex logic)\n", cliui.PTC)
 	}
 	if chatNoMemory {

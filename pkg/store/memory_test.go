@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/cortexdb/v2/pkg/graphflow"
 )
 
 func TestNewMemoryStoreConcurrentOpen(t *testing.T) {
@@ -98,6 +99,92 @@ func TestMemoryStoreSearchByText_CJK(t *testing.T) {
 	}
 	if got := results[0].ID; got != "m1" {
 		t.Fatalf("top result = %s, want m1", got)
+	}
+}
+
+func TestMemoryFlowStoreStoresThroughWorkflow(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "memoryflow.db")
+
+	store, err := NewMemoryFlowStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewMemoryFlowStore() error = %v", err)
+	}
+	defer store.Close()
+
+	mem := &domain.Memory{
+		ID:         "mf-1",
+		SessionID:  "session:apollo",
+		Type:       domain.MemoryTypePreference,
+		Content:    "Apollo prefers brief status updates",
+		Importance: 0.8,
+		CreatedAt:  time.Now().UTC(),
+	}
+	if err := store.Store(ctx, mem); err != nil {
+		t.Fatalf("Store() error = %v", err)
+	}
+
+	got, err := store.Get(ctx, "mf-1")
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if got.Content != mem.Content {
+		t.Fatalf("content = %q, want %q", got.Content, mem.Content)
+	}
+	if got.Type != domain.MemoryTypePreference {
+		t.Fatalf("type = %q, want %q", got.Type, domain.MemoryTypePreference)
+	}
+
+	results, err := store.SearchByText(ctx, "Apollo", 10)
+	if err != nil {
+		t.Fatalf("SearchByText() error = %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("SearchByText() returned no results")
+	}
+	if results[0].ID != "mf-1" {
+		t.Fatalf("top result = %s, want mf-1", results[0].ID)
+	}
+}
+
+func TestGraphFlowStoreBuildsGraph(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "graphflow.db")
+
+	store, err := NewGraphFlowStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewGraphFlowStore() error = %v", err)
+	}
+	defer store.Close()
+
+	mem := &domain.Memory{
+		ID:         "gf-1",
+		Type:       domain.MemoryTypeFact,
+		Content:    "Apollo ships Friday and Alice owns Apollo.",
+		Importance: 0.7,
+		CreatedAt:  time.Now().UTC(),
+	}
+	if err := store.Store(ctx, mem); err != nil {
+		t.Fatalf("Store() error = %v", err)
+	}
+
+	got, err := store.Get(ctx, "gf-1")
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if got.Content != mem.Content {
+		t.Fatalf("content = %q, want %q", got.Content, mem.Content)
+	}
+
+	report, err := graphflow.Analyze(ctx, store.db, graphflow.AnalyzeRequest{TopN: 5})
+	if err != nil {
+		t.Fatalf("graphflow Analyze() error = %v", err)
+	}
+	if report.NodeCount == 0 {
+		t.Fatal("expected graphflow nodes")
+	}
+	if report.EdgeCount == 0 {
+		t.Fatal("expected graphflow edges")
 	}
 }
 

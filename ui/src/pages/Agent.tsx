@@ -28,6 +28,16 @@ function kindLabel(kind: AgentModel["kind"], t: (key: string) => string) {
   return t("kindCaptain");
 }
 
+function capabilityBadges(agent: AgentModel, t: (key: string) => string) {
+  const badges = [
+    { enabled: agent.enable_ptc, label: t("capabilityPTC") },
+    { enabled: agent.enable_memory, label: t("capabilityMemory") },
+    { enabled: agent.enable_mcp, label: t("capabilityMCP") },
+    { enabled: agent.enable_rag, label: t("capabilityRAG") },
+  ];
+  return badges.filter((badge) => badge.enabled);
+}
+
 function AgentCard({
   agent,
   onExecute,
@@ -67,6 +77,16 @@ function AgentCard({
             </span>
           </div>
           <p className="mt-1 text-sm text-slate-600">{agent.description}</p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {capabilityBadges(agent, t).map((badge) => (
+              <span
+                key={badge.label}
+                className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600"
+              >
+                {badge.label}
+              </span>
+            ))}
+          </div>
         </div>
         <span className="text-sm text-slate-400">{expanded ? "−" : "+"}</span>
       </button>
@@ -225,7 +245,7 @@ export function Agent() {
     model: "",
     required_llm_capability: 0,
     enable_rag: false,
-    enable_memory: false,
+    enable_memory: true,
     enable_ptc: true,
     enable_mcp: true,
     mcp_tools: [],
@@ -280,7 +300,7 @@ export function Agent() {
         model: "",
         required_llm_capability: 0,
         enable_rag: false,
-        enable_memory: false,
+        enable_memory: true,
         enable_ptc: true,
         enable_mcp: true,
         mcp_tools: [],
@@ -451,6 +471,97 @@ export function Agent() {
             className="dashboard-input resize-none"
             required
           />
+          <fieldset className="rounded-[22px] border border-sky-100 bg-sky-50/50 p-4">
+            <legend className="px-1 text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
+              {t("agentCapabilities")}
+            </legend>
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              <label className="flex items-start gap-3 rounded-2xl bg-white/80 p-3 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={createForm.enable_ptc ?? true}
+                  onChange={(event) =>
+                    setCreateForm((current) => ({
+                      ...current,
+                      enable_ptc: event.target.checked,
+                    }))
+                  }
+                  className="mt-1"
+                />
+                <span>
+                  <span className="block font-medium text-slate-900">
+                    {t("capabilityPTC")}
+                  </span>
+                  <span className="mt-1 block text-xs text-slate-500">
+                    {t("ptcDefaultOnHelp")}
+                  </span>
+                </span>
+              </label>
+              <label className="flex items-start gap-3 rounded-2xl bg-white/80 p-3 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={createForm.enable_memory ?? true}
+                  onChange={(event) =>
+                    setCreateForm((current) => ({
+                      ...current,
+                      enable_memory: event.target.checked,
+                    }))
+                  }
+                  className="mt-1"
+                />
+                <span>
+                  <span className="block font-medium text-slate-900">
+                    {t("capabilityMemory")}
+                  </span>
+                  <span className="mt-1 block text-xs text-slate-500">
+                    {t("memoryNoEmbeddingHelp")}
+                  </span>
+                </span>
+              </label>
+              <label className="flex items-start gap-3 rounded-2xl bg-white/80 p-3 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={createForm.enable_mcp ?? true}
+                  onChange={(event) =>
+                    setCreateForm((current) => ({
+                      ...current,
+                      enable_mcp: event.target.checked,
+                    }))
+                  }
+                  className="mt-1"
+                />
+                <span>
+                  <span className="block font-medium text-slate-900">
+                    {t("capabilityMCP")}
+                  </span>
+                  <span className="mt-1 block text-xs text-slate-500">
+                    {t("mcpCapabilityHelp")}
+                  </span>
+                </span>
+              </label>
+              <label className="flex items-start gap-3 rounded-2xl bg-white/80 p-3 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={createForm.enable_rag ?? false}
+                  onChange={(event) =>
+                    setCreateForm((current) => ({
+                      ...current,
+                      enable_rag: event.target.checked,
+                    }))
+                  }
+                  className="mt-1"
+                />
+                <span>
+                  <span className="block font-medium text-slate-900">
+                    {t("capabilityRAG")}
+                  </span>
+                  <span className="mt-1 block text-xs text-slate-500">
+                    {t("ragOptionalHelp")}
+                  </span>
+                </span>
+              </label>
+            </div>
+          </fieldset>
           <button
             type="submit"
             disabled={createAgent.isPending}

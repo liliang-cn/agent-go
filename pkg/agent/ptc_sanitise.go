@@ -48,7 +48,7 @@ func sanitiseJSCode(code string) string {
 	// Pattern 2: valid JS followed by a bare JSON block (e.g. {"queries": [...]})
 	// or natural language. Detect by finding the last 'return' statement,
 	// then trim everything after the statement's expression ends.
-	if idx := findTrailingNonJS(trimmed); idx > 0 {
+	if idx := findTrailingNonJS(trimmed); idx > 0 && idx <= len(trimmed) {
 		trimmed = strings.TrimSpace(trimmed[:idx])
 	}
 
@@ -103,6 +103,9 @@ func findTrailingNonJS(code string) int {
 					for k := 0; k <= j; k++ {
 						lineEnd += len(lines[k]) + 1
 					}
+					if lineEnd > len(code) {
+						lineEnd = len(code)
+					}
 					if lineEnd < len(code) {
 						trailing := strings.TrimSpace(code[lineEnd:])
 						if trailing != "" && !looksLikeJS(trailing) {
@@ -116,6 +119,9 @@ func findTrailingNonJS(code string) int {
 					lineEnd := 0
 					for k := 0; k <= j; k++ {
 						lineEnd += len(lines[k]) + 1
+					}
+					if lineEnd > len(code) {
+						lineEnd = len(code)
 					}
 					return lineEnd
 				}

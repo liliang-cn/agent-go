@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/liliang-cn/agent-go/v2/pkg/mcp"
+	"github.com/liliang-cn/agent-go/v2/pkg/resource"
 	"github.com/liliang-cn/agent-go/v2/pkg/store"
 )
 
@@ -35,6 +36,15 @@ func validConfig(home string) *Config {
 	}
 	cfg.ApplyHomeLayout()
 	return cfg
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func defaultMCPConfig() mcp.Config {
@@ -112,6 +122,24 @@ func TestMemoryStoreTypeHelpers(t *testing.T) {
 	if got := cfg.MemoryPrimaryPath(); got != filepath.Join(cfg.Home, "data", "cortex.db") {
 		t.Fatalf("expected cortex memory path to use cortex db, got %s", got)
 	}
+	if err := cfg.SetMemoryStoreTypeString("memoryflow"); err != nil {
+		t.Fatalf("set memoryflow memory store type failed: %v", err)
+	}
+	if got := cfg.GetMemoryStoreType(); got != MemoryStoreTypeMemoryFlow {
+		t.Fatalf("expected memoryflow memory store type, got %s", got)
+	}
+	if got := cfg.MemoryPrimaryPath(); got != filepath.Join(cfg.Home, "data", "cortex.db") {
+		t.Fatalf("expected memoryflow memory path to use cortex db, got %s", got)
+	}
+	if err := cfg.SetMemoryStoreTypeString("graphflow"); err != nil {
+		t.Fatalf("set graphflow memory store type failed: %v", err)
+	}
+	if got := cfg.GetMemoryStoreType(); got != MemoryStoreTypeGraphFlow {
+		t.Fatalf("expected graphflow memory store type, got %s", got)
+	}
+	if got := cfg.MemoryPrimaryPath(); got != filepath.Join(cfg.Home, "data", "cortex.db") {
+		t.Fatalf("expected graphflow memory path to use cortex db, got %s", got)
+	}
 	if err := cfg.SetMemoryStoreType(MemoryStoreTypeFile); err != nil {
 		t.Fatalf("set file memory store type failed: %v", err)
 	}
@@ -133,6 +161,145 @@ func TestMemoryStoreTypeHelpers(t *testing.T) {
 	if err := cfg.SetMemoryStoreTypeString("invalid"); err == nil {
 		t.Fatal("expected invalid memory store type to fail")
 	}
+}
+
+func TestLoadDBBackedRuntimePreservesInitialMemoryStoreType(t *testing.T) {
+	cfg := validConfig(t.TempDir())
+	cfg.Memory.StoreType = MemoryStoreTypeGraphFlow
+
+	db, err := store.NewAgentGoDB(cfg.AgentDBPath())
+	if err != nil {
+		t.Fatalf("new db failed: %v", err)
+	}
+	defer db.Close()
+
+	if err := cfg.LoadDBBackedRuntimeFrom(db); err != nil {
+		t.Fatalf("load db runtime failed: %v", err)
+	}
+	if got := cfg.GetMemoryStoreType(); got != MemoryStoreTypeGraphFlow {
+		t.Fatalf("expected graphflow memory store type, got %s", got)
+	}
+
+	value, err := db.GetConfig("memory.store_type")
+	if err != nil {
+		t.Fatalf("get memory.store_type failed: %v", err)
+	}
+	if value != string(MemoryStoreTypeGraphFlow) {
+		t.Fatalf("db memory.store_type = %q, want %q", value, MemoryStoreTypeGraphFlow)
+	}
+}
+
+func TestLoadDBBackedRuntimeAppliesResources(t *testing.T) {
+	cfg := validConfig(t.TempDir())
+	db, err := store.NewAgentGoDB(cfg.AgentDBPath())
+	if err != nil {
+		t.Fatalf("new db failed: %v", err)
+	}
+	defer db.Close()
+
+	if err := db.SaveResource(resource.Resource{ID: "memory:memoryflow", Kind: resource.KindMemory, Name: "memoryflow"}); err != nil {
+		t.Fatalf("save memory resource failed: %v", err)
+	}
+	if err := db.SaveResource(resource.Resource{
+		ID:       "rag:default",
+		Kind:     resource.KindRAG,
+		Name:     "default",
+		Metadata: map[string]any{"embedding_model": "resource-embedding"},
+	}); err != nil {
+		t.Fatalf("save rag resource failed: %v", err)
+	}
+	if err := db.SaveResource(resource.Resource{
+		ID:       "mcp:test",
+		Kind:     resource.KindMCP,
+		Name:     "test",
+		Provider: "/tmp/mcpServers.json",
+		Metadata: map[string]any{
+			"server_config": map[string]any{
+				"name":        "test",
+				"type":        "stdio",
+				"command":     []string{"uvx"},
+				"args":        []string{"mcp-test"},
+				"auto_start":  true,
+				"working_dir": "/tmp/project",
+				"env":         map[string]string{"DEBUG": "1"},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("save mcp resource failed: %v", err)
+	}
+	if err := db.SaveResource(resource.Resource{
+		ID:       "skill:test",
+		Kind:     resource.KindSkill,
+		Name:     "test",
+		Provider: "/tmp/skills",
+	}); err != nil {
+		t.Fatalf("save skill resource failed: %v", err)
+	}
+	if err := db.SaveResource(resource.Resource{
+		ID:       "llm:resource-model",
+		Kind:     resource.KindLLM,
+		Name:     "resource-model",
+		Provider: "http://resource.example/v1",
+		Metadata: map[string]any{
+			"provider_name":   "resource-provider",
+			"key":             "resource-key",
+			"model_name":      "resource-model",
+			"max_concurrency": 7,
+			"capability":      5,
+		},
+	}); err != nil {
+		t.Fatalf("save llm resource failed: %v", err)
+	}
+	if err := db.SaveConfig("mcp.paths", `["/tmp/legacy-mcpServers.json"]`); err != nil {
+		t.Fatalf("save mcp.paths failed: %v", err)
+	}
+	if err := db.SaveConfig("skills.paths", `["/tmp/legacy-skills"]`); err != nil {
+		t.Fatalf("save skills.paths failed: %v", err)
+	}
+
+	if err := cfg.LoadDBBackedRuntimeFrom(db); err != nil {
+		t.Fatalf("load db runtime failed: %v", err)
+	}
+	if got := cfg.GetMemoryStoreType(); got != MemoryStoreTypeMemoryFlow {
+		t.Fatalf("expected memoryflow resource to set memory store type, got %s", got)
+	}
+	if cfg.RAG.EmbeddingModel != "resource-embedding" || !cfg.RAG.Enabled {
+		t.Fatalf("expected rag resource to set embedding model and enable rag, got %+v", cfg.RAG)
+	}
+	if !containsString(cfg.MCP.Servers, "/tmp/mcpServers.json") {
+		t.Fatalf("expected mcp resource path in config, got %+v", cfg.MCP.Servers)
+	}
+	if !containsString(cfg.MCP.Servers, "/tmp/legacy-mcpServers.json") {
+		t.Fatalf("expected legacy mcp path merged with resource path, got %+v", cfg.MCP.Servers)
+	}
+	if len(cfg.MCP.InlineServers) != 1 {
+		t.Fatalf("expected one inline mcp server from resource, got %+v", cfg.MCP.InlineServers)
+	}
+	inlineServer := cfg.MCP.InlineServers[0]
+	if inlineServer.Name != "test" ||
+		inlineServer.Type != mcp.ServerTypeStdio ||
+		len(inlineServer.Command) != 1 ||
+		inlineServer.Command[0] != "uvx" ||
+		inlineServer.WorkingDir != "/tmp/project" ||
+		inlineServer.Env["DEBUG"] != "1" {
+		t.Fatalf("expected inline mcp resource server to round trip, got %+v", inlineServer)
+	}
+	if !containsString(cfg.Skills.Paths, "/tmp/skills") {
+		t.Fatalf("expected skill resource path in config, got %+v", cfg.Skills.Paths)
+	}
+	if !containsString(cfg.Skills.Paths, "/tmp/legacy-skills") {
+		t.Fatalf("expected legacy skill path merged with resource path, got %+v", cfg.Skills.Paths)
+	}
+	for _, provider := range cfg.LLM.Providers {
+		if provider.Name == "resource-provider" &&
+			provider.BaseURL == "http://resource.example/v1" &&
+			provider.ModelName == "resource-model" &&
+			provider.MaxConcurrency == 7 &&
+			provider.Capability == 5 {
+			return
+		}
+	}
+	t.Fatalf("expected llm resource provider in config, got %+v", cfg.LLM.Providers)
 }
 
 func TestResolveMCPServerPaths(t *testing.T) {

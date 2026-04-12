@@ -438,6 +438,14 @@ func (m *TeamManager) prepareDispatchRequest(agentName, instruction string, sess
 	if strings.TrimSpace(taskID) != "" {
 		runOptions = append(runOptions, WithTaskID(taskID))
 	}
+	for _, opt := range extraOpts {
+		cfg := DefaultRunConfig()
+		opt(cfg)
+		if strings.TrimSpace(cfg.ParentTaskID) != "" {
+			runOptions = append(runOptions, WithParentTaskID(cfg.ParentTaskID))
+			break
+		}
+	}
 	runOptions = append(runOptions, extraOpts...)
 	return wrappedInstruction, runOptions
 }

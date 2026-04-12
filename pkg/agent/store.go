@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 	"github.com/liliang-cn/agent-go/v2/pkg/store"
+	taskpkg "github.com/liliang-cn/agent-go/v2/pkg/task"
 )
 
 // Store provides persistent storage for agent plans and sessions by wrapping AgentGoDB
@@ -110,7 +112,7 @@ func (s *Store) SaveSession(session *Session) error {
 		}
 	}
 
-	return s.agentGoDB.SaveSession(&store.ChatSession{
+	if err := s.agentGoDB.SaveSession(&store.ChatSession{
 		ID:        session.ID,
 		Type:      store.ChatTypeAgent,
 		Title:     "", // AgentGoDB handles title generation
@@ -120,7 +122,67 @@ func (s *Store) SaveSession(session *Session) error {
 		Metadata:  session.Metadata,
 		CreatedAt: session.CreatedAt,
 		UpdatedAt: session.UpdatedAt,
-	})
+	}); err != nil {
+		return err
+	}
+	return s.SaveTaskFramesFromSession(session)
+}
+
+func (s *Store) SaveTaskFramesFromSession(session *Session) error {
+	if s == nil || s.agentGoDB == nil || session == nil {
+		return nil
+	}
+	framesByTask := make(map[string][]taskpkg.Frame)
+	for _, message := range session.Messages {
+		taskID := strings.TrimSpace(message.TaskID)
+		if taskID == "" {
+			continue
+		}
+		framesByTask[taskID] = append(framesByTask[taskID], taskpkg.Frame{
+			SessionID: session.ID,
+			Message:   message,
+		})
+	}
+	for taskID, frames := range framesByTask {
+		if len(frames) == 0 {
+			continue
+		}
+		task, err := s.agentGoDB.GetTask(taskID)
+		if err != nil || task == nil {
+			parentTaskID, _ := session.Context["runtime.parent_task_id"].(string)
+			task = &taskpkg.Task{
+				ID:               taskID,
+				Kind:             taskpkg.KindAgent,
+				Status:           taskpkg.StatusRunning,
+				SessionID:        session.ID,
+				RuntimeSessionID: session.ID,
+				ParentTaskID:     strings.TrimSpace(parentTaskID),
+				CreatedAt:        firstNonZeroTime(session.CreatedAt, time.Now()),
+				Source:           "session",
+				SourceID:         session.ID,
+			}
+		}
+		task.Frames = replaceTaskFramesForSession(task.Frames, session.ID, frames)
+		if task.RuntimeSessionID == "" {
+			task.RuntimeSessionID = session.ID
+		}
+		if task.SessionID == "" {
+			task.SessionID = session.ID
+		}
+		if task.Input == "" {
+			task.Input = firstTaskFrameContent(frames, "user")
+		}
+		if output := lastTaskFrameContent(frames, "assistant"); output != "" {
+			task.Output = output
+			if task.Status == "" || task.Status == taskpkg.StatusRunning {
+				task.Status = taskpkg.StatusCompleted
+			}
+		}
+		if err := s.agentGoDB.SaveTask(task); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // GetSession retrieves a session by ID
@@ -190,6 +252,56 @@ func (s *Store) ListSessions(limit int) ([]*Session, error) {
 		result[i] = session
 	}
 	return result, nil
+}
+
+func (s *Store) ListMessagesForTask(taskID string, limit int) ([]UnifiedTaskMessage, error) {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 500
+	}
+	sessions, err := s.ListSessions(1000)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]UnifiedTaskMessage, 0)
+	for _, session := range sessions {
+		if session == nil {
+			continue
+		}
+		for _, message := range session.Messages {
+			if strings.TrimSpace(message.TaskID) == taskID {
+				out = append(out, UnifiedTaskMessage{SessionID: session.ID, Message: message})
+				if len(out) >= limit {
+					return out, nil
+				}
+			}
+		}
+	}
+	return out, nil
+}
+
+func (s *Store) SaveTask(task *UnifiedTask) error {
+	if s == nil || s.agentGoDB == nil || task == nil {
+		return nil
+	}
+	return s.agentGoDB.SaveTask(task)
+}
+
+func (s *Store) GetTask(id string) (*UnifiedTask, error) {
+	if s == nil || s.agentGoDB == nil {
+		return nil, fmt.Errorf("store is not initialized")
+	}
+	return s.agentGoDB.GetTask(id)
+}
+
+func (s *Store) ListTasks(limit int) ([]*UnifiedTask, error) {
+	if s == nil || s.agentGoDB == nil {
+		return nil, nil
+	}
+	return s.agentGoDB.ListTasks(limit)
 }
 
 // DeleteSession deletes a session
@@ -397,4 +509,42 @@ func normalizeAgentKind(agent *AgentModel) AgentKind {
 		return AgentKindAgent
 	}
 	return AgentKindCaptain
+}
+
+func replaceTaskFramesForSession(existing []taskpkg.Frame, sessionID string, replacement []taskpkg.Frame) []taskpkg.Frame {
+	out := make([]taskpkg.Frame, 0, len(existing)+len(replacement))
+	for _, frame := range existing {
+		if strings.TrimSpace(frame.SessionID) != sessionID {
+			out = append(out, frame)
+		}
+	}
+	out = append(out, replacement...)
+	return out
+}
+
+func firstTaskFrameContent(frames []taskpkg.Frame, role string) string {
+	for _, frame := range frames {
+		if frame.Message.Role == role && strings.TrimSpace(frame.Message.Content) != "" {
+			return strings.TrimSpace(frame.Message.Content)
+		}
+	}
+	return ""
+}
+
+func lastTaskFrameContent(frames []taskpkg.Frame, role string) string {
+	for i := len(frames) - 1; i >= 0; i-- {
+		if frames[i].Message.Role == role && strings.TrimSpace(frames[i].Message.Content) != "" {
+			return strings.TrimSpace(frames[i].Message.Content)
+		}
+	}
+	return ""
+}
+
+func firstNonZeroTime(values ...time.Time) time.Time {
+	for _, value := range values {
+		if !value.IsZero() {
+			return value
+		}
+	}
+	return time.Now()
 }

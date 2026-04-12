@@ -338,7 +338,7 @@ func (s *streamingToolExecutor) isConcurrencySafeToolCall(call domain.ToolCall) 
 	if name == "" {
 		return false
 	}
-	if name == "task_complete" || strings.HasPrefix(name, "transfer_to_") {
+	if isTaskTerminalToolName(name) || strings.HasPrefix(name, "transfer_to_") {
 		return false
 	}
 

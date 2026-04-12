@@ -139,6 +139,9 @@ func TestBuildSystemPromptKeepsOperationalNotesForAssistant(t *testing.T) {
 	if !strings.Contains(got, "Web search capability:") {
 		t.Fatalf("expected assistant prompt to keep web search note, got %q", got)
 	}
+	if !strings.Contains(got, "Finish-Or-Block Contract:") || !strings.Contains(got, "task_blocked") {
+		t.Fatalf("expected assistant prompt to include finish-or-block contract, got %q", got)
+	}
 }
 
 func TestBuildSystemPromptIncludesMemoryToolGuidanceWhenMemoryToolsCallable(t *testing.T) {

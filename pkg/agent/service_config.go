@@ -221,7 +221,7 @@ func (s *Service) AddToolWithMetadata(name, description string, parameters map[s
 
 	// If PTC is already configured, register directly on the router so that
 	// tools added after Build() are immediately accessible via callTool().
-	if s.ptcIntegration != nil && s.ptcIntegration.router != nil {
+	if s.ptcIntegration != nil && s.ptcIntegration.router != nil && metadata.ExposureMode != ToolExposureDirectOnly {
 		_ = s.ptcIntegration.router.RegisterTool(name, &ptc.ToolInfo{
 			Name:        name,
 			Description: description,
@@ -231,6 +231,13 @@ func (s *Service) AddToolWithMetadata(name, description string, parameters map[s
 			return handler(ctx, args)
 		})
 	}
+}
+
+func (s *Service) SetToolExecutionPolicy(policy ToolExecutionPolicy) {
+	if s == nil || s.toolRegistry == nil {
+		return
+	}
+	s.toolRegistry.SetExecutionPolicy(policy)
 }
 
 // Register registers a *Tool (created via NewTool[T] or BuildTool) on the default
@@ -243,6 +250,7 @@ func (s *Service) Register(tool *Tool) {
 		ConcurrencySafe:   tool.ConcurrencySafe(),
 		Destructive:       tool.Destructive(),
 		InterruptBehavior: tool.InterruptBehavior(),
+		ExposureMode:      tool.ExecutionMode(),
 	})
 
 	if s.agent != nil {
@@ -251,10 +259,12 @@ func (s *Service) Register(tool *Tool) {
 			ConcurrencySafe:   tool.ConcurrencySafe(),
 			Destructive:       tool.Destructive(),
 			InterruptBehavior: tool.InterruptBehavior(),
+			ExposureMode:      tool.ExecutionMode(),
 		})
 	}
 
-	if s.ptcIntegration != nil && s.ptcIntegration.config.Enabled {
+	metadata := s.toolRegistry.MetadataOf(def.Function.Name)
+	if s.ptcIntegration != nil && s.ptcIntegration.config.Enabled && metadata.ExposureMode != ToolExposureDirectOnly {
 		info := &ptc.ToolInfo{
 			Name:        def.Function.Name,
 			Description: def.Function.Description,

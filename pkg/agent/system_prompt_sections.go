@@ -169,13 +169,14 @@ func (s *Service) buildSystemPromptSections(ctx context.Context, agent *Agent, o
 	s.ensureSystemPromptSectionRegistry()
 	systemCtx := s.buildSystemContext()
 	operationalRules := strings.Join([]string{
-		"- Call task_complete as soon as you have the final answer. Never keep running after the task is done.",
+		"- " + strings.ReplaceAll(FinishOrBlockContract, "\n", "\n- "),
+		"- Call task_complete as soon as you have the final answer. Call task_blocked only when a concrete blocker prevents completion.",
 		"- For file operations use mcp_filesystem_* tools; for web search use mcp_websearch_* tools.",
 		"- Treat the visible callable tool list as the authoritative source of what can actually be executed in this runtime.",
 		"- Do not invent hidden tool or API names such as generic run/status/start methods when concrete callable tool names are already exposed.",
 		"- If you are unsure which exact tool fits a request, call `search_available_tools` before claiming the capability is unavailable.",
 		"- If the conversation context includes a 'Relevant Skills For This Task' section and one of those skills clearly matches the request, call the corresponding `skill_*` tool before doing the task manually.",
-		"- Skills: calling a skill tool returns step-by-step instructions — follow them, then call task_complete.",
+		"- Skills: calling a skill tool returns step-by-step instructions — follow them, then call task_complete or task_blocked.",
 		"- Never repeat the same tool call with identical arguments.",
 	}, "\n")
 	if isDispatchOnlyAgent(agent) {

@@ -116,6 +116,7 @@ type Builder struct {
 	skillsPaths     []string
 	enablePTC       bool
 	ptcCfg          *PTCConfig
+	toolPolicy      ToolExecutionPolicy
 
 	tools        []*Tool // pre-registered via WithTool/WithTools
 	extraModules []Module
@@ -395,6 +396,11 @@ func (b *Builder) WithTools(tools ...*Tool) *Builder {
 	return b
 }
 
+func (b *Builder) WithToolExecutionPolicy(policy ToolExecutionPolicy) *Builder {
+	b.toolPolicy = policy
+	return b
+}
+
 // Build constructs the Service. Called automatically on assignment.
 func (b *Builder) Build() (*Service, error) {
 	if b.svc != nil || b.err != nil {
@@ -532,6 +538,14 @@ func (b *Builder) build() (*Service, error) {
 	if dbPath == "" {
 		dbPath = agentgoCfg.AgentDBPath()
 	}
+	if b.toolPolicy.Default == "" && len(b.toolPolicy.Rules) == 0 {
+		if db, dbErr := store.NewAgentGoDB(dbPath); dbErr == nil {
+			if resources, resErr := db.ListResources(); resErr == nil {
+				b.toolPolicy = ToolExecutionPolicyFromResources(resources)
+			}
+			_ = db.Close()
+		}
+	}
 
 	// Create service
 	svc, err := NewService(llmSvc, mcpAdapter, ragProcessor, dbPath, memSvc)
@@ -540,6 +554,9 @@ func (b *Builder) build() (*Service, error) {
 	}
 	svc.cfg = agentgoCfg
 	svc.memoryStoreType = memoryStoreType
+	if b.toolPolicy.Default != "" || len(b.toolPolicy.Rules) > 0 {
+		svc.SetToolExecutionPolicy(b.toolPolicy)
+	}
 
 	// Apply debug config: either from WithDebug() builder call or global agentgoCfg.Debug (e.g. from DEBUG=1 env var)
 	if agentgoCfg.Debug {
@@ -739,6 +756,22 @@ func (b *Builder) buildMemoryService(agentgoCfg *config.Config, embedSvc domain.
 		if err := memStore.InitSchema(context.Background()); err != nil {
 			return nil, "", fmt.Errorf("failed to init cortex memory schema: %w", err)
 		}
+	case config.MemoryStoreTypeMemoryFlow:
+		memStore, err = store.NewMemoryFlowStore(memPath)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to create memoryflow memory store: %w", err)
+		}
+		if err := memStore.InitSchema(context.Background()); err != nil {
+			return nil, "", fmt.Errorf("failed to init memoryflow memory schema: %w", err)
+		}
+	case config.MemoryStoreTypeGraphFlow:
+		memStore, err = store.NewGraphFlowStore(memPath)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to create graphflow memory store: %w", err)
+		}
+		if err := memStore.InitSchema(context.Background()); err != nil {
+			return nil, "", fmt.Errorf("failed to init graphflow memory schema: %w", err)
+		}
 	default:
 		return nil, "", fmt.Errorf("unsupported memory store type: %s", storeType)
 	}
@@ -868,7 +901,7 @@ func WithMemoryPath(path string) MemoryOption {
 	return func(c *MemoryConfig) { c.MemoryPath = path }
 }
 
-// WithMemoryStoreType sets memory store type: "file" or "cortex".
+// WithMemoryStoreType sets memory store type: "file", "cortex", "memoryflow", or "graphflow".
 func WithMemoryStoreType(storeType string) MemoryOption {
 	return func(c *MemoryConfig) { c.StoreType = storeType }
 }
@@ -884,6 +917,16 @@ func WithMemoryReflect(threshold int) MemoryOption {
 // This mode can operate without an embedder, relying on lexical retrieval as needed.
 func WithMemoryCortex() MemoryOption {
 	return func(c *MemoryConfig) { c.StoreType = "cortex" }
+}
+
+// WithMemoryFlow enables the CortexDB MemoryFlow-backed memory store.
+func WithMemoryFlow() MemoryOption {
+	return func(c *MemoryConfig) { c.StoreType = "memoryflow" }
+}
+
+// WithMemoryGraphFlow enables the CortexDB GraphFlow-enhanced memory store.
+func WithMemoryGraphFlow() MemoryOption {
+	return func(c *MemoryConfig) { c.StoreType = "graphflow" }
 }
 
 // WithMemoryBank sets the agent's long-term mission statement and hard directives.

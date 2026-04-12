@@ -442,6 +442,18 @@ const resources = {
       agentsCount: "Agents",
       builtinAgentsCount: "Built-in Agents",
       customAgentsCount: "Custom Agents",
+      agentCapabilities: "Agent capabilities",
+      capabilityPTC: "PTC",
+      capabilityMemory: "Memory",
+      capabilityMCP: "MCP",
+      capabilityRAG: "RAG",
+      ptcDefaultOnHelp:
+        "Default-on JavaScript tool orchestration. Disable only for legacy direct function calling.",
+      memoryNoEmbeddingHelp:
+        "File-backed memory works without an embedding model.",
+      mcpCapabilityHelp: "Expose MCP tools and servers to the agent runtime.",
+      ragOptionalHelp:
+        "Optional document retrieval. Enable only when an embedding model is configured.",
     },
   },
   zh: {
@@ -875,6 +887,17 @@ const resources = {
       agentsCount: "智能体",
       builtinAgentsCount: "内置智能体",
       customAgentsCount: "自定义智能体",
+      agentCapabilities: "智能体能力",
+      capabilityPTC: "PTC",
+      capabilityMemory: "记忆",
+      capabilityMCP: "MCP",
+      capabilityRAG: "RAG",
+      ptcDefaultOnHelp:
+        "默认开启的 JavaScript 工具编排。只有需要旧版直接函数调用时才关闭。",
+      memoryNoEmbeddingHelp: "文件型记忆不需要 embedding model 也能工作。",
+      mcpCapabilityHelp: "向智能体运行时暴露 MCP 工具和服务。",
+      ragOptionalHelp:
+        "可选的文档检索。仅在已配置 embedding model 时启用。",
     },
   },
 };

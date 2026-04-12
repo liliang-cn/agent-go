@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"time"
 
+	storepkg "github.com/liliang-cn/agent-go/v2/pkg/store"
+	taskpkg "github.com/liliang-cn/agent-go/v2/pkg/task"
 	_ "modernc.org/sqlite"
 )
 
@@ -39,7 +41,8 @@ func (nt *NullTime) Scan(value interface{}) error {
 
 // Storage handles task persistence in SQLite
 type Storage struct {
-	db *sql.DB
+	db        *sql.DB
+	canonical *storepkg.AgentGoDB
 }
 
 // NewStorage creates a new storage instance
@@ -74,8 +77,20 @@ func NewStorage(dbPath string) (*Storage, error) {
 	return storage, nil
 }
 
+func NewStorageWithCanonical(dbPath string, canonical *storepkg.AgentGoDB) (*Storage, error) {
+	storage, err := NewStorage(dbPath)
+	if err != nil {
+		return nil, err
+	}
+	storage.canonical = canonical
+	return storage, nil
+}
+
 // Close closes the database connection
 func (s *Storage) Close() error {
+	if s.canonical != nil {
+		_ = s.canonical.Close()
+	}
 	return s.db.Close()
 }
 
@@ -185,6 +200,7 @@ func (s *Storage) CreateTask(task *Task) error {
 		return fmt.Errorf("failed to insert task: %w", err)
 	}
 
+	_ = s.mirrorTask(task, taskpkg.StatusQueued, "", "")
 	return nil
 }
 
@@ -346,6 +362,7 @@ func (s *Storage) UpdateTask(task *Task) error {
 		return fmt.Errorf("task not found: %s", task.ID)
 	}
 
+	_ = s.mirrorTask(task, schedulerStatusForTask(task), "", "")
 	return nil
 }
 
@@ -382,6 +399,7 @@ func (s *Storage) DeleteTask(id string) error {
 		return fmt.Errorf("task not found: %s", id)
 	}
 
+	_ = s.deleteCanonicalTask(id)
 	// Commit transaction
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
@@ -408,6 +426,9 @@ func (s *Storage) EnableTask(id string, enabled bool) error {
 		return fmt.Errorf("task not found: %s", id)
 	}
 
+	if task, err := s.GetTask(id); err == nil {
+		_ = s.mirrorTask(task, schedulerStatusForTask(task), "", "")
+	}
 	return nil
 }
 
@@ -443,6 +464,9 @@ func (s *Storage) CreateExecution(execution *TaskExecution) error {
 	}
 
 	execution.ID = id
+	if task, err := s.GetTask(execution.TaskID); err == nil {
+		_ = s.mirrorTask(task, taskpkg.StatusRunning, execution.Output, execution.Error)
+	}
 	return nil
 }
 
@@ -471,6 +495,9 @@ func (s *Storage) UpdateExecution(execution *TaskExecution) error {
 		return fmt.Errorf("failed to update execution: %w", err)
 	}
 
+	if task, getErr := s.GetTask(execution.TaskID); getErr == nil {
+		_ = s.mirrorTask(task, taskStatusFromExecution(execution.Status), execution.Output, execution.Error)
+	}
 	return nil
 }
 
@@ -535,6 +562,83 @@ func (s *Storage) GetTaskExecutions(taskID string, limit int) ([]*TaskExecution,
 	}
 
 	return executions, nil
+}
+
+func (s *Storage) mirrorTask(t *Task, status taskpkg.Status, output, errText string) error {
+	if s == nil || s.canonical == nil || t == nil || t.ID == "" {
+		return nil
+	}
+	if status == "" {
+		status = schedulerStatusForTask(t)
+	}
+	return s.canonical.SaveTask(&taskpkg.Task{
+		ID:         t.ID,
+		Kind:       taskpkg.KindScheduler,
+		Status:     status,
+		QueueClass: taskpkg.QueueClassTask,
+		Input:      firstNonEmptySchedulerString(t.Description, t.Type),
+		Output:     output,
+		Error:      errText,
+		CreatedAt:  firstNonZeroSchedulerTime(t.CreatedAt, time.Now()),
+		StartedAt:  cloneSchedulerTimePtr(t.LastRun),
+		Source:     "scheduler",
+		SourceID:   t.ID,
+	})
+}
+
+func (s *Storage) deleteCanonicalTask(id string) error {
+	return nil
+}
+
+func schedulerStatusForTask(t *Task) taskpkg.Status {
+	if t == nil {
+		return taskpkg.StatusQueued
+	}
+	if !t.Enabled {
+		return taskpkg.StatusCancelled
+	}
+	return taskpkg.StatusQueued
+}
+
+func taskStatusFromExecution(status TaskStatus) taskpkg.Status {
+	switch status {
+	case TaskStatusRunning:
+		return taskpkg.StatusRunning
+	case TaskStatusCompleted:
+		return taskpkg.StatusCompleted
+	case TaskStatusFailed:
+		return taskpkg.StatusFailed
+	case TaskStatusCancelled:
+		return taskpkg.StatusCancelled
+	default:
+		return taskpkg.StatusQueued
+	}
+}
+
+func firstNonEmptySchedulerString(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func firstNonZeroSchedulerTime(values ...time.Time) time.Time {
+	for _, value := range values {
+		if !value.IsZero() {
+			return value
+		}
+	}
+	return time.Now()
+}
+
+func cloneSchedulerTimePtr(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
 }
 
 // UpdateTaskNextRun updates the next run time for a task

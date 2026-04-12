@@ -263,7 +263,7 @@ func TestExecuteWithLLM_AutoContinuesAfterEmptyTextResponse(t *testing.T) {
 
 	foundAutoContinue := false
 	for _, msg := range llm.seenMessages[1] {
-		if msg.Role == "user" && strings.Contains(msg.Content, "You have used") && strings.Contains(msg.Content, "continue the next steps directly") {
+		if msg.Role == "user" && strings.Contains(msg.Content, "You have used") && strings.Contains(msg.Content, "continue executing directly") {
 			foundAutoContinue = true
 			break
 		}

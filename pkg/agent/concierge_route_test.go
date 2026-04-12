@@ -108,9 +108,9 @@ func TestRouteBuiltInRequestRunsOptimizerWhenNeeded(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	// 4 calls: IntentRouter + PromptOptimizer + Operator + Verifier
-	if len(calls) != 4 {
-		t.Fatalf("expected 4 dispatch calls, got %+v", calls)
+	// 3 calls: IntentRouter + PromptOptimizer + Operator
+	if len(calls) != 3 {
+		t.Fatalf("expected 3 dispatch calls, got %+v", calls)
 	}
 }
 

@@ -2,10 +2,13 @@ package agent
 
 import (
 	"context"
+	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	taskpkg "github.com/liliang-cn/agent-go/v2/pkg/task"
 )
 
 func (m *TeamManager) ensureAsyncTaskForSharedTask(task *SharedTask, sessionID, teamName string) *AsyncTask {
@@ -100,6 +103,7 @@ func (m *TeamManager) upsertAsyncTask(task *AsyncTask) {
 	if strings.TrimSpace(task.SessionID) != "" {
 		m.indexTaskSession(task.SessionID, task.ID)
 	}
+	m.persistUnifiedTask(task.ID)
 }
 
 func (m *TeamManager) updateAsyncTask(taskID string, mutate func(*AsyncTask)) *AsyncTask {
@@ -115,7 +119,9 @@ func (m *TeamManager) updateAsyncTask(taskID string, mutate func(*AsyncTask)) *A
 	if strings.TrimSpace(task.SessionID) != "" {
 		m.indexTaskSessionLocked(task.SessionID, task.ID)
 	}
-	return cloneAsyncTask(task)
+	cloned := cloneAsyncTask(task)
+	go m.persistUnifiedTask(taskID)
+	return cloned
 }
 
 func (m *TeamManager) emitTaskEvent(taskID string, evt *TaskEvent, terminal bool) {
@@ -156,6 +162,7 @@ func (m *TeamManager) emitTaskEvent(taskID string, evt *TaskEvent, terminal bool
 	m.taskMu.Unlock()
 
 	sendTaskEventToSubscribers(subs, evt, terminal)
+	m.persistUnifiedTask(taskID)
 }
 
 func (m *TeamManager) setTaskCancel(taskID string, cancel context.CancelFunc) {
@@ -185,6 +192,72 @@ func (m *TeamManager) indexTaskSessionLocked(sessionID, taskID string) {
 	m.sessionTasks[sessionID] = append(m.sessionTasks[sessionID], taskID)
 }
 
+var sharedTaskChildIDSanitizer = regexp.MustCompile(`[^a-z0-9]+`)
+
+func sharedTaskChildID(parentTaskID string, index int, agentName string) string {
+	parentTaskID = strings.TrimSpace(parentTaskID)
+	if parentTaskID == "" {
+		parentTaskID = uuid.NewString()
+	}
+	segment := strings.ToLower(strings.TrimSpace(agentName))
+	segment = sharedTaskChildIDSanitizer.ReplaceAllString(segment, "-")
+	segment = strings.Trim(segment, "-")
+	if segment == "" {
+		segment = "member"
+	}
+	return fmt.Sprintf("%s:member:%02d:%s", parentTaskID, index+1, segment)
+}
+
+func (m *TeamManager) persistTeamChildTaskPlaceholder(taskID string, parent *AsyncTask, sessionID, agentName, prompt string) {
+	if m == nil || m.store == nil || strings.TrimSpace(taskID) == "" {
+		return
+	}
+	task := &taskpkg.Task{
+		ID:               strings.TrimSpace(taskID),
+		Kind:             taskpkg.KindAgent,
+		Status:           taskpkg.StatusRunning,
+		SessionID:        strings.TrimSpace(sessionID),
+		RuntimeSessionID: strings.TrimSpace(sessionID),
+		ParentTaskID:     firstNonEmptyTaskString(firstNonEmptyTaskID(parent), parentTaskIDFromAsync(parent)),
+		TeamID:           strings.TrimSpace(firstTaskTeamID(parent)),
+		TeamName:         strings.TrimSpace(firstTaskTeamName(parent)),
+		AgentName:        strings.TrimSpace(agentName),
+		Input:            strings.TrimSpace(prompt),
+		CreatedAt:        firstNonZeroTime(parentCreatedAt(parent), time.Now()),
+		Source:           "team_child",
+		SourceID:         firstNonEmptyTaskString(firstNonEmptyTaskID(parent)),
+	}
+	_ = m.store.SaveTask(task)
+}
+
+func firstTaskTeamID(task *AsyncTask) string {
+	if task == nil {
+		return ""
+	}
+	return strings.TrimSpace(task.TeamID)
+}
+
+func firstTaskTeamName(task *AsyncTask) string {
+	if task == nil {
+		return ""
+	}
+	return strings.TrimSpace(task.TeamName)
+}
+
+func parentTaskIDFromAsync(task *AsyncTask) string {
+	if task == nil {
+		return ""
+	}
+	return strings.TrimSpace(task.ID)
+}
+
+func parentCreatedAt(task *AsyncTask) time.Time {
+	if task == nil {
+		return time.Time{}
+	}
+	return task.CreatedAt
+}
+
 func asyncStatusFromSharedTask(status SharedTaskStatus) AsyncTaskStatus {
 	switch status {
 	case SharedTaskStatusRunning:
@@ -195,6 +268,15 @@ func asyncStatusFromSharedTask(status SharedTaskStatus) AsyncTaskStatus {
 		return AsyncTaskStatusFailed
 	default:
 		return AsyncTaskStatusQueued
+	}
+}
+
+func isPausedAsyncTaskStatus(status AsyncTaskStatus) bool {
+	switch status {
+	case AsyncTaskStatusWaiting, AsyncTaskStatusYielded, AsyncTaskStatusResumable:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -303,7 +385,7 @@ func cloneTimePtr(value *time.Time) *time.Time {
 
 func isTerminalAsyncTaskStatus(status AsyncTaskStatus) bool {
 	switch status {
-	case AsyncTaskStatusCompleted, AsyncTaskStatusFailed, AsyncTaskStatusCancelled:
+	case AsyncTaskStatusCompleted, AsyncTaskStatusBlocked, AsyncTaskStatusFailed, AsyncTaskStatusCancelled:
 		return true
 	default:
 		return false

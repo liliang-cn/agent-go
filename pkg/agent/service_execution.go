@@ -136,7 +136,7 @@ const (
 	recentConversationWindow  = 6
 	olderConversationLimit    = 12
 	toolUseNudgePrompt        = "Do not describe what you would do. You have tools available — call them now to accomplish the goal. Use the tool functions provided to you."
-	toolResultsAnalysisPrompt = "Analyze the tool results above. If you have fulfilled the user's request, provide your final answer and call task_complete. Otherwise, continue with the necessary next steps."
+	toolResultsAnalysisPrompt = "Analyze the tool results above. If you have fulfilled the user's request, provide your final answer and call task_complete. If a concrete blocker prevents completion, call task_blocked. Otherwise continue executing directly with the available tools."
 )
 
 func isExplicitMemoryRecallQuery(goal string) bool {
@@ -325,7 +325,9 @@ Recalled memories:
 		maxTokens = 120
 	}
 
-	resp, err := s.llmService.Generate(ctx, prompt, &domain.GenerationOptions{
+	llmCtx, cancel := withLLMTurnTimeout(ctx)
+	defer cancel()
+	resp, err := s.llmService.Generate(llmCtx, prompt, &domain.GenerationOptions{
 		Temperature: 0,
 		MaxTokens:   maxTokens,
 	})
@@ -459,8 +461,9 @@ func (s *Service) executeWithLLM(ctx context.Context, goal string, intent *Inten
 					Role:    "assistant",
 					Content: fmt.Sprintf("Tool execution failed: %v", err),
 				}))
-				state.continueWith(queryLoopTransitionToolExecutionError, "tool execution failed, retrying in next round", state.Messages)
-				continue
+				state.setStage(TurnStageCompleted, "tool execution failed", 0)
+				state.setLoopTransition(queryLoopTransitionToolExecutionError, "tool execution failed")
+				return nil, state.metricsSnapshot(), fmt.Errorf("tool execution failed: %w", err)
 			}
 			s.recordToolResults(ctx, session, state.CurrentAgent, goal, toolResults, cfg, round)
 			state.noteToolResults(toolResults)
@@ -543,7 +546,7 @@ func buildAutoContinuePrompt(state *queryLoopState) (string, bool) {
 		pct = (state.Budget.CompletedRounds * 100) / state.Budget.MaxRounds
 	}
 	return fmt.Sprintf(
-		"You have used %d%% of your budget (%d/%d rounds). If you have not completed the user's request, please continue the next steps directly without asking for permission or apologizing. Use tools if necessary. If you are finished, call the task_complete tool.",
+		"You have used %d%% of your budget (%d/%d rounds). If you have not completed the user's request, continue executing directly without asking for permission or apologizing. Use tools if necessary. If you are finished, call task_complete. If a concrete blocker prevents completion, call task_blocked.",
 		pct, state.Budget.CompletedRounds, state.Budget.MaxRounds,
 	), true
 }
@@ -814,14 +817,18 @@ func (s *Service) runOneLLMTurn(ctx context.Context, currentAgent *Agent, messag
 		maxTokens = 2000
 	}
 
-	result, err := s.llmService.GenerateWithTools(ctx, genMessages, tools, s.toolGenerationOptions(temperature, maxTokens, toolChoiceForIntent(intent, round)))
+	llmCtx, cancel := withLLMTurnTimeout(ctx)
+	defer cancel()
+	result, err := s.llmService.GenerateWithTools(llmCtx, genMessages, tools, s.toolGenerationOptions(temperature, maxTokens, toolChoiceForIntent(intent, round)))
 	if err != nil {
 		// Check if error is withholdable - try compact and retry once
 		if IsWithholdable(err) {
 			compacted, compErr := s.CompactMessages(ctx, genMessages)
 			if compErr == nil {
 				// Retry with compacted messages
-				retryResult, retryErr := s.llmService.GenerateWithTools(ctx, compacted, tools, s.toolGenerationOptions(temperature, maxTokens, toolChoiceForIntent(intent, round)))
+				retryCtx, retryCancel := withLLMTurnTimeout(ctx)
+				defer retryCancel()
+				retryResult, retryErr := s.llmService.GenerateWithTools(retryCtx, compacted, tools, s.toolGenerationOptions(temperature, maxTokens, toolChoiceForIntent(intent, round)))
 				if retryErr == nil && retryResult != nil {
 					return retryResult, s.estimateGenerationTokens(compacted, retryResult), recoveryMeta{Compacted: true, Recovered: true}, nil
 				}
@@ -918,9 +925,9 @@ func (s *Service) handleDuplicateToolCalls(messages []domain.Message, result *do
 			continue
 		}
 
-		if tc.Function.Name == "task_complete" {
-			if res, ok := tc.Function.Arguments["result"].(string); ok && strings.TrimSpace(res) != "" {
-				return nil, nil, strings.TrimSpace(res)
+		if isTaskTerminalToolName(tc.Function.Name) {
+			if final := taskTerminalToolResult(tc.Function.Name, tc.Function.Arguments, result.Content); final != "" {
+				return nil, nil, final
 			}
 			return nil, nil, extractBestEffortAnswer(result.Content, messages)
 		}

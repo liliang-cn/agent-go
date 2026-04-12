@@ -17,7 +17,7 @@ require (
 	github.com/go-shiori/go-readability v0.0.0-20251205110129-5db1dc9836f0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
-	github.com/liliang-cn/cortexdb/v2 v2.15.0
+	github.com/liliang-cn/cortexdb/v2 v2.18.0
 	github.com/liliang-cn/mcp-swagger-server v0.4.0
 	github.com/liliang-cn/skills-go v1.7.0
 	github.com/mark3labs/mcp-filesystem-server v0.11.1
@@ -25,7 +25,7 @@ require (
 	github.com/mattn/go-runewidth v0.0.16
 	github.com/mattn/go-sqlite3 v1.14.32
 	github.com/modelcontextprotocol/go-sdk v1.4.1
-	github.com/openai/openai-go/v3 v3.30.0
+	github.com/openai/openai-go/v3 v3.31.0
 	github.com/pkoukk/tiktoken-go v0.1.8
 	github.com/qdrant/go-client v1.15.2
 	github.com/robfig/cron/v3 v3.0.1
@@ -43,6 +43,9 @@ require (
 
 require (
 	dario.cat/mergo v1.0.2 // indirect
+	github.com/0x51-dev/rdf v0.1.0 // indirect
+	github.com/0x51-dev/rids v0.1.0 // indirect
+	github.com/0x51-dev/upeg v0.1.0 // indirect
 	github.com/JohannesKaufmann/dom v0.2.0 // indirect
 	github.com/air-verse/air v1.64.5 // indirect
 	github.com/andybalholm/brotli v1.2.0 // indirect

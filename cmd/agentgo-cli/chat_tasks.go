@@ -9,6 +9,7 @@ import (
 	"github.com/liliang-cn/agent-go/v2/cmd/agentgo-cli/internal/cliui"
 	"github.com/liliang-cn/agent-go/v2/cmd/agentgo-cli/internal/lineinput"
 	"github.com/liliang-cn/agent-go/v2/pkg/agent"
+	taskpkg "github.com/liliang-cn/agent-go/v2/pkg/task"
 )
 
 type chatTaskFollower struct {
@@ -36,9 +37,13 @@ func (f *chatTaskFollower) StartSessionTasks(ctx context.Context, sessionID stri
 		return
 	}
 
-	tasks := f.manager.ListSessionTasks(sessionID, 20)
+	tasks, err := f.manager.Tasks().List(ctx, agent.TaskListOptions{Limit: 20})
+	if err != nil {
+		printChatTaskBlock(fmt.Sprintf("%s Task list failed: %v", cliui.Error, err))
+		return
+	}
 	for _, task := range tasks {
-		if task == nil {
+		if task == nil || task.SessionID != sessionID {
 			continue
 		}
 		f.mu.Lock()
@@ -107,7 +112,7 @@ func (f *chatTaskFollower) followTask(ctx context.Context, taskID string) {
 				return
 			}
 			renderChatTaskEvent(evt)
-			if evt.Type == agent.TaskEventTypeCompleted || evt.Type == agent.TaskEventTypeFailed || evt.Type == agent.TaskEventTypeCancelled {
+			if evt.Type == agent.TaskEventTypeCompleted || evt.Type == agent.TaskEventTypeBlocked || evt.Type == agent.TaskEventTypeFailed || evt.Type == agent.TaskEventTypeCancelled {
 				f.StartSessionTasks(ctx, evt.SessionID)
 			}
 		}
@@ -148,6 +153,15 @@ func renderChatTaskEvent(evt *agent.TaskEvent) {
 		} else {
 			printChatTaskBlock(line)
 		}
+	case agent.TaskEventTypeBlocked:
+		line := fmt.Sprintf("%s [%s] Task blocked", cliui.Error, taskLabel)
+		if evt.AgentName != "" {
+			line += fmt.Sprintf(" in @%s", evt.AgentName)
+		}
+		if text := strings.TrimSpace(evt.Message); text != "" {
+			line += fmt.Sprintf(": %s", text)
+		}
+		printChatTaskBlock(line)
 	case agent.TaskEventTypeFailed:
 		line := fmt.Sprintf("%s [%s] Task failed", cliui.Error, taskLabel)
 		if evt.AgentName != "" {
@@ -185,26 +199,32 @@ func shouldRenderChatTaskRuntimeEvent() bool {
 	return debug || verbose
 }
 
-func printChatTaskSnapshot(task *agent.AsyncTask) {
+func printChatTaskSnapshot(task *taskpkg.Task) {
 	if task == nil {
 		return
 	}
 
 	taskLabel := shortTaskID(task.ID)
 	switch task.Status {
-	case agent.AsyncTaskStatusCompleted:
-		if renderFollowUpSupplement(task.AgentName, task.ResultText) {
+	case taskpkg.StatusCompleted:
+		if renderFollowUpSupplement(task.AgentName, task.Output) {
 			return
 		}
 		line := fmt.Sprintf("%s [%s] Task completed", cliui.Success, taskLabel)
-		if text := strings.TrimSpace(task.ResultText); text != "" {
+		if text := strings.TrimSpace(task.Output); text != "" {
 			printChatTaskBlock(line, text)
 		} else {
 			printChatTaskBlock(line)
 		}
-	case agent.AsyncTaskStatusFailed:
+	case taskpkg.StatusFailed:
 		line := fmt.Sprintf("%s [%s] Task failed", cliui.Error, taskLabel)
 		if text := strings.TrimSpace(task.Error); text != "" {
+			line += fmt.Sprintf(": %s", text)
+		}
+		printChatTaskBlock(line)
+	case taskpkg.StatusBlocked:
+		line := fmt.Sprintf("%s [%s] Task blocked", cliui.Error, taskLabel)
+		if text := strings.TrimSpace(firstNonEmpty(task.Error, task.Output)); text != "" {
 			line += fmt.Sprintf(": %s", text)
 		}
 		printChatTaskBlock(line)
@@ -252,9 +272,9 @@ func executionResultAsyncTaskIDs(result *agent.ExecutionResult) []string {
 	}
 }
 
-func isTerminalTask(status agent.AsyncTaskStatus) bool {
+func isTerminalTask(status taskpkg.Status) bool {
 	switch status {
-	case agent.AsyncTaskStatusCompleted, agent.AsyncTaskStatusFailed, agent.AsyncTaskStatusCancelled:
+	case taskpkg.StatusCompleted, taskpkg.StatusBlocked, taskpkg.StatusFailed, taskpkg.StatusCancelled:
 		return true
 	default:
 		return false

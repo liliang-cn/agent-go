@@ -31,6 +31,9 @@ func TestBuildStandaloneAgentPromptKeepsTaskCompleteHintForAssistant(t *testing.
 	if !strings.Contains(got, "Call task_complete as soon as you have the final answer.") {
 		t.Fatalf("expected assistant standalone prompt to keep task_complete hint, got %q", got)
 	}
+	if !strings.Contains(got, "Finish-Or-Block Contract:") || !strings.Contains(got, "task_blocked") {
+		t.Fatalf("expected assistant standalone prompt to include finish-or-block contract, got %q", got)
+	}
 }
 
 func TestBuildStandaloneAgentPromptUsesDedicatedTemplateForStakeholder(t *testing.T) {

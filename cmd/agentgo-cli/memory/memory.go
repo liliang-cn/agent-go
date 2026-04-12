@@ -409,6 +409,16 @@ func createMemoryService(opts *CommandOptions) (*memory.Service, error) {
 		if err == nil {
 			_ = memStore.InitSchema(context.Background())
 		}
+	case config.MemoryStoreTypeMemoryFlow:
+		memStore, err = store.NewMemoryFlowStore(path)
+		if err == nil {
+			_ = memStore.InitSchema(context.Background())
+		}
+	case config.MemoryStoreTypeGraphFlow:
+		memStore, err = store.NewGraphFlowStore(path)
+		if err == nil {
+			_ = memStore.InitSchema(context.Background())
+		}
 	default:
 		memStore, err = store.NewFileMemoryStore(path)
 	}

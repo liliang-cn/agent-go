@@ -184,6 +184,20 @@ func TestToolBuilder_Basic(t *testing.T) {
 	}
 }
 
+func TestToolBuilder_ExecutionMode(t *testing.T) {
+	tool := BuildTool("direct").
+		Description("Direct only tool").
+		ExecutionMode(ToolExposureDirectOnly).
+		Handler(func(_ context.Context, _ map[string]interface{}) (interface{}, error) {
+			return nil, nil
+		}).
+		Build()
+
+	if tool.ExecutionMode() != ToolExposureDirectOnly {
+		t.Fatalf("execution mode = %q, want %q", tool.ExecutionMode(), ToolExposureDirectOnly)
+	}
+}
+
 func TestToolBuilder_Enum(t *testing.T) {
 	tool := BuildTool("classify").
 		Description("Classify sentiment").

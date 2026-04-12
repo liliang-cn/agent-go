@@ -22,7 +22,8 @@ var (
 	Verbose bool
 
 	acpAgentName string
-	acpWithPTC   bool
+	acpWithPTC   bool // Legacy compatibility flag; PTC is enabled by default.
+	acpNoPTC     bool
 	acpNoMemory  bool
 )
 
@@ -43,7 +44,10 @@ var serveCmd = &cobra.Command{
 	Short: "Serve AgentGo over ACP stdio",
 	Long: `Expose AgentGo as an ACP-compatible agent over stdin/stdout.
 
-This command is intended to be launched by ACP-capable editors and clients.`,
+This command is intended to be launched by ACP-capable editors and clients.
+
+PTC is enabled by default. Use --no-ptc only when you need legacy direct
+function-calling behavior.`,
 	RunE: runServe,
 }
 
@@ -51,13 +55,17 @@ func init() {
 	Cmd.AddCommand(serveCmd)
 
 	serveCmd.Flags().StringVar(&acpAgentName, "name", "AgentGo ACP", "agent display name")
-	serveCmd.Flags().BoolVar(&acpWithPTC, "with-ptc", false, "enable Programmatic Tool Calling (JS sandbox)")
+	serveCmd.Flags().BoolVar(&acpWithPTC, "with-ptc", false, "force Programmatic Tool Calling on (default; compatibility flag)")
+	serveCmd.Flags().BoolVar(&acpNoPTC, "no-ptc", false, "disable Programmatic Tool Calling and use direct function calling")
 	serveCmd.Flags().BoolVar(&acpNoMemory, "no-memory", false, "disable long-term memory for ACP sessions")
 }
 
 func runServe(cmd *cobra.Command, args []string) error {
 	if Cfg == nil {
 		return fmt.Errorf("ACP serve requires loaded configuration")
+	}
+	if acpWithPTC && acpNoPTC {
+		return fmt.Errorf("use either --with-ptc or --no-ptc, not both")
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{}))
@@ -79,7 +87,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 		if !acpNoMemory {
 			builder.WithMemory()
 		}
-		if acpWithPTC {
+		switch {
+		case acpNoPTC:
+			builder.WithPTC(false)
+		case acpWithPTC:
 			builder.WithPTC()
 		}
 

@@ -31,18 +31,19 @@ func (c *runtimeAsyncToolCollector) collect() []ToolExecutionResult {
 	return toolResults
 }
 
-func (r *Runtime) buildStreamingTurnCallbacks(ctx context.Context, taskCompleteResult *string, taskCompleteTriggered *bool, collector *runtimeAsyncToolCollector) StreamTurnCallbacks {
+func (r *Runtime) buildStreamingTurnCallbacks(ctx context.Context, taskTerminalName *string, taskTerminalResult *string, collector *runtimeAsyncToolCollector) StreamTurnCallbacks {
 	toolCallDetected := false
 
 	return StreamTurnCallbacks{
 		OnToolCall: func(tc domain.ToolCall) error {
-			if tc.Function.Name == "task_complete" {
+			if isTaskTerminalToolName(tc.Function.Name) {
 				r.emitToolCall(tc.Function.Name, tc.Function.Arguments, "")
-				if res, ok := tc.Function.Arguments["result"].(string); ok && res != "" {
-					*taskCompleteResult = res
-				}
-				*taskCompleteTriggered = true
-				return errTaskComplete
+				*taskTerminalName = tc.Function.Name
+				*taskTerminalResult = taskTerminalToolResult(tc.Function.Name, tc.Function.Arguments, "")
+				return errTaskTerminal
+			}
+			if len(tc.Function.Arguments) == 0 {
+				return nil
 			}
 
 			collector.wg.Add(1)

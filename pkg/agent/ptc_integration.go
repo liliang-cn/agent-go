@@ -342,9 +342,9 @@ func (p *PTCIntegration) GetAvailableCallTools(ctx context.Context) []ptc.ToolIn
 	// Otherwise return all except blocked
 	var filtered []ptc.ToolInfo
 	for _, t := range all {
-		// task_complete is a hardwired runtime signal — never callable via callTool().
-		// The LLM must call it as a direct function call, not through the JS sandbox.
-		if t.Name == "task_complete" {
+		// Terminal task signals are hardwired runtime tools — never callable via callTool().
+		// The LLM must call them as direct function calls, not through the JS sandbox.
+		if isTaskTerminalToolName(t.Name) {
 			continue
 		}
 		if !blocked[t.Name] {
@@ -388,7 +388,7 @@ func (p *PTCIntegration) GetPTCTools(availableTools []ptc.ToolInfo) []domain.Too
 					"Use callTool(name, args) to invoke a tool by exact name. " +
 					"If you do not know the exact tool name, first call search_available_tools or a tool_search_tool_* discovery tool, then call the selected exact tool name. " +
 					"MCP tools usually return an object like {success, data, error}; inspect data or use toolData(result) in JS. " +
-					"NOTE: task_complete is NOT callable inside the sandbox — call it directly." + toolListHint,
+					"NOTE: task_complete and task_blocked are NOT callable inside the sandbox — call them directly." + toolListHint,
 				Parameters: map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
@@ -585,8 +585,10 @@ func (r *PTCResult) FormatForLLM() string {
 			sb.WriteString(fmt.Sprintf("**Error:** %s\n", r.ExecutionResult.Error))
 		}
 
-		// Always show Return Value section
-		if r.ExecutionResult.ReturnValue != nil {
+		// Prefer a nested "result" field when a tool returned a structured envelope.
+		if preferred := preferredPTCReturnValue(r.ExecutionResult.ReturnValue); preferred != "" {
+			sb.WriteString(fmt.Sprintf("**Return Value:** %s\n", preferred))
+		} else if r.ExecutionResult.ReturnValue != nil {
 			sb.WriteString(fmt.Sprintf("**Return Value:** %+v\n", r.ExecutionResult.ReturnValue))
 		} else {
 			sb.WriteString("**Return Value:** (none - did you forget to 'return' in JS?)\n")
@@ -620,6 +622,19 @@ func (r *PTCResult) FormatForLLM() string {
 	default:
 		return r.OriginalContent
 	}
+}
+
+func preferredPTCReturnValue(value interface{}) string {
+	if value == nil {
+		return ""
+	}
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		if text, ok := typed["result"].(string); ok && strings.TrimSpace(text) != "" {
+			return strings.TrimSpace(text)
+		}
+	}
+	return ""
 }
 
 // PTCMemoryStore is a simple in-memory store for PTC execution history

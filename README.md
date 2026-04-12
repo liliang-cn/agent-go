@@ -6,9 +6,9 @@
 
 [中文文档](README_zh-CN.md) · [API Reference](references/API.md) · [Architecture](references/ARCHITECTURE.md)
 
-AgentGo is a Go framework for building Agent / Team based systems. Providers, MCP, skills, memory, RAG, router, and PTC extend the same runtime core, while CLI and UI remain optional adapters.
+AgentGo is a Go framework for building Agent / Team based systems. Team, Agent, Task, Memory, MCP/tools, Skills, and PTC form the core runtime; CLI and UI are optional adapters. RAG is an optional knowledge-retrieval plugin for external documents when embeddings are configured.
 
-You do not need an embedding model for the default experience. Basic agent runtime, MCP, skills, file-backed memory, and PTC work without vector search. Configure embeddings only when you explicitly want RAG or vector-heavy retrieval.
+You do not need an embedding model for the default experience. Basic agent runtime, MCP, skills, file-backed memory, tasks, and PTC work without vector search. Configure embeddings only when you explicitly want RAG, semantic vector recall, or vector-heavy retrieval.
 
 ```bash
 go get github.com/liliang-cn/agent-go/v2
@@ -26,7 +26,6 @@ go get github.com/liliang-cn/agent-go/v2
 | **PTC**       | LLM writes JavaScript; tools run in a Goja sandbox — cuts round-trips                                      |
 | **Streaming** | Token-by-token channel; **Low-latency Streaming Tool Execution** and **Tombstone** recovery                |
 | **Providers** | OpenAI, Anthropic, Azure, DeepSeek, Ollama — switchable at runtime                                         |
-| **RAG**       | Optional document ingestion → chunk → embed → SQLite vector store → hybrid search                          |
 | **Teams**     | Persistent captains + specialists, **Actor-model subagent IPC**, async task queues, cross-process tracking |
 | **Operator**  | Built-in execution agent with filesystem/web tools plus PTY and coding-agent session tooling               |
 
@@ -34,27 +33,30 @@ go get github.com/liliang-cn/agent-go/v2
 
 ## Conceptual Model
 
-AgentGo is easiest to understand as eight collaborating subsystems:
+AgentGo is easiest to understand as a small runtime core plus optional knowledge plugins:
 
 ### 1. LLM
 
-LLM is the execution core. Everything else is built around it.
+LLM is the execution core. Runtime capabilities are built around it.
 
-- It provides the base generation interface used by agents, RAG answers, PTC, and tool selection.
+- It provides the base generation interface used by agents, PTC, tool selection, and optional RAG answers.
 - Providers are runtime-selectable through the global pool.
 - Standalone agents, captains, specialists, and built-in agents all eventually run on the same LLM abstraction.
 
 Think of it as: `prompt + tools + policy -> model call`.
 
-### 2. RAG
+### 2. Task
 
-RAG is the knowledge retrieval layer.
+Task is the first-class execution unit.
 
-- It ingests documents, chunks them, embeds them, and stores them in SQLite/vector storage.
-- At query time it retrieves relevant context and injects it into the agent or query flow.
-- It is for external or project knowledge, not for durable user preferences.
+- Team is the process, Agent is the thread, and Task is the function invocation / activation frame.
+- A task can span multiple LLM/tool frames while remaining one logical call.
+- Task state is persisted with frames, events, continuation, awaiting state, and queue class (`task` or `microtask`).
+- Tasks follow a Finish-Or-Block contract: they should end as `completed`, `blocked`, `failed`, or `yielded`, not as vague “next steps” or “would do” text.
 
-Think of it as: `documents -> retrieval context`.
+Think of it as: `input -> frames/events -> output`.
+
+Finish-Or-Block is part of the default runtime prompt and built-in agent policy. Agents are expected to execute until verified completion, call `task_blocked` with a concrete blocker when execution cannot continue, fail with traceable errors, or yield when external input is genuinely required.
 
 ### 3. Memory
 
@@ -122,11 +124,23 @@ A Team is the persistent team layer on top of agents.
 
 Think of it as: `persistent multi-agent coordination with queueing and status`.
 
+
+### Optional: RAG
+
+RAG is not part of the default runtime path. It is an optional knowledge-retrieval plugin for external/project documents.
+
+- It ingests documents, chunks them, embeds them, and stores them in SQLite/vector storage.
+- It requires embeddings for the useful vector retrieval path.
+- Use it for external documents and project knowledge, not for durable internal agent memory.
+
+Think of it as: `documents + embeddings -> retrieval context`.
+
 ### Agent OS Analogy
 
 AgentGo can be mapped to modern operating system concepts:
 - **Team = Process**: A resource-isolated boundary with its own shared memory and task queue.
 - **Agent = Thread**: The execution entity with a specific role and prompt, sharing the team's resources.
+- **Task = Function call**: A first-class invocation frame with input, output, frames, events, and continuation state.
 - **SubAgent = Coroutine**: Lightweight context forks dynamically spawned by the Agent for asynchronous, parallel tasks.
 - **Memory = Virtual Memory**: LLM-based intelligent retrieval acts as `Page In`, while auto-compaction acts as `Page Out`.
 - **Subconscious = Daemon**: A background worker pool that silently extracts and consolidates memories after a session ends.
@@ -137,8 +151,6 @@ At a high level the APIs map to those concepts like this:
 
 - **LLM / Agent runtime**
   - `Ask`, `Chat`, `Run`, `RunStream`
-- **RAG**
-  - `WithRAG`, `rag_query`, document ingest/query flows
 - **Memory**
   - `WithMemory`, `memory_save`, `memory_recall`
 - **MCP**
@@ -147,14 +159,18 @@ At a high level the APIs map to those concepts like this:
   - `WithSkills`, skill registration and invocation
 - **PTC**
   - `WithPTC`, `execute_javascript`, `callTool()`
+- **Task**
+  - `manager.Tasks().Get/List/Await/Yield/Resume/Cancel`, `agentgo task trace`, `agentgo task inspect`
 - **Team**
   - `CreateTeam`, `JoinTeam`, `DispatchTask`, `SubmitTeamTask`, `GetTask`
+- **Optional RAG**
+  - `WithRAG`, `rag_query`, document ingest/query flows
 
 The practical layering is:
 
 `LLM -> tools/PTC -> Agent -> Team`
 
-with `RAG`, `Memory`, `MCP`, and `Skills` acting as capabilities that can be attached to an agent.
+with `Memory`, `MCP`, and `Skills` as core attachable capabilities; `RAG` is an optional external-knowledge plugin when embeddings are configured.
 
 ---
 
@@ -706,10 +722,21 @@ Structured runtime config lives in `data/agentgo.db`.
 
 ### Memory store types
 
-| `store_type`       | Storage                                                        | Requires embedder |
-| ------------------ | -------------------------------------------------------------- | ----------------- |
-| `file` _(default)_ | `data/memories/entities/*.md` and `data/memories/streams/*.md` | No                |
-| `cortex`           | `data/cortex.db`                                               | No                |
+| `store_type`           | Storage          | Best for                                      | Embedder requirement |
+| ---------------------- | ---------------- | --------------------------------------------- | -------------------- |
+| `file` _(default)_     | `data/memories/` | Most reliable default, local debugging, human-readable memory | Not required |
+| `cortex`               | `data/cortex.db` | Database-backed memory buckets and production-style local persistence | Optional; without one it uses lexical/text fallback |
+| `memoryflow`           | `data/cortex.db` | CortexDB MemoryFlow diary/session workflow and agent memory lifecycle | Optional; works without embeddings |
+| `graphflow`            | `data/cortex.db` | Memory that should also become an entity/relation graph | Optional; current graph extraction is deterministic |
+
+Recommendation:
+
+- Start with `file`. It is the most transparent and easiest to debug.
+- Use `cortex` when you want database-backed memory. Add an embedding provider if you need semantic vector recall; without embeddings it is lexical/text recall, not full semantic search.
+- Use `memoryflow` for session-centric agent memory workflows, diary-like memory, and future wake-up/recall lifecycle integrations.
+- Use `graphflow` when memory content should also be analyzed as a relationship graph.
+
+Set the runtime type through the CLI/UI or by persisting `memory.store_type` in `agentgo.db`. The current CLI runtime configuration is DB-backed; `agentgo.toml` is not the source of truth once `agentgo.db` has a value.
 
 ### Cache store types
 
@@ -725,7 +752,7 @@ AgentGo derives the runtime storage layout automatically from `AGENTGO_HOME`:
 - workspace: `$home/workspace`
 - MCP filesystem allowlist: `$home/workspace`
 - brain database: `$home/data/cortex.db`
-- memory store: `$home/data/memories` or `$home/data/cortex.db` when `memory.store_type = "cortex"`
+- memory store: `$home/data/memories` for `file`, or `$home/data/cortex.db` for `cortex`, `memoryflow`, and `graphflow`
 - cache directory: `$home/data/cache`
 
 The remaining structured runtime values live in `agentgo.db`, including:

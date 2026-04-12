@@ -13,6 +13,8 @@ func TestIsBlacklistedFilesystemPath(t *testing.T) {
 		{path: "/repo/ui/node_modules/react/index.js", want: true},
 		{path: "/repo/rust/target/debug/app", want: true},
 		{path: "/repo/.git/config", want: true},
+		{path: "/Users/alice/.agentgo/config/secrets.json", want: true},
+		{path: "/Users/alice/.agentgo/workspace/note.md", want: false},
 		{path: "/repo/ui/src/App.tsx", want: false},
 	}
 
@@ -74,6 +76,33 @@ func TestSanitizeFilesystemToolArgs_StripsControlCharsFromWrites(t *testing.T) {
 	}
 	if content != "helloworld\nnext\tline" {
 		t.Fatalf("unexpected sanitized content %q", content)
+	}
+}
+
+func TestSanitizeFilesystemToolArgs_NormalizesPathAliases(t *testing.T) {
+	args := map[string]interface{}{
+		"file_path": "/repo/workspace/note.md",
+		"content":   "hello",
+	}
+
+	got := sanitizeFilesystemToolArgs("mcp_filesystem_write_file", args)
+	if got["path"] != "/repo/workspace/note.md" {
+		t.Fatalf("expected path alias to be normalized, got %#v", got)
+	}
+	if _, ok := args["path"]; ok {
+		t.Fatalf("expected original args to remain unchanged, got %#v", args)
+	}
+}
+
+func TestSanitizeFilesystemToolArgs_ExistingPathWinsOverAlias(t *testing.T) {
+	args := map[string]interface{}{
+		"path":      "/repo/workspace/actual.md",
+		"file_path": "/repo/workspace/alias.md",
+	}
+
+	got := sanitizeFilesystemToolArgs("mcp_filesystem_read_file", args)
+	if got["path"] != "/repo/workspace/actual.md" {
+		t.Fatalf("expected existing path to win, got %#v", got)
 	}
 }
 

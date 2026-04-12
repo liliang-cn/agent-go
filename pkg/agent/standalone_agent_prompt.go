@@ -21,7 +21,11 @@ func buildStandaloneAgentPrompt(cfg *config.Config, model *AgentModel) string {
 		"- Use the capabilities that are actually available in the current runtime.",
 	}
 	if shouldIncludeTaskCompleteHint(model) {
-		lines = append(lines, "- Call task_complete as soon as you have the final answer.")
+		lines = append(lines,
+			FinishOrBlockContract,
+			"- Call task_complete as soon as you have the final answer.",
+			"- Call task_blocked only when a concrete blocker prevents completion.",
+		)
 	}
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
