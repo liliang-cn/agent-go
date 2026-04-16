@@ -40,6 +40,9 @@ type Runtime struct {
 	pendingToolsMu sync.Mutex
 	pendingTools   map[string]domain.ToolCall // tool_call_id -> call
 	completedTools map[string]bool            // tool_call_id -> true
+
+	// Observability: current round (1-indexed, set at loop start)
+	currentRound int
 }
 
 // NewRuntime creates a new runtime instance
@@ -111,6 +114,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		}
 
 		state.beginRound()
+		r.currentRound = round + 1
 		r.emit(EventTypeThinking, "Thinking...")
 		state.setStage(TurnStageAwaitingModel, "requesting model output", 0)
 		r.emitLoopState(state)
@@ -161,8 +165,17 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		r.CheckpointEnd("llm_call")
 		state.noteRecovery(recovery)
 
-		// Emit LLM latency analytics
+		// Estimate tokens for this turn and emit LLM latency analytics.
 		llmDur := time.Since(llmStart)
+		{
+			tc := usage.NewTokenCounter()
+			model := r.svc.Info().Model
+			turnTokens := tc.EstimateConversationTokens(toUsageMessages(genMessages), model)
+			if result != nil {
+				turnTokens += tc.EstimateTokens(result.Content, model)
+			}
+			state.noteTokens(turnTokens)
+		}
 		r.emitLLMLatency(round+1, state.Budget.EstimatedTokens, llmDur)
 
 		// Terminal task signal detected in stream — terminate immediately.
@@ -600,6 +613,7 @@ func (r *Runtime) emitToolCall(name string, args map[string]interface{}, interru
 		AgentName: r.currentAgent.Name(),
 		ToolName:  name,
 		ToolArgs:  args,
+		Round:     r.currentRound,
 		Timestamp: time.Now(),
 	}
 	if interruptBehavior == InterruptBehaviorBlock {
@@ -628,6 +642,7 @@ func (r *Runtime) emitToolResult(name string, res interface{}, err error, interr
 		AgentName:  r.currentAgent.Name(),
 		ToolName:   name,
 		ToolResult: res,
+		Round:      r.currentRound,
 		Timestamp:  time.Now(),
 	}
 	if err != nil {

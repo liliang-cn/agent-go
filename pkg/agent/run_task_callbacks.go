@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-func (s *Service) buildRunTaskExecutionCallbacks(session *Session) ToolExecutionCallbacks {
+func (s *Service) buildRunTaskExecutionCallbacks(session *Session, round int) ToolExecutionCallbacks {
 	taskID := currentTaskID(session)
 	agentName := currentAgentNameFromSession(session)
 	return ToolExecutionCallbacks{
@@ -13,6 +13,7 @@ func (s *Service) buildRunTaskExecutionCallbacks(session *Session) ToolExecution
 			s.persistRunTaskEvent(session, taskID, &Event{
 				Type:      EventTypeToolCall,
 				AgentName: agentName,
+				Round:     round,
 				ToolName:  name,
 				ToolArgs:  args,
 				Timestamp: time.Now(),
@@ -26,6 +27,7 @@ func (s *Service) buildRunTaskExecutionCallbacks(session *Session) ToolExecution
 			s.persistRunTaskEvent(session, taskID, &Event{
 				Type:       EventTypeToolResult,
 				AgentName:  agentName,
+				Round:      round,
 				ToolName:   name,
 				ToolResult: result,
 				Content:    content,

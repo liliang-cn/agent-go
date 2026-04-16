@@ -16,10 +16,22 @@ import (
 	"github.com/liliang-cn/agent-go/v2/pkg/prompt"
 )
 
+type roundMetrics struct {
+	round      int
+	tokens     int
+	toolCalls  int
+	llmMs      int64
+	toolMs     int64
+	durationMs int64
+}
+
 type executionMetrics struct {
 	toolCalls       int
 	toolsUsed       []string
 	estimatedTokens int
+	rounds          int
+	roundStats      []roundMetrics
+	totalDurationMs int64
 }
 
 // ============================================================
@@ -407,6 +419,7 @@ func (s *Service) executeWithLLM(ctx context.Context, goal string, intent *Inten
 		}
 
 		state.beginRound()
+		state.beginExecutionRound(round + 1)
 		s.persistRunTaskEvent(session, currentTaskID(session), &Event{
 			Type:      EventTypeStateUpdate,
 			AgentName: state.CurrentAgent.Name(),
@@ -419,8 +432,10 @@ func (s *Service) executeWithLLM(ctx context.Context, goal string, intent *Inten
 		cp.start("llm_call")
 		result, turnTokens, recovery, err := s.runOneLLMTurn(ctx, state.CurrentAgent, state.Messages, cfg, round, goal, intent)
 		llmDur := cp.end("llm_call")
+		state.noteLLMDuration(llmDur)
 		state.noteRecovery(recovery)
 		if err != nil {
+			state.finalizeRound()
 			return nil, state.metricsSnapshot(), err
 		}
 		state.noteTurnTokens(turnTokens)
@@ -437,12 +452,14 @@ func (s *Service) executeWithLLM(ctx context.Context, goal string, intent *Inten
 			if handoff {
 				decision := decideHandoff(nextAgent, handoffReason)
 				state.setCurrentAgent(decision.NextAgent)
+				state.finalizeRound()
 				state.continueWith(decision.Transition, decision.Message, state.Messages)
 				continue
 			}
 			if fallback != "" {
 				state.setLoopTransition(queryLoopTransitionTextResponse, "duplicate tool call returned best-effort final answer")
 				state.setStage(TurnStageCompleted, "duplicate tool call returned best-effort final answer", 0)
+				state.finalizeRound()
 				return fallback, state.metricsSnapshot(), nil
 			}
 			if len(filteredToolCalls) == 0 {
@@ -451,6 +468,7 @@ func (s *Service) executeWithLLM(ctx context.Context, goal string, intent *Inten
 					s.recordToolResults(ctx, session, state.CurrentAgent, goal, duplicateToolResults, cfg, round)
 					state.noteToolResults(duplicateToolResults)
 				}
+				state.finalizeRound()
 				state.continueWith(queryLoopTransitionDuplicateToolResults, "reused duplicate tool results", state.Messages)
 				continue
 			}
@@ -461,8 +479,9 @@ func (s *Service) executeWithLLM(ctx context.Context, goal string, intent *Inten
 			cp.start("tool_execution")
 			var toolResults []ToolExecutionResult
 			beforeLen := len(state.Messages)
-			state.Messages, toolResults, err = s.executePreparedToolRound(ctx, state.CurrentAgent, session, state.Messages, result, filteredToolCalls, duplicateToolResults, s.buildRunTaskExecutionCallbacks(session), false)
+			state.Messages, toolResults, err = s.executePreparedToolRound(ctx, state.CurrentAgent, session, state.Messages, result, filteredToolCalls, duplicateToolResults, s.buildRunTaskExecutionCallbacks(session, round+1), false)
 			toolDur := cp.end("tool_execution")
+			state.noteToolDuration(toolDur)
 			if err != nil {
 				if blocker, blocked := blockedReasonFromError(err); blocked {
 					blockedMsg := withTaskID(domain.Message{
@@ -479,6 +498,7 @@ func (s *Service) executeWithLLM(ctx context.Context, goal string, intent *Inten
 					})
 					state.setStage(TurnStageCompleted, "tool execution blocked", 0)
 					state.setLoopTransition(queryLoopTransitionToolExecutionError, "tool execution blocked")
+					state.finalizeRound()
 					return terminalRunResult{Text: blocker, Blocked: true}, state.metricsSnapshot(), nil
 				}
 				failureMsg := withTaskID(domain.Message{
@@ -495,6 +515,7 @@ func (s *Service) executeWithLLM(ctx context.Context, goal string, intent *Inten
 				})
 				state.setStage(TurnStageCompleted, "tool execution failed", 0)
 				state.setLoopTransition(queryLoopTransitionToolExecutionError, "tool execution failed")
+				state.finalizeRound()
 				return nil, state.metricsSnapshot(), fmt.Errorf("tool execution failed: %w", err)
 			}
 			if s.store != nil {
@@ -525,6 +546,7 @@ func (s *Service) executeWithLLM(ctx context.Context, goal string, intent *Inten
 					})
 					state.setStage(TurnStageCompleted, decision.Reason, 0)
 					state.setLoopTransition(decision.Transition, decision.Reason)
+					state.finalizeRound()
 					return terminalRunResult{Text: final, Blocked: true}, state.metricsSnapshot(), nil
 				}
 				finalMsg := withTaskID(domain.Message{Role: "assistant", Content: final}, currentTaskID(session))
@@ -537,6 +559,7 @@ func (s *Service) executeWithLLM(ctx context.Context, goal string, intent *Inten
 				})
 				state.setStage(TurnStageCompleted, decision.Reason, 0)
 				state.setLoopTransition(decision.Transition, decision.Reason)
+				state.finalizeRound()
 				return final, state.metricsSnapshot(), nil
 			}
 			if decision.AwaitAnswer {
@@ -551,8 +574,10 @@ func (s *Service) executeWithLLM(ctx context.Context, goal string, intent *Inten
 				})
 				state.setStage(TurnStageCompleted, stopResult.StopReason, 0)
 				state.setLoopTransition(queryLoopTransitionTextResponse, stopResult.StopReason)
+				state.finalizeRound()
 				return stopResult.StopReason, state.metricsSnapshot(), nil
 			}
+			state.finalizeRound()
 			state.continueWith(decision.Transition, decision.Reason, state.Messages)
 			continue
 		}
@@ -567,6 +592,7 @@ func (s *Service) executeWithLLM(ctx context.Context, goal string, intent *Inten
 			}, currentTaskID(session))
 			state.setMessages(append(state.Messages, nudgeMsg))
 			s.persistRunMessages(session, nudgeMsg)
+			state.finalizeRound()
 			state.continueWith(textDecision.Transition, textDecision.Reason, state.Messages)
 			continue
 		}
@@ -577,6 +603,7 @@ func (s *Service) executeWithLLM(ctx context.Context, goal string, intent *Inten
 			Role:    "assistant",
 			Content: result.Content,
 		}, currentTaskID(session)))
+		state.finalizeRound()
 		s.persistRunTaskEvent(session, currentTaskID(session), &Event{
 			Type:      EventTypeComplete,
 			AgentName: state.CurrentAgent.Name(),

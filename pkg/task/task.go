@@ -60,20 +60,54 @@ type Frame struct {
 	Message   domain.Message `json:"message"`
 }
 
+// EventRuntime carries structured tool/round data for an event.
+// JSON tags match the old map[string]any keys for backward compatibility.
+type EventRuntime struct {
+	ToolName   string                 `json:"tool_name,omitempty"`
+	ToolArgs   map[string]interface{} `json:"tool_args,omitempty"`
+	ToolResult interface{}            `json:"tool_result,omitempty"`
+	DurationMs int64                  `json:"duration_ms,omitempty"`
+	Round      int                    `json:"round,omitempty"`
+	TokensUsed int                    `json:"tokens_used,omitempty"`
+	Duplicate  bool                   `json:"duplicate,omitempty"`
+	FrameRef   int                    `json:"frame_ref,omitempty"` // 1-indexed; 0 = unlinked
+}
+
 type Event struct {
-	ID          string         `json:"id"`
-	TaskID      string         `json:"task_id"`
-	SessionID   string         `json:"session_id,omitempty"`
-	Kind        Kind           `json:"kind"`
-	Status      Status         `json:"status"`
-	Type        string         `json:"type"`
-	TeamID      string         `json:"team_id,omitempty"`
-	TeamName    string         `json:"team_name,omitempty"`
-	CaptainName string         `json:"captain_name,omitempty"`
-	AgentName   string         `json:"agent_name,omitempty"`
-	Message     string         `json:"message,omitempty"`
-	Runtime     map[string]any `json:"runtime,omitempty"`
-	Timestamp   time.Time      `json:"timestamp"`
+	ID          string        `json:"id"`
+	TaskID      string        `json:"task_id"`
+	SessionID   string        `json:"session_id,omitempty"`
+	Kind        Kind          `json:"kind"`
+	Status      Status        `json:"status"`
+	Type        string        `json:"type"`
+	TeamID      string        `json:"team_id,omitempty"`
+	TeamName    string        `json:"team_name,omitempty"`
+	CaptainName string        `json:"captain_name,omitempty"`
+	AgentName   string        `json:"agent_name,omitempty"`
+	Message     string        `json:"message,omitempty"`
+	DurationMs  int64         `json:"duration_ms,omitempty"`
+	Runtime     *EventRuntime `json:"runtime,omitempty"`
+	Timestamp   time.Time     `json:"timestamp"`
+}
+
+// RoundStats captures per-round execution metrics.
+type RoundStats struct {
+	Round      int   `json:"round"`
+	TokensUsed int   `json:"tokens_used"`
+	ToolCalls  int   `json:"tool_calls"`
+	LLMMs      int64 `json:"llm_ms"`
+	ToolMs     int64 `json:"tool_ms"`
+	DurationMs int64 `json:"duration_ms"`
+}
+
+// TaskStats summarises the execution of a task.
+type TaskStats struct {
+	Rounds         int          `json:"rounds"`
+	TotalTokens    int          `json:"total_tokens"`
+	ToolCalls      int          `json:"tool_calls"`
+	ToolsUsed      []string     `json:"tools_used,omitempty"`
+	DurationMs     int64        `json:"duration_ms"`
+	RoundBreakdown []RoundStats `json:"round_breakdown,omitempty"`
 }
 
 // Task is the first-class execution unit in AgentGo.
@@ -97,6 +131,7 @@ type Task struct {
 	Input            string         `json:"input,omitempty"`
 	Output           string         `json:"output,omitempty"`
 	Error            string         `json:"error,omitempty"`
+	Stats            *TaskStats     `json:"stats,omitempty"`
 	CreatedAt        time.Time      `json:"created_at"`
 	StartedAt        *time.Time     `json:"started_at,omitempty"`
 	FinishedAt       *time.Time     `json:"finished_at,omitempty"`

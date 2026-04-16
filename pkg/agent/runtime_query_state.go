@@ -1,6 +1,10 @@
 package agent
 
-import "github.com/liliang-cn/agent-go/v2/pkg/domain"
+import (
+	"time"
+
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+)
 
 type queryLoopBudget struct {
 	MaxRounds       int
@@ -199,23 +203,47 @@ func hasDiminishingReturns(tokensPerRound []int) bool {
 
 type serviceExecutionLoopState struct {
 	*queryLoopState
-	CurrentAgent *Agent
-	Metrics      executionMetrics
-	ToolUsed     bool
-	Nudged       bool
+	CurrentAgent   *Agent
+	Metrics        executionMetrics
+	ToolUsed       bool
+	Nudged         bool
+	roundStartedAt time.Time      // set at the start of each round
+	currentRound   roundMetrics   // accumulator for the current round
+	execStartedAt  time.Time      // overall execution start
 }
 
 func newServiceExecutionLoopState(goal string, messages []domain.Message, intent *IntentRecognitionResult, maxRounds int, currentAgent *Agent) *serviceExecutionLoopState {
 	return &serviceExecutionLoopState{
 		queryLoopState: newQueryLoopState(goal, messages, intent, maxRounds),
 		CurrentAgent:   currentAgent,
+		execStartedAt:  time.Now(),
 	}
+}
+
+func (s *serviceExecutionLoopState) beginExecutionRound(round int) {
+	s.roundStartedAt = time.Now()
+	s.currentRound = roundMetrics{round: round}
+}
+
+func (s *serviceExecutionLoopState) noteLLMDuration(d time.Duration) {
+	s.currentRound.llmMs += d.Milliseconds()
+}
+
+func (s *serviceExecutionLoopState) noteToolDuration(d time.Duration) {
+	s.currentRound.toolMs += d.Milliseconds()
+}
+
+func (s *serviceExecutionLoopState) finalizeRound() {
+	s.currentRound.durationMs = time.Since(s.roundStartedAt).Milliseconds()
+	s.Metrics.roundStats = append(s.Metrics.roundStats, s.currentRound)
+	s.Metrics.rounds++
 }
 
 func (s *serviceExecutionLoopState) noteTurnTokens(tokens int) {
 	s.queryLoopState.noteTokens(tokens)
 	if tokens > 0 {
 		s.Metrics.estimatedTokens += tokens
+		s.currentRound.tokens += tokens
 	}
 }
 
@@ -227,6 +255,7 @@ func (s *serviceExecutionLoopState) noteToolResults(results []ToolExecutionResul
 	s.queryLoopState.recordToolResults(results)
 	s.Metrics.toolCalls += len(results)
 	s.Metrics.toolsUsed = appendToolNames(s.Metrics.toolsUsed, results)
+	s.currentRound.toolCalls += len(results)
 }
 
 func (s *serviceExecutionLoopState) continueWith(transition, reason string, messages []domain.Message) {
@@ -251,5 +280,8 @@ func (s *serviceExecutionLoopState) metricsSnapshot() *executionMetrics {
 		toolCalls:       s.Metrics.toolCalls,
 		toolsUsed:       append([]string(nil), s.Metrics.toolsUsed...),
 		estimatedTokens: s.Metrics.estimatedTokens,
+		rounds:          s.Metrics.rounds,
+		roundStats:      append([]roundMetrics(nil), s.Metrics.roundStats...),
+		totalDurationMs: time.Since(s.execStartedAt).Milliseconds(),
 	}
 }

@@ -302,6 +302,7 @@ func (s *AgentGoDB) initSchema() error {
 			error TEXT,
 			frames TEXT,
 			events TEXT,
+			stats TEXT,
 			source TEXT,
 			source_id TEXT,
 			created_at DATETIME NOT NULL,
@@ -311,6 +312,9 @@ func (s *AgentGoDB) initSchema() error {
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to create tasks table: %w", err)
+	}
+	if err := s.ensureColumnExistsLocked("tasks", "stats", "TEXT"); err != nil {
+		return fmt.Errorf("failed to add stats column to tasks: %w", err)
 	}
 	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_session_id ON tasks(session_id)`); err != nil {
 		return fmt.Errorf("failed to create tasks session index: %w", err)
@@ -1497,6 +1501,7 @@ func (s *AgentGoDB) SaveTask(task *taskpkg.Task) error {
 	framesJSON, _ := json.Marshal(task.Frames)
 	eventsJSON, _ := json.Marshal(task.Events)
 	awaitingJSON, _ := json.Marshal(task.Awaiting)
+	statsJSON, _ := json.Marshal(task.Stats)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1504,9 +1509,9 @@ func (s *AgentGoDB) SaveTask(task *taskpkg.Task) error {
 		INSERT INTO tasks (
 			id, kind, status, session_id, runtime_session_id, parent_task_id,
 			continuation_id, queue_class, awaiting, team_id, team_name, agent_name, agent_names, input, output, error,
-			frames, events, source, source_id, created_at, started_at, finished_at
+			frames, events, stats, source, source_id, created_at, started_at, finished_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			kind = excluded.kind,
 			status = excluded.status,
@@ -1525,6 +1530,7 @@ func (s *AgentGoDB) SaveTask(task *taskpkg.Task) error {
 			error = excluded.error,
 			frames = excluded.frames,
 			events = excluded.events,
+			stats = excluded.stats,
 			source = excluded.source,
 			source_id = excluded.source_id,
 			created_at = excluded.created_at,
@@ -1532,7 +1538,7 @@ func (s *AgentGoDB) SaveTask(task *taskpkg.Task) error {
 			finished_at = excluded.finished_at
 	`, task.ID, task.Kind, task.Status, task.SessionID, task.RuntimeSessionID, task.ParentTaskID, task.ContinuationID, task.QueueClass, string(awaitingJSON),
 		task.TeamID, task.TeamName, task.AgentName, string(agentNamesJSON), task.Input, task.Output, task.Error,
-		string(framesJSON), string(eventsJSON), task.Source, task.SourceID, task.CreatedAt, task.StartedAt, task.FinishedAt)
+		string(framesJSON), string(eventsJSON), string(statsJSON), task.Source, task.SourceID, task.CreatedAt, task.StartedAt, task.FinishedAt)
 	return err
 }
 
@@ -1542,7 +1548,7 @@ func (s *AgentGoDB) GetTask(id string) (*taskpkg.Task, error) {
 	row := s.db.QueryRow(`
 		SELECT id, kind, status, session_id, runtime_session_id, parent_task_id,
 		       continuation_id, queue_class, awaiting, team_id, team_name, agent_name, agent_names, input, output, error,
-		       frames, events, source, source_id, created_at, started_at, finished_at
+		       frames, events, stats, source, source_id, created_at, started_at, finished_at
 		FROM tasks WHERE id = ?
 	`, id)
 	return scanTask(row)
@@ -1557,7 +1563,7 @@ func (s *AgentGoDB) ListTasks(limit int) ([]*taskpkg.Task, error) {
 	rows, err := s.db.Query(`
 		SELECT id, kind, status, session_id, runtime_session_id, parent_task_id,
 		       continuation_id, queue_class, awaiting, team_id, team_name, agent_name, agent_names, input, output, error,
-		       frames, events, source, source_id, created_at, started_at, finished_at
+		       frames, events, stats, source, source_id, created_at, started_at, finished_at
 		FROM tasks
 		ORDER BY created_at ASC
 		LIMIT ?
@@ -1583,13 +1589,13 @@ type taskScanner interface {
 
 func scanTask(scanner taskScanner) (*taskpkg.Task, error) {
 	var task taskpkg.Task
-	var agentNamesJSON, framesJSON, eventsJSON, awaitingJSON []byte
+	var agentNamesJSON, framesJSON, eventsJSON, awaitingJSON, statsJSON []byte
 	var sessionID, runtimeSessionID, parentTaskID, continuationID, queueClass, teamID, teamName, agentName, input, output, errorText, source, sourceID sql.NullString
 	var startedAt, finishedAt sql.NullTime
 	if err := scanner.Scan(
 		&task.ID, &task.Kind, &task.Status, &sessionID, &runtimeSessionID, &parentTaskID,
 		&continuationID, &queueClass, &awaitingJSON, &teamID, &teamName, &agentName, &agentNamesJSON, &input, &output, &errorText,
-		&framesJSON, &eventsJSON, &source, &sourceID, &task.CreatedAt, &startedAt, &finishedAt,
+		&framesJSON, &eventsJSON, &statsJSON, &source, &sourceID, &task.CreatedAt, &startedAt, &finishedAt,
 	); err != nil {
 		return nil, err
 	}
@@ -1610,6 +1616,10 @@ func scanTask(scanner taskScanner) (*taskpkg.Task, error) {
 	_ = json.Unmarshal(awaitingJSON, &task.Awaiting)
 	_ = json.Unmarshal(framesJSON, &task.Frames)
 	_ = json.Unmarshal(eventsJSON, &task.Events)
+	if len(statsJSON) > 0 {
+		task.Stats = &taskpkg.TaskStats{}
+		_ = json.Unmarshal(statsJSON, task.Stats)
+	}
 	if startedAt.Valid {
 		task.StartedAt = &startedAt.Time
 	}

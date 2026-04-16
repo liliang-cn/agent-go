@@ -783,6 +783,16 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 		createdAt:  startTime,
 		finishedAt: completedAt,
 	})
+	// Synthesize metrics from PTC path when execMetrics is nil.
+	if execMetrics == nil {
+		execMetrics = &executionMetrics{
+			estimatedTokens: result.EstimatedTokens,
+			toolCalls:       result.ToolCalls,
+			toolsUsed:       result.ToolsUsed,
+			totalDurationMs: completedAt.Sub(startTime).Milliseconds(),
+		}
+	}
+	s.persistRunTaskStats(session, taskID, execMetrics)
 	return result, nil
 }
 

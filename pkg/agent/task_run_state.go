@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -106,21 +107,43 @@ func (s *Service) persistRunTaskEvent(session *Session, taskID string, evt *Even
 		status = taskpkg.StatusFailed
 	}
 
+	runtime := &taskpkg.EventRuntime{
+		ToolName:   evt.ToolName,
+		ToolArgs:   evt.ToolArgs,
+		ToolResult: evt.ToolResult,
+		DurationMs: evt.DurationMs,
+		Round:      evt.Round,
+		TokensUsed: evt.TokensUsed,
+		Duplicate:  evt.Duplicate,
+	}
+
+	// Detect duplicate tool calls (same tool + same args seen before).
+	if evt.Type == EventTypeToolCall && evt.ToolName != "" {
+		key := fmt.Sprintf("%s:%v", evt.ToolName, evt.ToolArgs)
+		for i := range task.Events {
+			existing := &task.Events[i]
+			if existing.Type != string(EventTypeToolCall) || existing.Runtime == nil {
+				continue
+			}
+			if fmt.Sprintf("%s:%v", existing.Runtime.ToolName, existing.Runtime.ToolArgs) == key {
+				runtime.Duplicate = true
+				break
+			}
+		}
+	}
+
 	task.Events = append(task.Events, taskpkg.Event{
-		ID:        evt.ID,
-		TaskID:    strings.TrimSpace(taskID),
-		SessionID: sessionIDOrEmpty(session),
-		Kind:      taskpkg.KindAgent,
-		Status:    status,
-		Type:      string(evt.Type),
-		AgentName: strings.TrimSpace(evt.AgentName),
-		Message:   strings.TrimSpace(evt.Content),
-		Runtime: map[string]any{
-			"tool_name":   evt.ToolName,
-			"tool_args":   evt.ToolArgs,
-			"tool_result": evt.ToolResult,
-		},
-		Timestamp: firstNonZeroTime(evt.Timestamp, time.Now()),
+		ID:         evt.ID,
+		TaskID:     strings.TrimSpace(taskID),
+		SessionID:  sessionIDOrEmpty(session),
+		Kind:       taskpkg.KindAgent,
+		Status:     status,
+		Type:       string(evt.Type),
+		AgentName:  strings.TrimSpace(evt.AgentName),
+		Message:    strings.TrimSpace(evt.Content),
+		DurationMs: evt.DurationMs,
+		Runtime:    runtime,
+		Timestamp:  firstNonZeroTime(evt.Timestamp, time.Now()),
 	})
 	task.Status = status
 	if evt.Type == EventTypeComplete || evt.Type == EventTypeBlocked {
@@ -132,6 +155,35 @@ func (s *Service) persistRunTaskEvent(session *Session, taskID string, evt *Even
 	if task.ParentTaskID == "" && parentTaskID != "" {
 		task.ParentTaskID = parentTaskID
 	}
+	_ = s.store.SaveTask(task)
+}
+
+func (s *Service) persistRunTaskStats(session *Session, taskID string, metrics *executionMetrics) {
+	if s == nil || s.store == nil || metrics == nil || strings.TrimSpace(taskID) == "" {
+		return
+	}
+	task, err := s.store.GetTask(taskID)
+	if err != nil || task == nil {
+		return
+	}
+	stats := &taskpkg.TaskStats{
+		Rounds:      metrics.rounds,
+		TotalTokens: metrics.estimatedTokens,
+		ToolCalls:   metrics.toolCalls,
+		ToolsUsed:   metrics.toolsUsed,
+		DurationMs:  metrics.totalDurationMs,
+	}
+	for _, rs := range metrics.roundStats {
+		stats.RoundBreakdown = append(stats.RoundBreakdown, taskpkg.RoundStats{
+			Round:      rs.round,
+			TokensUsed: rs.tokens,
+			ToolCalls:  rs.toolCalls,
+			LLMMs:      rs.llmMs,
+			ToolMs:     rs.toolMs,
+			DurationMs: rs.durationMs,
+		})
+	}
+	task.Stats = stats
 	_ = s.store.SaveTask(task)
 }
 

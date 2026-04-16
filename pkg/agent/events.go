@@ -80,6 +80,11 @@ type Event struct {
 	ToolArgs   map[string]interface{} `json:"tool_args,omitempty"`
 	ToolResult interface{}            `json:"tool_result,omitempty"`
 
+	// Observability (threaded from execution loop)
+	DurationMs int64 `json:"duration_ms,omitempty"`
+	TokensUsed int   `json:"tokens_used,omitempty"`
+	Duplicate  bool  `json:"duplicate,omitempty"`
+
 	// RAG sources (for workflow_complete event)
 	Sources []domain.Chunk `json:"sources,omitempty"`
 

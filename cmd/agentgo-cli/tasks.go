@@ -314,6 +314,10 @@ func listUnifiedTasksSimple(jsonOutput bool) error {
 			fmt.Printf("Error:   %s\n", trimTaskText(task.Error, 120))
 		}
 		fmt.Printf("Frames:  %d | Events: %d | ToolCalls: %d\n", len(task.Frames), len(task.Events), countUnifiedTaskToolCalls(task))
+		if task.Stats != nil {
+			fmt.Printf("Stats:   Rounds:%d Tokens:%d Duration:%dms\n",
+				task.Stats.Rounds, task.Stats.TotalTokens, task.Stats.DurationMs)
+		}
 		fmt.Printf("Created: %s\n", task.CreatedAt.Format("2006-01-02 15:04:05"))
 		fmt.Println(strings.Repeat("-", 40))
 	}
@@ -372,6 +376,16 @@ func printTaskHeader(task *agentpkg.UnifiedTask) {
 		fmt.Printf("Error:   %s\n", trimTaskText(task.Error, 200))
 	}
 	fmt.Printf("Frames:  %d | Events: %d | ToolCalls: %d\n", len(task.Frames), len(task.Events), countUnifiedTaskToolCalls(task))
+	if task.Stats != nil {
+		fmt.Printf("Stats:   Rounds:%d Tokens:%d Duration:%dms\n",
+			task.Stats.Rounds, task.Stats.TotalTokens, task.Stats.DurationMs)
+		if len(task.Stats.RoundBreakdown) > 0 {
+			for _, rs := range task.Stats.RoundBreakdown {
+				fmt.Printf("  Round %d: tokens=%d tools=%d llm=%dms tool=%dms total=%dms\n",
+					rs.Round, rs.TokensUsed, rs.ToolCalls, rs.LLMMs, rs.ToolMs, rs.DurationMs)
+			}
+		}
+	}
 	fmt.Printf("Created: %s\n", task.CreatedAt.Format("2006-01-02 15:04:05"))
 	fmt.Println(strings.Repeat("-", 40))
 }
@@ -384,11 +398,23 @@ func printTaskEvents(task *agentpkg.UnifiedTask) {
 	}
 	for i, event := range task.Events {
 		when := event.Timestamp.Format("15:04:05")
+		dur := ""
+		if event.DurationMs > 0 {
+			dur = fmt.Sprintf(" (%dms)", event.DurationMs)
+		}
+		dupFlag := ""
+		if event.Runtime != nil && event.Runtime.Duplicate {
+			dupFlag = " [DUPLICATE]"
+		}
+		roundTag := ""
+		if event.Runtime != nil && event.Runtime.Round > 0 {
+			roundTag = fmt.Sprintf(" R%d", event.Runtime.Round)
+		}
 		message := trimTaskText(event.Message, 160)
 		if message == "" && event.Runtime != nil {
-			message = trimTaskText(fmt.Sprint(event.Runtime), 160)
+			message = trimTaskText(event.Runtime.ToolName, 160)
 		}
-		fmt.Printf("  [%d] %s %s %s\n", i+1, when, event.Type, message)
+		fmt.Printf("  [%d] %s %s%s%s%s %s\n", i+1, when, event.Type, roundTag, dur, dupFlag, message)
 	}
 }
 
