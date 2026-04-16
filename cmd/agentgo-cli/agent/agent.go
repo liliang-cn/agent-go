@@ -443,6 +443,7 @@ func init() {
 	agentAddCmd.Flags().StringVar(&agentInstructions, "instructions", "", "agent system instructions")
 	agentAddCmd.Flags().StringVar(&agentProvider, "provider", "", "preferred LLM provider")
 	agentAddCmd.Flags().StringVar(&agentModel, "model", "", "preferred LLM model")
+	agentAddCmd.Flags().StringVar(&agentMemoryType, "memory-type", "", "memory store type: file, cortex, memoryflow, graphflow")
 	agentAddCmd.Flags().BoolVar(&agentA2AEnabled, "a2a", false, "enable A2A exposure for this standalone agent")
 
 	agentUpdateCmd.Flags().StringVar(&agentUpdateName, "name", "", "rename the agent")
@@ -451,6 +452,7 @@ func init() {
 	agentUpdateCmd.Flags().StringVar(&agentProvider, "provider", "", "new preferred LLM provider")
 	agentUpdateCmd.Flags().StringVar(&agentModel, "model", "", "new preferred LLM model")
 	agentUpdateCmd.Flags().StringVar(&agentUpdateRole, "role", "", "set role to agent, captain, or specialist")
+	agentUpdateCmd.Flags().StringVar(&agentMemoryType, "memory-type", "", "memory store type: file, cortex, memoryflow, graphflow")
 	agentUpdateCmd.Flags().BoolVar(&agentA2AEnabled, "a2a", false, "explicitly enable or disable A2A exposure for this standalone agent")
 
 	agentA2AServeCmd.Flags().StringVar(&a2aHost, "host", "0.0.0.0", "host to bind the A2A server to")

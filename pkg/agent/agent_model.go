@@ -32,6 +32,7 @@ type AgentModel struct {
 	Skills                []string         `json:"skills"`
 	EnableRAG             bool             `json:"enable_rag"`
 	EnableMemory          bool             `json:"enable_memory"`
+	MemoryStoreType       string           `json:"memory_store_type,omitempty"`
 	EnablePTC             bool             `json:"enable_ptc"`
 	EnableMCP             bool             `json:"enable_mcp"`
 	EnableA2A             bool             `json:"enable_a2a"`

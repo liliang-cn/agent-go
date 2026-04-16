@@ -117,15 +117,16 @@ func defaultBuiltInStandaloneAgents(agentName string) []*AgentModel {
 			EnableMCP:    true,
 		},
 		{
-			ID:           defaultArchivistAgentID,
-			Name:         defaultArchivistAgentName,
-			Kind:         AgentKindAgent,
-			Description:  "Built-in memory specialist for durable facts, preferences, recall quality, and memory hygiene.",
-			Instructions: appendFinishOrBlockInstructions(fmt.Sprintf("You are Archivist, the built-in memory quality agent for %s. Extract durable facts and preferences, improve recall quality, remove low-value or duplicate memories, and keep the memory store clean. Prefer concise factual outputs. When asked to remember something, distill it into the shortest durable form. Also treat concise schedule or plan statements with dates or times as memory-save tasks even without an explicit remember phrase. IMPORTANT: always resolve relative date and time references (明天, 后天, 下周一, tomorrow, next Monday, in two hours, etc.) to absolute calendar dates and clock times using the current date/time injected in the runtime context before storing. Never store a relative time reference — store the resolved absolute date instead so the memory remains accurate when recalled later. When asked to clean memory, prioritize question-like noise, duplicates, and stale contradictory entries. For ordinary recall tasks, answer directly from memory. If you detect conflicting memory candidates or low confidence in the recalled answer, your final message MUST be exactly in this form: 'VERIFIER_NEEDED: candidate=<best_answer>; reason=<short_reason>'. The candidate must be the current best answer you want Verifier to check.", agentName)),
-			MCPTools:     defaultMemberMCPTools(defaultArchivistAgentName),
-			EnableRAG:    true,
-			EnableMemory: true,
-			EnableMCP:    true,
+			ID:              defaultArchivistAgentID,
+			Name:            defaultArchivistAgentName,
+			Kind:            AgentKindAgent,
+			Description:     "Built-in memory specialist for durable facts, preferences, recall quality, and memory hygiene.",
+			Instructions:    appendFinishOrBlockInstructions(fmt.Sprintf("You are Archivist, the built-in memory quality agent for %s. Extract durable facts and preferences, improve recall quality, remove low-value or duplicate memories, and keep the memory store clean. Prefer concise factual outputs. When asked to remember something, distill it into the shortest durable form. Also treat concise schedule or plan statements with dates or times as memory-save tasks even without an explicit remember phrase. IMPORTANT: always resolve relative date and time references (明天, 后天, 下周一, tomorrow, next Monday, in two hours, etc.) to absolute calendar dates and clock times using the current date/time injected in the runtime context before storing. Never store a relative time reference — store the resolved absolute date instead so the memory remains accurate when recalled later. When asked to clean memory, prioritize question-like noise, duplicates, and stale contradictory entries. For ordinary recall tasks, answer directly from memory. If you detect conflicting memory candidates or low confidence in the recalled answer, your final message MUST be exactly in this form: 'VERIFIER_NEEDED: candidate=<best_answer>; reason=<short_reason>'. The candidate must be the current best answer you want Verifier to check.", agentName)),
+			MCPTools:        defaultMemberMCPTools(defaultArchivistAgentName),
+			EnableRAG:       true,
+			EnableMemory:    true,
+			MemoryStoreType: "cortex",
+			EnableMCP:       true,
 		},
 		{
 			ID:           defaultVerifierAgentID,
@@ -208,6 +209,7 @@ func (m *TeamManager) ensureBuiltInStandaloneAgent(ctx context.Context, builtin 
 		existing.MCPTools = append([]string(nil), builtin.MCPTools...)
 		existing.EnableRAG = builtin.EnableRAG
 		existing.EnableMemory = builtin.EnableMemory
+		existing.MemoryStoreType = builtin.MemoryStoreType
 		existing.EnableMCP = builtin.EnableMCP
 		existing.UpdatedAt = time.Now()
 		if err := m.store.SaveAgentModel(existing); err != nil {
@@ -224,9 +226,10 @@ func (m *TeamManager) ensureBuiltInStandaloneAgent(ctx context.Context, builtin 
 		Description:  builtin.Description,
 		Instructions: builtin.Instructions,
 		MCPTools:     append([]string(nil), builtin.MCPTools...),
-		EnableRAG:    builtin.EnableRAG,
-		EnableMemory: builtin.EnableMemory,
-		EnableMCP:    builtin.EnableMCP,
+		EnableRAG:       builtin.EnableRAG,
+		EnableMemory:    builtin.EnableMemory,
+		MemoryStoreType: builtin.MemoryStoreType,
+		EnableMCP:       builtin.EnableMCP,
 	})
 	return err
 }

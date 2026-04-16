@@ -46,6 +46,7 @@ type TeamManager struct {
 	builtInRuntimes               map[string]*builtInAgentRuntime
 	builtInDispatchOverride       builtInRuntimeDispatchFunc
 	builtInStreamDispatchOverride builtInRuntimeStreamDispatchFunc
+	disableMemory                 bool
 }
 
 type SharedTaskStatus string
@@ -209,6 +210,19 @@ func (m *TeamManager) SetConfig(cfg *config.Config) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.cfg = cfg
+}
+
+// SetDisableMemory globally disables memory for all agents built by this manager.
+// Used by CLI flags like --no-memory to prevent sub-agents from loading memory.
+// Clears cached services so they are rebuilt without memory on next access.
+func (m *TeamManager) SetDisableMemory(disable bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.disableMemory == disable {
+		return
+	}
+	m.disableMemory = disable
+	m.services = make(map[string]*Service)
 }
 
 func (m *TeamManager) GetStore() *Store {
@@ -794,9 +808,9 @@ func (m *TeamManager) buildServiceForModel(model *AgentModel) (*Service, error) 
 	if model.EnableRAG {
 		builder.WithRAG()
 	}
-	if model.EnableMemory {
-		storeType := ""
-		if agentgoCfg != nil {
+	if model.EnableMemory && !m.disableMemory {
+		storeType := strings.TrimSpace(model.MemoryStoreType)
+		if storeType == "" && agentgoCfg != nil {
 			storeType = agentgoCfg.GetMemoryStoreType().String()
 		}
 		if storeType != "" {

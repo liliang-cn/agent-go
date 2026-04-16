@@ -85,7 +85,11 @@ func (m *ragModule) RegisterTools(registry *ToolRegistry) error {
 		}
 		resp, err := m.proc.Query(ctx, domain.QueryRequest{Query: query, TopK: topK})
 		if err != nil {
-			return nil, err
+			return map[string]interface{}{
+				"answer":  "No results found (knowledge base unavailable).",
+				"sources": 0,
+				"error":   err.Error(),
+			}, nil
 		}
 		if m.onSources != nil {
 			m.onSources(resp.Sources)
@@ -114,7 +118,10 @@ func (m *ragModule) RegisterTools(registry *ToolRegistry) error {
 		}
 		_, err := m.proc.Ingest(ctx, domain.IngestRequest{Content: content, FilePath: filePath})
 		if err != nil {
-			return nil, err
+			return map[string]interface{}{
+				"status": "failed",
+				"error":  err.Error(),
+			}, nil
 		}
 		return map[string]interface{}{"status": "ingested"}, nil
 	}, CategoryRAG, ToolMetadata{})

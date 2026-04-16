@@ -19,6 +19,7 @@ var (
 	agentInstructions   string
 	agentProvider       string
 	agentModel          string
+	agentMemoryType     string
 	agentA2AEnabled     bool
 	agentUpdateName     string
 	agentUpdateRole     string
@@ -116,6 +117,7 @@ var agentShowCmd = &cobra.Command{
 		fmt.Printf("Description: %s\n", valueOrDash(model.Description))
 		fmt.Printf("RAG: %s\n", enabledState(model.EnableRAG))
 		fmt.Printf("Memory: %s\n", enabledState(model.EnableMemory))
+		fmt.Printf("Memory Store Type: %s\n", valueOrDash(model.MemoryStoreType))
 		fmt.Printf("MCP: %s\n", enabledState(model.EnableMCP))
 		fmt.Printf("PTC: %s\n", enabledState(model.EnablePTC))
 		fmt.Printf("A2A: %s\n", enabledState(model.EnableA2A))
@@ -162,6 +164,7 @@ var agentAddCmd = &cobra.Command{
 			PreferredProvider: strings.TrimSpace(agentProvider),
 			PreferredModel:    strings.TrimSpace(agentModel),
 			Model:             strings.TrimSpace(agentModel),
+			MemoryStoreType:   strings.TrimSpace(agentMemoryType),
 			EnableA2A:         agentA2AEnabled,
 		})
 		if err != nil {
@@ -199,6 +202,7 @@ var agentUpdateCmd = &cobra.Command{
 			Skills:            current.Skills,
 			EnableRAG:         current.EnableRAG,
 			EnableMemory:      current.EnableMemory,
+			MemoryStoreType:   current.MemoryStoreType,
 			EnablePTC:         current.EnablePTC,
 			EnableMCP:         current.EnableMCP,
 			EnableA2A:         current.EnableA2A,
@@ -218,6 +222,9 @@ var agentUpdateCmd = &cobra.Command{
 		if strings.TrimSpace(agentModel) != "" {
 			updated.PreferredModel = strings.TrimSpace(agentModel)
 			updated.Model = strings.TrimSpace(agentModel)
+		}
+		if strings.TrimSpace(agentMemoryType) != "" {
+			updated.MemoryStoreType = strings.TrimSpace(agentMemoryType)
 		}
 		if agentUpdateRole != "" {
 			role, normalizeErr := normalizeAgentRole(strings.TrimSpace(agentUpdateRole))

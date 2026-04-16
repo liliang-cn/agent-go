@@ -105,6 +105,10 @@ func runChat(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	if chatNoMemory && agentManager != nil {
+		agentManager.SetDisableMemory(true)
+	}
+
 	svc, err := buildChatConciergeService(chatCfg, agentDBPath, agentManager)
 	if err != nil {
 		return fmt.Errorf("failed to build concierge service: %w", err)
@@ -168,7 +172,7 @@ func buildChatConciergeService(chatCfg *config.Config, agentDBPath string, manag
 		return nil, fmt.Errorf("use either --with-ptc or --no-ptc, not both")
 	}
 
-	if manager != nil && !chatNoMemory && !chatWithPTC && !chatNoPTC && !chatCfg.GetMemoryStoreType().UsesVector() {
+	if manager != nil && !chatWithPTC && !chatNoPTC && !chatCfg.GetMemoryStoreType().UsesVector() {
 		if svc, err := manager.GetAgentService(agent.BuiltInConciergeAgentName); err == nil {
 			svc.SetDebug(debug)
 			svc.SetProgressCallback(progressCallback)

@@ -137,6 +137,7 @@ func (s *AgentGoDB) initSchema() error {
 			skills TEXT,
 			enable_rag BOOLEAN DEFAULT 0,
 			enable_memory BOOLEAN DEFAULT 0,
+			memory_store_type TEXT DEFAULT '',
 			enable_ptc BOOLEAN DEFAULT 1,
 			enable_mcp BOOLEAN DEFAULT 0,
 			enable_a2a BOOLEAN DEFAULT 0,
@@ -149,6 +150,7 @@ func (s *AgentGoDB) initSchema() error {
 	}
 	_, _ = s.db.Exec(`ALTER TABLE agents ADD COLUMN a2a_id TEXT`)
 	_, _ = s.db.Exec(`ALTER TABLE agents ADD COLUMN enable_a2a BOOLEAN DEFAULT 0`)
+	_, _ = s.db.Exec(`ALTER TABLE agents ADD COLUMN memory_store_type TEXT DEFAULT ''`)
 
 	// Teams table
 	_, err = s.db.Exec(`
@@ -1116,6 +1118,7 @@ type AgentModel struct {
 	Skills                []string  `json:"skills"`
 	EnableRAG             bool      `json:"enable_rag"`
 	EnableMemory          bool      `json:"enable_memory"`
+	MemoryStoreType       string    `json:"memory_store_type"`
 	EnablePTC             bool      `json:"enable_ptc"`
 	EnableMCP             bool      `json:"enable_mcp"`
 	EnableA2A             bool      `json:"enable_a2a"`
@@ -1135,8 +1138,8 @@ func (s *AgentGoDB) SaveAgentModel(agent *AgentModel) error {
 	skillsJSON, _ := json.Marshal(agent.Skills)
 
 	_, err := s.db.Exec(`
-		INSERT INTO agents (id, a2a_id, team_id, name, kind, description, instructions, model, preferred_provider, preferred_model, required_llm_capability, mcp_tools, skills, enable_rag, enable_memory, enable_ptc, enable_mcp, enable_a2a, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO agents (id, a2a_id, team_id, name, kind, description, instructions, model, preferred_provider, preferred_model, required_llm_capability, mcp_tools, skills, enable_rag, enable_memory, memory_store_type, enable_ptc, enable_mcp, enable_a2a, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			a2a_id = excluded.a2a_id,
 			team_id = excluded.team_id,
@@ -1152,11 +1155,12 @@ func (s *AgentGoDB) SaveAgentModel(agent *AgentModel) error {
 			skills = excluded.skills,
 			enable_rag = excluded.enable_rag,
 			enable_memory = excluded.enable_memory,
+			memory_store_type = excluded.memory_store_type,
 			enable_ptc = excluded.enable_ptc,
 			enable_mcp = excluded.enable_mcp,
 			enable_a2a = excluded.enable_a2a,
 			updated_at = CURRENT_TIMESTAMP
-	`, agent.ID, agent.A2AID, agent.TeamID, agent.Name, agent.Kind, agent.Description, agent.Instructions, agent.Model, agent.PreferredProvider, agent.PreferredModel, agent.RequiredLLMCapability, string(mcpToolsJSON), string(skillsJSON), agent.EnableRAG, agent.EnableMemory, agent.EnablePTC, agent.EnableMCP, agent.EnableA2A, agent.CreatedAt, agent.UpdatedAt)
+	`, agent.ID, agent.A2AID, agent.TeamID, agent.Name, agent.Kind, agent.Description, agent.Instructions, agent.Model, agent.PreferredProvider, agent.PreferredModel, agent.RequiredLLMCapability, string(mcpToolsJSON), string(skillsJSON), agent.EnableRAG, agent.EnableMemory, agent.MemoryStoreType, agent.EnablePTC, agent.EnableMCP, agent.EnableA2A, agent.CreatedAt, agent.UpdatedAt)
 	return err
 }
 
@@ -1169,10 +1173,10 @@ func (s *AgentGoDB) GetAgentModel(id string) (*AgentModel, error) {
 	var mcpToolsJSON, skillsJSON string
 
 	err := s.db.QueryRow(`
-		SELECT id, a2a_id, team_id, name, kind, description, instructions, model, preferred_provider, preferred_model, required_llm_capability, mcp_tools, skills, enable_rag, enable_memory, enable_ptc, enable_mcp, enable_a2a, created_at, updated_at
+		SELECT id, a2a_id, team_id, name, kind, description, instructions, model, preferred_provider, preferred_model, required_llm_capability, mcp_tools, skills, enable_rag, enable_memory, memory_store_type, enable_ptc, enable_mcp, enable_a2a, created_at, updated_at
 		FROM agents WHERE id = ?
 	`, id).Scan(&agent.ID, &agent.A2AID, &agent.TeamID, &agent.Name, &agent.Kind, &agent.Description, &agent.Instructions, &agent.Model, &agent.PreferredProvider, &agent.PreferredModel, &agent.RequiredLLMCapability,
-		&mcpToolsJSON, &skillsJSON, &agent.EnableRAG, &agent.EnableMemory, &agent.EnablePTC, &agent.EnableMCP, &agent.EnableA2A, &agent.CreatedAt, &agent.UpdatedAt)
+		&mcpToolsJSON, &skillsJSON, &agent.EnableRAG, &agent.EnableMemory, &agent.MemoryStoreType, &agent.EnablePTC, &agent.EnableMCP, &agent.EnableA2A, &agent.CreatedAt, &agent.UpdatedAt)
 
 	if err != nil {
 		return nil, err
@@ -1193,10 +1197,10 @@ func (s *AgentGoDB) GetAgentModelByName(name string) (*AgentModel, error) {
 	var mcpToolsJSON, skillsJSON string
 
 	err := s.db.QueryRow(`
-		SELECT id, a2a_id, team_id, name, kind, description, instructions, model, preferred_provider, preferred_model, required_llm_capability, mcp_tools, skills, enable_rag, enable_memory, enable_ptc, enable_mcp, enable_a2a, created_at, updated_at
+		SELECT id, a2a_id, team_id, name, kind, description, instructions, model, preferred_provider, preferred_model, required_llm_capability, mcp_tools, skills, enable_rag, enable_memory, memory_store_type, enable_ptc, enable_mcp, enable_a2a, created_at, updated_at
 		FROM agents WHERE name = ?
 	`, name).Scan(&agent.ID, &agent.A2AID, &agent.TeamID, &agent.Name, &agent.Kind, &agent.Description, &agent.Instructions, &agent.Model, &agent.PreferredProvider, &agent.PreferredModel, &agent.RequiredLLMCapability,
-		&mcpToolsJSON, &skillsJSON, &agent.EnableRAG, &agent.EnableMemory, &agent.EnablePTC, &agent.EnableMCP, &agent.EnableA2A, &agent.CreatedAt, &agent.UpdatedAt)
+		&mcpToolsJSON, &skillsJSON, &agent.EnableRAG, &agent.EnableMemory, &agent.MemoryStoreType, &agent.EnablePTC, &agent.EnableMCP, &agent.EnableA2A, &agent.CreatedAt, &agent.UpdatedAt)
 
 	if err != nil {
 		return nil, err
@@ -1216,10 +1220,10 @@ func (s *AgentGoDB) GetAgentModelByA2AID(a2aID string) (*AgentModel, error) {
 	var mcpToolsJSON, skillsJSON string
 
 	err := s.db.QueryRow(`
-		SELECT id, a2a_id, team_id, name, kind, description, instructions, model, preferred_provider, preferred_model, required_llm_capability, mcp_tools, skills, enable_rag, enable_memory, enable_ptc, enable_mcp, enable_a2a, created_at, updated_at
+		SELECT id, a2a_id, team_id, name, kind, description, instructions, model, preferred_provider, preferred_model, required_llm_capability, mcp_tools, skills, enable_rag, enable_memory, memory_store_type, enable_ptc, enable_mcp, enable_a2a, created_at, updated_at
 		FROM agents WHERE a2a_id = ?
 	`, strings.TrimSpace(a2aID)).Scan(&agent.ID, &agent.A2AID, &agent.TeamID, &agent.Name, &agent.Kind, &agent.Description, &agent.Instructions, &agent.Model, &agent.PreferredProvider, &agent.PreferredModel, &agent.RequiredLLMCapability,
-		&mcpToolsJSON, &skillsJSON, &agent.EnableRAG, &agent.EnableMemory, &agent.EnablePTC, &agent.EnableMCP, &agent.EnableA2A, &agent.CreatedAt, &agent.UpdatedAt)
+		&mcpToolsJSON, &skillsJSON, &agent.EnableRAG, &agent.EnableMemory, &agent.MemoryStoreType, &agent.EnablePTC, &agent.EnableMCP, &agent.EnableA2A, &agent.CreatedAt, &agent.UpdatedAt)
 
 	if err != nil {
 		return nil, err
@@ -1235,7 +1239,7 @@ func (s *AgentGoDB) ListAgentModels() ([]*AgentModel, error) {
 	defer s.mu.RUnlock()
 
 	rows, err := s.db.Query(`
-		SELECT id, a2a_id, team_id, name, kind, description, instructions, model, preferred_provider, preferred_model, required_llm_capability, mcp_tools, skills, enable_rag, enable_memory, enable_ptc, enable_mcp, enable_a2a, created_at, updated_at
+		SELECT id, a2a_id, team_id, name, kind, description, instructions, model, preferred_provider, preferred_model, required_llm_capability, mcp_tools, skills, enable_rag, enable_memory, memory_store_type, enable_ptc, enable_mcp, enable_a2a, created_at, updated_at
 		FROM agents ORDER BY name ASC
 	`)
 	if err != nil {
@@ -1249,7 +1253,7 @@ func (s *AgentGoDB) ListAgentModels() ([]*AgentModel, error) {
 		var mcpToolsJSON, skillsJSON string
 
 		err := rows.Scan(&agent.ID, &agent.A2AID, &agent.TeamID, &agent.Name, &agent.Kind, &agent.Description, &agent.Instructions, &agent.Model, &agent.PreferredProvider, &agent.PreferredModel, &agent.RequiredLLMCapability,
-			&mcpToolsJSON, &skillsJSON, &agent.EnableRAG, &agent.EnableMemory, &agent.EnablePTC, &agent.EnableMCP, &agent.EnableA2A, &agent.CreatedAt, &agent.UpdatedAt)
+			&mcpToolsJSON, &skillsJSON, &agent.EnableRAG, &agent.EnableMemory, &agent.MemoryStoreType, &agent.EnablePTC, &agent.EnableMCP, &agent.EnableA2A, &agent.CreatedAt, &agent.UpdatedAt)
 		if err != nil {
 			continue
 		}
