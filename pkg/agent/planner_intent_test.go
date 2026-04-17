@@ -131,6 +131,20 @@ func TestPlannerRuleBasedIntentRecognitionDetectsCurrentInfoWebSearch(t *testing
 	}
 }
 
+func TestPlannerRuleBasedIntentRecognitionDetectsImplicitInternalMemoryRecall(t *testing.T) {
+	p := &Planner{}
+	intent := p.ruleBasedIntentRecognition("如果有人提到移动端掉帧，应该找谁？夜航计划指的是什么？蓝色标签又代表什么？只用一行回答。")
+	if intent == nil {
+		t.Fatal("expected intent result")
+	}
+	if intent.IntentType != "memory_recall" {
+		t.Fatalf("expected memory_recall, got %q", intent.IntentType)
+	}
+	if intent.PreferredAgent != defaultArchivistAgentName {
+		t.Fatalf("expected archivist preferred agent, got %+v", intent)
+	}
+}
+
 func TestPlannerRuleBasedIntentRecognitionDetectsRAGQuery(t *testing.T) {
 	p := &Planner{
 		tools: []domain.ToolDefinition{

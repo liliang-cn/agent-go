@@ -261,7 +261,9 @@ func isExplicitMemorySaveIntent(goal string, intent *IntentRecognitionResult) bo
 		strings.HasPrefix(goalLower, "remember that") ||
 		strings.HasPrefix(goalLower, "记住:") ||
 		strings.HasPrefix(goalLower, "记住：") ||
-		strings.HasPrefix(goalLower, "请记住")
+		strings.HasPrefix(goalLower, "请记住") ||
+		strings.HasPrefix(goalLower, "请记住：") ||
+		strings.HasPrefix(goalLower, "请记住:")
 }
 
 func extractExplicitMemorySaveContent(goal string) string {
@@ -277,7 +279,11 @@ func extractExplicitMemorySaveContent(goal string) string {
 		"keep this in mind",
 		"记住:",
 		"记住：",
+		"请记住:",
+		"请记住：",
 		"请记住",
+		"帮我记住:",
+		"帮我记住：",
 		"帮我记住",
 		"保存到记忆",
 		"存到记忆",
@@ -321,6 +327,8 @@ func (s *Service) answerExplicitMemoryRecall(ctx context.Context, goal string, i
 
 	prompt := fmt.Sprintf(`You are answering a direct memory recall question.
 Use only the recalled memory snippets below.
+The answer may require combining facts from multiple separate snippets.
+If different snippets each provide part of the requested answer, merge them into one final response.
 Follow the user's formatting instructions exactly.
 If the user asks for only a token, ID, or short value, return only that value.
 If the answer is not present in the recalled memories, reply exactly: I couldn't find that in memory.

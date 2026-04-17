@@ -181,6 +181,95 @@ func TestParseIntentRouterDecisionParsesNeedsOptimization(t *testing.T) {
 	}
 }
 
+func TestRouteBuiltInRequestStabilizesExplicitMemorySaveRouting(t *testing.T) {
+	t.Parallel()
+
+	var (
+		mu          sync.Mutex
+		calls       []string
+		finalPrompt string
+	)
+
+	dispatch := func(ctx context.Context, agentName, prompt string, opts []RunOption) (string, error) {
+		mu.Lock()
+		calls = append(calls, agentName)
+		mu.Unlock()
+
+		switch agentName {
+		case defaultIntentRouterAgentName:
+			return "TARGET_AGENT: Assistant\nINTENT_TYPE: general_qa\nREASON: misread request\nNEEDS_OPTIMIZATION: yes", nil
+		case defaultPromptOptimizerAgentName:
+			return optimizedPromptBeginMarker + "\n请先解释“夜航计划”具体是什么意思\n" + optimizedPromptEndMarker, nil
+		case defaultArchivistAgentName:
+			finalPrompt = prompt
+			return "已记住。", nil
+		default:
+			return "", fmt.Errorf("unexpected agent %s", agentName)
+		}
+	}
+
+	result, err := routeBuiltInRequestWithDispatcher(context.Background(), "请记住：北极星项目组代号是 Nebula-42。", domain.MemoryQueryContext{
+		AgentID: "Concierge",
+		TeamID:  defaultTeamID,
+	}, nil, dispatch)
+	if err != nil {
+		t.Fatalf("routeBuiltInRequestWithDispatcher failed: %v", err)
+	}
+
+	if result.TargetAgent != defaultArchivistAgentName {
+		t.Fatalf("expected Archivist target, got %+v", result)
+	}
+	if result.IntentType != "memory_save" {
+		t.Fatalf("expected memory_save intent, got %+v", result)
+	}
+	if result.OptimizedPrompt != "请记住：北极星项目组代号是 Nebula-42。" {
+		t.Fatalf("expected original prompt to be preserved, got %q", result.OptimizedPrompt)
+	}
+	if finalPrompt != "请记住：北极星项目组代号是 Nebula-42。" {
+		t.Fatalf("expected Archivist final prompt to preserve memory save request, got %q", finalPrompt)
+	}
+	if result.Result != "已记住。" {
+		t.Fatalf("unexpected final result: %+v", result)
+	}
+	if len(calls) != 3 {
+		t.Fatalf("expected router + optimizer + archivist dispatch calls, got %+v", calls)
+	}
+}
+
+func TestRouteBuiltInRequestOverridesAssistantWithArchivistForImplicitMemoryRecall(t *testing.T) {
+	t.Parallel()
+
+	dispatch := func(ctx context.Context, agentName, prompt string, opts []RunOption) (string, error) {
+		switch agentName {
+		case defaultIntentRouterAgentName:
+			return "TARGET_AGENT: Assistant\nINTENT_TYPE: general_qa\nREASON: explanatory question\nNEEDS_OPTIMIZATION: no", nil
+		case defaultPromptOptimizerAgentName:
+			return optimizedPromptBeginMarker + "\n如果有人提到移动端掉帧，应该找谁？夜航计划指的是什么？蓝色标签又代表什么？只用一行回答。\n" + optimizedPromptEndMarker, nil
+		case defaultArchivistAgentName:
+			return "移动端掉帧找宋屿；夜航计划指灰度演练和回滚预案；蓝色标签表示待验证。", nil
+		default:
+			return "", fmt.Errorf("unexpected agent %s", agentName)
+		}
+	}
+
+	result, err := routeBuiltInRequestWithDispatcher(context.Background(), "如果有人提到移动端掉帧，应该找谁？夜航计划指的是什么？蓝色标签又代表什么？只用一行回答。", domain.MemoryQueryContext{
+		AgentID: "Concierge",
+		TeamID:  defaultTeamID,
+	}, nil, dispatch)
+	if err != nil {
+		t.Fatalf("routeBuiltInRequestWithDispatcher failed: %v", err)
+	}
+	if result.TargetAgent != defaultArchivistAgentName {
+		t.Fatalf("expected Archivist target, got %+v", result)
+	}
+	if result.IntentType != "memory_recall" {
+		t.Fatalf("expected memory_recall intent, got %+v", result)
+	}
+	if result.Result != "移动端掉帧找宋屿；夜航计划指灰度演练和回滚预案；蓝色标签表示待验证。" {
+		t.Fatalf("unexpected final result: %+v", result)
+	}
+}
+
 func TestFallbackBuiltInRouteDecisionDefaultsToAssistantForGenericRequests(t *testing.T) {
 	t.Parallel()
 

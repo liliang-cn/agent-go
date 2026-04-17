@@ -47,6 +47,7 @@ func TestSeedDefaultMembersCreatesBuiltInsByDefault(t *testing.T) {
 		t.Fatalf("new store failed: %v", err)
 	}
 	manager := NewTeamManager(store)
+	manager.SetConfig(testAgentConfig(t.TempDir()))
 	if err := manager.SeedDefaultMembers(); err != nil {
 		t.Fatalf("seed default members failed: %v", err)
 	}
@@ -120,6 +121,9 @@ func TestSeedDefaultMembersCreatesBuiltInsByDefault(t *testing.T) {
 		!strings.Contains(concierge.Instructions, "runs PromptOptimizer and IntentRouter in parallel") ||
 		!strings.Contains(concierge.Instructions, "Do not use submit_agent_task or submit_team_task for ordinary user requests") {
 		t.Fatalf("expected Concierge prompt to focus on dispatch-only routing, got %q", concierge.Instructions)
+	}
+	if !concierge.EnableMemory {
+		t.Fatal("expected Concierge to keep long-term memory enabled")
 	}
 	if concierge.EnableMCP || len(concierge.MCPTools) != 0 {
 		t.Fatalf("expected Concierge to stay lightweight without default MCP tools, got enable_mcp=%v tools=%v", concierge.EnableMCP, concierge.MCPTools)

@@ -97,6 +97,7 @@ func (s *Service) buildMemoryPromptNote(ctx context.Context, agent *Agent) strin
 	}
 	if hasRecall {
 		lines = append(lines, "- If the user asks what was previously remembered or asks you to answer from memory, call `memory_recall` before answering.")
+		lines = append(lines, "- If one user message asks for multiple remembered facts at once, break it into multiple focused `memory_recall` queries and merge the results before answering.")
 	}
 
 	return strings.Join(lines, "\n")

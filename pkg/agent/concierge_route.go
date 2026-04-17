@@ -98,6 +98,7 @@ func routeBuiltInRequestWithDispatcher(ctx context.Context, prompt string, query
 
 	decision := parseIntentRouterDecision(routerRaw)
 	fallbackDecision := fallbackBuiltInRouteDecision(prompt)
+	decision = stabilizeBuiltInMemoryRouteDecision(prompt, decision, fallbackDecision)
 	if shouldOverrideBuiltInRouteDecision(prompt, decision, fallbackDecision) {
 		decision = fallbackDecision
 	}
@@ -160,6 +161,7 @@ func buildIntentRouterTaskPrompt(userPrompt string, availableMCPTools []string) 
 Valid TARGET_AGENT values: Assistant, Operator, Stakeholder, Archivist, Verifier.
 Rules:
 - Use Archivist for memory_save, memory_recall, preferences, schedules, durable facts, and planned events.
+- Also use Archivist for recalling internal project/team facts such as code names, owner mappings, label semantics, recurring plans, and the meaning of named internal terms.
 - Use Operator for files, commands, execution, validation, environment inspection, MCP-backed actions, desktop automation, local app control, and device control.
 - If the user is asking the system to do something through a configured tool or server, prefer Operator.
 - Use Stakeholder for product, business, prioritization, requirements, scope, and acceptance criteria.
@@ -288,10 +290,37 @@ func shouldOverrideBuiltInRouteDecision(prompt string, decision, fallback builtI
 	if decision.TargetAgent == fallback.TargetAgent {
 		return false
 	}
+	if fallback.TargetAgent == defaultArchivistAgentName && strings.EqualFold(strings.TrimSpace(fallback.IntentType), "memory_recall") {
+		return decision.TargetAgent != defaultArchivistAgentName
+	}
 	if fallback.TargetAgent == defaultOperatorAgentName && promptLooksLikeOperatorControlRequest(prompt) {
 		return decision.TargetAgent == defaultAssistantAgentName
 	}
 	return false
+}
+
+func stabilizeBuiltInMemoryRouteDecision(prompt string, decision, fallback builtInRouteDecision) builtInRouteDecision {
+	fallbackIntent := strings.TrimSpace(fallback.IntentType)
+	if fallback.TargetAgent != defaultArchivistAgentName {
+		return decision
+	}
+	if fallbackIntent != "memory_save" && fallbackIntent != "memory_recall" {
+		return decision
+	}
+	if strings.TrimSpace(decision.TargetAgent) == defaultArchivistAgentName && !decision.NeedsOptimization {
+		return decision
+	}
+
+	decision.TargetAgent = defaultArchivistAgentName
+	decision.IntentType = fallbackIntent
+	// Memory intents should preserve the user's original wording. Let Archivist
+	// distill/save or answer from memory directly instead of letting optimizer
+	// rewrite the request into a different question.
+	decision.NeedsOptimization = false
+	if strings.TrimSpace(decision.Reason) == "" {
+		decision.Reason = "deterministic memory route"
+	}
+	return decision
 }
 
 func promptLooksLikeOperatorControlRequest(prompt string) bool {
@@ -340,6 +369,18 @@ func buildFinalBuiltInDispatchPrompt(originalPrompt, optimizedPrompt string, dec
 			return optimizedPrompt
 		}
 		return "记住：" + optimizedPrompt
+	}
+	if strings.EqualFold(decision.TargetAgent, defaultArchivistAgentName) &&
+		strings.EqualFold(strings.TrimSpace(decision.IntentType), "memory_recall") {
+		subqueries := conciergeMemoryRecallQueries(originalPrompt)
+		var subqueryHint string
+		if len(subqueries) > 1 {
+			subqueryHint = "\nSuggested memory_recall subqueries:"
+			for _, query := range subqueries {
+				subqueryHint += "\n- " + query
+			}
+		}
+		return strings.TrimSpace(optimizedPrompt + "\n\nRecall contract:\n- Answer from memory.\n- If the question asks for multiple facts, split it into multiple focused memory_recall queries before answering.\n- Merge the recalled facts into one concise final answer.\n- If one part is missing, say “信息不足” for that part instead of mixing in 'I couldn't find that in memory.'"+subqueryHint)
 	}
 	if strings.EqualFold(decision.TargetAgent, defaultOperatorAgentName) && !looksLikeInformationSeekingQuery(originalPrompt) {
 		return strings.TrimSpace(optimizedPrompt + "\n\nExecution contract:\n- Execute the request directly using available tools or MCP capabilities when possible.\n- Do not bounce the task back to Concierge or say you are routing it.\n- If the request is actionable and reasonable defaults suffice, choose practical defaults instead of asking unnecessary follow-up questions.\n- Before giving your final answer, explicitly verify from tool results or observed effects whether the request is actually complete, and state the concrete evidence in your answer.\n- If blocked, call task_blocked with exactly what blocked execution and what was attempted.\n\n" + FinishOrBlockContract)

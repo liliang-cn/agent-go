@@ -781,6 +781,9 @@ func (p *Planner) classifyMemoryIntent(goal string) *IntentRecognitionResult {
 	if isExplicitMemoryRecallQuery(goal) {
 		return &IntentRecognitionResult{IntentType: "memory_recall", Topic: p.extractTopic(goal), Confidence: 0.9}
 	}
+	if looksLikeImplicitMemoryRecallQuery(goal) {
+		return &IntentRecognitionResult{IntentType: "memory_recall", Topic: p.extractTopic(goal), Confidence: 0.82}
+	}
 	if isExplicitMemorySaveIntent(goal, nil) {
 		return &IntentRecognitionResult{IntentType: "memory_save", Topic: p.extractTopic(goal), Confidence: 0.9}
 	}
@@ -790,6 +793,26 @@ func (p *Planner) classifyMemoryIntent(goal string) *IntentRecognitionResult {
 		return &IntentRecognitionResult{IntentType: "memory_save", Topic: p.extractTopic(goal), Confidence: 0.82}
 	}
 	return nil
+}
+
+func looksLikeImplicitMemoryRecallQuery(goal string) bool {
+	if !looksLikeInformationSeekingQuery(goal) {
+		return false
+	}
+	lowerGoal := strings.ToLower(normalizeTaskPrompt(goal))
+	if lowerGoal == "" {
+		return false
+	}
+	if containsAny(lowerGoal, []string{
+		"latest", "current", "today", "tonight", "breaking", "news",
+		"最新", "当前", "今天", "今晚", "新闻",
+	}) {
+		return false
+	}
+	return containsAny(lowerGoal, []string{
+		"代号", "项目组", "负责人", "谁负责", "找谁", "标签", "标签表示", "标签代表", "含义", "指的是什么", "指什么", "术语", "约定", "计划",
+		"codename", "owner", "who owns", "who handles", "label", "what does", "meaning", "project team", "project codename",
+	})
 }
 
 func (p *Planner) classifyFileIntent(goal string) *IntentRecognitionResult {

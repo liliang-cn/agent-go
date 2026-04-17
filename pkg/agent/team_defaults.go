@@ -65,7 +65,7 @@ func defaultBuiltInStandaloneAgents(agentName string) []*AgentModel {
 			Kind:         AgentKindAgent,
 			Description:  defaultConciergeAgentDescription,
 			Instructions: defaultConciergeInstructions(agentName),
-			EnableMemory: false,
+			EnableMemory: true,
 		},
 		{
 			ID:           defaultIntentRouterAgentID,
@@ -265,7 +265,7 @@ func (m *TeamManager) ensureDefaultTeamConcierge(ctx context.Context, agentName,
 		Kind:         AgentKindAgent,
 		Description:  defaultConciergeAgentDescription,
 		Instructions: defaultConciergeInstructions(agentName),
-		EnableMemory: false,
+		EnableMemory: true,
 	}
 
 	// Ensure the standalone agent exists

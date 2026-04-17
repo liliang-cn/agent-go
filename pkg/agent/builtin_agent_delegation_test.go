@@ -12,6 +12,7 @@ func TestConciergeBuiltInDelegationTargetsIntentRouterOnly(t *testing.T) {
 		t.Fatalf("new store failed: %v", err)
 	}
 	manager := NewTeamManager(store)
+	manager.SetConfig(testAgentConfig(t.TempDir()))
 	if err := manager.SeedDefaultMembers(); err != nil {
 		t.Fatalf("seed default members failed: %v", err)
 	}
@@ -41,6 +42,7 @@ func TestIntentRouterBuiltInDelegationTargetsCoreSpecialists(t *testing.T) {
 		t.Fatalf("new store failed: %v", err)
 	}
 	manager := NewTeamManager(store)
+	manager.SetConfig(testAgentConfig(t.TempDir()))
 	if err := manager.SeedDefaultMembers(); err != nil {
 		t.Fatalf("seed default members failed: %v", err)
 	}

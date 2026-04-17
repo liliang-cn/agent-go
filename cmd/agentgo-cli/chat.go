@@ -172,10 +172,13 @@ func buildChatConciergeService(chatCfg *config.Config, agentDBPath string, manag
 		return nil, fmt.Errorf("use either --with-ptc or --no-ptc, not both")
 	}
 
-	if manager != nil && !chatWithPTC && !chatNoPTC && !chatCfg.GetMemoryStoreType().UsesVector() {
+	if manager != nil && !chatWithPTC {
 		if svc, err := manager.GetAgentService(agent.BuiltInConciergeAgentName); err == nil {
 			svc.SetDebug(debug)
 			svc.SetProgressCallback(progressCallback)
+			if chatNoPTC {
+				svc.SetPTC(nil)
+			}
 			manager.RegisterConciergeTools(svc)
 			return svc, nil
 		}
@@ -194,6 +197,10 @@ func buildChatConciergeService(chatCfg *config.Config, agentDBPath string, manag
 		WithDBPath(agentDBPath).
 		WithDebug(debug).
 		WithProgress(progressCallback)
+
+	if !chatNoMemory {
+		builder.WithMemory(agent.WithMemoryStoreType(chatCfg.GetMemoryStoreType().String()))
+	}
 
 	switch {
 	case chatNoPTC:

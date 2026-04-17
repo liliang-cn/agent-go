@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/liliang-cn/agent-go/v2/pkg/domain"
@@ -86,30 +87,50 @@ func (s *GraphFlowStore) SearchByScope(ctx context.Context, vector []float64, sc
 // SearchByText performs text search with graph augmentation.
 // Results are filtered to memories within the agentgo namespace.
 func (s *GraphFlowStore) SearchByText(ctx context.Context, query string, topK int) ([]*domain.MemoryWithScore, error) {
-	km := s.db.KnowledgeMemory()
-	resp, err := km.Recall(ctx, cortexdb.KnowledgeMemoryRecallRequest{
-		Query:        query,
-		Namespace:    memoryBucketNamespace,
-		TopKMemories: topK,
-	})
-	if err == nil && resp != nil && len(resp.Memories) > 0 {
-		results := make([]*domain.MemoryWithScore, 0, len(resp.Memories))
-		for _, hit := range resp.Memories {
-			row, loadErr := s.loadStoredMemoryRow(ctx, hit.Memory.ID)
-			if loadErr != nil {
-				continue
-			}
-			results = append(results, &domain.MemoryWithScore{
-				Memory: row.toDomainMemory(),
-				Score:  hit.Score,
-			})
-		}
-		if len(results) > 0 {
-			return results, nil
-		}
+	if strings.TrimSpace(query) == "" || topK <= 0 {
+		return nil, nil
 	}
 
-	return s.MemoryStore.SearchByText(ctx, query, topK)
+	searchTopK := topK * 2
+	if searchTopK < topK {
+		searchTopK = topK
+	}
+
+	// Use the parent lexical/BM25 path as the base recall, then enrich it with
+	// graph expansion and KnowledgeMemory fused recall. Graph-only recall can be
+	// too sparse for fact-list style queries, so it must not replace lexical hits.
+	var (
+		baseResults []*domain.MemoryWithScore
+		baseErr     error
+	)
+	for _, subquery := range graphTextSubqueries(query) {
+		hits, err := s.MemoryStore.SearchByText(ctx, subquery, searchTopK)
+		if err != nil && baseErr == nil {
+			baseErr = err
+		}
+		baseResults = mergeGraphTextResults(query, searchTopK*2, baseResults, hits)
+	}
+
+	expandedBase := cloneMemoryWithScores(baseResults)
+	if len(expandedBase) > 0 {
+		expandedBase = s.augmentWithGraph(ctx, expandedBase, searchTopK*2, nil)
+	}
+
+	knowledgeResults, knowledgeErr := s.knowledgeMemoryRecallResults(ctx, query, searchTopK, nil)
+	merged := mergeGraphTextResults(query, searchTopK, expandedBase, knowledgeResults)
+	if len(merged) > 0 {
+		if len(merged) > topK {
+			merged = merged[:topK]
+		}
+		return merged, nil
+	}
+	if baseErr != nil {
+		return nil, baseErr
+	}
+	if knowledgeErr != nil {
+		return nil, knowledgeErr
+	}
+	return nil, nil
 }
 
 // KnowledgeMemoryRecall exposes CortexDB's fused memory+knowledge+graph recall
@@ -139,6 +160,26 @@ func (s *GraphFlowStore) KnowledgeMemoryRecallScoped(ctx context.Context, query 
 		}
 	}
 	return km.Recall(ctx, req)
+}
+
+func (s *GraphFlowStore) knowledgeMemoryRecallResults(ctx context.Context, query string, topK int, scope *domain.MemoryScope) ([]*domain.MemoryWithScore, error) {
+	resp, err := s.KnowledgeMemoryRecallScoped(ctx, query, topK, scope)
+	if err != nil || resp == nil || len(resp.Memories) == 0 {
+		return nil, err
+	}
+
+	results := make([]*domain.MemoryWithScore, 0, len(resp.Memories))
+	for _, hit := range resp.Memories {
+		row, loadErr := s.loadStoredMemoryRow(ctx, hit.Memory.ID)
+		if loadErr != nil {
+			continue
+		}
+		results = append(results, &domain.MemoryWithScore{
+			Memory: row.toDomainMemory(),
+			Score:  hit.Score,
+		})
+	}
+	return results, nil
 }
 
 // augmentWithGraph enriches vector results with graph-expanded neighbors.
@@ -361,3 +402,168 @@ func extractMemoryIDFromChunk(chunk cortexdb.GraphRAGChunkResult) string {
 	return ""
 }
 
+func cloneMemoryWithScores(results []*domain.MemoryWithScore) []*domain.MemoryWithScore {
+	if len(results) == 0 {
+		return nil
+	}
+	cloned := make([]*domain.MemoryWithScore, 0, len(results))
+	for _, result := range results {
+		if result == nil {
+			continue
+		}
+		copyResult := *result
+		cloned = append(cloned, &copyResult)
+	}
+	return cloned
+}
+
+func graphTextSubqueries(query string) []string {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil
+	}
+
+	seen := make(map[string]struct{})
+	var subqueries []string
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		if _, ok := seen[value]; ok {
+			return
+		}
+		seen[value] = struct{}{}
+		subqueries = append(subqueries, value)
+	}
+
+	add(query)
+	for _, fragment := range strings.FieldsFunc(query, func(r rune) bool {
+		switch r {
+		case '，', ',', '。', '.', '？', '?', '；', ';', '！', '!', '\n', '\r':
+			return true
+		default:
+			return unicode.IsSpace(r)
+		}
+	}) {
+		add(fragment)
+		add(normalizeGraphQueryFragment(fragment))
+	}
+	for _, entity := range extractContentEntities(query) {
+		add(entity)
+	}
+	for _, token := range tokenizeText(query) {
+		if len(token) >= 2 {
+			add(token)
+		}
+	}
+	if len(subqueries) > 12 {
+		subqueries = subqueries[:12]
+	}
+	return subqueries
+}
+
+func normalizeGraphQueryFragment(fragment string) string {
+	fragment = strings.TrimSpace(fragment)
+	if fragment == "" {
+		return ""
+	}
+
+	prefixes := []string{
+		"如果有人提到",
+		"如果提到",
+		"如果有人问到",
+		"如果有人问",
+		"我之前让你记住的团队资料里",
+		"我之前让你记住的",
+		"之前让你记住的",
+		"关于",
+	}
+	suffixes := []string{
+		"应该找谁",
+		"找谁",
+		"指的是什么",
+		"是什么",
+		"表示什么",
+		"代表什么",
+		"又代表什么",
+		"要做什么",
+		"只用一行回答",
+		"只回答",
+	}
+
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(fragment, prefix) {
+			fragment = strings.TrimSpace(strings.TrimPrefix(fragment, prefix))
+			break
+		}
+	}
+	for _, suffix := range suffixes {
+		if strings.HasSuffix(fragment, suffix) {
+			fragment = strings.TrimSpace(strings.TrimSuffix(fragment, suffix))
+			break
+		}
+	}
+	return fragment
+}
+
+func mergeGraphTextResults(query string, topK int, sets ...[]*domain.MemoryWithScore) []*domain.MemoryWithScore {
+	if topK <= 0 {
+		topK = 10
+	}
+
+	tokens := tokenizeText(query)
+	now := time.Now()
+	merged := make(map[string]*domain.MemoryWithScore)
+	order := make([]string, 0)
+
+	for _, set := range sets {
+		for _, result := range set {
+			if result == nil || result.Memory == nil || strings.TrimSpace(result.Memory.ID) == "" {
+				continue
+			}
+			score := result.Score
+			if score <= 0 {
+				textScore := ngramMatchScore(tokens, result.Memory.Content)
+				if textScore == 0 {
+					textScore = 0.01
+				}
+				score = applyMemoryBoosts(textScore, result.Memory.Importance, result.Memory.CreatedAt, now)
+			}
+			id := strings.TrimSpace(result.Memory.ID)
+			if existing, ok := merged[id]; ok {
+				if score > existing.Score {
+					copyResult := *result
+					copyResult.Score = score
+					merged[id] = &copyResult
+				}
+				continue
+			}
+			copyResult := *result
+			copyResult.Score = score
+			merged[id] = &copyResult
+			order = append(order, id)
+		}
+	}
+
+	if len(merged) == 0 {
+		return nil
+	}
+
+	results := make([]*domain.MemoryWithScore, 0, len(merged))
+	for _, id := range order {
+		if result := merged[id]; result != nil {
+			results = append(results, result)
+		}
+	}
+	sort.SliceStable(results, func(i, j int) bool {
+		if results[i].Score == results[j].Score {
+			return results[i].CreatedAt.After(results[j].CreatedAt)
+		}
+		return results[i].Score > results[j].Score
+	})
+	if len(results) > topK {
+		results = results[:topK]
+	}
+	return results
+}

@@ -12,12 +12,19 @@ import (
 	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 )
 
+func newIsolatedTeamRuntimeManager(t *testing.T, store *Store) *TeamManager {
+	t.Helper()
+	manager := NewTeamManager(store)
+	manager.SetConfig(testAgentConfig(t.TempDir()))
+	return manager
+}
+
 func TestGetTeamStatusIdleByDefault(t *testing.T) {
 	store, err := NewStore(filepath.Join(t.TempDir(), "agent.db"))
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
 	}
-	manager := NewTeamManager(store)
+	manager := newIsolatedTeamRuntimeManager(t, store)
 	if err := manager.SeedDefaultMembers(); err != nil {
 		t.Fatalf("seed default members failed: %v", err)
 	}
@@ -39,7 +46,7 @@ func TestGetTeamStatusAggregatesRunningAndQueuedTasks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
 	}
-	manager := NewTeamManager(store)
+	manager := newIsolatedTeamRuntimeManager(t, store)
 	if err := manager.SeedDefaultMembers(); err != nil {
 		t.Fatalf("seed default members failed: %v", err)
 	}
@@ -86,7 +93,7 @@ func TestGetAgentStatusIncludesConcierge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
 	}
-	manager := NewTeamManager(store)
+	manager := newIsolatedTeamRuntimeManager(t, store)
 	if err := manager.SeedDefaultMembers(); err != nil {
 		t.Fatalf("seed default members failed: %v", err)
 	}
@@ -114,7 +121,7 @@ func TestRegisterConciergeToolsExposesStatusAndSubmission(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
 	}
-	manager := NewTeamManager(store)
+	manager := newIsolatedTeamRuntimeManager(t, store)
 	if err := manager.SeedDefaultMembers(); err != nil {
 		t.Fatalf("seed default members failed: %v", err)
 	}
@@ -245,7 +252,7 @@ func TestBuiltInServiceRespectsModelPTCSetting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
 	}
-	manager := NewTeamManager(store)
+	manager := newIsolatedTeamRuntimeManager(t, store)
 	if err := manager.SeedDefaultMembers(); err != nil {
 		t.Fatalf("seed default members failed: %v", err)
 	}
@@ -272,7 +279,7 @@ func TestRegisterCaptainTools_Metadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
 	}
-	manager := NewTeamManager(store)
+	manager := newIsolatedTeamRuntimeManager(t, store)
 	if err := manager.SeedDefaultMembers(); err != nil {
 		t.Fatalf("seed default members failed: %v", err)
 	}
@@ -304,7 +311,7 @@ func TestRegisterCaptainToolsPrefersTeamAsyncAndRemovesSubAgentDelegation(t *tes
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
 	}
-	manager := NewTeamManager(store)
+	manager := newIsolatedTeamRuntimeManager(t, store)
 	if err := manager.SeedDefaultMembers(); err != nil {
 		t.Fatalf("seed default members failed: %v", err)
 	}
@@ -352,7 +359,7 @@ func TestTeamHelpersExposeTeamStyleAPI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
 	}
-	manager := NewTeamManager(store)
+	manager := newIsolatedTeamRuntimeManager(t, store)
 	if err := manager.SeedDefaultMembers(); err != nil {
 		t.Fatalf("seed default members failed: %v", err)
 	}
@@ -424,7 +431,7 @@ func TestEnqueueSharedTaskQueuesImmediately(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
 	}
-	manager := NewTeamManager(store)
+	manager := newIsolatedTeamRuntimeManager(t, store)
 	if err := manager.SeedDefaultMembers(); err != nil {
 		t.Fatalf("seed default members failed: %v", err)
 	}
@@ -530,7 +537,7 @@ func TestBuildTeamSystemPromptForCaptainIncludesRosterAndResponsibilities(t *tes
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
 	}
-	manager := NewTeamManager(store)
+	manager := newIsolatedTeamRuntimeManager(t, store)
 	if err := manager.SeedDefaultMembers(); err != nil {
 		t.Fatalf("seed default members failed: %v", err)
 	}
@@ -610,7 +617,7 @@ func TestCreateMemberClearsCaptainServiceCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
 	}
-	manager := NewTeamManager(store)
+	manager := newIsolatedTeamRuntimeManager(t, store)
 	if err := manager.SeedDefaultMembers(); err != nil {
 		t.Fatalf("seed default members failed: %v", err)
 	}
@@ -654,7 +661,7 @@ func TestPersistedSharedTasksRestoreAcrossManagerInstances(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
 	}
-	manager := NewTeamManager(store)
+	manager := newIsolatedTeamRuntimeManager(t, store)
 	if err := manager.SeedDefaultMembers(); err != nil {
 		t.Fatalf("seed default members failed: %v", err)
 	}
@@ -676,7 +683,7 @@ func TestPersistedSharedTasksRestoreAcrossManagerInstances(t *testing.T) {
 		t.Fatalf("save shared task failed: %v", err)
 	}
 
-	restored := NewTeamManager(store)
+	restored := newIsolatedTeamRuntimeManager(t, store)
 	tasks := restored.ListSharedTasksForTeam(defaultTeamID, time.Time{}, 10)
 	if len(tasks) != 1 {
 		t.Fatalf("expected restored shared task, got %+v", tasks)

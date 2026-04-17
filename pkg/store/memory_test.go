@@ -486,6 +486,48 @@ func TestGraphFlowStoreUpdateReplacesGraph(t *testing.T) {
 	}
 }
 
+func TestGraphFlowStoreSearchByTextMergesLexicalAndGraphResults(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "gf-search-by-text.db")
+
+	store, err := NewGraphFlowStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewGraphFlowStore() error = %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now().UTC()
+	memories := []*domain.Memory{
+		{ID: "gf-nebula", Type: domain.MemoryTypeFact, Content: "北极星项目组代号：Nebula-42", Importance: 0.8, CreatedAt: now},
+		{ID: "gf-songyu", Type: domain.MemoryTypeFact, Content: "宋屿负责性能专项，重点关注移动端掉帧和启动耗时", Importance: 0.8, CreatedAt: now},
+		{ID: "gf-tags", Type: domain.MemoryTypeFact, Content: "团队标签约定：红色=阻塞；蓝色=待验证；绿色=可发布", Importance: 0.8, CreatedAt: now},
+		{ID: "gf-review", Type: domain.MemoryTypeFact, Content: "周三15:30与供应商进行接口冻结评审", Importance: 0.8, CreatedAt: now},
+	}
+	for _, mem := range memories {
+		if err := store.Store(ctx, mem); err != nil {
+			t.Fatalf("Store(%s) error = %v", mem.ID, err)
+		}
+	}
+
+	results, err := store.SearchByText(ctx, "北极星项目组代号 性能专项 红色标签 周三15:30", 6)
+	if err != nil {
+		t.Fatalf("SearchByText() error = %v", err)
+	}
+	if len(results) < 4 {
+		t.Fatalf("expected at least 4 results, got %d: %+v", len(results), results)
+	}
+
+	found := map[string]bool{}
+	for _, result := range results {
+		found[result.ID] = true
+	}
+	for _, want := range []string{"gf-nebula", "gf-songyu", "gf-tags", "gf-review"} {
+		if !found[want] {
+			t.Fatalf("expected SearchByText to include %s, got %+v", want, found)
+		}
+	}
+}
+
 // TestMemoryStoreReflectEmptyBankReturnsEmpty verifies Reflect on an empty
 // bank returns empty without error (graceful degrade with logged reason).
 func TestMemoryStoreReflectEmptyBankReturnsEmpty(t *testing.T) {
