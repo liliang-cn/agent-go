@@ -421,34 +421,52 @@ func (s *Service) storeIfWorthwhileSync(ctx context.Context, req *domain.MemoryS
 }
 
 // maybeReflect counts active facts for sessionID and triggers Reflect if threshold is met.
-// Only runs for FileMemoryStore (which has LLM-driven Reflect); other stores handle this internally.
-// Runs in a goroutine; errors are silently swallowed.
+// Works for FileMemoryStore (LLM-driven Reflect) and CortexDB-backed stores
+// (KnowledgeMemory.Consolidate). Runs in a goroutine; errors are silently swallowed.
 func (s *Service) maybeReflect(sessionID string) {
-	fileStore, ok := s.store.(*store.FileMemoryStore)
-	if !ok {
-		return
-	}
-
 	ctx := context.Background()
-	facts, _, err := fileStore.List(ctx, 1000, 0)
-	if err != nil {
+
+	// FileMemoryStore path: count facts, then LLM-driven reflect
+	if fileStore, ok := s.store.(*store.FileMemoryStore); ok {
+		facts, _, err := fileStore.List(ctx, 1000, 0)
+		if err != nil {
+			return
+		}
+		count := 0
+		for _, m := range facts {
+			if m.Type == domain.MemoryTypeFact &&
+				(sessionID == "" || m.SessionID == sessionID) &&
+				!store.IsStale(m) {
+				count++
+			}
+		}
+		if count >= s.reflectThreshold {
+			_, _ = fileStore.Reflect(ctx, sessionID)
+			if s.navigator != nil {
+				s.navigator.InvalidateCache()
+			}
+		}
 		return
 	}
 
-	count := 0
-	for _, m := range facts {
-		if m.Type == domain.MemoryTypeFact &&
-			(sessionID == "" || m.SessionID == sessionID) &&
-			!store.IsStale(m) {
-			count++
+	// CortexDB-backed stores (MemoryStore, MemoryFlowStore, GraphFlowStore):
+	// use KnowledgeMemory.Consolidate via Reflect(), which synthesizes a
+	// reflection, stores a summary, and promotes to durable knowledge.
+	switch s.store.(type) {
+	case *store.MemoryStore, *store.MemoryFlowStore, *store.GraphFlowStore:
+		facts, _, err := s.store.List(ctx, 1000, 0)
+		if err != nil {
+			return
 		}
-	}
-
-	if count >= s.reflectThreshold {
-		_, _ = fileStore.Reflect(ctx, sessionID)
-		// Invalidate cache again after reflection produced new observations
-		if s.navigator != nil {
-			s.navigator.InvalidateCache()
+		count := 0
+		for _, m := range facts {
+			if m.Type == domain.MemoryTypeFact &&
+				(sessionID == "" || m.SessionID == sessionID) {
+				count++
+			}
+		}
+		if count >= s.reflectThreshold {
+			_, _ = s.store.Reflect(ctx, sessionID)
 		}
 	}
 }

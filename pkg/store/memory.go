@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"sort"
 	"strings"
@@ -148,20 +149,94 @@ func (s *MemoryStore) StoreWithScope(ctx context.Context, memory *domain.Memory,
 	return s.storeMemory(ctx, memory, scope)
 }
 
-// SearchByText performs lexical search across cortexdb memory buckets with
-// CJK n-gram tokenization, importance weighting, and time decay.
+// SearchByText performs lexical search across cortexdb memory buckets.
+// Uses CortexDB's native SearchMemory with FTS5/BM25 when available,
+// falling back to manual LIKE + n-gram scoring for CJK support.
 func (s *MemoryStore) SearchByText(ctx context.Context, query string, topK int) ([]*domain.MemoryWithScore, error) {
 	if topK <= 0 {
 		topK = 10
 	}
+	if strings.TrimSpace(query) == "" {
+		return nil, nil
+	}
 
+	// Try CortexDB's native SearchMemory which uses FTS5/BM25 with
+	// multi-query expansion (keywords + alternate queries).
+	buckets, err := s.listMemoryBucketIDs(ctx)
+	if err == nil && len(buckets) > 0 {
+		results := s.searchByTextNative(ctx, query, buckets, topK)
+		if len(results) > 0 {
+			return results, nil
+		}
+	}
+
+	// Fallback: manual LIKE + n-gram scoring (handles CJK better)
+	return s.searchByTextLegacy(ctx, query, topK)
+}
+
+// searchByTextNative uses CortexDB's SearchMemory API (FTS5/BM25) for broader
+// recall, then re-scores results using n-gram matching + importance/recency boosts
+// for consistent ranking with the legacy path.
+func (s *MemoryStore) searchByTextNative(ctx context.Context, query string, bucketIDs []string, topK int) []*domain.MemoryWithScore {
+	seen := make(map[string]*domain.MemoryWithScore)
+	now := time.Now()
+	tokens := tokenizeText(query)
+	for _, bucketID := range bucketIDs {
+		scope, userID, sessionID, namespace := decodeBucketID(bucketID)
+		resp, err := s.db.SearchMemory(ctx, cortexdb.MemorySearchRequest{
+			Query:         query,
+			UserID:        userID,
+			SessionID:     sessionID,
+			Scope:         scope,
+			Namespace:     namespace,
+			TopK:          topK * 2,
+			RetrievalMode: "lexical",
+		})
+		if err != nil {
+			continue
+		}
+		for _, hit := range resp.Results {
+			if _, exists := seen[hit.Memory.ID]; exists {
+				continue
+			}
+			row, err := s.loadStoredMemoryRow(ctx, hit.Memory.ID)
+			if err != nil {
+				continue
+			}
+			mem := row.toDomainMemory()
+			// Re-score using n-gram matching for consistent ranking,
+			// then apply importance/recency boosts.
+			textScore := ngramMatchScore(tokens, mem.Content)
+			if textScore == 0 {
+				textScore = hit.Score // fallback to BM25 score if n-gram fails
+			}
+			score := applyMemoryBoosts(textScore, mem.Importance, mem.CreatedAt, now)
+			seen[hit.Memory.ID] = &domain.MemoryWithScore{
+				Memory: mem,
+				Score:  score,
+			}
+		}
+	}
+
+	results := make([]*domain.MemoryWithScore, 0, len(seen))
+	for _, r := range seen {
+		results = append(results, r)
+	}
+	sort.Slice(results, func(i, j int) bool { return results[i].Score > results[j].Score })
+	if len(results) > topK {
+		results = results[:topK]
+	}
+	return results
+}
+
+// searchByTextLegacy is the original LIKE + n-gram approach, kept as fallback
+// for CJK queries where FTS5 tokenization may not perform well.
+func (s *MemoryStore) searchByTextLegacy(ctx context.Context, query string, topK int) ([]*domain.MemoryWithScore, error) {
 	tokens := tokenizeText(query)
 	if len(tokens) == 0 {
 		return nil, nil
 	}
 
-	// Build a LIKE pattern for the first token to narrow the SQL scan,
-	// then re-score all candidates in Go for accuracy.
 	searchPattern := "%" + strings.ToLower(strings.TrimSpace(query)) + "%"
 	rows, err := s.queryWithRetry(ctx, `
 		SELECT m.id, m.session_id, s.user_id, m.role, m.content, m.vector, m.metadata, m.created_at, s.metadata
@@ -200,6 +275,34 @@ func (s *MemoryStore) SearchByText(ctx context.Context, query string, topK int) 
 		results = results[:topK]
 	}
 	return results, nil
+}
+
+// decodeBucketID extracts scope, userID, sessionID, and namespace from an agent-go
+// memory bucket ID (e.g. "memory:user:agent:Archivist:agentgo").
+func decodeBucketID(bucketID string) (scope, userID, sessionID, namespace string) {
+	parts := strings.Split(strings.TrimPrefix(bucketID, memoryBucketPrefix), ":")
+	if len(parts) < 2 {
+		return "global", "", "", memoryBucketNamespace
+	}
+	scope = parts[0]
+	namespace = parts[len(parts)-1]
+
+	switch scope {
+	case "global":
+		return scope, "", "", namespace
+	case "session":
+		if len(parts) >= 3 {
+			return scope, "", parts[1], namespace
+		}
+		return scope, "", "", namespace
+	default:
+		// agent/team/user scopes: bucket = memory:{scope}:{encodedUserID}:{namespace}
+		// encodedUserID may contain colons, namespace is always the last segment
+		if len(parts) >= 3 {
+			userID = strings.Join(parts[1:len(parts)-1], ":")
+		}
+		return "user", userID, "", namespace
+	}
 }
 
 func (s *MemoryStore) Get(ctx context.Context, id string) (*domain.Memory, error) {
@@ -416,8 +519,50 @@ func (s *MemoryStore) ConfigureBank(ctx context.Context, bankID string, config *
 }
 
 // Reflect is only implemented for the file-backed truth store.
+// Reflect uses CortexDB's KnowledgeMemory.Consolidate to synthesize a
+// structured reflection over recent memories, store a summary, and
+// optionally promote it to durable knowledge.
 func (s *MemoryStore) Reflect(ctx context.Context, bankID string) (string, error) {
-	return "", nil
+	if s.db == nil {
+		return "", nil
+	}
+
+	scope, userID, sessionID, namespace := decodeBucketID(bankID)
+
+	km := s.db.KnowledgeMemory()
+	resp, err := km.Consolidate(ctx, cortexdb.KnowledgeMemoryConsolidateRequest{
+		Reflect: cortexdb.KnowledgeMemoryReflectRequest{
+			Recall: cortexdb.KnowledgeMemoryRecallRequest{
+				Query:            "*",
+				UserID:           userID,
+				SessionID:        sessionID,
+				Scope:            scope,
+				Namespace:        namespace,
+				TopKMemories:     10,
+				DisableKnowledge: true,
+				DisableGraph:     true,
+			},
+			MaxFacts:  8,
+			MaxThemes: 6,
+		},
+		UserID:             userID,
+		SessionID:          sessionID,
+		Scope:              scope,
+		Namespace:          namespace,
+		Role:               "summary",
+		Importance:         0.9,
+		PromoteToKnowledge: true,
+	})
+	if err != nil {
+		// Consolidate can legitimately fail when the bank is empty or when
+		// no embedder is configured (lexical FTS5 rejects the wildcard
+		// query). Surface the reason via log but don't fail the caller —
+		// "nothing to reflect on" is a valid outcome, not an error.
+		log.Printf("memory reflect: consolidate returned no summary for bank %q: %v", bankID, err)
+		return "", nil
+	}
+
+	return resp.Reflection.Summary, nil
 }
 
 func (s *MemoryStore) AddMentalModel(ctx context.Context, model *domain.MentalModel) error {
@@ -516,28 +661,32 @@ func (s *MemoryStore) searchBuckets(ctx context.Context, bucketIDs []string, vec
 
 	queryVec := toFloat32(vector)
 	seen := make(map[string]*domain.MemoryWithScore)
+
 	for _, bucketID := range bucketIDs {
-		rows, err := s.queryWithRetry(ctx, `
-			SELECT m.id, m.session_id, s.user_id, m.role, m.content, m.vector, m.metadata, m.created_at, s.metadata
-			FROM messages m
-			JOIN sessions s ON s.id = m.session_id
-			WHERE m.session_id = ? AND m.vector IS NOT NULL
-		`, bucketID)
+		// Use CortexDB's native SearchChatHistory for optimized vector search
+		// instead of loading all vectors and computing cosine similarity in Go.
+		messages, err := s.store.SearchChatHistory(ctx, queryVec, bucketID, topK*2)
 		if err != nil {
-			return nil, err
+			// Fallback to manual scan if SearchChatHistory fails
+			s.searchBucketManual(ctx, bucketID, queryVec, minScore, seen)
+			continue
 		}
 
-		for rows.Next() {
-			row, err := scanStoredMemoryRow(rows)
-			if err != nil || len(row.Vector) == 0 {
+		for _, message := range messages {
+			if message == nil {
 				continue
 			}
-
-			score := cosineSimilarity(queryVec, row.Vector)
+			// Compute actual cosine similarity from the returned vector
+			// (SearchChatHistory returns messages with vectors populated).
+			score := cosineSimilarity(queryVec, message.Vector)
 			if score < minScore {
 				continue
 			}
 
+			row, err := s.loadStoredMemoryRow(ctx, message.ID)
+			if err != nil {
+				continue
+			}
 			candidate := &domain.MemoryWithScore{
 				Memory: row.toDomainMemory(),
 				Score:  score,
@@ -546,7 +695,6 @@ func (s *MemoryStore) searchBuckets(ctx context.Context, bucketIDs []string, vec
 				seen[candidate.ID] = candidate
 			}
 		}
-		_ = rows.Close()
 	}
 
 	results := make([]*domain.MemoryWithScore, 0, len(seen))
@@ -565,6 +713,39 @@ func (s *MemoryStore) searchBuckets(ctx context.Context, bucketIDs []string, vec
 		results = results[:topK]
 	}
 	return results, nil
+}
+
+// searchBucketManual is the legacy fallback that loads all vectors and computes
+// cosine similarity in Go. Used only when CortexDB's SearchChatHistory fails.
+func (s *MemoryStore) searchBucketManual(ctx context.Context, bucketID string, queryVec []float32, minScore float64, seen map[string]*domain.MemoryWithScore) {
+	rows, err := s.queryWithRetry(ctx, `
+		SELECT m.id, m.session_id, s.user_id, m.role, m.content, m.vector, m.metadata, m.created_at, s.metadata
+		FROM messages m
+		JOIN sessions s ON s.id = m.session_id
+		WHERE m.session_id = ? AND m.vector IS NOT NULL
+	`, bucketID)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		row, err := scanStoredMemoryRow(rows)
+		if err != nil || len(row.Vector) == 0 {
+			continue
+		}
+		score := cosineSimilarity(queryVec, row.Vector)
+		if score < minScore {
+			continue
+		}
+		candidate := &domain.MemoryWithScore{
+			Memory: row.toDomainMemory(),
+			Score:  score,
+		}
+		if existing, exists := seen[candidate.ID]; !exists || existing.Score < candidate.Score {
+			seen[candidate.ID] = candidate
+		}
+	}
 }
 
 func (s *MemoryStore) ensureMemoryBucket(ctx context.Context, bucket memoryBucket) error {

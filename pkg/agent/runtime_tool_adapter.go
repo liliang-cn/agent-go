@@ -36,6 +36,7 @@ func (r *Runtime) buildStreamingTurnCallbacks(ctx context.Context, taskTerminalN
 
 	return StreamTurnCallbacks{
 		OnToolCall: func(tc domain.ToolCall) error {
+			tc = normalizeStreamingToolCall(tc)
 			if isTaskTerminalToolName(tc.Function.Name) {
 				r.emitToolCall(tc.Function.Name, tc.Function.Arguments, "")
 				*taskTerminalName = tc.Function.Name
@@ -63,6 +64,11 @@ func (r *Runtime) buildStreamingTurnCallbacks(ctx context.Context, taskTerminalN
 			}
 		},
 	}
+}
+
+func normalizeStreamingToolCall(tc domain.ToolCall) domain.ToolCall {
+	tc.ID = domain.NormalizeToolCallID(tc.ID)
+	return tc
 }
 
 func (r *Runtime) buildStreamingToolExecutionCallbacks() ToolExecutionCallbacks {

@@ -211,6 +211,9 @@ func (m *TeamManager) UpdateAgent(_ context.Context, model *AgentModel) (*AgentM
 	if model.Skills != nil {
 		current.Skills = append([]string(nil), model.Skills...)
 	}
+	if strings.TrimSpace(model.MemoryStoreType) != "" {
+		current.MemoryStoreType = strings.TrimSpace(model.MemoryStoreType)
+	}
 	current.EnableRAG = model.EnableRAG || current.EnableRAG
 	current.EnableMemory = model.EnableMemory || current.EnableMemory
 	current.EnablePTC = model.EnablePTC || current.EnablePTC

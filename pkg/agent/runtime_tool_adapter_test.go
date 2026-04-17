@@ -26,3 +26,13 @@ func TestStreamingTurnCallbacksSkipsEmptyArgumentToolDelta(t *testing.T) {
 		t.Fatalf("empty non-terminal delta should not execute a tool")
 	}
 }
+
+func TestStreamingTurnCallbacksNormalizesToolCallID(t *testing.T) {
+	got := normalizeStreamingToolCall(domain.ToolCall{
+		ID:       "call-123",
+		Function: domain.FunctionCall{Name: "mcp_filesystem_read_file", Arguments: map[string]interface{}{"path": "/tmp/x"}},
+	})
+	if got.ID != "fc_call-123" {
+		t.Fatalf("normalizeStreamingToolCall() id = %q, want %q", got.ID, "fc_call-123")
+	}
+}

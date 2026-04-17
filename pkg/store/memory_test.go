@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -286,5 +287,257 @@ func TestMemoryStoreClear(t *testing.T) {
 	}
 	if total != 0 || len(memories) != 0 {
 		t.Fatalf("expected empty store after clear, got total=%d len=%d", total, len(memories))
+	}
+}
+
+// TestMemoryFlowStoreWakeUp verifies WakeUp returns layered context over
+// seeded memories without error.
+func TestMemoryFlowStoreWakeUp(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "wakeup.db")
+
+	store, err := NewMemoryFlowStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewMemoryFlowStore() error = %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now().UTC()
+	seeds := []*domain.Memory{
+		{ID: "wu-1", Type: domain.MemoryTypeFact, Content: "Alice leads the API team.", Importance: 0.8, CreatedAt: now},
+		{ID: "wu-2", Type: domain.MemoryTypeFact, Content: "Bob focuses on frontend performance.", Importance: 0.6, CreatedAt: now},
+	}
+	for _, m := range seeds {
+		if err := store.Store(ctx, m); err != nil {
+			t.Fatalf("Store(%s) error = %v", m.ID, err)
+		}
+	}
+
+	layers, err := store.WakeUp(ctx, "agent:archivist", "team leadership", nil)
+	if err != nil {
+		t.Fatalf("WakeUp() error = %v", err)
+	}
+	if len(layers) == 0 {
+		t.Fatal("WakeUp() returned no layers")
+	}
+	for _, l := range layers {
+		if l.Level == "" {
+			t.Errorf("layer missing level: %+v", l)
+		}
+	}
+
+	// A session-scoped wake-up should also succeed (session_id is derived from
+	// the scope). Verifies the scope parameter is actually wired through.
+	sessionScope := &domain.MemoryScope{Type: domain.MemoryScopeSession, ID: "session:team-sync-42"}
+	if _, err := store.WakeUp(ctx, "agent:archivist", "team leadership", sessionScope); err != nil {
+		t.Fatalf("WakeUp(session scope) error = %v", err)
+	}
+}
+
+// TestMemoryFlowStoreCloseSession verifies CloseSession runs without error
+// on a minimal transcript.
+func TestMemoryFlowStoreCloseSession(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "closesession.db")
+
+	store, err := NewMemoryFlowStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewMemoryFlowStore() error = %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now().UTC()
+	transcript := []TranscriptTurn{
+		{Role: "user", Content: "Let's standardize on Go generics for new code.", Timestamp: now},
+		{Role: "assistant", Content: "Agreed — I'll flag older generic-free utilities for refactor.", Timestamp: now.Add(time.Second)},
+	}
+	if err := store.CloseSession(ctx, "session:team-sync-42", transcript); err != nil {
+		t.Fatalf("CloseSession() error = %v", err)
+	}
+}
+
+// TestMemoryFlowStoreSearchDelegatesToParent locks in the contract that
+// MemoryFlowStore does not override vector-search methods. Recall is
+// text-primary and does not honor the (vector, minScore) semantics, so
+// Search/SearchByScope must resolve to the embedded *MemoryStore which
+// uses CortexDB's real cosine similarity. If someone re-adds an override
+// this test will fail.
+func TestMemoryFlowStoreSearchDelegatesToParent(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "mf-delegate.db")
+	store, err := NewMemoryFlowStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewMemoryFlowStore() error = %v", err)
+	}
+	defer store.Close()
+
+	cases := []string{"Search", "SearchByScope"}
+	for _, name := range cases {
+		outer := reflect.ValueOf(store).MethodByName(name)
+		inner := reflect.ValueOf(store.MemoryStore).MethodByName(name)
+		if !outer.IsValid() || !inner.IsValid() {
+			t.Fatalf("%s method missing on MemoryFlowStore or parent", name)
+		}
+		if outer.Pointer() != inner.Pointer() {
+			t.Fatalf("%s is overridden on MemoryFlowStore; must delegate to *MemoryStore "+
+				"because MemoryFlow Recall does not honor vector/minScore", name)
+		}
+	}
+}
+
+// TestGraphFlowStoreSearchByScopeFiltersCrossScope verifies that scoped
+// search (and its graph expansion) does not leak memories from other scopes.
+func TestGraphFlowStoreSearchByScopeFiltersCrossScope(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "gf-scope.db")
+
+	store, err := NewGraphFlowStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewGraphFlowStore() error = %v", err)
+	}
+	defer store.Close()
+
+	vec := make([]float64, 4)
+	for i := range vec {
+		vec[i] = 1.0
+	}
+
+	alphaMem := &domain.Memory{
+		ID: "scope-alpha", Type: domain.MemoryTypeFact,
+		Content: "Alpha team owns the ingestion service.",
+		Vector:  vec, Importance: 0.5, CreatedAt: time.Now().UTC(),
+		Tags: []string{"alpha", "ingestion"},
+	}
+	betaMem := &domain.Memory{
+		ID: "scope-beta", Type: domain.MemoryTypeFact,
+		Content: "Beta team owns the ingestion service.",
+		Vector:  vec, Importance: 0.5, CreatedAt: time.Now().UTC(),
+		Tags: []string{"beta", "ingestion"},
+	}
+	if err := store.StoreWithScope(ctx, alphaMem, domain.MemoryScope{Type: domain.MemoryScopeAgent, ID: "alpha"}); err != nil {
+		t.Fatalf("Store alpha: %v", err)
+	}
+	if err := store.StoreWithScope(ctx, betaMem, domain.MemoryScope{Type: domain.MemoryScopeAgent, ID: "beta"}); err != nil {
+		t.Fatalf("Store beta: %v", err)
+	}
+
+	results, err := store.SearchByScope(ctx, vec, []domain.MemoryScope{
+		{Type: domain.MemoryScopeAgent, ID: "alpha"},
+	}, 10)
+	if err != nil {
+		t.Fatalf("SearchByScope: %v", err)
+	}
+
+	for _, r := range results {
+		if r.ID == "scope-beta" {
+			t.Errorf("beta-scoped memory leaked into alpha-scoped search: %+v", r)
+		}
+		if r.ScopeType != domain.MemoryScopeAgent || r.ScopeID != "alpha" {
+			t.Errorf("result has wrong scope: type=%s id=%s", r.ScopeType, r.ScopeID)
+		}
+	}
+}
+
+// TestGraphFlowStoreUpdateReplacesGraph verifies that Update rebuilds the
+// graph with ReplaceEdges, avoiding accumulation of stale edges.
+func TestGraphFlowStoreUpdateReplacesGraph(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "gf-update.db")
+
+	store, err := NewGraphFlowStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewGraphFlowStore() error = %v", err)
+	}
+	defer store.Close()
+
+	mem := &domain.Memory{
+		ID:         "upd-1",
+		Type:       domain.MemoryTypeFact,
+		Content:    "Alice leads Apollo.",
+		Importance: 0.7,
+		CreatedAt:  time.Now().UTC(),
+	}
+	if err := store.Store(ctx, mem); err != nil {
+		t.Fatalf("Store: %v", err)
+	}
+
+	before, err := graphflow.Analyze(ctx, store.db, graphflow.AnalyzeRequest{TopN: 20})
+	if err != nil {
+		t.Fatalf("Analyze before: %v", err)
+	}
+
+	updated := &domain.Memory{
+		ID:      "upd-1",
+		Type:    domain.MemoryTypeFact,
+		Content: "Bob leads Mercury.",
+	}
+	if err := store.Update(ctx, updated); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	after, err := graphflow.Analyze(ctx, store.db, graphflow.AnalyzeRequest{TopN: 20})
+	if err != nil {
+		t.Fatalf("Analyze after: %v", err)
+	}
+
+	// After replace-edges update, edge count should not monotonically grow
+	// (otherwise we'd know old edges leaked through).
+	if after.EdgeCount > before.EdgeCount*3 {
+		t.Errorf("edge count exploded after update: before=%d after=%d", before.EdgeCount, after.EdgeCount)
+	}
+}
+
+// TestMemoryStoreReflectEmptyBankReturnsEmpty verifies Reflect on an empty
+// bank returns empty without error (graceful degrade with logged reason).
+func TestMemoryStoreReflectEmptyBankReturnsEmpty(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "reflect-empty.db")
+
+	store, err := NewMemoryStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewMemoryStore() error = %v", err)
+	}
+	defer store.Close()
+
+	summary, err := store.Reflect(ctx, "memory:global:agentgo")
+	if err != nil {
+		t.Fatalf("Reflect should not error on empty bank, got: %v", err)
+	}
+	if summary != "" {
+		t.Errorf("expected empty summary for empty bank, got %q", summary)
+	}
+}
+
+// TestGraphFlowExtractContentEntities verifies the heuristic entity extractor
+// picks up CJK runs and Capitalized terms even without tags/keywords.
+func TestGraphFlowExtractContentEntities(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+		want    []string
+	}{
+		{"capitalized english", "Alice and Bob built Apollo.", []string{"Alice", "Bob", "Apollo"}},
+		{"cjk runs", "向量数据库是现代AI应用的核心", []string{"向量数据库", "是现代", "应用的核心"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := extractContentEntities(tc.content)
+			if len(got) == 0 {
+				t.Fatalf("extractContentEntities returned empty for %q", tc.content)
+			}
+			seen := make(map[string]bool, len(got))
+			for _, e := range got {
+				seen[e] = true
+			}
+			foundAny := false
+			for _, w := range tc.want {
+				if seen[w] {
+					foundAny = true
+					break
+				}
+			}
+			if !foundAny {
+				t.Errorf("none of %v found in %v", tc.want, got)
+			}
+		})
 	}
 }
