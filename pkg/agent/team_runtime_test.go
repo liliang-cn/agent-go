@@ -354,6 +354,120 @@ func TestRegisterCaptainToolsPrefersTeamAsyncAndRemovesSubAgentDelegation(t *tes
 	}
 }
 
+func TestDelegateTaskStreamPassthroughForwardsDelegatedEvents(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "agent.db"))
+	if err != nil {
+		t.Fatalf("new store failed: %v", err)
+	}
+	manager := newIsolatedTeamRuntimeManager(t, store)
+	if err := manager.SeedDefaultMembers(); err != nil {
+		t.Fatalf("seed default members failed: %v", err)
+	}
+
+	svc, err := manager.GetAgentService("Captain")
+	if err != nil {
+		t.Fatalf("get captain service failed: %v", err)
+	}
+	manager.RegisterCaptainTools(svc)
+
+	manager.builtInStreamDispatchOverride = func(ctx context.Context, agentName, instruction string, runOptions []RunOption) (<-chan *Event, error) {
+		events := make(chan *Event, 4)
+		events <- &Event{Type: EventTypeStart, AgentName: agentName, Content: "delegated start"}
+		events <- &Event{Type: EventTypePartial, AgentName: agentName, Content: "hello "}
+		events <- &Event{Type: EventTypeToolCall, AgentName: agentName, ToolName: "mcp_filesystem_read_file"}
+		events <- &Event{Type: EventTypeComplete, AgentName: agentName, Content: "delegated final"}
+		close(events)
+		return events, nil
+	}
+
+	var forwarded []*Event
+	ctx := withEventSink(context.Background(), func(evt *Event) {
+		forwarded = append(forwarded, cloneAgentEvent(evt))
+	})
+
+	raw, err := svc.toolRegistry.Call(ctx, "delegate_task", map[string]interface{}{
+		"agent_name":  defaultAssistantAgentName,
+		"instruction": "summarize this",
+		"stream":      true,
+	})
+	if err != nil {
+		t.Fatalf("delegate_task failed: %v", err)
+	}
+	text, ok := raw.(string)
+	if !ok {
+		t.Fatalf("unexpected delegate_task result: %#v", raw)
+	}
+	if text != "delegated final" {
+		t.Fatalf("delegate_task result = %q, want %q", text, "delegated final")
+	}
+
+	if len(forwarded) != 4 {
+		t.Fatalf("expected 4 forwarded delegated events, got %d (%+v)", len(forwarded), forwarded)
+	}
+	if forwarded[0].Type != EventTypeStart || forwarded[0].AgentName != defaultAssistantAgentName {
+		t.Fatalf("unexpected first forwarded event: %+v", forwarded[0])
+	}
+	if forwarded[1].Type != EventTypePartial || forwarded[1].Content != "hello " {
+		t.Fatalf("unexpected partial forwarded event: %+v", forwarded[1])
+	}
+	if forwarded[2].Type != EventTypeToolCall || forwarded[2].ToolName != "mcp_filesystem_read_file" {
+		t.Fatalf("unexpected tool_call forwarded event: %+v", forwarded[2])
+	}
+	if forwarded[3].Type != EventTypeComplete || forwarded[3].Content != "delegated final" {
+		t.Fatalf("unexpected complete forwarded event: %+v", forwarded[3])
+	}
+}
+
+func TestDelegateTaskStreamWithoutSinkFallsBackToSyncDispatch(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "agent.db"))
+	if err != nil {
+		t.Fatalf("new store failed: %v", err)
+	}
+	manager := newIsolatedTeamRuntimeManager(t, store)
+	if err := manager.SeedDefaultMembers(); err != nil {
+		t.Fatalf("seed default members failed: %v", err)
+	}
+
+	svc, err := manager.GetAgentService("Captain")
+	if err != nil {
+		t.Fatalf("get captain service failed: %v", err)
+	}
+	manager.RegisterCaptainTools(svc)
+
+	streamCalled := false
+	manager.builtInStreamDispatchOverride = func(ctx context.Context, agentName, instruction string, runOptions []RunOption) (<-chan *Event, error) {
+		streamCalled = true
+		events := make(chan *Event)
+		close(events)
+		return events, nil
+	}
+	manager.builtInDispatchOverride = func(ctx context.Context, agentName, instruction string, runOptions []RunOption) (*ExecutionResult, error) {
+		return &ExecutionResult{
+			Success:     true,
+			FinalResult: "sync result",
+		}, nil
+	}
+
+	raw, err := svc.toolRegistry.Call(context.Background(), "delegate_task", map[string]interface{}{
+		"agent_name":  defaultAssistantAgentName,
+		"instruction": "summarize this",
+		"stream":      true,
+	})
+	if err != nil {
+		t.Fatalf("delegate_task failed: %v", err)
+	}
+	text, ok := raw.(string)
+	if !ok {
+		t.Fatalf("unexpected delegate_task result: %#v", raw)
+	}
+	if text != "sync result" {
+		t.Fatalf("delegate_task result = %q, want %q", text, "sync result")
+	}
+	if streamCalled {
+		t.Fatal("expected delegate_task without an event sink to fall back to synchronous dispatch")
+	}
+}
+
 func TestTeamHelpersExposeTeamStyleAPI(t *testing.T) {
 	store, err := NewStore(filepath.Join(t.TempDir(), "agent.db"))
 	if err != nil {

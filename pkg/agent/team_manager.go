@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -1346,6 +1347,22 @@ func (m *TeamManager) dispatchTask(ctx context.Context, agentName string, instru
 	return m.dispatchTaskWithOptions(ctx, agentName, instruction, sessionID, nil)
 }
 
+func (m *TeamManager) dispatchTaskWithOptionalStream(ctx context.Context, agentName string, instruction string, sessionID string, extraOpts []RunOption, stream bool) (string, error) {
+	if !stream {
+		return m.dispatchTaskWithOptions(ctx, agentName, instruction, sessionID, extraOpts)
+	}
+	sink := eventSinkFromContext(ctx)
+	if sink == nil {
+		return m.dispatchTaskWithOptions(ctx, agentName, instruction, sessionID, extraOpts)
+	}
+
+	events, err := m.dispatchTaskStream(ctx, agentName, instruction, sessionID, extraOpts)
+	if err != nil {
+		return "", err
+	}
+	return collectDispatchStreamResult(events, sink)
+}
+
 func (m *TeamManager) dispatchTaskWithOptions(ctx context.Context, agentName string, instruction string, sessionID string, extraOpts []RunOption) (string, error) {
 	if err := m.ensureAgentRunning(ctx, agentName); err != nil {
 		return "", fmt.Errorf("cannot start agent %s: %w", agentName, err)
@@ -1372,6 +1389,44 @@ func (m *TeamManager) dispatchTaskWithOptions(ctx context.Context, agentName str
 
 	bz, _ := json.Marshal(res.FinalResult)
 	return string(bz), nil
+}
+
+func collectDispatchStreamResult(events <-chan *Event, sink func(*Event)) (string, error) {
+	var (
+		finalText strings.Builder
+		finished  bool
+	)
+
+	for evt := range events {
+		if evt == nil {
+			continue
+		}
+		if sink != nil {
+			sink(cloneAgentEvent(evt))
+		}
+
+		switch evt.Type {
+		case EventTypePartial:
+			finalText.WriteString(evt.Content)
+		case EventTypeComplete, EventTypeBlocked:
+			if text := strings.TrimSpace(evt.Content); text != "" {
+				finalText.Reset()
+				finalText.WriteString(text)
+			}
+			finished = true
+		case EventTypeError:
+			msg := strings.TrimSpace(evt.Content)
+			if msg == "" {
+				msg = "agent execution failed"
+			}
+			return strings.TrimSpace(finalText.String()), errors.New(msg)
+		}
+	}
+
+	if !finished {
+		return strings.TrimSpace(finalText.String()), nil
+	}
+	return strings.TrimSpace(finalText.String()), nil
 }
 
 func (m *TeamManager) conversationSessionID(conversationKey, agentName string) string {
@@ -1604,7 +1659,7 @@ func (m *TeamManager) RegisterCaptainTools(captain *Service) {
 		Type: "function",
 		Function: domain.ToolFunction{
 			Name:        "delegate_task",
-			Description: "Synchronously delegate a short task to one team agent and wait for the inline result. Prefer submit_team_async for longer implementation work.",
+			Description: "Synchronously delegate a short task to one team agent and wait for the inline result. Prefer submit_team_async for longer implementation work. If `stream` is true and the current run is streaming, downstream agent events will be forwarded into the current event stream.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -1616,6 +1671,10 @@ func (m *TeamManager) RegisterCaptainTools(captain *Service) {
 						"type":        "string",
 						"description": "The full prompt/instruction for the task.",
 					},
+					"stream": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Optional. When true and the current run is streaming, forward the delegated agent's runtime events into the current stream.",
+					},
 				},
 				"required": []string{"agent_name", "instruction"},
 			},
@@ -1624,7 +1683,8 @@ func (m *TeamManager) RegisterCaptainTools(captain *Service) {
 	register(delegateDef.Function.Name, delegateDef.Function.Description, delegateDef.Function.Parameters, ToolMetadata{InterruptBehavior: InterruptBehaviorBlock}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 		agentName, _ := args["agent_name"].(string)
 		instruction, _ := args["instruction"].(string)
-		return m.DispatchTask(ctx, agentName, instruction)
+		stream, _ := args["stream"].(bool)
+		return m.dispatchTaskWithOptionalStream(ctx, agentName, instruction, "", nil, stream)
 	})
 }
 
