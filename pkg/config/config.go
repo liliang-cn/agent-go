@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/liliang-cn/agent-go/v2/pkg/mcp"
 	"github.com/liliang-cn/agent-go/v2/pkg/pool"
@@ -40,7 +41,8 @@ type Config struct {
 
 // AgentConfig holds global agent settings.
 type AgentConfig struct {
-	Name string `mapstructure:"name"`
+	Name                  string `mapstructure:"name"`
+	LLMTurnTimeoutSeconds int    `mapstructure:"llm_turn_timeout_seconds"`
 }
 
 // TeamConfig holds global team settings.
@@ -122,6 +124,16 @@ func (c *Config) IntentsDir() string   { return filepath.Join(c.Home, "intents")
 func (c *Config) WorkspaceDir() string { return filepath.Join(c.Home, "workspace") }
 func (c *Config) AgentDBPath() string  { return filepath.Join(c.DataDir(), "agentgo.db") }
 func (c *Config) CortexDBPath() string { return filepath.Join(c.DataDir(), "cortex.db") }
+
+const defaultAgentLLMTurnTimeoutSeconds = 180
+
+func (c *Config) AgentLLMTurnTimeout() time.Duration {
+	seconds := defaultAgentLLMTurnTimeoutSeconds
+	if c != nil && c.Agent.LLMTurnTimeoutSeconds > 0 {
+		seconds = c.Agent.LLMTurnTimeoutSeconds
+	}
+	return time.Duration(seconds) * time.Second
+}
 
 // ApplyHomeLayout 唯一的路径计算枢纽
 func (c *Config) ApplyHomeLayout() {
@@ -220,7 +232,8 @@ func defaultConfig(home string) *Config {
 			},
 		},
 		Agent: AgentConfig{
-			Name: "AgentGo",
+			Name:                  "AgentGo",
+			LLMTurnTimeoutSeconds: GetEnvOrDefaultInt("AGENTGO_LLM_TURN_TIMEOUT_SECONDS", defaultAgentLLMTurnTimeoutSeconds),
 		},
 	}
 	return cfg

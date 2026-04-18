@@ -345,7 +345,7 @@ Recalled memories:
 		maxTokens = 120
 	}
 
-	llmCtx, cancel := withLLMTurnTimeout(ctx)
+	llmCtx, cancel := withLLMTurnTimeout(ctx, s.cfg)
 	defer cancel()
 	resp, err := s.llmService.Generate(llmCtx, prompt, &domain.GenerationOptions{
 		Temperature: 0,
@@ -953,7 +953,7 @@ func (s *Service) runOneLLMTurn(ctx context.Context, currentAgent *Agent, messag
 		maxTokens = 2000
 	}
 
-	llmCtx, cancel := withLLMTurnTimeout(ctx)
+	llmCtx, cancel := withLLMTurnTimeout(ctx, s.cfg)
 	defer cancel()
 	result, err := s.llmService.GenerateWithTools(llmCtx, genMessages, tools, s.toolGenerationOptions(temperature, maxTokens, toolChoiceForIntent(intent, round)))
 	if err != nil {
@@ -962,7 +962,7 @@ func (s *Service) runOneLLMTurn(ctx context.Context, currentAgent *Agent, messag
 			compacted, compErr := s.CompactMessages(ctx, genMessages)
 			if compErr == nil {
 				// Retry with compacted messages
-				retryCtx, retryCancel := withLLMTurnTimeout(ctx)
+				retryCtx, retryCancel := withLLMTurnTimeout(ctx, s.cfg)
 				defer retryCancel()
 				retryResult, retryErr := s.llmService.GenerateWithTools(retryCtx, compacted, tools, s.toolGenerationOptions(temperature, maxTokens, toolChoiceForIntent(intent, round)))
 				if retryErr == nil && retryResult != nil {

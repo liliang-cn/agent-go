@@ -23,6 +23,8 @@ import (
 type TeamManager struct {
 	store                         *Store
 	cfg                           *config.Config
+	injectedLLM                   domain.Generator
+	injectedEmbedder              domain.Embedder
 	runningAgents                 map[string]context.CancelFunc // Tracks running agents if they are background loopers
 	services                      map[string]*Service           // Cached instantiated agent services
 	mu                            sync.RWMutex
@@ -210,6 +212,24 @@ func (m *TeamManager) SetConfig(cfg *config.Config) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.cfg = cfg
+}
+
+// SetLLM injects a custom LLM implementation for services built by this manager.
+// Passing nil clears the override and restores global-pool fallback behavior.
+func (m *TeamManager) SetLLM(llm domain.Generator) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.injectedLLM = llm
+	m.services = make(map[string]*Service)
+}
+
+// SetEmbedder injects a custom embedder for services built by this manager.
+// Passing nil clears the override and restores global-pool fallback behavior.
+func (m *TeamManager) SetEmbedder(embedder domain.Embedder) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.injectedEmbedder = embedder
+	m.services = make(map[string]*Service)
 }
 
 // SetDisableMemory globally disables memory for all agents built by this manager.
@@ -729,12 +749,6 @@ func (m *TeamManager) getOrBuildService(name string) (*Service, error) {
 		return svc, nil
 	}
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if svc, exists := m.services[name]; exists {
-		return svc, nil
-	}
-
 	model, err := m.store.GetAgentModelByName(name)
 	if err != nil {
 		return nil, err
@@ -745,6 +759,12 @@ func (m *TeamManager) getOrBuildService(name string) (*Service, error) {
 		return nil, err
 	}
 
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if svc, exists := m.services[name]; exists {
+		_ = newSvc.Close()
+		return svc, nil
+	}
 	m.services[name] = newSvc
 
 	return newSvc, nil
@@ -767,7 +787,12 @@ func (m *TeamManager) buildServiceForModel(model *AgentModel) (*Service, error) 
 	builder := New(model.Name)
 	systemPrompt := strings.TrimSpace(model.Instructions)
 
+	m.mu.RLock()
 	cfg := m.cfg
+	injectedLLM := m.injectedLLM
+	injectedEmbedder := m.injectedEmbedder
+	m.mu.RUnlock()
+
 	if cfg == nil {
 		var loadErr error
 		cfg, loadErr = config.Load()
@@ -793,14 +818,26 @@ func (m *TeamManager) buildServiceForModel(model *AgentModel) (*Service, error) 
 
 	if agentgoCfg != nil {
 		builder.WithConfig(agentgoCfg)
+	}
+	if injectedLLM != nil {
+		builder.WithLLM(injectedLLM)
+	}
+	if injectedEmbedder != nil {
+		builder.WithEmbedder(injectedEmbedder)
+	}
 
+	if agentgoCfg != nil && (injectedLLM == nil || injectedEmbedder == nil) {
 		globalPool := services.GetGlobalPoolService()
 		if initErr := globalPool.Initialize(context.Background(), agentgoCfg); initErr == nil {
-			if llmSvc, llmErr := globalPool.GetLLMServiceWithHint(selectionHintForAgentModel(model)); llmErr == nil {
-				builder.WithLLM(llmSvc)
+			if injectedLLM == nil {
+				if llmSvc, llmErr := globalPool.GetLLMServiceWithHint(selectionHintForAgentModel(model)); llmErr == nil {
+					builder.WithLLM(llmSvc)
+				}
 			}
-			if embedSvc, embedErr := globalPool.GetEmbeddingService(context.Background()); embedErr == nil {
-				builder.WithEmbedder(embedSvc)
+			if injectedEmbedder == nil {
+				if embedSvc, embedErr := globalPool.GetEmbeddingService(context.Background()); embedErr == nil {
+					builder.WithEmbedder(embedSvc)
+				}
 			}
 		}
 	}

@@ -56,7 +56,7 @@ Visible callable tools:
 		},
 	}
 
-	llmCtx, cancel := withLLMTurnTimeout(ctx)
+	llmCtx, cancel := withLLMTurnTimeout(ctx, s.cfg)
 	defer cancel()
 	result, err := s.llmService.GenerateWithTools(llmCtx, messages, available, s.toolGenerationOptions(0.1, 800, "required"))
 	if err != nil {
@@ -94,7 +94,7 @@ Available tools:
 User request:
 ` + goal)
 
-	llmCtx, cancel := withLLMTurnTimeout(ctx)
+	llmCtx, cancel := withLLMTurnTimeout(ctx, s.cfg)
 	defer cancel()
 	raw, err := s.llmService.Generate(llmCtx, prompt, &domain.GenerationOptions{
 		Temperature: 0.1,

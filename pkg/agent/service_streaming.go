@@ -28,7 +28,7 @@ func (s *Service) streamToolTurnWithRecovery(ctx context.Context, messages []dom
 		toolCallDetected bool
 	)
 
-	llmCtx, cancel := withLLMTurnTimeout(ctx)
+	llmCtx, cancel := withLLMTurnTimeout(ctx, s.cfg)
 	defer cancel()
 	err := s.llmService.StreamWithTools(llmCtx, messages, tools, opts, func(delta *domain.GenerationResult) error {
 		if delta.ID != "" {

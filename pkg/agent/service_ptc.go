@@ -98,7 +98,7 @@ Example format:
 	var fullContent strings.Builder
 	var toolCalls []domain.ToolCall
 
-	llmCtx, cancel := withLLMTurnTimeout(ctx)
+	llmCtx, cancel := withLLMTurnTimeout(ctx, s.cfg)
 	defer cancel()
 	err := s.llmService.StreamWithTools(llmCtx, messages, ptcTools, s.toolGenerationOptions(temperature, maxTokens, ""), func(delta *domain.GenerationResult) error {
 		if delta.Content != "" {

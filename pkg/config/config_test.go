@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/liliang-cn/agent-go/v2/pkg/mcp"
 	"github.com/liliang-cn/agent-go/v2/pkg/resource"
@@ -470,5 +471,20 @@ func TestEnvFallbackHelpers(t *testing.T) {
 	t.Setenv("AGENTGO_TEST_STR", "val")
 	if got := GetEnvOrDefault("AGENTGO_TEST_STR", "def"); got != "val" {
 		t.Fatalf("env fallback failed")
+	}
+}
+
+func TestDefaultConfigUsesEnvForAgentLLMTurnTimeout(t *testing.T) {
+	t.Setenv("AGENTGO_LLM_TURN_TIMEOUT_SECONDS", "240")
+	cfg := defaultConfig(t.TempDir())
+	if got := cfg.AgentLLMTurnTimeout(); got != 240*time.Second {
+		t.Fatalf("expected 240s agent llm turn timeout, got %v", got)
+	}
+}
+
+func TestAgentLLMTurnTimeoutFallsBackToDefaultWhenUnset(t *testing.T) {
+	cfg := &Config{}
+	if got := cfg.AgentLLMTurnTimeout(); got != 180*time.Second {
+		t.Fatalf("expected default 180s timeout, got %v", got)
 	}
 }
