@@ -286,3 +286,44 @@ func TestGlobalPoolServiceSaveEmbeddingProviderUpdatesExistingProvider(t *testin
 		t.Fatalf("expected live embedding pool model %q, got %q", "embed-v2", gotModel)
 	}
 }
+
+func TestSetGlobalPoolServiceReplacesSingleton(t *testing.T) {
+	original := SetGlobalPoolService(nil)
+	defer SetGlobalPoolService(original)
+
+	first := &GlobalPoolService{}
+	if previous := SetGlobalPoolService(first); previous != nil {
+		t.Fatalf("expected no previous global pool, got %p", previous)
+	}
+	if got := GetGlobalPoolService(); got != first {
+		t.Fatalf("expected first injected global pool, got %p", got)
+	}
+
+	second := &GlobalPoolService{}
+	if previous := SetGlobalPoolService(second); previous != first {
+		t.Fatalf("expected previous global pool %p, got %p", first, previous)
+	}
+	if got := GetGlobalPoolService(); got != second {
+		t.Fatalf("expected second injected global pool, got %p", got)
+	}
+}
+
+func TestSetGlobalPoolServiceNilClearsSingleton(t *testing.T) {
+	original := SetGlobalPoolService(nil)
+	defer SetGlobalPoolService(original)
+
+	injected := &GlobalPoolService{}
+	SetGlobalPoolService(injected)
+
+	if previous := SetGlobalPoolService(nil); previous != injected {
+		t.Fatalf("expected cleared global pool to return injected instance %p, got %p", injected, previous)
+	}
+
+	recreated := GetGlobalPoolService()
+	if recreated == nil {
+		t.Fatal("expected GetGlobalPoolService to recreate a singleton after clear")
+	}
+	if recreated == injected {
+		t.Fatal("expected recreated global pool to differ from cleared injected instance")
+	}
+}

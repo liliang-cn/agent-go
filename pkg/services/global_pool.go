@@ -49,6 +49,21 @@ func GetGlobalPoolService() *GlobalPoolService {
 	return globalPoolService
 }
 
+// SetGlobalPoolService installs or replaces the process-global pool service.
+// Passing nil clears the installed singleton; the next GetGlobalPoolService()
+// call will lazily create a fresh empty instance.
+//
+// The caller owns lifecycle management for both the previous and replacement
+// services. This function does not automatically Close or Shutdown either one.
+func SetGlobalPoolService(service *GlobalPoolService) (previous *GlobalPoolService) {
+	globalPoolMu.Lock()
+	defer globalPoolMu.Unlock()
+
+	previous = globalPoolService
+	globalPoolService = service
+	return previous
+}
+
 // Initialize 初始化pool
 func (s *GlobalPoolService) Initialize(ctx context.Context, cfg *config.Config) error {
 	s.mu.Lock()
