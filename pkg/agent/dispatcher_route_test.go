@@ -294,8 +294,11 @@ func TestRouteBuiltInRequestVerifiesOperatorCompletion(t *testing.T) {
 	t.Parallel()
 
 	var prompts []string
+	var promptsMu sync.Mutex
 	dispatch := func(ctx context.Context, agentName, prompt string, opts []RunOption) (string, error) {
+		promptsMu.Lock()
 		prompts = append(prompts, agentName+": "+prompt)
+		promptsMu.Unlock()
 		switch agentName {
 		case defaultIntentRouterAgentName:
 			return "TARGET_AGENT: Operator\nINTENT_TYPE: tool_execution\nREASON: execution request\nNEEDS_OPTIMIZATION: no", nil

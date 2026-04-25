@@ -374,11 +374,12 @@ func (m *TeamManager) EnqueueSharedTaskForTeam(ctx context.Context, teamID, orch
 		return nil, err
 	}
 
+	queuedTask := cloneSharedTask(task)
 	if shouldStartWorker {
 		go m.runSharedTaskQueue(context.WithoutCancel(ctx), team.ID)
 	}
 
-	return cloneSharedTask(task), nil
+	return queuedTask, nil
 }
 
 // ListSharedTasks returns recent queued or completed team tasks for one orchestrator.

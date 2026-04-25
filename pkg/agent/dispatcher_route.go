@@ -86,12 +86,12 @@ func routeBuiltInRequestWithDispatcher(ctx context.Context, prompt string, query
 
 	go func() {
 		defer wg.Done()
-		routerRaw, routerErr = dispatch(ctx, defaultIntentRouterAgentName, buildIntentRouterTaskPrompt(prompt, availableMCPTools), append(runOptions, WithTaskID(parentTaskID+":router")))
+		routerRaw, routerErr = dispatch(ctx, defaultIntentRouterAgentName, buildIntentRouterTaskPrompt(prompt, availableMCPTools), withBuiltInRouteOptions(runOptions, WithTaskID(parentTaskID+":router")))
 	}()
 
 	go func() {
 		defer wg.Done()
-		optimizerRaw, optimizerErr = dispatch(ctx, defaultPromptOptimizerAgentName, buildPromptOptimizerTaskPrompt(prompt), append(runOptions, WithTaskID(parentTaskID+":optimizer")))
+		optimizerRaw, optimizerErr = dispatch(ctx, defaultPromptOptimizerAgentName, buildPromptOptimizerTaskPrompt(prompt), withBuiltInRouteOptions(runOptions, WithTaskID(parentTaskID+":optimizer")))
 	}()
 
 	wg.Wait()
@@ -118,7 +118,7 @@ func routeBuiltInRequestWithDispatcher(ctx context.Context, prompt string, query
 
 	finalPrompt := buildFinalBuiltInDispatchPrompt(prompt, optimizedPrompt, decision)
 	dispatchTaskID := parentTaskID + ":dispatch"
-	result, err := dispatch(ctx, decision.TargetAgent, finalPrompt, append(runOptions, WithTaskID(dispatchTaskID)))
+	result, err := dispatch(ctx, decision.TargetAgent, finalPrompt, withBuiltInRouteOptions(runOptions, WithTaskID(dispatchTaskID)))
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +126,7 @@ func routeBuiltInRequestWithDispatcher(ctx context.Context, prompt string, query
 	if shouldVerifyBuiltInDispatchCompletion(prompt, decision) {
 		verifyPrompt := buildBuiltInCompletionVerificationPrompt(prompt, finalPrompt, result, decision)
 		if strings.TrimSpace(verifyPrompt) != "" {
-			if verifyRaw, verifyErr := dispatch(ctx, defaultVerifierAgentName, verifyPrompt, append(runOptions, WithTaskID(parentTaskID+":verify"))); verifyErr == nil {
+			if verifyRaw, verifyErr := dispatch(ctx, defaultVerifierAgentName, verifyPrompt, withBuiltInRouteOptions(runOptions, WithTaskID(parentTaskID+":verify"))); verifyErr == nil {
 				verificationResult = strings.TrimSpace(verifyRaw)
 				if verified := applyBuiltInVerificationResult(result, verificationResult); strings.TrimSpace(verified) != "" {
 					result = verified
@@ -146,6 +146,13 @@ func routeBuiltInRequestWithDispatcher(ctx context.Context, prompt string, query
 		RouterRaw:          routerRaw,
 		OptimizerRaw:       optimizerRaw,
 	}, nil
+}
+
+func withBuiltInRouteOptions(base []RunOption, extra ...RunOption) []RunOption {
+	opts := make([]RunOption, 0, len(base)+len(extra))
+	opts = append(opts, base...)
+	opts = append(opts, extra...)
+	return opts
 }
 
 func buildIntentRouterTaskPrompt(userPrompt string, availableMCPTools []string) string {
