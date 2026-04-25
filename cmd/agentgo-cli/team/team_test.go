@@ -10,7 +10,7 @@ import (
 func TestParseDelegatedTasks(t *testing.T) {
 	isKnown := func(name string) bool {
 		switch name {
-		case "Captain", "Writer":
+		case "Orchestrator", "Writer":
 			return true
 		default:
 			return false
@@ -29,21 +29,21 @@ func TestParseDelegatedTasks(t *testing.T) {
 func TestParseDelegatedTasksWithLeadingSharedMentions(t *testing.T) {
 	isKnown := func(name string) bool {
 		switch name {
-		case "Captain", "Writer":
+		case "Orchestrator", "Writer":
 			return true
 		default:
 			return false
 		}
 	}
 
-	tasks, err := parseDelegatedTasks("@Captain @Writer 总结当前仓库的 UI 和后端关系，并在 workspace 里写一份说明", isKnown)
+	tasks, err := parseDelegatedTasks("@Orchestrator @Writer 总结当前仓库的 UI 和后端关系，并在 workspace 里写一份说明", isKnown)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(tasks) != 2 {
 		t.Fatalf("expected 2 tasks, got %+v", tasks)
 	}
-	if tasks[0].AgentName != "Captain" || tasks[1].AgentName != "Writer" {
+	if tasks[0].AgentName != "Orchestrator" || tasks[1].AgentName != "Writer" {
 		t.Fatalf("unexpected agent order: %+v", tasks)
 	}
 	want := "总结当前仓库的 UI 和后端关系，并在 workspace 里写一份说明"

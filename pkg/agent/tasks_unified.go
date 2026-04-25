@@ -100,7 +100,7 @@ func unifiedTaskFromAsync(task *AsyncTask) *UnifiedTask {
 		Awaiting:         awaitingStateFromAsync(task),
 		TeamID:           strings.TrimSpace(task.TeamID),
 		TeamName:         strings.TrimSpace(task.TeamName),
-		AgentName:        firstNonEmptyTaskString(task.AgentName, task.CaptainName),
+		AgentName:        firstNonEmptyTaskString(task.AgentName, task.OrchestratorName),
 		AgentNames:       append([]string(nil), task.AgentNames...),
 		Input:            task.Prompt,
 		Output:           task.ResultText,
@@ -136,7 +136,7 @@ func awaitingStateFromAsync(task *AsyncTask) *taskpkg.AwaitingState {
 		Type:      "resume",
 		Reason:    task.Error,
 		Since:     since,
-		AgentName: firstNonEmptyTaskString(task.AgentName, task.CaptainName),
+		AgentName: firstNonEmptyTaskString(task.AgentName, task.OrchestratorName),
 	}
 }
 
@@ -155,18 +155,18 @@ func convertTaskEvents(events []*TaskEvent) []taskpkg.Event {
 			continue
 		}
 		out = append(out, taskpkg.Event{
-			ID:          event.ID,
-			TaskID:      event.TaskID,
-			SessionID:   event.SessionID,
-			Kind:        taskpkg.Kind(event.Kind),
-			Status:      taskpkg.Status(event.Status),
-			Type:        string(event.Type),
-			TeamID:      event.TeamID,
-			TeamName:    event.TeamName,
-			CaptainName: event.CaptainName,
-			AgentName:   event.AgentName,
-			Message:     event.Message,
-			Timestamp:   event.Timestamp,
+			ID:               event.ID,
+			TaskID:           event.TaskID,
+			SessionID:        event.SessionID,
+			Kind:             taskpkg.Kind(event.Kind),
+			Status:           taskpkg.Status(event.Status),
+			Type:             string(event.Type),
+			TeamID:           event.TeamID,
+			TeamName:         event.TeamName,
+			OrchestratorName: event.OrchestratorName,
+			AgentName:        event.AgentName,
+			Message:          event.Message,
+			Timestamp:        event.Timestamp,
 		})
 	}
 	return out

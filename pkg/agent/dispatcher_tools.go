@@ -9,15 +9,15 @@ import (
 	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 )
 
-func (m *TeamManager) RegisterConciergeTools(concierge *Service) {
-	if concierge == nil {
+func (m *TeamManager) RegisterDispatcherTools(dispatcher *Service) {
+	if dispatcher == nil {
 		return
 	}
-	configureConciergeService(concierge)
-	m.configureConciergeVerifierHook(concierge)
+	configureDispatcherService(dispatcher)
+	m.configureDispatcherVerifierHook(dispatcher)
 
 	register := func(name, description string, parameters map[string]interface{}, metadata ToolMetadata, handler func(context.Context, map[string]interface{}) (interface{}, error)) {
-		concierge.AddToolWithMetadata(name, description, parameters, handler, metadata)
+		dispatcher.AddToolWithMetadata(name, description, parameters, handler, metadata)
 	}
 
 	register("route_builtin_request", "Run PromptOptimizer and IntentRouter in parallel, then dispatch the optimized request to the best-fit built-in specialist and return the inline result.", map[string]interface{}{
@@ -38,7 +38,7 @@ func (m *TeamManager) RegisterConciergeTools(concierge *Service) {
 		if prompt == "" {
 			return nil, fmt.Errorf("prompt is required")
 		}
-		queryContext := concierge.resolveMemoryQueryContextFromContext(ctx)
+		queryContext := dispatcher.resolveMemoryQueryContextFromContext(ctx)
 		routed, err := m.routeBuiltInRequest(ctx, prompt, queryContext)
 		if err != nil {
 			return nil, err
@@ -71,7 +71,7 @@ func (m *TeamManager) RegisterConciergeTools(concierge *Service) {
 				"description":     status.Description,
 				"status":          status.Status,
 				"agent_count":     status.AgentCount,
-				"captains":        append([]string(nil), status.CaptainNames...),
+				"orchestrators":   append([]string(nil), status.OrchestratorNames...),
 				"running_tasks":   status.RunningTasks,
 				"queued_tasks":    status.QueuedTasks,
 				"active_task_ids": append([]string(nil), status.ActiveTaskIDs...),
@@ -170,7 +170,7 @@ func (m *TeamManager) RegisterConciergeTools(concierge *Service) {
 			return nil, fmt.Errorf("prompt is required")
 		}
 
-		task, err := m.SubmitAgentTask(ctx, concierge.CurrentSessionID(), agentName, prompt)
+		task, err := m.SubmitAgentTask(ctx, dispatcher.CurrentSessionID(), agentName, prompt)
 		if err != nil {
 			return nil, err
 		}
@@ -194,7 +194,7 @@ func (m *TeamManager) RegisterConciergeTools(concierge *Service) {
 			"agent_names": map[string]interface{}{
 				"type":        "array",
 				"items":       map[string]interface{}{"type": "string"},
-				"description": "Optional target agent names. Defaults to the team captain.",
+				"description": "Optional target agent names. Defaults to the team orchestrator.",
 			},
 		},
 		"required": []string{"prompt"},
@@ -218,19 +218,19 @@ func (m *TeamManager) RegisterConciergeTools(concierge *Service) {
 			agentNames = []string{lead.Name}
 		}
 
-		task, err := m.SubmitTeamTask(ctx, concierge.CurrentSessionID(), team.ID, prompt, agentNames)
+		task, err := m.SubmitTeamTask(ctx, dispatcher.CurrentSessionID(), team.ID, prompt, agentNames)
 		if err != nil {
 			return nil, err
 		}
 
 		return map[string]interface{}{
-			"task_id":      task.ID,
-			"team_id":      task.TeamID,
-			"team_name":    team.Name,
-			"captain_name": task.CaptainName,
-			"agent_names":  append([]string(nil), task.AgentNames...),
-			"ack_message":  task.AckMessage,
-			"status":       task.Status,
+			"task_id":           task.ID,
+			"team_id":           task.TeamID,
+			"team_name":         team.Name,
+			"orchestrator_name": task.OrchestratorName,
+			"agent_names":       append([]string(nil), task.AgentNames...),
+			"ack_message":       task.AckMessage,
+			"status":            task.Status,
 		}, nil
 	})
 
@@ -251,7 +251,7 @@ func (m *TeamManager) RegisterConciergeTools(concierge *Service) {
 		return m.GetTask(taskID)
 	})
 
-	register("list_session_tasks", "List recent background tasks created in the current Concierge conversation.", map[string]interface{}{
+	register("list_session_tasks", "List recent background tasks created in the current Dispatcher conversation.", map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
 			"limit": map[string]interface{}{
@@ -260,7 +260,7 @@ func (m *TeamManager) RegisterConciergeTools(concierge *Service) {
 			},
 		},
 	}, ToolMetadata{ReadOnly: true, ConcurrencySafe: true, InterruptBehavior: InterruptBehaviorCancel}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-		sessionID := strings.TrimSpace(concierge.CurrentSessionID())
+		sessionID := strings.TrimSpace(dispatcher.CurrentSessionID())
 		if sessionID == "" {
 			return []map[string]interface{}{}, nil
 		}
@@ -303,23 +303,23 @@ func (m *TeamManager) RegisterConciergeTools(concierge *Service) {
 		out := make([]map[string]interface{}, 0, len(tasks))
 		for _, task := range tasks {
 			out = append(out, map[string]interface{}{
-				"task_id":      task.ID,
-				"captain_name": task.CaptainName,
-				"agent_names":  append([]string(nil), task.AgentNames...),
-				"prompt":       task.Prompt,
-				"status":       task.Status,
-				"ack_message":  task.AckMessage,
-				"result_text":  task.ResultText,
-				"created_at":   task.CreatedAt,
-				"started_at":   task.StartedAt,
-				"finished_at":  task.FinishedAt,
+				"task_id":           task.ID,
+				"orchestrator_name": task.OrchestratorName,
+				"agent_names":       append([]string(nil), task.AgentNames...),
+				"prompt":            task.Prompt,
+				"status":            task.Status,
+				"ack_message":       task.AckMessage,
+				"result_text":       task.ResultText,
+				"created_at":        task.CreatedAt,
+				"started_at":        task.StartedAt,
+				"finished_at":       task.FinishedAt,
 			})
 		}
 		return out, nil
 	})
 }
 
-var conciergeBaseAllowedToolNames = map[string]struct{}{
+var dispatcherBaseAllowedToolNames = map[string]struct{}{
 	"task_complete":         {},
 	"task_blocked":          {},
 	"llm":                   {},
@@ -337,13 +337,13 @@ var conciergeBaseAllowedToolNames = map[string]struct{}{
 	"list_team_tasks":       {},
 }
 
-func configureConciergeService(concierge *Service) {
-	if concierge == nil {
+func configureDispatcherService(dispatcher *Service) {
+	if dispatcher == nil {
 		return
 	}
-	allowedToolNames := conciergeAllowedToolNames(concierge)
+	allowedToolNames := dispatcherAllowedToolNames(dispatcher)
 
-	if concierge.toolRegistry != nil {
+	if dispatcher.toolRegistry != nil {
 		for _, name := range []string{
 			"delegate_to_subagent",
 			"search_available_tools",
@@ -355,34 +355,34 @@ func configureConciergeService(concierge *Service) {
 			"memory_delete",
 		} {
 			if _, ok := allowedToolNames[name]; !ok {
-				concierge.toolRegistry.Unregister(name)
+				dispatcher.toolRegistry.Unregister(name)
 			}
 		}
 	}
 
-	if concierge.agent != nil {
-		filteredTools := make([]domain.ToolDefinition, 0, len(concierge.agent.tools))
-		for _, tool := range concierge.agent.tools {
+	if dispatcher.agent != nil {
+		filteredTools := make([]domain.ToolDefinition, 0, len(dispatcher.agent.tools))
+		for _, tool := range dispatcher.agent.tools {
 			if _, ok := allowedToolNames[tool.Function.Name]; ok {
 				filteredTools = append(filteredTools, tool)
 			}
 		}
-		concierge.agent.SetTools(filteredTools)
+		dispatcher.agent.SetTools(filteredTools)
 
-		for name := range concierge.agent.handlers {
+		for name := range dispatcher.agent.handlers {
 			if _, ok := allowedToolNames[name]; !ok {
-				delete(concierge.agent.handlers, name)
+				delete(dispatcher.agent.handlers, name)
 			}
 		}
 	}
 }
 
-func conciergeAllowedToolNames(concierge *Service) map[string]struct{} {
-	allowed := make(map[string]struct{}, len(conciergeBaseAllowedToolNames)+4)
-	for name := range conciergeBaseAllowedToolNames {
+func dispatcherAllowedToolNames(dispatcher *Service) map[string]struct{} {
+	allowed := make(map[string]struct{}, len(dispatcherBaseAllowedToolNames)+4)
+	for name := range dispatcherBaseAllowedToolNames {
 		allowed[name] = struct{}{}
 	}
-	if concierge != nil && concierge.shouldExposeMemoryTools() {
+	if dispatcher != nil && dispatcher.shouldExposeMemoryTools() {
 		allowed["memory_save"] = struct{}{}
 		allowed["memory_recall"] = struct{}{}
 		allowed["memory_update"] = struct{}{}
@@ -391,25 +391,25 @@ func conciergeAllowedToolNames(concierge *Service) map[string]struct{} {
 	return allowed
 }
 
-func configureCaptainService(captain *Service) {
-	if captain == nil {
+func configureOrchestratorService(orchestrator *Service) {
+	if orchestrator == nil {
 		return
 	}
 
-	if captain.toolRegistry != nil {
-		captain.toolRegistry.Unregister("delegate_to_subagent")
+	if orchestrator.toolRegistry != nil {
+		orchestrator.toolRegistry.Unregister("delegate_to_subagent")
 	}
 
-	if captain.agent != nil {
-		filteredTools := make([]domain.ToolDefinition, 0, len(captain.agent.tools))
-		for _, tool := range captain.agent.tools {
+	if orchestrator.agent != nil {
+		filteredTools := make([]domain.ToolDefinition, 0, len(orchestrator.agent.tools))
+		for _, tool := range orchestrator.agent.tools {
 			if tool.Function.Name == "delegate_to_subagent" {
 				continue
 			}
 			filteredTools = append(filteredTools, tool)
 		}
-		captain.agent.SetTools(filteredTools)
-		delete(captain.agent.handlers, "delegate_to_subagent")
+		orchestrator.agent.SetTools(filteredTools)
+		delete(orchestrator.agent.handlers, "delegate_to_subagent")
 	}
 }
 

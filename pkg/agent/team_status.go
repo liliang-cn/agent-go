@@ -7,19 +7,19 @@ import (
 )
 
 type TeamRuntimeStatus struct {
-	TeamID          string   `json:"team_id"`
-	Name            string   `json:"name"`
-	Description     string   `json:"description"`
-	EnableA2A       bool     `json:"enable_a2a"`
-	Status          string   `json:"status"`
-	AgentCount      int      `json:"agent_count"`
-	CaptainCount    int      `json:"captain_count"`
-	SpecialistCount int      `json:"specialist_count"`
-	CaptainNames    []string `json:"captain_names,omitempty"`
-	RunningCaptains []string `json:"running_captains,omitempty"`
-	ActiveTaskIDs   []string `json:"active_task_ids,omitempty"`
-	RunningTasks    int      `json:"running_tasks"`
-	QueuedTasks     int      `json:"queued_tasks"`
+	TeamID               string   `json:"team_id"`
+	Name                 string   `json:"name"`
+	Description          string   `json:"description"`
+	EnableA2A            bool     `json:"enable_a2a"`
+	Status               string   `json:"status"`
+	AgentCount           int      `json:"agent_count"`
+	OrchestratorCount    int      `json:"orchestrator_count"`
+	SpecialistCount      int      `json:"specialist_count"`
+	OrchestratorNames    []string `json:"orchestrator_names,omitempty"`
+	RunningOrchestrators []string `json:"running_orchestrators,omitempty"`
+	ActiveTaskIDs        []string `json:"active_task_ids,omitempty"`
+	RunningTasks         int      `json:"running_tasks"`
+	QueuedTasks          int      `json:"queued_tasks"`
 }
 
 func (m *TeamManager) GetTeamStatus(teamID string) (*TeamRuntimeStatus, error) {
@@ -50,9 +50,9 @@ func (m *TeamManager) GetTeamStatus(teamID string) (*TeamRuntimeStatus, error) {
 	for _, member := range members {
 		status.AgentCount++
 		switch member.Kind {
-		case AgentKindCaptain:
-			status.CaptainCount++
-			status.CaptainNames = append(status.CaptainNames, member.Name)
+		case AgentKindOrchestrator:
+			status.OrchestratorCount++
+			status.OrchestratorNames = append(status.OrchestratorNames, member.Name)
 			leadSet[member.Name] = struct{}{}
 		case AgentKindSpecialist:
 			status.SpecialistCount++
@@ -64,14 +64,14 @@ func (m *TeamManager) GetTeamStatus(teamID string) (*TeamRuntimeStatus, error) {
 		if task.TeamID != teamID {
 			continue
 		}
-		if _, ok := leadSet[task.CaptainName]; !ok {
+		if _, ok := leadSet[task.OrchestratorName]; !ok {
 			continue
 		}
 		switch task.Status {
 		case SharedTaskStatusRunning:
 			status.RunningTasks++
 			status.ActiveTaskIDs = append(status.ActiveTaskIDs, task.ID)
-			status.RunningCaptains = append(status.RunningCaptains, task.CaptainName)
+			status.RunningOrchestrators = append(status.RunningOrchestrators, task.OrchestratorName)
 		case SharedTaskStatusQueued:
 			status.QueuedTasks++
 		}
@@ -83,12 +83,12 @@ func (m *TeamManager) GetTeamStatus(teamID string) (*TeamRuntimeStatus, error) {
 		status.Status = "running"
 	case status.QueuedTasks > 0:
 		status.Status = "queued"
-	case status.CaptainCount == 0:
+	case status.OrchestratorCount == 0:
 		status.Status = "empty"
 	}
 
-	slices.Sort(status.CaptainNames)
-	slices.Sort(status.RunningCaptains)
+	slices.Sort(status.OrchestratorNames)
+	slices.Sort(status.RunningOrchestrators)
 	slices.Sort(status.ActiveTaskIDs)
 	return status, nil
 }

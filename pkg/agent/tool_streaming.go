@@ -25,7 +25,7 @@ type StreamingToolExecutor interface {
 type TrackedTool struct {
 	ID                string
 	Call              domain.ToolCall
-	AssistantMessage  string
+	ResponderMessage  string
 	Status            ToolStatus
 	IsConcurrencySafe bool
 	ResultCh          chan *ToolExecutionResult // buffered channel for async result
@@ -78,7 +78,7 @@ func (s *streamingToolExecutor) AddTool(call domain.ToolCall, assistantMsg strin
 	tool := &TrackedTool{
 		ID:               call.ID,
 		Call:             call,
-		AssistantMessage: assistantMsg,
+		ResponderMessage: assistantMsg,
 		Status:           ToolStatusQueued,
 		ResultCh:         make(chan *ToolExecutionResult, 1),
 		PendingProgress:  make([]interface{}, 0),

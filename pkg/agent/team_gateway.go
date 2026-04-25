@@ -50,40 +50,40 @@ type TeamRequest struct {
 }
 
 type TeamResponse struct {
-	ProtocolVersion string             `json:"protocol_version,omitempty"`
-	ID              string             `json:"id"`
-	RequestID       string             `json:"request_id,omitempty"`
-	SessionID       string             `json:"session_id,omitempty"`
-	TeamID          string             `json:"team_id,omitempty"`
-	TeamName        string             `json:"team_name,omitempty"`
-	CaptainName     string             `json:"captain_name,omitempty"`
-	AgentNames      []string           `json:"agent_names,omitempty"`
-	Prompt          string             `json:"prompt,omitempty"`
-	Status          TeamResponseStatus `json:"status"`
-	AckMessage      string             `json:"ack_message,omitempty"`
-	ResultText      string             `json:"result_text,omitempty"`
-	Error           string             `json:"error,omitempty"`
-	CreatedAt       time.Time          `json:"created_at"`
-	StartedAt       *time.Time         `json:"started_at,omitempty"`
-	FinishedAt      *time.Time         `json:"finished_at,omitempty"`
-	Metadata        map[string]any     `json:"metadata,omitempty"`
+	ProtocolVersion  string             `json:"protocol_version,omitempty"`
+	ID               string             `json:"id"`
+	RequestID        string             `json:"request_id,omitempty"`
+	SessionID        string             `json:"session_id,omitempty"`
+	TeamID           string             `json:"team_id,omitempty"`
+	TeamName         string             `json:"team_name,omitempty"`
+	OrchestratorName string             `json:"orchestrator_name,omitempty"`
+	AgentNames       []string           `json:"agent_names,omitempty"`
+	Prompt           string             `json:"prompt,omitempty"`
+	Status           TeamResponseStatus `json:"status"`
+	AckMessage       string             `json:"ack_message,omitempty"`
+	ResultText       string             `json:"result_text,omitempty"`
+	Error            string             `json:"error,omitempty"`
+	CreatedAt        time.Time          `json:"created_at"`
+	StartedAt        *time.Time         `json:"started_at,omitempty"`
+	FinishedAt       *time.Time         `json:"finished_at,omitempty"`
+	Metadata         map[string]any     `json:"metadata,omitempty"`
 }
 
 type TeamResponseEvent struct {
-	ProtocolVersion string                `json:"protocol_version,omitempty"`
-	ID              string                `json:"id"`
-	ResponseID      string                `json:"response_id"`
-	RequestID       string                `json:"request_id,omitempty"`
-	SessionID       string                `json:"session_id,omitempty"`
-	TeamID          string                `json:"team_id,omitempty"`
-	TeamName        string                `json:"team_name,omitempty"`
-	CaptainName     string                `json:"captain_name,omitempty"`
-	Type            TeamResponseEventType `json:"type"`
-	Status          TeamResponseStatus    `json:"status"`
-	Message         string                `json:"message,omitempty"`
-	Runtime         *Event                `json:"runtime,omitempty"`
-	Timestamp       time.Time             `json:"timestamp"`
-	Metadata        map[string]any        `json:"metadata,omitempty"`
+	ProtocolVersion  string                `json:"protocol_version,omitempty"`
+	ID               string                `json:"id"`
+	ResponseID       string                `json:"response_id"`
+	RequestID        string                `json:"request_id,omitempty"`
+	SessionID        string                `json:"session_id,omitempty"`
+	TeamID           string                `json:"team_id,omitempty"`
+	TeamName         string                `json:"team_name,omitempty"`
+	OrchestratorName string                `json:"orchestrator_name,omitempty"`
+	Type             TeamResponseEventType `json:"type"`
+	Status           TeamResponseStatus    `json:"status"`
+	Message          string                `json:"message,omitempty"`
+	Runtime          *Event                `json:"runtime,omitempty"`
+	Timestamp        time.Time             `json:"timestamp"`
+	Metadata         map[string]any        `json:"metadata,omitempty"`
 }
 
 type TeamGateway interface {
@@ -217,22 +217,22 @@ func (m *TeamManager) teamResponseFromAsyncTask(task *AsyncTask) *TeamResponse {
 	}
 	req := m.teamRequestForResponse(task.ID)
 	resp := &TeamResponse{
-		ProtocolVersion: TeamGatewayProtocolVersion,
-		ID:              task.ID,
-		SessionID:       strings.TrimSpace(task.SessionID),
-		TeamID:          strings.TrimSpace(task.TeamID),
-		TeamName:        strings.TrimSpace(task.TeamName),
-		CaptainName:     strings.TrimSpace(task.CaptainName),
-		AgentNames:      append([]string(nil), task.AgentNames...),
-		Prompt:          strings.TrimSpace(task.Prompt),
-		Status:          teamResponseStatusFromAsyncTask(task.Status),
-		AckMessage:      strings.TrimSpace(task.AckMessage),
-		ResultText:      strings.TrimSpace(task.ResultText),
-		Error:           strings.TrimSpace(task.Error),
-		CreatedAt:       task.CreatedAt,
-		StartedAt:       cloneTimePtr(task.StartedAt),
-		FinishedAt:      cloneTimePtr(task.FinishedAt),
-		Metadata:        cloneStructuredMap(nil),
+		ProtocolVersion:  TeamGatewayProtocolVersion,
+		ID:               task.ID,
+		SessionID:        strings.TrimSpace(task.SessionID),
+		TeamID:           strings.TrimSpace(task.TeamID),
+		TeamName:         strings.TrimSpace(task.TeamName),
+		OrchestratorName: strings.TrimSpace(task.OrchestratorName),
+		AgentNames:       append([]string(nil), task.AgentNames...),
+		Prompt:           strings.TrimSpace(task.Prompt),
+		Status:           teamResponseStatusFromAsyncTask(task.Status),
+		AckMessage:       strings.TrimSpace(task.AckMessage),
+		ResultText:       strings.TrimSpace(task.ResultText),
+		Error:            strings.TrimSpace(task.Error),
+		CreatedAt:        task.CreatedAt,
+		StartedAt:        cloneTimePtr(task.StartedAt),
+		FinishedAt:       cloneTimePtr(task.FinishedAt),
+		Metadata:         cloneStructuredMap(nil),
 	}
 	if req != nil {
 		resp.RequestID = req.ID
@@ -264,19 +264,19 @@ func (m *TeamManager) teamResponseEventFromTaskEvent(responseID string, evt *Tas
 	}
 	req := m.teamRequestForResponse(responseID)
 	out := &TeamResponseEvent{
-		ProtocolVersion: TeamGatewayProtocolVersion,
-		ID:              strings.TrimSpace(evt.ID),
-		ResponseID:      strings.TrimSpace(responseID),
-		SessionID:       strings.TrimSpace(evt.SessionID),
-		TeamID:          strings.TrimSpace(evt.TeamID),
-		TeamName:        strings.TrimSpace(evt.TeamName),
-		CaptainName:     strings.TrimSpace(evt.CaptainName),
-		Type:            teamResponseEventTypeFromTaskEvent(evt),
-		Status:          teamResponseStatusFromTaskEvent(evt),
-		Message:         strings.TrimSpace(evt.Message),
-		Runtime:         cloneAgentEvent(evt.Runtime),
-		Timestamp:       evt.Timestamp,
-		Metadata:        cloneStructuredMap(nil),
+		ProtocolVersion:  TeamGatewayProtocolVersion,
+		ID:               strings.TrimSpace(evt.ID),
+		ResponseID:       strings.TrimSpace(responseID),
+		SessionID:        strings.TrimSpace(evt.SessionID),
+		TeamID:           strings.TrimSpace(evt.TeamID),
+		TeamName:         strings.TrimSpace(evt.TeamName),
+		OrchestratorName: strings.TrimSpace(evt.OrchestratorName),
+		Type:             teamResponseEventTypeFromTaskEvent(evt),
+		Status:           teamResponseStatusFromTaskEvent(evt),
+		Message:          strings.TrimSpace(evt.Message),
+		Runtime:          cloneAgentEvent(evt.Runtime),
+		Timestamp:        evt.Timestamp,
+		Metadata:         cloneStructuredMap(nil),
 	}
 	if out.ID == "" {
 		out.ID = uuid.NewString()

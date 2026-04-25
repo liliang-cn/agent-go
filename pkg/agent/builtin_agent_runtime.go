@@ -56,13 +56,13 @@ type builtInRuntimeSnapshot struct {
 
 func defaultBuiltInRuntimeAgentNames() []string {
 	return []string{
-		defaultConciergeAgentName,
-		defaultCaptainAgentName,
+		defaultDispatcherAgentName,
+		defaultOrchestratorAgentName,
 		defaultIntentRouterAgentName,
 		defaultPromptOptimizerAgentName,
-		defaultAssistantAgentName,
+		defaultResponderAgentName,
 		defaultOperatorAgentName,
-		defaultStakeholderAgentName,
+		defaultEvaluatorAgentName,
 		defaultArchivistAgentName,
 		defaultVerifierAgentName,
 	}
@@ -70,7 +70,7 @@ func defaultBuiltInRuntimeAgentNames() []string {
 
 func builtInRuntimeWorkerCount(agentName string) int {
 	switch strings.ToLower(strings.TrimSpace(agentName)) {
-	case strings.ToLower(defaultConciergeAgentName):
+	case strings.ToLower(defaultDispatcherAgentName):
 		return 8
 	case strings.ToLower(defaultIntentRouterAgentName):
 		return 4
@@ -83,7 +83,7 @@ func builtInRuntimeWorkerCount(agentName string) int {
 
 func builtInRuntimeQueueSize(agentName string) int {
 	switch strings.ToLower(strings.TrimSpace(agentName)) {
-	case strings.ToLower(defaultConciergeAgentName):
+	case strings.ToLower(defaultDispatcherAgentName):
 		return 256
 	case strings.ToLower(defaultIntentRouterAgentName), strings.ToLower(defaultPromptOptimizerAgentName):
 		return 128

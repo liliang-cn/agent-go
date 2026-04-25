@@ -120,13 +120,14 @@ type IntentResult struct {
 
 // Message represents a conversation message, used for tool calling
 type Message struct {
-	Role             string     `json:"role"` // user, assistant, tool
-	Content          string     `json:"content"`
-	ReasoningContent string     `json:"reasoning_content,omitempty"`
-	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID       string     `json:"tool_call_id,omitempty"`
-	TaskID           string     `json:"task_id,omitempty"`
-	ResponseID       string     `json:"response_id,omitempty"` // For stateful Response API
+	Role             string        `json:"role"` // user, assistant, tool
+	Content          string        `json:"content"`
+	Parts            []MessagePart `json:"parts,omitempty"`
+	ReasoningContent string        `json:"reasoning_content,omitempty"`
+	ToolCalls        []ToolCall    `json:"tool_calls,omitempty"`
+	ToolCallID       string        `json:"tool_call_id,omitempty"`
+	TaskID           string        `json:"task_id,omitempty"`
+	ResponseID       string        `json:"response_id,omitempty"` // For stateful Response API
 }
 
 type Generator interface {

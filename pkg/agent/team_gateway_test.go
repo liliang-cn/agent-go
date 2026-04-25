@@ -10,16 +10,16 @@ func TestGetTeamResponseIncludesRecordedRequestMetadata(t *testing.T) {
 	now := time.Now()
 
 	manager.upsertAsyncTask(&AsyncTask{
-		ID:          "team-response-1",
-		SessionID:   "session-1",
-		Kind:        AsyncTaskKindTeam,
-		Status:      AsyncTaskStatusQueued,
-		TeamID:      "team-1",
-		TeamName:    "Docs Team",
-		CaptainName: "Docs Team Captain",
-		Prompt:      "summarize docs",
-		AckMessage:  "accepted",
-		CreatedAt:   now,
+		ID:               "team-response-1",
+		SessionID:        "session-1",
+		Kind:             AsyncTaskKindTeam,
+		Status:           AsyncTaskStatusQueued,
+		TeamID:           "team-1",
+		TeamName:         "Docs Team",
+		OrchestratorName: "Docs Team Orchestrator",
+		Prompt:           "summarize docs",
+		AckMessage:       "accepted",
+		CreatedAt:        now,
 	})
 	manager.recordTeamRequest("team-response-1", &TeamRequest{
 		ID:              "team-request-1",
@@ -60,15 +60,15 @@ func TestSubscribeTeamResponseConvertsRuntimeEvent(t *testing.T) {
 	now := time.Now()
 
 	manager.upsertAsyncTask(&AsyncTask{
-		ID:          "team-response-live",
-		SessionID:   "session-live",
-		Kind:        AsyncTaskKindTeam,
-		Status:      AsyncTaskStatusRunning,
-		TeamID:      "team-1",
-		TeamName:    "Docs Team",
-		CaptainName: "Docs Team Captain",
-		Prompt:      "summarize docs",
-		CreatedAt:   now,
+		ID:               "team-response-live",
+		SessionID:        "session-live",
+		Kind:             AsyncTaskKindTeam,
+		Status:           AsyncTaskStatusRunning,
+		TeamID:           "team-1",
+		TeamName:         "Docs Team",
+		OrchestratorName: "Docs Team Orchestrator",
+		Prompt:           "summarize docs",
+		CreatedAt:        now,
 	})
 	manager.recordTeamRequest("team-response-live", &TeamRequest{
 		ID:          "team-request-live",
@@ -86,23 +86,23 @@ func TestSubscribeTeamResponseConvertsRuntimeEvent(t *testing.T) {
 	defer unsubscribe()
 
 	manager.emitTaskEvent("team-response-live", &TaskEvent{
-		TaskID:      "team-response-live",
-		SessionID:   "session-live",
-		Kind:        AsyncTaskKindTeam,
-		Status:      AsyncTaskStatusRunning,
-		Type:        TaskEventTypeRuntime,
-		TeamID:      "team-1",
-		TeamName:    "Docs Team",
-		CaptainName: "Docs Team Captain",
+		TaskID:           "team-response-live",
+		SessionID:        "session-live",
+		Kind:             AsyncTaskKindTeam,
+		Status:           AsyncTaskStatusRunning,
+		Type:             TaskEventTypeRuntime,
+		TeamID:           "team-1",
+		TeamName:         "Docs Team",
+		OrchestratorName: "Docs Team Orchestrator",
 		Runtime: &Event{
 			Type:      EventTypePartial,
-			AgentName: "Docs Team Captain",
+			AgentName: "Docs Team Orchestrator",
 			Content:   "partial team output",
 			Timestamp: time.Now(),
 		},
 		Timestamp: time.Now(),
 	}, false)
-	manager.completeAsyncTask("team-response-live", "done", "Docs Team Captain")
+	manager.completeAsyncTask("team-response-live", "done", "Docs Team Orchestrator")
 
 	select {
 	case evt := <-events:

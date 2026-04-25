@@ -207,9 +207,9 @@ type serviceExecutionLoopState struct {
 	Metrics        executionMetrics
 	ToolUsed       bool
 	Nudged         bool
-	roundStartedAt time.Time      // set at the start of each round
-	currentRound   roundMetrics   // accumulator for the current round
-	execStartedAt  time.Time      // overall execution start
+	roundStartedAt time.Time    // set at the start of each round
+	currentRound   roundMetrics // accumulator for the current round
+	execStartedAt  time.Time    // overall execution start
 }
 
 func newServiceExecutionLoopState(goal string, messages []domain.Message, intent *IntentRecognitionResult, maxRounds int, currentAgent *Agent) *serviceExecutionLoopState {

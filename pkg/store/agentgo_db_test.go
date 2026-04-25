@@ -116,7 +116,7 @@ func TestNewAgentGoDBMigratesLegacySharedTasksColumns(t *testing.T) {
 			session_id TEXT,
 			squad_id TEXT NOT NULL,
 			squad_name TEXT,
-			captain_name TEXT NOT NULL,
+			orchestrator_name TEXT NOT NULL,
 			agent_names TEXT NOT NULL,
 			prompt TEXT NOT NULL,
 			ack_message TEXT,

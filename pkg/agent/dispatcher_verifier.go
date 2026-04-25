@@ -7,9 +7,9 @@ import (
 
 const VerifierAgentName = "Verifier"
 
-func (m *TeamManager) configureConciergeVerifierHook(concierge *Service) {
-	m.ConfigureFollowUpAgentHook(concierge, FollowUpAgentPolicy{
-		HookDescription: "concierge_verifier_async_review",
+func (m *TeamManager) configureDispatcherVerifierHook(dispatcher *Service) {
+	m.ConfigureFollowUpAgentHook(dispatcher, FollowUpAgentPolicy{
+		HookDescription: "dispatcher_verifier_async_review",
 		AgentName:       VerifierAgentName,
 		Priority:        200,
 		ScenarioTags:    []string{"recall", "conflict", "verification"},
@@ -37,19 +37,19 @@ func buildVerifierReviewPromptFromHook(data HookData) string {
 	if reply == "" {
 		reply = "(empty response)"
 	}
-	return fmt.Sprintf(`Review this completed Concierge recall turn for verification quality.
+	return fmt.Sprintf(`Review this completed Dispatcher recall turn for verification quality.
 If no verification follow-up is needed, reply exactly: NO_MEMORY_ACTION_NEEDED
 
 Your job:
 - Check whether the recalled answer appears consistent with the retrieved memories.
 - Flag stale or conflicting remembered values.
 - Produce one short user-facing supplement message prefixed with "Supplement:" when useful.
-- Prefer evidence-oriented wording and avoid repeating the full Concierge answer.
+- Prefer evidence-oriented wording and avoid repeating the full Dispatcher answer.
 
 Conversation context:
 - Session ID: %s
 - User message: %s
-- Concierge reply: %s
+- Dispatcher reply: %s
 `, strings.TrimSpace(data.SessionID), strings.TrimSpace(data.Goal), reply)
 }
 

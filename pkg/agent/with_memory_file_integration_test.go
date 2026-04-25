@@ -524,7 +524,7 @@ func TestMemoryToolsUseInheritedScopeForBuiltInArchivist(t *testing.T) {
 	defer svc.Close()
 
 	session := NewSession("session-archivist-scope")
-	session.SetContext(sessionContextMemoryAgentScope, "Concierge")
+	session.SetContext(sessionContextMemoryAgentScope, "Dispatcher")
 	session.SetContext(sessionContextMemoryTeamScope, "default-team")
 
 	toolCtx := withCurrentSession(ctx, session)
@@ -549,8 +549,8 @@ func TestMemoryToolsUseInheritedScopeForBuiltInArchivist(t *testing.T) {
 	for _, mem := range mems {
 		if strings.Contains(mem.Content, "万达广场吃饭") {
 			found = true
-			if mem.ScopeType != domain.MemoryScopeAgent || mem.ScopeID != "Concierge" {
-				t.Fatalf("expected built-in Archivist save to inherit Concierge scope, got %+v", mem)
+			if mem.ScopeType != domain.MemoryScopeAgent || mem.ScopeID != "Dispatcher" {
+				t.Fatalf("expected built-in Archivist save to inherit Dispatcher scope, got %+v", mem)
 			}
 		}
 	}

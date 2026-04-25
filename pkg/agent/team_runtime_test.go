@@ -53,16 +53,16 @@ func TestGetTeamStatusAggregatesRunningAndQueuedTasks(t *testing.T) {
 
 	manager.queueMu.Lock()
 	manager.sharedTasks["task-running"] = &SharedTask{
-		ID:          "task-running",
-		TeamID:      defaultTeamID,
-		CaptainName: "Captain",
-		Status:      SharedTaskStatusRunning,
+		ID:               "task-running",
+		TeamID:           defaultTeamID,
+		OrchestratorName: "Orchestrator",
+		Status:           SharedTaskStatusRunning,
 	}
 	manager.sharedTasks["task-queued"] = &SharedTask{
-		ID:          "task-queued",
-		TeamID:      defaultTeamID,
-		CaptainName: "Captain",
-		Status:      SharedTaskStatusQueued,
+		ID:               "task-queued",
+		TeamID:           defaultTeamID,
+		OrchestratorName: "Orchestrator",
+		Status:           SharedTaskStatusQueued,
 	}
 	manager.queueRunning[defaultTeamID] = true
 	manager.queueMu.Unlock()
@@ -83,12 +83,12 @@ func TestGetTeamStatusAggregatesRunningAndQueuedTasks(t *testing.T) {
 	if len(status.ActiveTaskIDs) != 1 || status.ActiveTaskIDs[0] != "task-running" {
 		t.Fatalf("unexpected active task ids: %+v", status.ActiveTaskIDs)
 	}
-	if len(status.RunningCaptains) != 1 || status.RunningCaptains[0] != "Captain" {
-		t.Fatalf("unexpected running captains: %+v", status.RunningCaptains)
+	if len(status.RunningOrchestrators) != 1 || status.RunningOrchestrators[0] != "Orchestrator" {
+		t.Fatalf("unexpected running orchestrators: %+v", status.RunningOrchestrators)
 	}
 }
 
-func TestGetAgentStatusIncludesConcierge(t *testing.T) {
+func TestGetAgentStatusIncludesDispatcher(t *testing.T) {
 	store, err := NewStore(filepath.Join(t.TempDir(), "agent.db"))
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
@@ -98,25 +98,25 @@ func TestGetAgentStatusIncludesConcierge(t *testing.T) {
 		t.Fatalf("seed default members failed: %v", err)
 	}
 
-	status, err := manager.GetAgentStatus(BuiltInConciergeAgentName)
+	status, err := manager.GetAgentStatus(BuiltInDispatcherAgentName)
 	if err != nil {
-		t.Fatalf("get concierge status failed: %v", err)
+		t.Fatalf("get dispatcher status failed: %v", err)
 	}
-	if status.Name != BuiltInConciergeAgentName {
-		t.Fatalf("unexpected concierge status name: %+v", status)
+	if status.Name != BuiltInDispatcherAgentName {
+		t.Fatalf("unexpected dispatcher status name: %+v", status)
 	}
 	if !status.BuiltIn {
-		t.Fatalf("expected concierge to be built-in: %+v", status)
+		t.Fatalf("expected dispatcher to be built-in: %+v", status)
 	}
 	if status.Status != "idle" {
-		t.Fatalf("expected idle concierge, got %q", status.Status)
+		t.Fatalf("expected idle dispatcher, got %q", status.Status)
 	}
 	if len(status.Teams) != 1 {
-		t.Fatalf("expected concierge to be in default team, got teams=%+v", status.Teams)
+		t.Fatalf("expected dispatcher to be in default team, got teams=%+v", status.Teams)
 	}
 }
 
-func TestRegisterConciergeToolsExposesStatusAndSubmission(t *testing.T) {
+func TestRegisterDispatcherToolsExposesStatusAndSubmission(t *testing.T) {
 	store, err := NewStore(filepath.Join(t.TempDir(), "agent.db"))
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
@@ -131,7 +131,7 @@ func TestRegisterConciergeToolsExposesStatusAndSubmission(t *testing.T) {
 	manager.queueMu.Unlock()
 
 	svc := &Service{
-		agent:        NewAgentWithConfig(BuiltInConciergeAgentName, "concierge", nil),
+		agent:        NewAgentWithConfig(BuiltInDispatcherAgentName, "dispatcher", nil),
 		toolRegistry: NewToolRegistry(),
 	}
 	svc.toolRegistry.Register(domain.ToolDefinition{
@@ -161,31 +161,31 @@ func TestRegisterConciergeToolsExposesStatusAndSubmission(t *testing.T) {
 	svc.agent.AddTool("delegate_to_subagent", "delegation helper", map[string]interface{}{"type": "object"}, nil)
 	svc.agent.AddTool("search_available_tools", "search helper", map[string]interface{}{"type": "object"}, nil)
 	svc.agent.AddTool("memory_recall", "memory helper", map[string]interface{}{"type": "object"}, nil)
-	manager.RegisterConciergeTools(svc)
+	manager.RegisterDispatcherTools(svc)
 
 	if svc.toolRegistry.Has("delegate_to_subagent") {
-		t.Fatal("expected delegate_to_subagent to be removed from Concierge tool registry")
+		t.Fatal("expected delegate_to_subagent to be removed from Dispatcher tool registry")
 	}
 	if svc.toolRegistry.Has("search_available_tools") {
-		t.Fatal("expected search_available_tools to be removed from Concierge tool registry")
+		t.Fatal("expected search_available_tools to be removed from Dispatcher tool registry")
 	}
 	if svc.toolRegistry.Has("memory_recall") {
-		t.Fatal("expected memory_recall to be removed from Concierge tool registry in file-only mode")
+		t.Fatal("expected memory_recall to be removed from Dispatcher tool registry in file-only mode")
 	}
 	if svc.agent.HasTool("delegate_to_subagent") {
-		t.Fatal("expected delegate_to_subagent to be removed from Concierge agent tools")
+		t.Fatal("expected delegate_to_subagent to be removed from Dispatcher agent tools")
 	}
 	if svc.agent.HasTool("search_available_tools") {
-		t.Fatal("expected search_available_tools to be removed from Concierge agent tools")
+		t.Fatal("expected search_available_tools to be removed from Dispatcher agent tools")
 	}
 	if svc.agent.HasTool("memory_recall") {
-		t.Fatal("expected memory_recall to be removed from Concierge agent tools in file-only mode")
+		t.Fatal("expected memory_recall to be removed from Dispatcher agent tools in file-only mode")
 	}
 	if !svc.agent.HasTool("route_builtin_request") {
-		t.Fatal("expected route_builtin_request to be available on Concierge")
+		t.Fatal("expected route_builtin_request to be available on Dispatcher")
 	}
 	if !svc.agent.HasTool("submit_agent_task") {
-		t.Fatal("expected submit_agent_task to be available on Concierge")
+		t.Fatal("expected submit_agent_task to be available on Dispatcher")
 	}
 	listTeamsMeta := svc.toolRegistry.MetadataOf("list_teams")
 	if !listTeamsMeta.ReadOnly || !listTeamsMeta.ConcurrencySafe || listTeamsMeta.InterruptBehavior != InterruptBehaviorCancel {
@@ -206,7 +206,7 @@ func TestRegisterConciergeToolsExposesStatusAndSubmission(t *testing.T) {
 	}
 
 	rawAgentStatus, err := svc.toolRegistry.Call(context.Background(), "get_agent_status", map[string]interface{}{
-		"agent_name": BuiltInConciergeAgentName,
+		"agent_name": BuiltInDispatcherAgentName,
 	})
 	if err != nil {
 		t.Fatalf("get_agent_status failed: %v", err)
@@ -215,14 +215,14 @@ func TestRegisterConciergeToolsExposesStatusAndSubmission(t *testing.T) {
 	if !ok {
 		t.Fatalf("unexpected get_agent_status result: %#v", rawAgentStatus)
 	}
-	if agentStatus.Name != BuiltInConciergeAgentName || !agentStatus.BuiltIn {
-		t.Fatalf("unexpected concierge status: %+v", agentStatus)
+	if agentStatus.Name != BuiltInDispatcherAgentName || !agentStatus.BuiltIn {
+		t.Fatalf("unexpected dispatcher status: %+v", agentStatus)
 	}
 
 	rawTask, err := svc.toolRegistry.Call(context.Background(), "submit_team_task", map[string]interface{}{
 		"team_name":   defaultTeamName,
 		"prompt":      "prepare a short acknowledgement",
-		"agent_names": []interface{}{BuiltInCaptainAgentName},
+		"agent_names": []interface{}{BuiltInOrchestratorAgentName},
 	})
 	if err != nil {
 		t.Fatalf("submit_team_task failed: %v", err)
@@ -257,12 +257,12 @@ func TestBuiltInServiceRespectsModelPTCSetting(t *testing.T) {
 		t.Fatalf("seed default members failed: %v", err)
 	}
 
-	concierge, err := manager.GetAgentService(BuiltInConciergeAgentName)
+	dispatcher, err := manager.GetAgentService(BuiltInDispatcherAgentName)
 	if err != nil {
-		t.Fatalf("get concierge service failed: %v", err)
+		t.Fatalf("get dispatcher service failed: %v", err)
 	}
-	if concierge.isPTCEnabled() {
-		t.Fatal("expected Concierge service PTC to be disabled")
+	if dispatcher.isPTCEnabled() {
+		t.Fatal("expected Dispatcher service PTC to be disabled")
 	}
 
 	operator, err := manager.GetAgentService(defaultOperatorAgentName)
@@ -274,7 +274,7 @@ func TestBuiltInServiceRespectsModelPTCSetting(t *testing.T) {
 	}
 }
 
-func TestRegisterCaptainTools_Metadata(t *testing.T) {
+func TestRegisterOrchestratorTools_Metadata(t *testing.T) {
 	store, err := NewStore(filepath.Join(t.TempDir(), "agent.db"))
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
@@ -284,11 +284,11 @@ func TestRegisterCaptainTools_Metadata(t *testing.T) {
 		t.Fatalf("seed default members failed: %v", err)
 	}
 
-	svc, err := manager.GetAgentService("Captain")
+	svc, err := manager.GetAgentService("Orchestrator")
 	if err != nil {
-		t.Fatalf("get captain service failed: %v", err)
+		t.Fatalf("get orchestrator service failed: %v", err)
 	}
-	manager.RegisterCaptainTools(svc)
+	manager.RegisterOrchestratorTools(svc)
 
 	discoverMeta := svc.toolRegistry.MetadataOf("discover_agents")
 	if !discoverMeta.ReadOnly || !discoverMeta.ConcurrencySafe || discoverMeta.InterruptBehavior != InterruptBehaviorCancel {
@@ -306,7 +306,7 @@ func TestRegisterCaptainTools_Metadata(t *testing.T) {
 	}
 }
 
-func TestRegisterCaptainToolsPrefersTeamAsyncAndRemovesSubAgentDelegation(t *testing.T) {
+func TestRegisterOrchestratorToolsPrefersTeamAsyncAndRemovesSubAgentDelegation(t *testing.T) {
 	store, err := NewStore(filepath.Join(t.TempDir(), "agent.db"))
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
@@ -317,10 +317,10 @@ func TestRegisterCaptainToolsPrefersTeamAsyncAndRemovesSubAgentDelegation(t *tes
 	}
 
 	svc := &Service{
-		agent:        NewAgentWithConfig("Captain", "captain", nil),
+		agent:        NewAgentWithConfig("Orchestrator", "orchestrator", nil),
 		toolRegistry: NewToolRegistry(),
 	}
-	svc.SetSessionID("captain-session-1")
+	svc.SetSessionID("orchestrator-session-1")
 	svc.toolRegistry.Register(domain.ToolDefinition{
 		Type: "function",
 		Function: domain.ToolFunction{
@@ -331,26 +331,26 @@ func TestRegisterCaptainToolsPrefersTeamAsyncAndRemovesSubAgentDelegation(t *tes
 	}, nil, CategoryCustom)
 	svc.agent.AddTool("delegate_to_subagent", "delegation helper", map[string]interface{}{"type": "object"}, nil)
 
-	manager.RegisterCaptainTools(svc)
-	configureCaptainService(svc)
+	manager.RegisterOrchestratorTools(svc)
+	configureOrchestratorService(svc)
 
 	if svc.toolRegistry.Has("delegate_to_subagent") {
-		t.Fatal("expected delegate_to_subagent to be removed from captain tool registry")
+		t.Fatal("expected delegate_to_subagent to be removed from orchestrator tool registry")
 	}
 	if svc.agent.HasTool("delegate_to_subagent") {
-		t.Fatal("expected delegate_to_subagent to be removed from captain agent tools")
+		t.Fatal("expected delegate_to_subagent to be removed from orchestrator agent tools")
 	}
 	if !svc.agent.HasTool("submit_team_async") {
-		t.Fatal("expected submit_team_async to be available on captain")
+		t.Fatal("expected submit_team_async to be available on orchestrator")
 	}
 	if !svc.agent.HasTool("list_team_tasks") {
-		t.Fatal("expected list_team_tasks to be available on captain")
+		t.Fatal("expected list_team_tasks to be available on orchestrator")
 	}
 	if !svc.agent.HasTool("get_task_status") {
-		t.Fatal("expected get_task_status to be available on captain")
+		t.Fatal("expected get_task_status to be available on orchestrator")
 	}
 	if !svc.agent.HasTool("delegate_task") {
-		t.Fatal("expected synchronous delegate_task to remain available on captain")
+		t.Fatal("expected synchronous delegate_task to remain available on orchestrator")
 	}
 }
 
@@ -364,11 +364,11 @@ func TestDelegateTaskStreamPassthroughForwardsDelegatedEvents(t *testing.T) {
 		t.Fatalf("seed default members failed: %v", err)
 	}
 
-	svc, err := manager.GetAgentService("Captain")
+	svc, err := manager.GetAgentService("Orchestrator")
 	if err != nil {
-		t.Fatalf("get captain service failed: %v", err)
+		t.Fatalf("get orchestrator service failed: %v", err)
 	}
-	manager.RegisterCaptainTools(svc)
+	manager.RegisterOrchestratorTools(svc)
 
 	manager.builtInStreamDispatchOverride = func(ctx context.Context, agentName, instruction string, runOptions []RunOption) (<-chan *Event, error) {
 		events := make(chan *Event, 4)
@@ -386,7 +386,7 @@ func TestDelegateTaskStreamPassthroughForwardsDelegatedEvents(t *testing.T) {
 	})
 
 	raw, err := svc.toolRegistry.Call(ctx, "delegate_task", map[string]interface{}{
-		"agent_name":  defaultAssistantAgentName,
+		"agent_name":  defaultResponderAgentName,
 		"instruction": "summarize this",
 		"stream":      true,
 	})
@@ -404,7 +404,7 @@ func TestDelegateTaskStreamPassthroughForwardsDelegatedEvents(t *testing.T) {
 	if len(forwarded) != 4 {
 		t.Fatalf("expected 4 forwarded delegated events, got %d (%+v)", len(forwarded), forwarded)
 	}
-	if forwarded[0].Type != EventTypeStart || forwarded[0].AgentName != defaultAssistantAgentName {
+	if forwarded[0].Type != EventTypeStart || forwarded[0].AgentName != defaultResponderAgentName {
 		t.Fatalf("unexpected first forwarded event: %+v", forwarded[0])
 	}
 	if forwarded[1].Type != EventTypePartial || forwarded[1].Content != "hello " {
@@ -428,11 +428,11 @@ func TestDelegateTaskStreamWithoutSinkFallsBackToSyncDispatch(t *testing.T) {
 		t.Fatalf("seed default members failed: %v", err)
 	}
 
-	svc, err := manager.GetAgentService("Captain")
+	svc, err := manager.GetAgentService("Orchestrator")
 	if err != nil {
-		t.Fatalf("get captain service failed: %v", err)
+		t.Fatalf("get orchestrator service failed: %v", err)
 	}
-	manager.RegisterCaptainTools(svc)
+	manager.RegisterOrchestratorTools(svc)
 
 	streamCalled := false
 	manager.builtInStreamDispatchOverride = func(ctx context.Context, agentName, instruction string, runOptions []RunOption) (<-chan *Event, error) {
@@ -449,7 +449,7 @@ func TestDelegateTaskStreamWithoutSinkFallsBackToSyncDispatch(t *testing.T) {
 	}
 
 	raw, err := svc.toolRegistry.Call(context.Background(), "delegate_task", map[string]interface{}{
-		"agent_name":  defaultAssistantAgentName,
+		"agent_name":  defaultResponderAgentName,
 		"instruction": "summarize this",
 		"stream":      true,
 	})
@@ -498,16 +498,16 @@ func TestTeamHelpersExposeTeamStyleAPI(t *testing.T) {
 		t.Fatalf("add specialist failed: %v", err)
 	}
 
-	captains, err := manager.ListCaptains()
+	orchestrators, err := manager.ListOrchestrators()
 	if err != nil {
-		t.Fatalf("list captains failed: %v", err)
+		t.Fatalf("list orchestrators failed: %v", err)
 	}
 	specialists, err := manager.ListSpecialists()
 	if err != nil {
 		t.Fatalf("list specialists failed: %v", err)
 	}
-	if len(captains) < 2 {
-		t.Fatalf("expected at least 2 captains, got %d", len(captains))
+	if len(orchestrators) < 2 {
+		t.Fatalf("expected at least 2 orchestrators, got %d", len(orchestrators))
 	}
 	if len(specialists) < 1 {
 		t.Fatalf("expected at least 1 specialist, got %d", len(specialists))
@@ -521,10 +521,10 @@ func TestConversationSessionIDIsStablePerConversationAndMember(t *testing.T) {
 	}
 	manager := NewTeamManager(store)
 
-	first := manager.conversationSessionID("team-chat-1", "Captain")
-	second := manager.conversationSessionID("team-chat-1", "Captain")
+	first := manager.conversationSessionID("team-chat-1", "Orchestrator")
+	second := manager.conversationSessionID("team-chat-1", "Orchestrator")
 	otherMember := manager.conversationSessionID("team-chat-1", "Writer")
-	otherConversation := manager.conversationSessionID("team-chat-2", "Captain")
+	otherConversation := manager.conversationSessionID("team-chat-2", "Orchestrator")
 
 	if first == "" {
 		t.Fatal("expected non-empty session id")
@@ -550,11 +550,11 @@ func TestEnqueueSharedTaskQueuesImmediately(t *testing.T) {
 		t.Fatalf("seed default members failed: %v", err)
 	}
 
-	first, err := manager.EnqueueSharedTask(context.Background(), "Captain", []string{"Captain"}, "first task")
+	first, err := manager.EnqueueSharedTask(context.Background(), "Orchestrator", []string{"Orchestrator"}, "first task")
 	if err != nil {
 		t.Fatalf("enqueue first failed: %v", err)
 	}
-	second, err := manager.EnqueueSharedTask(context.Background(), "Captain", []string{"Captain"}, "second task")
+	second, err := manager.EnqueueSharedTask(context.Background(), "Orchestrator", []string{"Orchestrator"}, "second task")
 	if err != nil {
 		t.Fatalf("enqueue second failed: %v", err)
 	}
@@ -566,7 +566,7 @@ func TestEnqueueSharedTaskQueuesImmediately(t *testing.T) {
 		t.Fatalf("expected second task to see queue ahead, got %d", second.QueuedAhead)
 	}
 
-	tasks := manager.ListSharedTasks("Captain", time.Time{}, 10)
+	tasks := manager.ListSharedTasks("Orchestrator", time.Time{}, 10)
 	if len(tasks) != 2 {
 		t.Fatalf("expected two queued shared tasks, got %+v", tasks)
 	}
@@ -605,30 +605,30 @@ func TestBuildTeamMemberPrompt_IsAgentSpecific(t *testing.T) {
 		t.Fatalf("coder member prompt should not include team workspace context: %s", coderPrompt)
 	}
 
-	captainPrompt := buildTeamMemberPrompt(&AgentModel{
-		Name:         "Captain",
-		Instructions: "captain base",
+	orchestratorPrompt := buildTeamMemberPrompt(&AgentModel{
+		Name:         "Orchestrator",
+		Instructions: "orchestrator base",
 	})
-	if !strings.Contains(captainPrompt, "Delegate specialized implementation work to specialists") {
-		t.Fatalf("captain prompt missing coordinator guidance: %s", captainPrompt)
+	if !strings.Contains(orchestratorPrompt, "Delegate specialized implementation work to specialists") {
+		t.Fatalf("orchestrator prompt missing coordinator guidance: %s", orchestratorPrompt)
 	}
-	if !strings.Contains(captainPrompt, "Do not invent helper tools that are not present in the visible tool list") {
-		t.Fatalf("captain prompt missing visible-tool rule: %s", captainPrompt)
+	if !strings.Contains(orchestratorPrompt, "Do not invent helper tools that are not present in the visible tool list") {
+		t.Fatalf("orchestrator prompt missing visible-tool rule: %s", orchestratorPrompt)
 	}
-	if !strings.Contains(captainPrompt, "Never inspect blacklisted repository paths unless the user explicitly asks for them.") {
-		t.Fatalf("captain prompt missing repo-analysis rule: %s", captainPrompt)
+	if !strings.Contains(orchestratorPrompt, "Never inspect blacklisted repository paths unless the user explicitly asks for them.") {
+		t.Fatalf("orchestrator prompt missing repo-analysis rule: %s", orchestratorPrompt)
 	}
-	if !strings.Contains(captainPrompt, "read those files first before calling list_directory") {
-		t.Fatalf("captain prompt missing direct-file-read rule: %s", captainPrompt)
+	if !strings.Contains(orchestratorPrompt, "read those files first before calling list_directory") {
+		t.Fatalf("orchestrator prompt missing direct-file-read rule: %s", orchestratorPrompt)
 	}
-	if !strings.Contains(captainPrompt, "fall back to individual read_file calls") {
-		t.Fatalf("captain prompt missing multi-read fallback rule: %s", captainPrompt)
+	if !strings.Contains(orchestratorPrompt, "fall back to individual read_file calls") {
+		t.Fatalf("orchestrator prompt missing multi-read fallback rule: %s", orchestratorPrompt)
 	}
-	if strings.Contains(captainPrompt, "MUST call a filesystem write or modify tool") {
-		t.Fatalf("captain prompt should not include coder file-writing rules: %s", captainPrompt)
+	if strings.Contains(orchestratorPrompt, "MUST call a filesystem write or modify tool") {
+		t.Fatalf("orchestrator prompt should not include coder file-writing rules: %s", orchestratorPrompt)
 	}
 
-	teamPrompt := buildTeamSystemPrompt(cfg, &AgentModel{Name: "Captain", Teams: []TeamMembership{{TeamID: defaultTeamID, Role: AgentKindCaptain}}})
+	teamPrompt := buildTeamSystemPrompt(cfg, &AgentModel{Name: "Orchestrator", Teams: []TeamMembership{{TeamID: defaultTeamID, Role: AgentKindOrchestrator}}})
 	if !strings.Contains(teamPrompt, "Shared writable workspace") {
 		t.Fatalf("team prompt missing workspace context: %s", teamPrompt)
 	}
@@ -641,12 +641,12 @@ func TestBuildTeamMemberPrompt_IsAgentSpecific(t *testing.T) {
 	if !strings.Contains(teamPrompt, "Interactive shell: /bin/test-shell") {
 		t.Fatalf("team prompt missing shell context: %s", teamPrompt)
 	}
-	if !strings.Contains(teamPrompt, "captain for this team") {
-		t.Fatalf("team prompt missing captain guidance: %s", teamPrompt)
+	if !strings.Contains(teamPrompt, "orchestrator for this team") {
+		t.Fatalf("team prompt missing orchestrator guidance: %s", teamPrompt)
 	}
 }
 
-func TestBuildTeamSystemPromptForCaptainIncludesRosterAndResponsibilities(t *testing.T) {
+func TestBuildTeamSystemPromptForOrchestratorIncludesRosterAndResponsibilities(t *testing.T) {
 	store, err := NewStore(filepath.Join(t.TempDir(), "agent.db"))
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
@@ -664,22 +664,22 @@ func TestBuildTeamSystemPromptForCaptainIncludesRosterAndResponsibilities(t *tes
 		t.Fatalf("create team failed: %v", err)
 	}
 
-	captain, err := manager.GetLeadAgentForTeam(team.ID)
+	orchestrator, err := manager.GetLeadAgentForTeam(team.ID)
 	if err != nil {
 		t.Fatalf("get lead failed: %v", err)
 	}
-	updatedCaptain, err := manager.UpdateAgent(context.Background(), &AgentModel{
-		ID:           captain.ID,
-		Name:         captain.Name,
+	updatedOrchestrator, err := manager.UpdateAgent(context.Background(), &AgentModel{
+		ID:           orchestrator.ID,
+		Name:         orchestrator.Name,
 		Description:  "Coordinate the team and own delivery decisions.",
 		Instructions: "Break work into specialist tracks, assign owners, and integrate outputs.",
 	})
 	if err != nil {
-		t.Fatalf("update captain failed: %v", err)
+		t.Fatalf("update orchestrator failed: %v", err)
 	}
-	captain, err = manager.GetMemberByNameInTeam(updatedCaptain.Name, team.ID)
+	orchestrator, err = manager.GetMemberByNameInTeam(updatedOrchestrator.Name, team.ID)
 	if err != nil {
-		t.Fatalf("reload captain failed: %v", err)
+		t.Fatalf("reload orchestrator failed: %v", err)
 	}
 
 	if _, err := manager.CreateMember(context.Background(), &AgentModel{
@@ -702,15 +702,15 @@ func TestBuildTeamSystemPromptForCaptainIncludesRosterAndResponsibilities(t *tes
 		t.Fatalf("create backend specialist failed: %v", err)
 	}
 
-	prompt := manager.buildTeamSystemPromptForModel(&config.Config{Home: t.TempDir()}, captain)
-	if !strings.Contains(prompt, "Captain responsibilities and team roster:") {
-		t.Fatalf("expected captain roster header, got %s", prompt)
+	prompt := manager.buildTeamSystemPromptForModel(&config.Config{Home: t.TempDir()}, orchestrator)
+	if !strings.Contains(prompt, "Orchestrator responsibilities and team roster:") {
+		t.Fatalf("expected orchestrator roster header, got %s", prompt)
 	}
 	if !strings.Contains(prompt, "Your responsibility summary: Coordinate the team and own delivery decisions.") {
-		t.Fatalf("expected captain responsibility summary, got %s", prompt)
+		t.Fatalf("expected orchestrator responsibility summary, got %s", prompt)
 	}
 	if !strings.Contains(prompt, "Your operating responsibilities: Break work into specialist tracks, assign owners, and integrate outputs.") {
-		t.Fatalf("expected captain operating responsibilities, got %s", prompt)
+		t.Fatalf("expected orchestrator operating responsibilities, got %s", prompt)
 	}
 	if !strings.Contains(prompt, "Delivery Frontend [specialist]: Owns the web UI implementation.") {
 		t.Fatalf("expected frontend member roster entry, got %s", prompt)
@@ -726,7 +726,7 @@ func TestBuildTeamSystemPromptForCaptainIncludesRosterAndResponsibilities(t *tes
 	}
 }
 
-func TestCreateMemberClearsCaptainServiceCache(t *testing.T) {
+func TestCreateMemberClearsOrchestratorServiceCache(t *testing.T) {
 	store, err := NewStore(filepath.Join(t.TempDir(), "agent.db"))
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
@@ -743,13 +743,13 @@ func TestCreateMemberClearsCaptainServiceCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create team failed: %v", err)
 	}
-	captain, err := manager.GetLeadAgentForTeam(team.ID)
+	orchestrator, err := manager.GetLeadAgentForTeam(team.ID)
 	if err != nil {
 		t.Fatalf("get lead failed: %v", err)
 	}
 
 	manager.mu.Lock()
-	manager.services[captain.Name] = &Service{}
+	manager.services[orchestrator.Name] = &Service{}
 	manager.mu.Unlock()
 
 	if _, err := manager.CreateMember(context.Background(), &AgentModel{
@@ -763,10 +763,10 @@ func TestCreateMemberClearsCaptainServiceCache(t *testing.T) {
 	}
 
 	manager.mu.RLock()
-	_, exists := manager.services[captain.Name]
+	_, exists := manager.services[orchestrator.Name]
 	manager.mu.RUnlock()
 	if exists {
-		t.Fatal("expected captain service cache to be cleared after team membership change")
+		t.Fatal("expected orchestrator service cache to be cleared after team membership change")
 	}
 }
 
@@ -781,17 +781,17 @@ func TestPersistedSharedTasksRestoreAcrossManagerInstances(t *testing.T) {
 	}
 
 	task := &SharedTask{
-		ID:          "shared-task-1",
-		SessionID:   "session-restore-1",
-		TeamID:      defaultTeamID,
-		TeamName:    defaultTeamName,
-		CaptainName: BuiltInCaptainAgentName,
-		AgentNames:  []string{BuiltInCaptainAgentName},
-		Prompt:      "review persisted team work",
-		AckMessage:  "Captain received that. Starting it now.",
-		Status:      SharedTaskStatusCompleted,
-		ResultText:  "done",
-		CreatedAt:   time.Now().Add(-time.Minute),
+		ID:               "shared-task-1",
+		SessionID:        "session-restore-1",
+		TeamID:           defaultTeamID,
+		TeamName:         defaultTeamName,
+		OrchestratorName: BuiltInOrchestratorAgentName,
+		AgentNames:       []string{BuiltInOrchestratorAgentName},
+		Prompt:           "review persisted team work",
+		AckMessage:       "Orchestrator received that. Starting it now.",
+		Status:           SharedTaskStatusCompleted,
+		ResultText:       "done",
+		CreatedAt:        time.Now().Add(-time.Minute),
 	}
 	if err := store.SaveSharedTask(task); err != nil {
 		t.Fatalf("save shared task failed: %v", err)
@@ -818,25 +818,25 @@ func TestPersistedSharedTasksRestoreAcrossManagerInstances(t *testing.T) {
 	}
 }
 
-func TestDefaultMemberMCPTools_CaptainIncludesFilesystemAndWebTools(t *testing.T) {
-	tools := defaultMemberMCPTools("Captain")
+func TestDefaultMemberMCPTools_OrchestratorIncludesFilesystemAndWebTools(t *testing.T) {
+	tools := defaultMemberMCPTools("Orchestrator")
 	if len(tools) == 0 {
-		t.Fatal("expected captain default tool allowlist")
+		t.Fatal("expected orchestrator default tool allowlist")
 	}
 	if containsStr(tools, "mcp_filesystem_tree") {
-		t.Fatalf("captain should not have tree by default: %v", tools)
+		t.Fatalf("orchestrator should not have tree by default: %v", tools)
 	}
 	if containsStr(tools, "mcp_filesystem_search_files") {
-		t.Fatalf("captain should not have broad file search by default: %v", tools)
+		t.Fatalf("orchestrator should not have broad file search by default: %v", tools)
 	}
 	if !containsStr(tools, "mcp_filesystem_read_file") {
-		t.Fatalf("captain should keep targeted file reads: %v", tools)
+		t.Fatalf("orchestrator should keep targeted file reads: %v", tools)
 	}
 	if !containsStr(tools, "mcp_filesystem_write_file") {
-		t.Fatalf("captain should have file write capability: %v", tools)
+		t.Fatalf("orchestrator should have file write capability: %v", tools)
 	}
 	if !containsStr(tools, "mcp_websearch_websearch_ai_summary") {
-		t.Fatalf("captain should have websearch capability: %v", tools)
+		t.Fatalf("orchestrator should have websearch capability: %v", tools)
 	}
 }
 
@@ -851,11 +851,11 @@ func TestBuildTeamTaskEnvelope_ContainsSharedContext(t *testing.T) {
 	cfg := &config.Config{Home: "/tmp/agentgo-test"}
 	t.Setenv("SHELL", "/bin/test-shell")
 
-	envelope := buildTeamTaskEnvelope(cfg, "Assistant", "summarize the repo flow")
+	envelope := buildTeamTaskEnvelope(cfg, "Responder", "summarize the repo flow")
 	if !strings.Contains(envelope, "Team task context:") {
 		t.Fatalf("missing team task header: %s", envelope)
 	}
-	if !strings.Contains(envelope, "Target team agent: Assistant") {
+	if !strings.Contains(envelope, "Target team agent: Responder") {
 		t.Fatalf("missing target team agent: %s", envelope)
 	}
 	if !strings.Contains(envelope, "Shared writable workspace: /tmp/agentgo-test/workspace") {
@@ -883,7 +883,7 @@ func TestBuildTeamTaskEnvelope_ContainsSharedContext(t *testing.T) {
 
 func TestFilterToolDefinitionsForAgent_RespectsAllowlist(t *testing.T) {
 	svc := &Service{}
-	currentAgent := NewAgentWithConfig("Assistant", "assistant", nil)
+	currentAgent := NewAgentWithConfig("Responder", "assistant", nil)
 	currentAgent.SetAllowedMCPTools([]string{
 		"mcp_filesystem_read_file",
 		"mcp_filesystem_list_directory",
@@ -946,7 +946,7 @@ func TestDispatchRunOptions(t *testing.T) {
 		t.Fatalf("expected coder-specific options, got %d", len(coder))
 	}
 
-	assistant := dispatchRunOptions("Assistant")
+	assistant := dispatchRunOptions("Responder")
 	if len(assistant) != 2 {
 		t.Fatalf("expected tuned dispatch options for assistant, got %d", len(assistant))
 	}

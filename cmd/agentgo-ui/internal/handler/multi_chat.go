@@ -57,7 +57,7 @@ func (h *Handler) HandleMultiAgentChat(w http.ResponseWriter, r *http.Request) {
 	chatID := strings.TrimSpace(stringValue(raw["id"]))
 	leadAgentName := strings.TrimSpace(stringValue(raw["lead_agent_name"]))
 	if leadAgentName == "" {
-		leadAgentName = strings.TrimSpace(stringValue(raw["captain_name"]))
+		leadAgentName = strings.TrimSpace(stringValue(raw["orchestrator_name"]))
 	}
 	streamAISDKMultiAgentChat(w, r, chatID, leadAgentName, agentNames, cleanedPrompt, h.teamManager)
 }
@@ -128,10 +128,10 @@ func streamAISDKMultiAgentChat(w http.ResponseWriter, r *http.Request, chatID, l
 		"type":      "start",
 		"messageId": messageID,
 		"messageMetadata": map[string]any{
-			"mode":            "multi-agent",
-			"agent_names":     agentNames,
-			"captain_name":    leadAgentName,
-			"lead_agent_name": leadAgentName,
+			"mode":              "multi-agent",
+			"agent_names":       agentNames,
+			"orchestrator_name": leadAgentName,
+			"lead_agent_name":   leadAgentName,
 		},
 	})
 	writeSSEChunk(w, flusher, map[string]any{
@@ -225,10 +225,10 @@ func streamAISDKMultiAgentChat(w http.ResponseWriter, r *http.Request, chatID, l
 		"type":         "finish",
 		"finishReason": finishReason,
 		"messageMetadata": map[string]any{
-			"mode":            "multi-agent",
-			"agent_names":     append([]string(nil), agentNames...),
-			"captain_name":    leadAgentName,
-			"lead_agent_name": leadAgentName,
+			"mode":              "multi-agent",
+			"agent_names":       append([]string(nil), agentNames...),
+			"orchestrator_name": leadAgentName,
+			"lead_agent_name":   leadAgentName,
 		},
 	})
 }

@@ -37,7 +37,7 @@ var resourcesListCmd = &cobra.Command{
 			}
 			return printResources(resources, resourcesJSON)
 		}
-		svc, err := agent.New(agent.BuiltInConciergeAgentName).
+		svc, err := agent.New(agent.BuiltInDispatcherAgentName).
 			WithConfig(Cfg).
 			WithDBPath(Cfg.AgentDBPath()).
 			Build()

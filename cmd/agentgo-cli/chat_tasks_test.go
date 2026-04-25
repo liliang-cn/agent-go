@@ -39,13 +39,13 @@ func TestRenderChatTaskEventCompleted(t *testing.T) {
 		renderChatTaskEvent(&agent.TaskEvent{
 			TaskID:    "12345678-task",
 			Type:      agent.TaskEventTypeCompleted,
-			AgentName: "Captain",
+			AgentName: "Orchestrator",
 			Message:   "done",
 			Timestamp: time.Now(),
 		})
 	})
 
-	if !strings.Contains(output, "✅ [12345678] Task completed by @Captain") {
+	if !strings.Contains(output, "✅ [12345678] Task completed by @Orchestrator") {
 		t.Fatalf("missing completion header: %q", output)
 	}
 	if !strings.Contains(output, "done") {
@@ -57,13 +57,13 @@ func TestRenderRuntimeTaskEventToolCall(t *testing.T) {
 	output := captureStdout(t, func() {
 		renderRuntimeTaskEvent("task1234", &agent.Event{
 			Type:      agent.EventTypeToolCall,
-			AgentName: "Assistant",
+			AgentName: "Responder",
 			ToolName:  "mcp_websearch_websearch_ai_summary",
 			Timestamp: time.Now(),
 		})
 	})
 
-	if !strings.Contains(output, "🛠 [task1234] @Assistant using mcp_websearch_websearch_ai_summary") {
+	if !strings.Contains(output, "🛠 [task1234] @Responder using mcp_websearch_websearch_ai_summary") {
 		t.Fatalf("unexpected tool call output: %q", output)
 	}
 }

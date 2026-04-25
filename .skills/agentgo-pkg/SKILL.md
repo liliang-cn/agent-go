@@ -174,16 +174,16 @@ mgr, err := agent.NewTeam(dbPath).
     Build()
 
 // Built-in agents
-captain := mgr.GetAgent("Captain")
-assistant := mgr.GetAgent("Assistant")
-concierge := mgr.GetAgent("Concierge")
+orchestrator := mgr.GetAgent("Orchestrator")
+assistant := mgr.GetAgent("Responder")
+dispatcher := mgr.GetAgent("Dispatcher")
 operator := mgr.GetAgent("Operator")
 archivist := mgr.GetAgent("Archivist")
 
 // Enqueue task
 task, err := mgr.EnqueueSharedTask(ctx,
-    "Captain",
-    []string{"Assistant", "Operator"},
+    "Orchestrator",
+    []string{"Responder", "Operator"},
     "Implement user authentication",
 )
 

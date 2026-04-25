@@ -52,26 +52,26 @@ func TestSeedDefaultMembersCreatesBuiltInsByDefault(t *testing.T) {
 		t.Fatalf("seed default members failed: %v", err)
 	}
 
-	captain, err := manager.GetMemberByName("Captain")
+	orchestrator, err := manager.GetMemberByName("Orchestrator")
 	if err != nil {
-		t.Fatalf("get default captain failed: %v", err)
+		t.Fatalf("get default orchestrator failed: %v", err)
 	}
-	if captain.Kind != AgentKindCaptain {
-		t.Fatalf("expected captain kind, got %q", captain.Kind)
+	if orchestrator.Kind != AgentKindOrchestrator {
+		t.Fatalf("expected orchestrator kind, got %q", orchestrator.Kind)
 	}
 
-	assistant, err := manager.GetAgentByName("Assistant")
+	assistant, err := manager.GetAgentByName("Responder")
 	if err != nil {
 		t.Fatalf("get standalone assistant failed: %v", err)
 	}
 	if assistant.Kind != AgentKindAgent {
-		t.Fatalf("expected Assistant standalone kind, got %q", assistant.Kind)
+		t.Fatalf("expected Responder standalone kind, got %q", assistant.Kind)
 	}
 	if len(assistant.Teams) != 1 {
-		t.Fatalf("expected Assistant to be in default team, got teams=%+v", assistant.Teams)
+		t.Fatalf("expected Responder to be in default team, got teams=%+v", assistant.Teams)
 	}
 	if assistant.Teams[0].Role != AgentKindSpecialist {
-		t.Fatalf("expected Assistant role specialist, got %q", assistant.Teams[0].Role)
+		t.Fatalf("expected Responder role specialist, got %q", assistant.Teams[0].Role)
 	}
 
 	operator, err := manager.GetAgentByName("Operator")
@@ -100,33 +100,33 @@ func TestSeedDefaultMembersCreatesBuiltInsByDefault(t *testing.T) {
 		t.Fatalf("expected Operator to receive wildcard MCP allowlist, got %v", operator.MCPTools)
 	}
 
-	concierge, err := manager.GetAgentByName("Concierge")
+	dispatcher, err := manager.GetAgentByName("Dispatcher")
 	if err != nil {
-		t.Fatalf("get standalone concierge failed: %v", err)
+		t.Fatalf("get standalone dispatcher failed: %v", err)
 	}
-	if concierge.Kind != AgentKindAgent {
-		t.Fatalf("expected Concierge standalone kind, got %q", concierge.Kind)
+	if dispatcher.Kind != AgentKindAgent {
+		t.Fatalf("expected Dispatcher standalone kind, got %q", dispatcher.Kind)
 	}
-	if len(concierge.Teams) != 1 {
-		t.Fatalf("expected Concierge to be in default team, got teams=%+v", concierge.Teams)
+	if len(dispatcher.Teams) != 1 {
+		t.Fatalf("expected Dispatcher to be in default team, got teams=%+v", dispatcher.Teams)
 	}
-	if concierge.Teams[0].Role != AgentKindSpecialist {
-		t.Fatalf("expected Concierge role specialist, got %q", concierge.Teams[0].Role)
+	if dispatcher.Teams[0].Role != AgentKindSpecialist {
+		t.Fatalf("expected Dispatcher role specialist, got %q", dispatcher.Teams[0].Role)
 	}
-	if concierge.Description != "Always-on user entry agent for intake, status checks, and dispatching work." {
-		t.Fatalf("unexpected Concierge description: %q", concierge.Description)
+	if dispatcher.Description != "Always-on user entry agent for intake, status checks, and dispatching work." {
+		t.Fatalf("unexpected Dispatcher description: %q", dispatcher.Description)
 	}
-	if !strings.Contains(concierge.Instructions, "only job is intake, routing, status inspection, and task dispatch") ||
-		!strings.Contains(concierge.Instructions, "call route_builtin_request") ||
-		!strings.Contains(concierge.Instructions, "runs PromptOptimizer and IntentRouter in parallel") ||
-		!strings.Contains(concierge.Instructions, "Do not use submit_agent_task or submit_team_task for ordinary user requests") {
-		t.Fatalf("expected Concierge prompt to focus on dispatch-only routing, got %q", concierge.Instructions)
+	if !strings.Contains(dispatcher.Instructions, "only job is intake, routing, status inspection, and task dispatch") ||
+		!strings.Contains(dispatcher.Instructions, "call route_builtin_request") ||
+		!strings.Contains(dispatcher.Instructions, "runs PromptOptimizer and IntentRouter in parallel") ||
+		!strings.Contains(dispatcher.Instructions, "Do not use submit_agent_task or submit_team_task for ordinary user requests") {
+		t.Fatalf("expected Dispatcher prompt to focus on dispatch-only routing, got %q", dispatcher.Instructions)
 	}
-	if !concierge.EnableMemory {
-		t.Fatal("expected Concierge to keep long-term memory enabled")
+	if !dispatcher.EnableMemory {
+		t.Fatal("expected Dispatcher to keep long-term memory enabled")
 	}
-	if concierge.EnableMCP || len(concierge.MCPTools) != 0 {
-		t.Fatalf("expected Concierge to stay lightweight without default MCP tools, got enable_mcp=%v tools=%v", concierge.EnableMCP, concierge.MCPTools)
+	if dispatcher.EnableMCP || len(dispatcher.MCPTools) != 0 {
+		t.Fatalf("expected Dispatcher to stay lightweight without default MCP tools, got enable_mcp=%v tools=%v", dispatcher.EnableMCP, dispatcher.MCPTools)
 	}
 
 	intentRouter, err := manager.GetAgentByName(defaultIntentRouterAgentName)
@@ -187,30 +187,30 @@ func TestSeedDefaultMembersCreatesBuiltInsByDefault(t *testing.T) {
 		t.Fatalf("expected Verifier instructions to emphasize independent verification, got %q", verifier.Instructions)
 	}
 
-	stakeholder, err := manager.GetAgentByName("Stakeholder")
+	evaluator, err := manager.GetAgentByName("Evaluator")
 	if err != nil {
-		t.Fatalf("get standalone stakeholder failed: %v", err)
+		t.Fatalf("get standalone evaluator failed: %v", err)
 	}
-	if stakeholder.Kind != AgentKindAgent {
-		t.Fatalf("expected Stakeholder standalone kind, got %q", stakeholder.Kind)
+	if evaluator.Kind != AgentKindAgent {
+		t.Fatalf("expected Evaluator standalone kind, got %q", evaluator.Kind)
 	}
-	if len(stakeholder.Teams) != 1 {
-		t.Fatalf("expected Stakeholder to be in default team, got teams=%+v", stakeholder.Teams)
+	if len(evaluator.Teams) != 1 {
+		t.Fatalf("expected Evaluator to be in default team, got teams=%+v", evaluator.Teams)
 	}
-	if stakeholder.Teams[0].Role != AgentKindSpecialist {
-		t.Fatalf("expected Stakeholder role specialist, got %q", stakeholder.Teams[0].Role)
+	if evaluator.Teams[0].Role != AgentKindSpecialist {
+		t.Fatalf("expected Evaluator role specialist, got %q", evaluator.Teams[0].Role)
 	}
-	if stakeholder.Description != "Product/business representative for goals, scope, priorities, and acceptance criteria." {
-		t.Fatalf("unexpected Stakeholder description: %q", stakeholder.Description)
+	if evaluator.Description != "Product/business representative for goals, scope, priorities, and acceptance criteria." {
+		t.Fatalf("unexpected Evaluator description: %q", evaluator.Description)
 	}
-	if !strings.Contains(stakeholder.Instructions, "product manager or business representative") {
-		t.Fatalf("expected Stakeholder prompt to include PM/business framing, got %q", stakeholder.Instructions)
+	if !strings.Contains(evaluator.Instructions, "product manager or business representative") {
+		t.Fatalf("expected Evaluator prompt to include PM/business framing, got %q", evaluator.Instructions)
 	}
-	if !strings.Contains(stakeholder.Instructions, "Do not write code unless the user explicitly asks you to") {
-		t.Fatalf("expected Stakeholder prompt to discourage direct coding, got %q", stakeholder.Instructions)
+	if !strings.Contains(evaluator.Instructions, "Do not write code unless the user explicitly asks you to") {
+		t.Fatalf("expected Evaluator prompt to discourage direct coding, got %q", evaluator.Instructions)
 	}
-	if !strings.Contains(stakeholder.Instructions, "acceptance criteria") || !strings.Contains(stakeholder.Instructions, "risk lists") || !strings.Contains(stakeholder.Instructions, "prioritization recommendations") {
-		t.Fatalf("expected Stakeholder prompt to prioritize product outputs, got %q", stakeholder.Instructions)
+	if !strings.Contains(evaluator.Instructions, "acceptance criteria") || !strings.Contains(evaluator.Instructions, "risk lists") || !strings.Contains(evaluator.Instructions, "prioritization recommendations") {
+		t.Fatalf("expected Evaluator prompt to prioritize product outputs, got %q", evaluator.Instructions)
 	}
 
 	if _, err := manager.GetMemberByName("Coder"); err == nil {
@@ -249,9 +249,9 @@ func TestCreateMemberAppliesUsefulDefaults(t *testing.T) {
 	}
 
 	if _, err := manager.CreateMember(context.Background(), &AgentModel{
-		Name:         "DocCaptain",
+		Name:         "DocOrchestrator",
 		TeamID:       "docs-team-test",
-		Kind:         AgentKindCaptain,
+		Kind:         AgentKindOrchestrator,
 		Description:  "Leads documentation work.",
 		Instructions: "Coordinate documentation tasks.",
 	}); err == nil {
@@ -281,7 +281,7 @@ func TestCreateMemberAppliesUsefulDefaults(t *testing.T) {
 	}
 }
 
-func TestCreateMemberCaptainConflictDoesNotLeaveStandaloneAgent(t *testing.T) {
+func TestCreateMemberOrchestratorConflictDoesNotLeaveStandaloneAgent(t *testing.T) {
 	store, err := NewStore(filepath.Join(t.TempDir(), "agent.db"))
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
@@ -302,16 +302,16 @@ func TestCreateMemberCaptainConflictDoesNotLeaveStandaloneAgent(t *testing.T) {
 	_, err = manager.CreateMember(context.Background(), &AgentModel{
 		Name:         "Docs PM",
 		TeamID:       team.ID,
-		Kind:         AgentKindCaptain,
+		Kind:         AgentKindOrchestrator,
 		Description:  "duplicate lead",
 		Instructions: "duplicate lead",
 	})
 	if err == nil {
-		t.Fatal("expected duplicate team captain creation to fail")
+		t.Fatal("expected duplicate team orchestrator creation to fail")
 	}
 
 	if _, getErr := manager.GetAgentByName("Docs PM"); getErr == nil {
-		t.Fatal("expected failed captain creation to not leave a standalone agent behind")
+		t.Fatal("expected failed orchestrator creation to not leave a standalone agent behind")
 	}
 }
 
@@ -432,14 +432,14 @@ func TestCustomStandaloneAgentCanDelegateBuiltInAgents(t *testing.T) {
 			names[name] = true
 		}
 	}
-	if !names["Operator"] || !names["Assistant"] || !names["Stakeholder"] {
-		t.Fatalf("expected delegable built-in agents to include Operator, Assistant, Stakeholder, got %+v", names)
+	if !names["Operator"] || !names["Responder"] || !names["Evaluator"] {
+		t.Fatalf("expected delegable built-in agents to include Operator, Responder, Evaluator, got %+v", names)
 	}
 	if names[defaultIntentRouterAgentName] {
 		t.Fatalf("did not expect IntentRouter to be delegable for custom agents, got %+v", names)
 	}
-	if names["Concierge"] {
-		t.Fatalf("did not expect Concierge to be delegable, got %+v", names)
+	if names["Dispatcher"] {
+		t.Fatalf("did not expect Dispatcher to be delegable, got %+v", names)
 	}
 
 	prompt := svc.agent.Instructions()
@@ -499,7 +499,7 @@ func TestJoinAndLeaveTeamMovesStandaloneAgent(t *testing.T) {
 	}
 }
 
-func TestLastCaptainCannotLeaveOrBeDeleted(t *testing.T) {
+func TestLastOrchestratorCannotLeaveOrBeDeleted(t *testing.T) {
 	store, err := NewStore(filepath.Join(t.TempDir(), "agent.db"))
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
@@ -509,10 +509,10 @@ func TestLastCaptainCannotLeaveOrBeDeleted(t *testing.T) {
 		t.Fatalf("seed default members failed: %v", err)
 	}
 
-	if _, err := manager.LeaveTeam(context.Background(), "Captain"); err == nil {
-		t.Fatal("expected last captain leave to fail")
+	if _, err := manager.LeaveTeam(context.Background(), "Orchestrator"); err == nil {
+		t.Fatal("expected last orchestrator leave to fail")
 	}
-	if err := manager.DeleteAgent(context.Background(), "Captain"); err == nil {
-		t.Fatal("expected last captain delete to fail")
+	if err := manager.DeleteAgent(context.Background(), "Orchestrator"); err == nil {
+		t.Fatal("expected last orchestrator delete to fail")
 	}
 }

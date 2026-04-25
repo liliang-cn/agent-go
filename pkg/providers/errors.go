@@ -78,8 +78,8 @@ func ValidateMessages(messages []domain.Message) error {
 		if msg.Role == "" {
 			return fmt.Errorf("%w: empty role in message %d", domain.ErrInvalidInput, i)
 		}
-		if msg.Content == "" && len(msg.ToolCalls) == 0 {
-			return fmt.Errorf("%w: empty content and no tool calls in message %d", domain.ErrInvalidInput, i)
+		if msg.Content == "" && len(msg.Parts) == 0 && len(msg.ToolCalls) == 0 {
+			return fmt.Errorf("%w: empty content, no parts, and no tool calls in message %d", domain.ErrInvalidInput, i)
 		}
 	}
 

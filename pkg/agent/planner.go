@@ -550,7 +550,7 @@ func (p *Planner) llmIntentRecognition(ctx context.Context, goal string, session
 			},
 			"preferred_agent": map[string]interface{}{
 				"type":        "string",
-				"enum":        []string{defaultAssistantAgentName, defaultOperatorAgentName, defaultArchivistAgentName, defaultStakeholderAgentName, defaultVerifierAgentName},
+				"enum":        []string{defaultResponderAgentName, defaultOperatorAgentName, defaultArchivistAgentName, defaultEvaluatorAgentName, defaultVerifierAgentName},
 				"description": "Best-fit built-in standalone agent for this intent.",
 			},
 			"transition": map[string]interface{}{
@@ -733,11 +733,11 @@ func (p *Planner) populateIntentExecutionHints(intent *IntentRecognitionResult) 
 	case "memory_save", "memory_recall":
 		intent.PreferredAgent = defaultArchivistAgentName
 	case "analysis":
-		intent.PreferredAgent = defaultAssistantAgentName
+		intent.PreferredAgent = defaultResponderAgentName
 	case "general_qa":
-		intent.PreferredAgent = defaultAssistantAgentName
+		intent.PreferredAgent = defaultResponderAgentName
 	case "rag_query":
-		intent.PreferredAgent = defaultAssistantAgentName
+		intent.PreferredAgent = defaultResponderAgentName
 	}
 
 	if intent.Transition == "" {

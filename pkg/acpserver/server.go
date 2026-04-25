@@ -251,7 +251,7 @@ func (s *Server) Prompt(ctx context.Context, params acp.PromptRequest) (acp.Prom
 
 	fallbackToolCalls := make(map[string][]acp.ToolCallId)
 	var fallbackToolSeq int
-	var streamedAssistant bool
+	var streamedResponder bool
 
 	for evt := range events {
 		switch evt.Type {
@@ -266,7 +266,7 @@ func (s *Server) Prompt(ctx context.Context, params acp.PromptRequest) (acp.Prom
 			if evt.Content == "" {
 				continue
 			}
-			streamedAssistant = true
+			streamedResponder = true
 			if err := s.sendUpdate(ctx, params.SessionId, acp.UpdateAgentMessageText(evt.Content)); err != nil {
 				return acp.PromptResponse{}, err
 			}
@@ -313,7 +313,7 @@ func (s *Server) Prompt(ctx context.Context, params acp.PromptRequest) (acp.Prom
 				return acp.PromptResponse{}, err
 			}
 		case agent.EventTypeComplete:
-			if !streamedAssistant && evt.Content != "" {
+			if !streamedResponder && evt.Content != "" {
 				if err := s.sendUpdate(ctx, params.SessionId, acp.UpdateAgentMessageText(evt.Content)); err != nil {
 					return acp.PromptResponse{}, err
 				}

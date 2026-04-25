@@ -14,11 +14,11 @@ func (s *Service) buildSystemPrompt(ctx context.Context, agent *Agent) string {
 	}))
 }
 
-func isConciergeAgent(agent *Agent) bool {
+func isDispatcherAgent(agent *Agent) bool {
 	if agent == nil {
 		return false
 	}
-	return strings.EqualFold(agent.Name(), BuiltInConciergeAgentName)
+	return strings.EqualFold(agent.Name(), BuiltInDispatcherAgentName)
 }
 
 func isDispatchOnlyAgent(agent *Agent) bool {

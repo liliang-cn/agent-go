@@ -938,9 +938,9 @@ func TestCortexDB_VectorSearch(t *testing.T) {
 	vec2 := make([]float64, dim)
 	vec3 := make([]float64, dim)
 	for i := 0; i < dim; i++ {
-		vec1[i] = 1.0       // identical to query
-		vec2[i] = 0.5       // same direction but mixed
-		vec3[i] = -1.0      // opposite
+		vec1[i] = 1.0  // identical to query
+		vec2[i] = 0.5  // same direction but mixed
+		vec3[i] = -1.0 // opposite
 	}
 	// Make vec2 clearly different from query by adding some orthogonal noise
 	vec2[0] = 0.1

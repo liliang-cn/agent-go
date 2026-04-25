@@ -26,8 +26,10 @@ func (s *Service) persistRunTaskState(session *Session, taskID string, opts task
 	}
 	parentTaskID := ""
 	if session != nil {
-		if raw, ok := session.Context["runtime.parent_task_id"].(string); ok {
-			parentTaskID = strings.TrimSpace(raw)
+		if raw, ok := session.GetContext("runtime.parent_task_id"); ok {
+			if s, ok := raw.(string); ok {
+				parentTaskID = strings.TrimSpace(s)
+			}
 		}
 	}
 	task, err := s.store.GetTask(taskID)
@@ -81,8 +83,10 @@ func (s *Service) persistRunTaskEvent(session *Session, taskID string, evt *Even
 	}
 	parentTaskID := ""
 	if session != nil {
-		if raw, ok := session.Context["runtime.parent_task_id"].(string); ok {
-			parentTaskID = strings.TrimSpace(raw)
+		if raw, ok := session.GetContext("runtime.parent_task_id"); ok {
+			if s, ok := raw.(string); ok {
+				parentTaskID = strings.TrimSpace(s)
+			}
 		}
 	}
 	task, err := s.store.GetTask(taskID)

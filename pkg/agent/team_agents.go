@@ -53,7 +53,7 @@ func (m *TeamManager) GetLeadAgentForTeam(teamID string) (*AgentModel, error) {
 		return nil, err
 	}
 	for _, model := range agents {
-		if model.Kind == AgentKindCaptain {
+		if model.Kind == AgentKindOrchestrator {
 			return model, nil
 		}
 	}
@@ -109,7 +109,7 @@ func (m *TeamManager) CreateAgent(ctx context.Context, model *AgentModel) (*Agen
 	if len(model.MCPTools) > 0 {
 		model.EnableMCP = true
 	}
-	if model.Kind == "" || model.Kind == AgentKindCaptain || model.Kind == AgentKindSpecialist {
+	if model.Kind == "" || model.Kind == AgentKindOrchestrator || model.Kind == AgentKindSpecialist {
 		model.Kind = AgentKindAgent
 	}
 	if model.Kind != AgentKindAgent {
@@ -141,7 +141,7 @@ func (m *TeamManager) CreateAgent(ctx context.Context, model *AgentModel) (*Agen
 			return nil, err
 		}
 		m.clearCachedAgent(created.Name)
-		m.clearTeamCaptainCache(requestedTeamID)
+		m.clearTeamOrchestratorCache(requestedTeamID)
 		return m.GetMemberByNameInTeam(created.Name, requestedTeamID)
 	}
 
@@ -161,7 +161,7 @@ func (m *TeamManager) resolveRequestedTeamRole(teamID string, requestedRole Agen
 	if role == "" || role == AgentKindAgent {
 		role = AgentKindSpecialist
 	}
-	if role != AgentKindCaptain && role != AgentKindSpecialist {
+	if role != AgentKindOrchestrator && role != AgentKindSpecialist {
 		return "", fmt.Errorf("invalid team role %q", role)
 	}
 	if err := m.ensureSingleLeadPerTeam("", teamID, role); err != nil {
@@ -286,7 +286,7 @@ func (m *TeamManager) JoinTeam(_ context.Context, name, teamID string, role Agen
 		return nil, err
 	}
 	role = normalizeMembershipRole(role)
-	if role != AgentKindCaptain && role != AgentKindSpecialist {
+	if role != AgentKindOrchestrator && role != AgentKindSpecialist {
 		return nil, fmt.Errorf("invalid team role %q", role)
 	}
 	if err := m.ensureSingleLeadPerTeam(model.ID, teamID, role); err != nil {
@@ -300,7 +300,7 @@ func (m *TeamManager) JoinTeam(_ context.Context, name, teamID string, role Agen
 		return nil, err
 	}
 	m.clearCachedAgent(model.Name)
-	m.clearTeamCaptainCache(teamID)
+	m.clearTeamOrchestratorCache(teamID)
 	return m.GetMemberByNameInTeam(model.Name, teamID)
 }
 
@@ -324,7 +324,7 @@ func (m *TeamManager) LeaveTeam(_ context.Context, name string, teamID ...string
 		return nil, err
 	}
 	m.clearCachedAgent(model.Name)
-	m.clearTeamCaptainCache(targetTeamID)
+	m.clearTeamOrchestratorCache(targetTeamID)
 	return m.store.GetAgentModel(model.ID)
 }
 
@@ -351,7 +351,7 @@ func (m *TeamManager) DeleteTeam(_ context.Context, teamID string) error {
 			return getErr
 		}
 		m.clearCachedAgent(model.Name)
-		m.clearTeamCaptainCache(teamID)
+		m.clearTeamOrchestratorCache(teamID)
 		if err := m.store.DeleteTeamMembership(membership.AgentID, teamID); err != nil {
 			return err
 		}
@@ -369,7 +369,7 @@ func (m *TeamManager) DeleteTeam(_ context.Context, teamID string) error {
 }
 
 func (m *TeamManager) ensureSingleLeadPerTeam(agentID, teamID string, role AgentKind) error {
-	if role != AgentKindCaptain {
+	if role != AgentKindOrchestrator {
 		return nil
 	}
 	memberships, err := m.store.ListTeamMembershipsByTeam(teamID)
@@ -377,7 +377,7 @@ func (m *TeamManager) ensureSingleLeadPerTeam(agentID, teamID string, role Agent
 		return err
 	}
 	for _, membership := range memberships {
-		if membership.Role == AgentKindCaptain && membership.AgentID != agentID {
+		if membership.Role == AgentKindOrchestrator && membership.AgentID != agentID {
 			return fmt.Errorf("team %s already has a lead agent", teamID)
 		}
 	}
@@ -385,7 +385,7 @@ func (m *TeamManager) ensureSingleLeadPerTeam(agentID, teamID string, role Agent
 }
 
 func (m *TeamManager) ensureLeadRemovalAllowed(model *AgentModel, teamID string, role AgentKind) error {
-	if model == nil || role != AgentKindCaptain || strings.TrimSpace(teamID) == "" {
+	if model == nil || role != AgentKindOrchestrator || strings.TrimSpace(teamID) == "" {
 		return nil
 	}
 	memberships, err := m.store.ListTeamMembershipsByTeam(teamID)
@@ -394,7 +394,7 @@ func (m *TeamManager) ensureLeadRemovalAllowed(model *AgentModel, teamID string,
 	}
 	leadCount := 0
 	for _, membership := range memberships {
-		if membership.Role == AgentKindCaptain {
+		if membership.Role == AgentKindOrchestrator {
 			leadCount++
 		}
 	}
@@ -434,7 +434,7 @@ func (m *TeamManager) clearCachedAgent(name string) {
 	m.stopBuiltInAgentRuntime(name)
 }
 
-func (m *TeamManager) clearTeamCaptainCache(teamID string) {
+func (m *TeamManager) clearTeamOrchestratorCache(teamID string) {
 	teamID = strings.TrimSpace(teamID)
 	if teamID == "" {
 		return
@@ -444,7 +444,7 @@ func (m *TeamManager) clearTeamCaptainCache(teamID string) {
 		return
 	}
 	for _, member := range members {
-		if member != nil && member.Kind == AgentKindCaptain {
+		if member != nil && member.Kind == AgentKindOrchestrator {
 			m.clearCachedAgent(member.Name)
 		}
 	}

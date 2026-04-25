@@ -149,7 +149,10 @@ func (s *Store) SaveTaskFramesFromSession(session *Session) error {
 		}
 		task, err := s.agentGoDB.GetTask(taskID)
 		if err != nil || task == nil {
-			parentTaskID, _ := session.Context["runtime.parent_task_id"].(string)
+			parentTaskID := ""
+			if raw, ok := session.GetContext("runtime.parent_task_id"); ok {
+				parentTaskID, _ = raw.(string)
+			}
 			task = &taskpkg.Task{
 				ID:               taskID,
 				Kind:             taskpkg.KindAgent,
@@ -502,15 +505,15 @@ func convertToTeam(sq *store.Team) *Team {
 
 func normalizeAgentKind(agent *AgentModel) AgentKind {
 	if agent == nil {
-		return AgentKindCaptain
+		return AgentKindOrchestrator
 	}
-	if agent.Kind == AgentKindCaptain || agent.Kind == AgentKindSpecialist || agent.Kind == AgentKindAgent {
+	if agent.Kind == AgentKindOrchestrator || agent.Kind == AgentKindSpecialist || agent.Kind == AgentKindAgent {
 		return agent.Kind
 	}
 	if strings.TrimSpace(agent.TeamID) == "" {
 		return AgentKindAgent
 	}
-	return AgentKindCaptain
+	return AgentKindOrchestrator
 }
 
 func replaceTaskFramesForSession(existing []taskpkg.Frame, sessionID string, replacement []taskpkg.Frame) []taskpkg.Frame {

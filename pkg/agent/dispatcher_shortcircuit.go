@@ -12,7 +12,7 @@ import (
 	memorypkg "github.com/liliang-cn/agent-go/v2/pkg/memory"
 )
 
-type conciergeDirectRouteResult struct {
+type dispatcherDirectRouteResult struct {
 	targetAgent  string
 	intentType   string
 	reason       string
@@ -23,8 +23,8 @@ type conciergeDirectRouteResult struct {
 	rawResult    map[string]interface{}
 }
 
-func (s *Service) shouldShortCircuitConciergeRoute(goal string) bool {
-	if s == nil || !isConciergeAgent(s.agent) || s.toolRegistry == nil || !s.toolRegistry.Has("route_builtin_request") {
+func (s *Service) shouldShortCircuitDispatcherRoute(goal string) bool {
+	if s == nil || !isDispatcherAgent(s.agent) || s.toolRegistry == nil || !s.toolRegistry.Has("route_builtin_request") {
 		return false
 	}
 
@@ -50,11 +50,11 @@ func (s *Service) shouldShortCircuitConciergeRoute(goal string) bool {
 	return true
 }
 
-func (s *Service) executeDirectConciergeRoute(ctx context.Context, session *Session, goal string) (*ExecutionResult, bool, error) {
-	if !s.shouldShortCircuitConciergeRoute(goal) {
+func (s *Service) executeDirectDispatcherRoute(ctx context.Context, session *Session, goal string) (*ExecutionResult, bool, error) {
+	if !s.shouldShortCircuitDispatcherRoute(goal) {
 		return nil, false, nil
 	}
-	if memoryResult, ok, err := s.executeDirectConciergeMemoryIntent(ctx, session, goal); ok {
+	if memoryResult, ok, err := s.executeDirectDispatcherMemoryIntent(ctx, session, goal); ok {
 		return memoryResult, true, err
 	}
 
@@ -70,21 +70,21 @@ func (s *Service) executeDirectConciergeRoute(ctx context.Context, session *Sess
 		return nil, true, err
 	}
 
-	parsed := parseConciergeDirectRouteResult(raw)
+	parsed := parseDispatcherDirectRouteResult(raw)
 	if strings.TrimSpace(parsed.finalText) == "" {
 		return nil, true, fmt.Errorf("route_builtin_request returned an empty result")
 	}
 	if strings.Contains(strings.ToLower(parsed.finalText), "couldn't find that in memory") && s.memoryService != nil {
-		if memories, err := s.retrieveConciergeMemories(ctx, goal, s.resolveMemoryQueryContext(session)); err == nil && len(memories) > 0 {
+		if memories, err := s.retrieveDispatcherMemories(ctx, goal, s.resolveMemoryQueryContext(session)); err == nil && len(memories) > 0 {
 			parsed.finalText = fallbackExplicitRecallSnippet(memories)
 		} else {
-			parsed.finalText = sanitizeConciergeMemoryFallbackText(parsed.finalText)
+			parsed.finalText = sanitizeDispatcherMemoryFallbackText(parsed.finalText)
 		}
 	}
 
 	now := time.Now()
 	result := &ExecutionResult{
-		PlanID:      fmt.Sprintf("concierge-route-%d", now.UnixNano()),
+		PlanID:      fmt.Sprintf("dispatcher-route-%d", now.UnixNano()),
 		SessionID:   firstNonEmpty(s.CurrentSessionID(), sessionIDOrEmpty(session)),
 		Success:     true,
 		StepsTotal:  1,
@@ -97,7 +97,7 @@ func (s *Service) executeDirectConciergeRoute(ctx context.Context, session *Sess
 		FinalResult: parsed.finalText,
 		Duration:    "completed",
 		Metadata: map[string]interface{}{
-			"dispatch_mode":        "direct_concierge_route",
+			"dispatch_mode":        "direct_dispatcher_route",
 			"dispatch_target":      parsed.targetAgent,
 			"dispatch_intent":      parsed.intentType,
 			"dispatch_reason":      parsed.reason,
@@ -111,8 +111,8 @@ func (s *Service) executeDirectConciergeRoute(ctx context.Context, session *Sess
 	return result, true, nil
 }
 
-func (s *Service) streamDirectConciergeRoute(ctx context.Context, session *Session, goal string) (<-chan *Event, bool, error) {
-	if !s.shouldShortCircuitConciergeRoute(goal) {
+func (s *Service) streamDirectDispatcherRoute(ctx context.Context, session *Session, goal string) (<-chan *Event, bool, error) {
+	if !s.shouldShortCircuitDispatcherRoute(goal) {
 		return nil, false, nil
 	}
 
@@ -124,7 +124,7 @@ func (s *Service) streamDirectConciergeRoute(ctx context.Context, session *Sessi
 		startEvt.Content = fmt.Sprintf("Starting task: %s", strings.TrimSpace(goal))
 		events <- startEvt
 
-		result, _, err := s.executeDirectConciergeRoute(ctx, session, goal)
+		result, _, err := s.executeDirectDispatcherRoute(ctx, session, goal)
 		if err != nil {
 			errEvt := NewEvent(EventTypeError, s.agent)
 			errEvt.Content = err.Error()
@@ -132,7 +132,7 @@ func (s *Service) streamDirectConciergeRoute(ctx context.Context, session *Sessi
 			return
 		}
 
-		toolName, toolArgs := conciergeShortCircuitToolMetadata(result, goal)
+		toolName, toolArgs := dispatcherShortCircuitToolMetadata(result, goal)
 		if toolName != "" {
 			toolEvt := NewEvent(EventTypeToolCall, s.agent)
 			toolEvt.ToolName = toolName
@@ -148,7 +148,7 @@ func (s *Service) streamDirectConciergeRoute(ctx context.Context, session *Sessi
 		if toolName != "" {
 			toolResultEvt := NewEvent(EventTypeToolResult, s.agent)
 			toolResultEvt.ToolName = toolName
-			toolResultEvt.ToolResult = conciergeShortCircuitToolResult(result)
+			toolResultEvt.ToolResult = dispatcherShortCircuitToolResult(result)
 			events <- toolResultEvt
 		}
 
@@ -161,7 +161,7 @@ func (s *Service) streamDirectConciergeRoute(ctx context.Context, session *Sessi
 	return events, true, nil
 }
 
-func (s *Service) executeDirectConciergeMemoryIntent(ctx context.Context, session *Session, goal string) (*ExecutionResult, bool, error) {
+func (s *Service) executeDirectDispatcherMemoryIntent(ctx context.Context, session *Session, goal string) (*ExecutionResult, bool, error) {
 	if s == nil || s.memoryService == nil {
 		return nil, false, nil
 	}
@@ -182,12 +182,12 @@ func (s *Service) executeDirectConciergeMemoryIntent(ctx context.Context, sessio
 			UserID:       queryContext.UserID,
 			TaskGoal:     goal,
 			TaskResult:   content,
-			ExecutionLog: "explicit concierge memory save",
+			ExecutionLog: "explicit dispatcher memory save",
 		}); err != nil {
 			return nil, true, err
 		}
 		return &ExecutionResult{
-			PlanID:      fmt.Sprintf("concierge-memory-save-%d", now.UnixNano()),
+			PlanID:      fmt.Sprintf("dispatcher-memory-save-%d", now.UnixNano()),
 			SessionID:   firstNonEmpty(s.CurrentSessionID(), sessionIDOrEmpty(session)),
 			Success:     true,
 			StepsTotal:  1,
@@ -200,7 +200,7 @@ func (s *Service) executeDirectConciergeMemoryIntent(ctx context.Context, sessio
 			FinalResult: "已保存用于后续跨会话。",
 			Duration:    "completed",
 			Metadata: map[string]interface{}{
-				"dispatch_mode":   "direct_concierge_memory_save",
+				"dispatch_mode":   "direct_dispatcher_memory_save",
 				"dispatch_target": s.agent.Name(),
 				"dispatch_intent": "memory_save",
 				"memory_saved":    true,
@@ -212,26 +212,26 @@ func (s *Service) executeDirectConciergeMemoryIntent(ctx context.Context, sessio
 		if !looksLikeInformationSeekingQuery(goal) {
 			return nil, false, nil
 		}
-		memories, err := s.retrieveConciergeMemories(ctx, goal, queryContext)
-		if err != nil || !shouldDirectConciergeAnswerFromMemory(memories) {
+		memories, err := s.retrieveDispatcherMemories(ctx, goal, queryContext)
+		if err != nil || !shouldDirectDispatcherAnswerFromMemory(memories) {
 			return nil, false, nil
 		}
-		return s.buildDirectConciergeMemoryRecallResult(ctx, session, goal, intent, memories)
+		return s.buildDirectDispatcherMemoryRecallResult(ctx, session, goal, intent, memories)
 	}
 
-	memories, err := s.retrieveConciergeMemories(ctx, goal, queryContext)
+	memories, err := s.retrieveDispatcherMemories(ctx, goal, queryContext)
 	if err != nil {
 		return nil, true, err
 	}
-	return s.buildDirectConciergeMemoryRecallResult(ctx, session, goal, intent, memories)
+	return s.buildDirectDispatcherMemoryRecallResult(ctx, session, goal, intent, memories)
 }
 
-func (s *Service) retrieveConciergeMemories(ctx context.Context, goal string, queryContext domain.MemoryQueryContext) ([]*domain.MemoryWithScore, error) {
+func (s *Service) retrieveDispatcherMemories(ctx context.Context, goal string, queryContext domain.MemoryQueryContext) ([]*domain.MemoryWithScore, error) {
 	if s == nil || s.memoryService == nil {
 		return nil, nil
 	}
 
-	queries := conciergeMemoryRecallQueries(goal)
+	queries := dispatcherMemoryRecallQueries(goal)
 	seen := make(map[string]*domain.MemoryWithScore)
 	order := make([]string, 0)
 	var firstErr error
@@ -280,7 +280,7 @@ func (s *Service) retrieveConciergeMemories(ctx context.Context, goal string, qu
 			if memory == nil {
 				continue
 			}
-			score := conciergeRecallFallbackScore(queries, memory.Content)
+			score := dispatcherRecallFallbackScore(queries, memory.Content)
 			if score <= 0 {
 				continue
 			}
@@ -289,7 +289,7 @@ func (s *Service) retrieveConciergeMemories(ctx context.Context, goal string, qu
 				Score:  score,
 			})
 		}
-		memories = mergeConciergeMemoryResults(memories, memorypkg.FilterMemoriesForQuery(goal, fallback))
+		memories = mergeDispatcherMemoryResults(memories, memorypkg.FilterMemoriesForQuery(goal, fallback))
 	}
 	if len(memories) == 0 {
 		return nil, firstErr
@@ -309,7 +309,7 @@ func (s *Service) retrieveConciergeMemories(ctx context.Context, goal string, qu
 	return memories, nil
 }
 
-func conciergeMemoryRecallQueries(goal string) []string {
+func dispatcherMemoryRecallQueries(goal string) []string {
 	goal = normalizeTaskPrompt(goal)
 	if goal == "" {
 		return nil
@@ -319,7 +319,7 @@ func conciergeMemoryRecallQueries(goal string) []string {
 	var queries []string
 	add := func(value string) {
 		value = strings.TrimSpace(value)
-		if value == "" || isConciergeRecallDirective(value) {
+		if value == "" || isDispatcherRecallDirective(value) {
 			return
 		}
 		if _, ok := seen[value]; ok {
@@ -341,7 +341,7 @@ func conciergeMemoryRecallQueries(goal string) []string {
 	})
 	for _, field := range fields {
 		add(field)
-		add(normalizeConciergeRecallFragment(field))
+		add(normalizeDispatcherRecallFragment(field))
 	}
 
 	if len(queries) > 8 {
@@ -350,7 +350,7 @@ func conciergeMemoryRecallQueries(goal string) []string {
 	return queries
 }
 
-func normalizeConciergeRecallFragment(fragment string) string {
+func normalizeDispatcherRecallFragment(fragment string) string {
 	fragment = strings.TrimSpace(fragment)
 	if fragment == "" {
 		return ""
@@ -392,7 +392,7 @@ func normalizeConciergeRecallFragment(fragment string) string {
 	return fragment
 }
 
-func conciergeRecallFallbackScore(queries []string, content string) float64 {
+func dispatcherRecallFallbackScore(queries []string, content string) float64 {
 	contentLower := strings.ToLower(strings.TrimSpace(content))
 	if contentLower == "" {
 		return 0
@@ -400,7 +400,7 @@ func conciergeRecallFallbackScore(queries []string, content string) float64 {
 	best := 0.0
 	for _, query := range queries {
 		query = strings.ToLower(strings.TrimSpace(query))
-		if query == "" || isConciergeRecallDirective(query) {
+		if query == "" || isDispatcherRecallDirective(query) {
 			continue
 		}
 		switch {
@@ -413,7 +413,7 @@ func conciergeRecallFallbackScore(queries []string, content string) float64 {
 				best = lengthBoost
 			}
 		case len([]rune(query)) >= 2:
-			if overlap := conciergeContentOverlap(query, contentLower); overlap > best {
+			if overlap := dispatcherContentOverlap(query, contentLower); overlap > best {
 				best = overlap
 			}
 		}
@@ -421,7 +421,7 @@ func conciergeRecallFallbackScore(queries []string, content string) float64 {
 	return best
 }
 
-func conciergeContentOverlap(query, content string) float64 {
+func dispatcherContentOverlap(query, content string) float64 {
 	matches := 0
 	for _, token := range strings.Fields(query) {
 		token = strings.TrimSpace(token)
@@ -438,7 +438,7 @@ func conciergeContentOverlap(query, content string) float64 {
 	return 0.45
 }
 
-func shouldDirectConciergeAnswerFromMemory(memories []*domain.MemoryWithScore) bool {
+func shouldDirectDispatcherAnswerFromMemory(memories []*domain.MemoryWithScore) bool {
 	if len(memories) == 0 {
 		return false
 	}
@@ -451,7 +451,7 @@ func shouldDirectConciergeAnswerFromMemory(memories []*domain.MemoryWithScore) b
 	return false
 }
 
-func (s *Service) buildDirectConciergeMemoryRecallResult(ctx context.Context, session *Session, goal string, intent *IntentRecognitionResult, memories []*domain.MemoryWithScore) (*ExecutionResult, bool, error) {
+func (s *Service) buildDirectDispatcherMemoryRecallResult(ctx context.Context, session *Session, goal string, intent *IntentRecognitionResult, memories []*domain.MemoryWithScore) (*ExecutionResult, bool, error) {
 	formatted := formatExplicitRecallMemories(memories)
 	cfg := DefaultRunConfig()
 	answer, ok, err := s.answerExplicitMemoryRecall(ctx, goal, intent, formatted, memories, cfg)
@@ -465,7 +465,7 @@ func (s *Service) buildDirectConciergeMemoryRecallResult(ctx context.Context, se
 	}
 	now := time.Now()
 	return &ExecutionResult{
-		PlanID:      fmt.Sprintf("concierge-memory-recall-%d", now.UnixNano()),
+		PlanID:      fmt.Sprintf("dispatcher-memory-recall-%d", now.UnixNano()),
 		SessionID:   firstNonEmpty(s.CurrentSessionID(), sessionIDOrEmpty(session)),
 		Success:     true,
 		StepsTotal:  1,
@@ -478,7 +478,7 @@ func (s *Service) buildDirectConciergeMemoryRecallResult(ctx context.Context, se
 		FinalResult: strings.TrimSpace(answer),
 		Duration:    "completed",
 		Metadata: map[string]interface{}{
-			"dispatch_mode":   "direct_concierge_memory_recall",
+			"dispatch_mode":   "direct_dispatcher_memory_recall",
 			"dispatch_target": s.agent.Name(),
 			"dispatch_intent": "memory_recall",
 			"memory_recall":   formatted,
@@ -515,7 +515,7 @@ func fallbackExplicitRecallSnippet(memories []*domain.MemoryWithScore) string {
 	return strings.Join(parts, "；")
 }
 
-func sanitizeConciergeMemoryFallbackText(text string) string {
+func sanitizeDispatcherMemoryFallbackText(text string) string {
 	lower := strings.ToLower(text)
 	needle := "couldn't find that in memory"
 	idx := strings.Index(lower, needle)
@@ -525,7 +525,7 @@ func sanitizeConciergeMemoryFallbackText(text string) string {
 	return strings.TrimSpace(text[:idx] + "信息不足")
 }
 
-func mergeConciergeMemoryResults(primary []*domain.MemoryWithScore, extras []*domain.MemoryWithScore) []*domain.MemoryWithScore {
+func mergeDispatcherMemoryResults(primary []*domain.MemoryWithScore, extras []*domain.MemoryWithScore) []*domain.MemoryWithScore {
 	if len(extras) == 0 {
 		return primary
 	}
@@ -568,7 +568,7 @@ func mergeConciergeMemoryResults(primary []*domain.MemoryWithScore, extras []*do
 	return out
 }
 
-func isConciergeRecallDirective(value string) bool {
+func isDispatcherRecallDirective(value string) bool {
 	value = strings.ToLower(strings.TrimSpace(value))
 	switch value {
 	case "", "只用一行回答", "只回答", "一行回答", "只用一行", "reply in one line", "reply with one line":
@@ -578,36 +578,36 @@ func isConciergeRecallDirective(value string) bool {
 	}
 }
 
-func conciergeShortCircuitToolMetadata(result *ExecutionResult, goal string) (string, map[string]interface{}) {
+func dispatcherShortCircuitToolMetadata(result *ExecutionResult, goal string) (string, map[string]interface{}) {
 	if result == nil {
 		return "", nil
 	}
 	switch strings.TrimSpace(metadataString(result.Metadata, "dispatch_mode")) {
-	case "direct_concierge_memory_save":
+	case "direct_dispatcher_memory_save":
 		return "memory_save", map[string]interface{}{"content": strings.TrimSpace(extractExplicitMemorySaveContent(goal))}
-	case "direct_concierge_memory_recall":
+	case "direct_dispatcher_memory_recall":
 		return "memory_recall", map[string]interface{}{"query": normalizeTaskPrompt(goal)}
 	default:
 		return "route_builtin_request", map[string]interface{}{"prompt": normalizeTaskPrompt(goal)}
 	}
 }
 
-func conciergeShortCircuitToolResult(result *ExecutionResult) interface{} {
+func dispatcherShortCircuitToolResult(result *ExecutionResult) interface{} {
 	if result == nil {
 		return nil
 	}
 	switch strings.TrimSpace(metadataString(result.Metadata, "dispatch_mode")) {
-	case "direct_concierge_memory_save":
+	case "direct_dispatcher_memory_save":
 		return map[string]interface{}{"status": "saved", "result": result.Text()}
-	case "direct_concierge_memory_recall":
+	case "direct_dispatcher_memory_recall":
 		return map[string]interface{}{"result": result.Text(), "formatted": result.Metadata["memory_recall"]}
 	default:
 		return result.Metadata["route_builtin_result"]
 	}
 }
 
-func parseConciergeDirectRouteResult(raw interface{}) conciergeDirectRouteResult {
-	result := conciergeDirectRouteResult{}
+func parseDispatcherDirectRouteResult(raw interface{}) dispatcherDirectRouteResult {
+	result := dispatcherDirectRouteResult{}
 	payload, ok := raw.(map[string]interface{})
 	if !ok {
 		result.finalText = strings.TrimSpace(formatResultForContent(raw))

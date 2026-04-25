@@ -9,8 +9,8 @@ import (
 
 func TestResolveMemoryQueryContext(t *testing.T) {
 	svc := &Service{
-		agent:              NewAgent("Assistant"),
-		memoryScopeAgentID: "Assistant",
+		agent:              NewAgent("Responder"),
+		memoryScopeAgentID: "Responder",
 		memoryScopeTeamID:  "team-alpha",
 	}
 	session := NewSession("agent-1")
@@ -20,8 +20,8 @@ func TestResolveMemoryQueryContext(t *testing.T) {
 	if queryContext.SessionID != session.GetID() {
 		t.Fatalf("expected session id %q, got %q", session.GetID(), queryContext.SessionID)
 	}
-	if queryContext.AgentID != "Assistant" {
-		t.Fatalf("expected agent scope Assistant, got %q", queryContext.AgentID)
+	if queryContext.AgentID != "Responder" {
+		t.Fatalf("expected agent scope Responder, got %q", queryContext.AgentID)
 	}
 	if queryContext.TeamID != "team-alpha" {
 		t.Fatalf("expected team scope team-alpha, got %q", queryContext.TeamID)
@@ -36,12 +36,12 @@ func TestRememberMemoryQueryContext(t *testing.T) {
 	session := NewSession("agent-1")
 
 	svc.rememberMemoryQueryContext(session, domain.MemoryQueryContext{
-		AgentID: "Assistant",
+		AgentID: "Responder",
 		TeamID:  "team-alpha",
 		UserID:  "user-1",
 	})
 
-	if value, ok := session.GetContext(sessionContextMemoryAgentScope); !ok || value != "Assistant" {
+	if value, ok := session.GetContext(sessionContextMemoryAgentScope); !ok || value != "Responder" {
 		t.Fatalf("expected agent scope to be stored in session context, got %v %v", value, ok)
 	}
 	if value, ok := session.GetContext(sessionContextMemoryTeamScope); !ok || value != "team-alpha" {
@@ -54,21 +54,21 @@ func TestRememberMemoryQueryContext(t *testing.T) {
 
 func TestResolveMemoryQueryContextFromContextPreservesInheritedScopeForBuiltInAgent(t *testing.T) {
 	svc := &Service{
-		agent:              NewAgent("Concierge"),
-		memoryScopeAgentID: "Concierge",
+		agent:              NewAgent("Dispatcher"),
+		memoryScopeAgentID: "Dispatcher",
 		memoryScopeTeamID:  "team-alpha",
 	}
 
 	session := NewSession("session-1")
-	session.SetContext(sessionContextMemoryAgentScope, "Concierge")
+	session.SetContext(sessionContextMemoryAgentScope, "Dispatcher")
 	session.SetContext(sessionContextMemoryTeamScope, "team-alpha")
 
 	ctx := withCurrentSession(context.Background(), session)
 	ctx = withCurrentAgent(ctx, NewAgent("Archivist"))
 
 	queryContext := svc.resolveMemoryQueryContextFromContext(ctx)
-	if queryContext.AgentID != "Concierge" {
-		t.Fatalf("expected inherited agent scope Concierge, got %q", queryContext.AgentID)
+	if queryContext.AgentID != "Dispatcher" {
+		t.Fatalf("expected inherited agent scope Dispatcher, got %q", queryContext.AgentID)
 	}
 	if queryContext.TeamID != "team-alpha" {
 		t.Fatalf("expected inherited team scope team-alpha, got %q", queryContext.TeamID)
@@ -77,12 +77,12 @@ func TestResolveMemoryQueryContextFromContextPreservesInheritedScopeForBuiltInAg
 
 func TestResolveMemoryQueryContextFromContextUsesCurrentScopeForCustomAgent(t *testing.T) {
 	svc := &Service{
-		agent:              NewAgent("Concierge"),
-		memoryScopeAgentID: "Concierge",
+		agent:              NewAgent("Dispatcher"),
+		memoryScopeAgentID: "Dispatcher",
 	}
 
 	session := NewSession("session-1")
-	session.SetContext(sessionContextMemoryAgentScope, "Concierge")
+	session.SetContext(sessionContextMemoryAgentScope, "Dispatcher")
 
 	ctx := withCurrentSession(context.Background(), session)
 	ctx = withCurrentAgent(ctx, NewAgent("ReleasePlanner"))

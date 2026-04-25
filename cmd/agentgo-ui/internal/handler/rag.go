@@ -108,7 +108,7 @@ func (h *Handler) handleAISDKAgentChat(w http.ResponseWriter, r *http.Request, r
 
 	agentName := strings.TrimSpace(stringValue(raw["agent_name"]))
 	if agentName == "" {
-		agentName = "Captain"
+		agentName = "Orchestrator"
 	}
 
 	events, err := h.teamManager.DispatchTaskStream(r.Context(), agentName, prompt)

@@ -36,7 +36,7 @@ func TestScopeHelpersTeamCompatibility(t *testing.T) {
 }
 
 func TestDefaultScopeChainUsesTeamLayer(t *testing.T) {
-	chain := DefaultScopeChain("sess-1", "Assistant", "alpha", "user-1")
+	chain := DefaultScopeChain("sess-1", "Responder", "alpha", "user-1")
 	if len(chain) != 5 {
 		t.Fatalf("unexpected chain length: %d", len(chain))
 	}

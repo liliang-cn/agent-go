@@ -177,7 +177,7 @@ func populateIntentExecutionHints(intent *IntentRecognitionResult) *IntentRecogn
 	case "memory_save", "memory_recall":
 		intent.PreferredAgent = "Archivist"
 	case "analysis", "general_qa", "rag_query":
-		intent.PreferredAgent = "Assistant"
+		intent.PreferredAgent = "Responder"
 	}
 
 	if intent.Transition == "" {

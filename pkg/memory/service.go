@@ -974,7 +974,7 @@ func isSharedTeamMemory(req *domain.MemoryStoreRequest, item domain.MemoryItem) 
 
 	text := strings.ToLower(strings.Join(append([]string{item.Content}, append(item.Tags.Strings(), item.Entities.Strings()...)...), " "))
 	keywords := []string{
-		"shared", "cross-agent", "cross agent", "team", "team", "captain", "specialist", "handoff", "roster",
+		"shared", "cross-agent", "cross agent", "team", "team", "orchestrator", "specialist", "handoff", "roster",
 		"shared context", "coordination", "workspace", "repository", "api contract", "deployment", "schema",
 		"共享", "跨agent", "跨 agent", "团队", "小队", "协作", "交接",
 	}

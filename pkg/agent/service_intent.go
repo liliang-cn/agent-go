@@ -119,7 +119,7 @@ func preferredEntryAgentForIntent(intent *IntentRecognitionResult) string {
 		return ""
 	}
 	switch strings.TrimSpace(intent.PreferredAgent) {
-	case defaultOperatorAgentName, defaultArchivistAgentName, defaultAssistantAgentName, defaultStakeholderAgentName, defaultVerifierAgentName:
+	case defaultOperatorAgentName, defaultArchivistAgentName, defaultResponderAgentName, defaultEvaluatorAgentName, defaultVerifierAgentName:
 		return strings.TrimSpace(intent.PreferredAgent)
 	default:
 		return ""

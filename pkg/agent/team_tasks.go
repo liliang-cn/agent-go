@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func (m *TeamManager) resolveSharedTaskContext(teamID, captainName string) (*Team, *AgentModel, error) {
+func (m *TeamManager) resolveSharedTaskContext(teamID, orchestratorName string) (*Team, *AgentModel, error) {
 	if teamID != "" {
 		team, err := m.store.GetTeam(teamID)
 		if err != nil {
@@ -16,24 +16,24 @@ func (m *TeamManager) resolveSharedTaskContext(teamID, captainName string) (*Tea
 		if err != nil {
 			return nil, nil, err
 		}
-		if captainName != "" && !strings.EqualFold(captainName, leadAgent.Name) {
-			return nil, nil, fmt.Errorf("%s is not the lead agent for team %s", captainName, team.Name)
+		if orchestratorName != "" && !strings.EqualFold(orchestratorName, leadAgent.Name) {
+			return nil, nil, fmt.Errorf("%s is not the lead agent for team %s", orchestratorName, team.Name)
 		}
 		return team, leadAgent, nil
 	}
 
-	if captainName == "" {
-		captainName = defaultCaptainAgentName
+	if orchestratorName == "" {
+		orchestratorName = defaultOrchestratorAgentName
 	}
 
-	model, err := m.store.GetAgentModelByName(captainName)
+	model, err := m.store.GetAgentModelByName(orchestratorName)
 	if err != nil {
-		return nil, nil, fmt.Errorf("cannot load team lead agent %s: %w", captainName, err)
+		return nil, nil, fmt.Errorf("cannot load team lead agent %s: %w", orchestratorName, err)
 	}
 
 	leadMemberships := leadMemberships(model.Teams)
 	if len(leadMemberships) == 0 {
-		return nil, nil, fmt.Errorf("%s is not a team lead agent", captainName)
+		return nil, nil, fmt.Errorf("%s is not a team lead agent", orchestratorName)
 	}
 
 	var membership TeamMembership
@@ -48,7 +48,7 @@ func (m *TeamManager) resolveSharedTaskContext(teamID, captainName string) (*Tea
 			}
 		}
 		if strings.TrimSpace(membership.TeamID) == "" {
-			return nil, nil, fmt.Errorf("%s leads multiple teams; specify team id", captainName)
+			return nil, nil, fmt.Errorf("%s leads multiple teams; specify team id", orchestratorName)
 		}
 	}
 

@@ -511,7 +511,7 @@ func isBuiltIn(model *agentpkg.AgentModel) bool {
 		return false
 	}
 	switch strings.TrimSpace(model.Name) {
-	case "Concierge", "Assistant", "Operator", "Captain", "Stakeholder", "Archivist", "Verifier":
+	case "Dispatcher", "Responder", "Operator", "Orchestrator", "Evaluator", "Archivist", "Verifier":
 		return true
 	default:
 		return false
@@ -942,8 +942,8 @@ func newTeamStatusEvent(reqCtx *a2asrv.RequestContext, task *agentpkg.TeamRespon
 		if strings.TrimSpace(task.TeamID) != "" {
 			event.SetMeta("agentgo_team_id", task.TeamID)
 		}
-		if strings.TrimSpace(task.CaptainName) != "" {
-			event.SetMeta("agentgo_captain_name", task.CaptainName)
+		if strings.TrimSpace(task.OrchestratorName) != "" {
+			event.SetMeta("agentgo_orchestrator_name", task.OrchestratorName)
 		}
 		if strings.TrimSpace(task.RequestID) != "" {
 			event.SetMeta("agentgo_team_request_id", task.RequestID)

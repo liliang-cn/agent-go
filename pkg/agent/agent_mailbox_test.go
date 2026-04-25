@@ -19,16 +19,16 @@ func TestAgentMessagingToolsDeliverMailboxMessages(t *testing.T) {
 		t.Fatalf("seed default members failed: %v", err)
 	}
 
-	concierge, err := manager.GetAgentService(BuiltInConciergeAgentName)
+	dispatcher, err := manager.GetAgentService(BuiltInDispatcherAgentName)
 	if err != nil {
-		t.Fatalf("get concierge service failed: %v", err)
+		t.Fatalf("get dispatcher service failed: %v", err)
 	}
 	archivist, err := manager.GetAgentService(defaultArchivistAgentName)
 	if err != nil {
 		t.Fatalf("get archivist service failed: %v", err)
 	}
 
-	if _, err := concierge.toolRegistry.Call(context.Background(), "send_agent_message", map[string]interface{}{
+	if _, err := dispatcher.toolRegistry.Call(context.Background(), "send_agent_message", map[string]interface{}{
 		"agent_name":   defaultArchivistAgentName,
 		"message_type": string(AgentMessageTypeRequest),
 		"priority":     string(AgentMessagePriorityHigh),
@@ -39,7 +39,7 @@ func TestAgentMessagingToolsDeliverMailboxMessages(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("send_agent_message failed: %v", err)
 	}
-	sendMeta := concierge.toolRegistry.MetadataOf("send_agent_message")
+	sendMeta := dispatcher.toolRegistry.MetadataOf("send_agent_message")
 	if sendMeta.InterruptBehavior != InterruptBehaviorBlock {
 		t.Fatalf("unexpected send_agent_message metadata: %+v", sendMeta)
 	}
@@ -63,7 +63,7 @@ func TestAgentMessagingToolsDeliverMailboxMessages(t *testing.T) {
 	if len(messages) != 1 {
 		t.Fatalf("expected one mailbox message, got %#v", messages)
 	}
-	if got := messages[0]["from_agent"]; got != BuiltInConciergeAgentName {
+	if got := messages[0]["from_agent"]; got != BuiltInDispatcherAgentName {
 		t.Fatalf("unexpected source agent: %#v", messages[0])
 	}
 	if got := messages[0]["to_agent"]; got != defaultArchivistAgentName {
@@ -107,9 +107,9 @@ func TestBuiltServicePromptIncludesKnownAgentsCatalog(t *testing.T) {
 		t.Fatalf("seed default members failed: %v", err)
 	}
 
-	svc, err := manager.GetAgentService(BuiltInConciergeAgentName)
+	svc, err := manager.GetAgentService(BuiltInDispatcherAgentName)
 	if err != nil {
-		t.Fatalf("get concierge service failed: %v", err)
+		t.Fatalf("get dispatcher service failed: %v", err)
 	}
 
 	prompt := svc.agent.Instructions()

@@ -102,8 +102,8 @@ func (s *Store) hydrateAgentMemberships(agent *AgentModel) error {
 
 func normalizeMembershipRole(role AgentKind) AgentKind {
 	switch role {
-	case AgentKindCaptain:
-		return AgentKindCaptain
+	case AgentKindOrchestrator:
+		return AgentKindOrchestrator
 	case AgentKindSpecialist:
 		return AgentKindSpecialist
 	default:
@@ -134,7 +134,7 @@ func hasMembershipRole(memberships []TeamMembership, role AgentKind) bool {
 func leadMemberships(memberships []TeamMembership) []TeamMembership {
 	out := make([]TeamMembership, 0, len(memberships))
 	for _, membership := range memberships {
-		if membership.Role == AgentKindCaptain {
+		if membership.Role == AgentKindOrchestrator {
 			out = append(out, membership)
 		}
 	}

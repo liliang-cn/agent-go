@@ -2,9 +2,13 @@ package providers
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"mime"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -13,6 +17,7 @@ import (
 	"github.com/liliang-cn/agent-go/v2/pkg/prompt"
 	openai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/packages/param"
 	"github.com/openai/openai-go/v3/shared"
 )
 
@@ -178,39 +183,213 @@ func toOpenAIMessages(messages []domain.Message) ([]openai.ChatCompletionMessage
 	for i, msg := range messages {
 		switch msg.Role {
 		case "user":
-			openAIMessages[i] = openai.UserMessage(msg.Content)
+			if len(msg.Parts) > 0 {
+				parts, err := toOpenAIUserContentParts(msg)
+				if err != nil {
+					return nil, err
+				}
+				openAIMessages[i] = openai.UserMessage(parts)
+			} else {
+				openAIMessages[i] = openai.UserMessage(msg.Content)
+			}
 		case "system":
-			openAIMessages[i] = openai.SystemMessage(msg.Content)
+			if len(msg.Parts) > 0 {
+				parts, err := toOpenAITextParts(msg, "system")
+				if err != nil {
+					return nil, err
+				}
+				openAIMessages[i] = openai.SystemMessage(parts)
+			} else {
+				openAIMessages[i] = openai.SystemMessage(msg.Content)
+			}
 		case "tool":
-			openAIMessages[i] = openai.ToolMessage(msg.Content, domain.NormalizeToolCallID(msg.ToolCallID))
+			if len(msg.Parts) > 0 {
+				parts, err := toOpenAITextParts(msg, "tool")
+				if err != nil {
+					return nil, err
+				}
+				openAIMessages[i] = openai.ToolMessage(parts, domain.NormalizeToolCallID(msg.ToolCallID))
+			} else {
+				openAIMessages[i] = openai.ToolMessage(msg.Content, domain.NormalizeToolCallID(msg.ToolCallID))
+			}
 		case "assistant":
-			assistantMsg := openai.ChatCompletionMessage{
-				Role:    "assistant",
-				Content: msg.Content,
+			assistantMsg := openai.ChatCompletionAssistantMessageParam{}
+			if len(msg.Parts) > 0 {
+				parts, err := toOpenAIAssistantTextParts(msg)
+				if err != nil {
+					return nil, err
+				}
+				assistantMsg.Content.OfArrayOfContentParts = parts
+			} else {
+				assistantMsg.Content.OfString = param.NewOpt(msg.Content)
 			}
 			if len(msg.ToolCalls) > 0 {
-				assistantMsg.ToolCalls = make([]openai.ChatCompletionMessageToolCallUnion, len(msg.ToolCalls))
+				assistantMsg.ToolCalls = make([]openai.ChatCompletionMessageToolCallUnionParam, len(msg.ToolCalls))
 				for j, tc := range msg.ToolCalls {
 					args, err := json.Marshal(tc.Function.Arguments)
 					if err != nil {
 						return nil, fmt.Errorf("failed to marshal tool call arguments: %w", err)
 					}
-					assistantMsg.ToolCalls[j] = openai.ChatCompletionMessageToolCallUnion{
-						ID:   domain.NormalizeToolCallID(tc.ID),
-						Type: "function",
-						Function: openai.ChatCompletionMessageFunctionToolCallFunction{
-							Name:      tc.Function.Name,
-							Arguments: string(args),
+					assistantMsg.ToolCalls[j] = openai.ChatCompletionMessageToolCallUnionParam{
+						OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
+							ID: domain.NormalizeToolCallID(tc.ID),
+							Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
+								Name:      tc.Function.Name,
+								Arguments: string(args),
+							},
 						},
 					}
 				}
 			}
-			openAIMessages[i] = assistantMsg.ToParam()
+			openAIMessages[i] = openai.ChatCompletionMessageParamUnion{OfAssistant: &assistantMsg}
 		default:
 			return nil, fmt.Errorf("unknown message role: %s", msg.Role)
 		}
 	}
 	return openAIMessages, nil
+}
+
+func toOpenAIUserContentParts(msg domain.Message) ([]openai.ChatCompletionContentPartUnionParam, error) {
+	parts := make([]openai.ChatCompletionContentPartUnionParam, 0, len(msg.Parts)+1)
+	if strings.TrimSpace(msg.Content) != "" {
+		parts = append(parts, openai.TextContentPart(msg.Content))
+	}
+	for idx, part := range msg.Parts {
+		switch normalizeMessagePartType(part) {
+		case domain.MessagePartTypeText:
+			parts = append(parts, openai.TextContentPart(part.Text))
+		case domain.MessagePartTypeImage:
+			imageURL, err := toOpenAIImageURLParam(part)
+			if err != nil {
+				return nil, fmt.Errorf("user message part %d: %w", idx, err)
+			}
+			parts = append(parts, openai.ImageContentPart(imageURL))
+		default:
+			return nil, fmt.Errorf("user message part %d: unsupported part type %q", idx, part.Type)
+		}
+	}
+	return parts, nil
+}
+
+func toOpenAITextParts(msg domain.Message, role string) ([]openai.ChatCompletionContentPartTextParam, error) {
+	parts := make([]openai.ChatCompletionContentPartTextParam, 0, len(msg.Parts)+1)
+	if strings.TrimSpace(msg.Content) != "" {
+		parts = append(parts, openai.ChatCompletionContentPartTextParam{Text: msg.Content})
+	}
+	for idx, part := range msg.Parts {
+		switch normalizeMessagePartType(part) {
+		case domain.MessagePartTypeText:
+			parts = append(parts, openai.ChatCompletionContentPartTextParam{Text: part.Text})
+		case domain.MessagePartTypeImage:
+			return nil, fmt.Errorf("%s message part %d: image parts are only supported for user messages", role, idx)
+		default:
+			return nil, fmt.Errorf("%s message part %d: unsupported part type %q", role, idx, part.Type)
+		}
+	}
+	return parts, nil
+}
+
+func toOpenAIAssistantTextParts(msg domain.Message) ([]openai.ChatCompletionAssistantMessageParamContentArrayOfContentPartUnion, error) {
+	textParts, err := toOpenAITextParts(msg, "assistant")
+	if err != nil {
+		return nil, err
+	}
+	out := make([]openai.ChatCompletionAssistantMessageParamContentArrayOfContentPartUnion, 0, len(textParts))
+	for _, part := range textParts {
+		partCopy := part
+		out = append(out, openai.ChatCompletionAssistantMessageParamContentArrayOfContentPartUnion{OfText: &partCopy})
+	}
+	return out, nil
+}
+
+func normalizeMessagePartType(part domain.MessagePart) domain.MessagePartType {
+	if part.Type != "" {
+		return part.Type
+	}
+	if part.Image != nil {
+		return domain.MessagePartTypeImage
+	}
+	return domain.MessagePartTypeText
+}
+
+func toOpenAIImageURLParam(part domain.MessagePart) (openai.ChatCompletionContentPartImageImageURLParam, error) {
+	if part.Image == nil {
+		return openai.ChatCompletionContentPartImageImageURLParam{}, fmt.Errorf("image part is missing image payload")
+	}
+	image := part.Image
+	if strings.TrimSpace(image.Base64) != "" && strings.TrimSpace(image.LocalPath) != "" {
+		return openai.ChatCompletionContentPartImageImageURLParam{}, fmt.Errorf("image part must not set both base64 and local_path")
+	}
+
+	var (
+		url string
+		err error
+	)
+	switch {
+	case strings.TrimSpace(image.Base64) != "":
+		url, err = imageDataURLFromBase64(image.Base64, image.MIMEType)
+	case strings.TrimSpace(image.LocalPath) != "":
+		url, err = imageDataURLFromFile(image.LocalPath, image.MIMEType)
+	default:
+		err = fmt.Errorf("image part requires either base64 or local_path")
+	}
+	if err != nil {
+		return openai.ChatCompletionContentPartImageImageURLParam{}, err
+	}
+
+	return openai.ChatCompletionContentPartImageImageURLParam{
+		URL:    url,
+		Detail: strings.TrimSpace(image.Detail),
+	}, nil
+}
+
+func imageDataURLFromBase64(rawBase64, explicitMIME string) (string, error) {
+	trimmed := strings.TrimSpace(rawBase64)
+	if strings.HasPrefix(trimmed, "data:") {
+		return trimmed, nil
+	}
+	normalized := stripBase64Whitespace(trimmed)
+	decoded, err := base64.StdEncoding.DecodeString(normalized)
+	if err != nil {
+		return "", fmt.Errorf("decode image base64: %w", err)
+	}
+	mimeType := detectImageMIMEType(decoded, explicitMIME, "")
+	return fmt.Sprintf("data:%s;base64,%s", mimeType, normalized), nil
+}
+
+func imageDataURLFromFile(path, explicitMIME string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read image file %q: %w", path, err)
+	}
+	mimeType := detectImageMIMEType(data, explicitMIME, path)
+	return fmt.Sprintf("data:%s;base64,%s", mimeType, base64.StdEncoding.EncodeToString(data)), nil
+}
+
+func detectImageMIMEType(data []byte, explicitMIME, path string) string {
+	if mimeType := strings.TrimSpace(explicitMIME); mimeType != "" {
+		return mimeType
+	}
+	if detected := strings.TrimSpace(http.DetectContentType(data)); detected != "" && detected != "application/octet-stream" {
+		return detected
+	}
+	if ext := strings.TrimSpace(filepath.Ext(path)); ext != "" {
+		if guessed := strings.TrimSpace(mime.TypeByExtension(ext)); guessed != "" {
+			return guessed
+		}
+	}
+	return "image/png"
+}
+
+func stripBase64Whitespace(value string) string {
+	return strings.Map(func(r rune) rune {
+		switch r {
+		case ' ', '\n', '\r', '\t':
+			return -1
+		default:
+			return r
+		}
+	}, value)
 }
 
 func buildOpenAIChatCompletionParams(messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions, model string) (openai.ChatCompletionNewParams, error) {

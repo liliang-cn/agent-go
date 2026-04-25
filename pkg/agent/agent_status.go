@@ -80,7 +80,7 @@ func (m *TeamManager) GetAgentStatus(name string) (*AgentRuntimeStatus, error) {
 		if task == nil {
 			continue
 		}
-		involvesAgent := strings.EqualFold(task.CaptainName, model.Name)
+		involvesAgent := strings.EqualFold(task.OrchestratorName, model.Name)
 		if !involvesAgent {
 			for _, agentName := range task.AgentNames {
 				if strings.EqualFold(agentName, model.Name) {
@@ -133,11 +133,11 @@ func isBuiltInAgentModel(model *AgentModel) bool {
 		return false
 	}
 	switch strings.TrimSpace(model.ID) {
-	case defaultConciergeAgentID, defaultIntentRouterAgentID, defaultPromptOptimizerAgentID, defaultAssistantAgentID, defaultOperatorAgentID, defaultCaptainAgentID, defaultStakeholderAgentID, defaultArchivistAgentID, defaultVerifierAgentID:
+	case defaultDispatcherAgentID, defaultIntentRouterAgentID, defaultPromptOptimizerAgentID, defaultResponderAgentID, defaultOperatorAgentID, defaultOrchestratorAgentID, defaultEvaluatorAgentID, defaultArchivistAgentID, defaultVerifierAgentID:
 		return true
 	}
 	switch strings.TrimSpace(model.Name) {
-	case defaultConciergeAgentName, defaultIntentRouterAgentName, defaultPromptOptimizerAgentName, defaultAssistantAgentName, defaultOperatorAgentName, defaultCaptainAgentName, defaultStakeholderAgentName, defaultArchivistAgentName, defaultVerifierAgentName:
+	case defaultDispatcherAgentName, defaultIntentRouterAgentName, defaultPromptOptimizerAgentName, defaultResponderAgentName, defaultOperatorAgentName, defaultOrchestratorAgentName, defaultEvaluatorAgentName, defaultArchivistAgentName, defaultVerifierAgentName:
 		return true
 	default:
 		return false

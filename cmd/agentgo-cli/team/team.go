@@ -37,7 +37,7 @@ Interactive controls:
   quit      exit interactive mode
   exit      exit interactive mode`,
 	Example: `  agentgo team
-  agentgo team go "@Captain summarize the repo"
+  agentgo team go "@Orchestrator summarize the repo"
   agentgo team agent add Writer --team "Docs Team" --description "Writes concise docs"`,
 	Args: cobra.NoArgs,
 	RunE: runInteractiveTeam,
@@ -69,7 +69,7 @@ func init() {
 
 	memberAddCmd.Flags().StringVar(&memberDescription, "description", "", "agent description")
 	memberAddCmd.Flags().StringVar(&memberInstructions, "instructions", "", "agent system instructions")
-	memberAddCmd.Flags().StringVar(&memberKind, "kind", "specialist", "agent role inside the team: specialist or captain")
+	memberAddCmd.Flags().StringVar(&memberKind, "kind", "specialist", "agent role inside the team: specialist or orchestrator")
 	memberAddCmd.Flags().StringVar(&memberTeamID, "team-id", "", "target team ID (defaults to the default team)")
 	memberAddCmd.Flags().StringVar(&memberTeamName, "team", "", "target team name (defaults to the default team)")
 	memberAddCmd.Flags().StringVar(&memberModel, "model", "", "preferred provider or model")
@@ -88,7 +88,7 @@ var (
 var goCmd = &cobra.Command{
 	Use:   "go [task]",
 	Short: "Run a team task",
-	Long:  `Run one team task explicitly, for example: agentgo team go "@Captain summarize and implement".`,
+	Long:  `Run one team task explicitly, for example: agentgo team go "@Orchestrator summarize and implement".`,
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		manager, err := getManager()
@@ -129,7 +129,7 @@ var addCmd = &cobra.Command{
 		}
 
 		if lead, leadErr := manager.GetLeadAgentForTeam(team.ID); leadErr == nil && strings.TrimSpace(lead.Name) != "" {
-			fmt.Printf("Added team '%s' with default captain '%s'.\n", team.Name, lead.Name)
+			fmt.Printf("Added team '%s' with default orchestrator '%s'.\n", team.Name, lead.Name)
 		} else {
 			fmt.Printf("Added team '%s'.\n", team.Name)
 		}
@@ -212,8 +212,8 @@ var listCmd = &cobra.Command{
 				Agents:      t.AgentCount,
 				A2A:         t.EnableA2A,
 			}
-			if len(t.CaptainNames) > 0 {
-				row.LeadAgent = t.CaptainNames[0]
+			if len(t.OrchestratorNames) > 0 {
+				row.LeadAgent = t.OrchestratorNames[0]
 			}
 			rows = append(rows, row)
 		}
@@ -235,7 +235,7 @@ var listCmd = &cobra.Command{
 			return nil
 		}
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-		fmt.Fprintln(w, "NAME\tCAPTAIN\tAGENTS\tSTATUS\tBUILT-IN\tA2A\tDESCRIPTION")
+		fmt.Fprintln(w, "NAME\tORCHESTRATOR\tAGENTS\tSTATUS\tBUILT-IN\tA2A\tDESCRIPTION")
 		for _, row := range rows {
 			fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\t%s\t%s\n", row.Name, valueOrDash(row.LeadAgent), row.Agents, row.Status, yesNo(row.BuiltIn), yesNo(row.A2A), row.Description)
 		}
@@ -349,7 +349,7 @@ var memberListCmd = &cobra.Command{
 			return compareAgentNames(a.Name, b.Name)
 		})
 
-		printAgentSection("Captains", leadAgents)
+		printAgentSection("Orchestrators", leadAgents)
 		fmt.Println()
 		printAgentSection("Specialists", specialists)
 		return nil
@@ -447,17 +447,17 @@ func normalizeTeamRole(input string) (agent.AgentKind, error) {
 	switch strings.ToLower(strings.TrimSpace(input)) {
 	case "", "specialist":
 		return agent.AgentKindSpecialist, nil
-	case "captain", "lead", "lead-agent", "leader":
-		return agent.AgentKindCaptain, nil
+	case "orchestrator", "lead", "lead-agent", "leader":
+		return agent.AgentKindOrchestrator, nil
 	default:
-		return "", fmt.Errorf("invalid role %q: use specialist or captain", input)
+		return "", fmt.Errorf("invalid role %q: use specialist or orchestrator", input)
 	}
 }
 
 func kindDisplay(kind agent.AgentKind) string {
 	switch kind {
-	case agent.AgentKindCaptain:
-		return "captain"
+	case agent.AgentKindOrchestrator:
+		return "orchestrator"
 	case agent.AgentKindSpecialist:
 		return "specialist"
 	case agent.AgentKindAgent:
@@ -502,7 +502,7 @@ func followTeamStatus(ctx context.Context, manager *agent.TeamManager, teamID st
 		if snapshot != lastSnapshot {
 			fmt.Printf("Team: %s\n", status.Name)
 			fmt.Printf("Status: %s\n", status.Status)
-			fmt.Printf("Captains: %s\n", joinOrDash(status.CaptainNames))
+			fmt.Printf("Orchestrators: %s\n", joinOrDash(status.OrchestratorNames))
 			fmt.Printf("Agents: %d\n", status.AgentCount)
 			fmt.Printf("Running Tasks: %d\n", status.RunningTasks)
 			fmt.Printf("Queued Tasks: %d\n\n", status.QueuedTasks)
@@ -512,7 +512,7 @@ func followTeamStatus(ctx context.Context, manager *agent.TeamManager, teamID st
 		tasks := manager.ListSharedTasksForTeam(teamID, time.Time{}, 50)
 		for _, task := range tasks {
 			if lastTaskState[task.ID] != task.Status {
-				fmt.Printf("• %s [%s] %s\n", task.CaptainName, task.Status, trimForDisplay(task.Prompt, 100))
+				fmt.Printf("• %s [%s] %s\n", task.OrchestratorName, task.Status, trimForDisplay(task.Prompt, 100))
 				lastTaskState[task.ID] = task.Status
 			}
 			if (task.Status == agent.SharedTaskStatusCompleted || task.Status == agent.SharedTaskStatusFailed) && task.ResultText != "" {
@@ -585,8 +585,8 @@ func runInteractiveTeamChat(ctx context.Context, manager *agent.TeamManager) err
 	conversationKey := "cli-team-" + uuid.NewString()
 
 	fmt.Println("🤝 AgentGo Team Mode")
-	fmt.Println("💡 Direct requests go to Concierge by default")
-	fmt.Println("💡 Use @Concierge or any existing team agent name to delegate")
+	fmt.Println("💡 Direct requests go to Dispatcher by default")
+	fmt.Println("💡 Use @Dispatcher or any existing team agent name to delegate")
 	fmt.Println("💡 Ctrl+C cancels the current input")
 	fmt.Println("💡 Ctrl+D exits when the input is empty")
 	fmt.Println("💡 Type 'quit' or 'exit' to end")
@@ -978,7 +978,7 @@ func parseDelegatedTasks(input string, isKnownAgent func(name string) bool) ([]d
 	}
 
 	// Support leading shared mentions like:
-	//   @Captain @SomeMember summarize the repo and write a note
+	//   @Orchestrator @SomeMember summarize the repo and write a note
 	// In this form every leading mention receives the same instruction.
 	leadingMentions := []string{firstName}
 	firstInstructionIndex := 1

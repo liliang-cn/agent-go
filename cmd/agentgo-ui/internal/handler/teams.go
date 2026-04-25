@@ -11,14 +11,14 @@ import (
 )
 
 type TeamResponse struct {
-	ID          string              `json:"id"`
-	Name        string              `json:"name"`
-	Description string              `json:"description"`
-	LeadAgent   *agent.AgentModel   `json:"lead_agent,omitempty"`
-	Captain     *agent.AgentModel   `json:"captain,omitempty"`
-	Members     []*agent.AgentModel `json:"members"`
-	CreatedAt   time.Time           `json:"created_at"`
-	UpdatedAt   time.Time           `json:"updated_at"`
+	ID           string              `json:"id"`
+	Name         string              `json:"name"`
+	Description  string              `json:"description"`
+	LeadAgent    *agent.AgentModel   `json:"lead_agent,omitempty"`
+	Orchestrator *agent.AgentModel   `json:"orchestrator,omitempty"`
+	Members      []*agent.AgentModel `json:"members"`
+	CreatedAt    time.Time           `json:"created_at"`
+	UpdatedAt    time.Time           `json:"updated_at"`
 }
 
 func (h *Handler) HandleTeams(w http.ResponseWriter, r *http.Request) {
@@ -52,8 +52,8 @@ func (h *Handler) HandleTeams(w http.ResponseWriter, r *http.Request) {
 			}
 			for _, member := range members {
 				resp.Members = append(resp.Members, member)
-				if member.Kind == agent.AgentKindCaptain && resp.Captain == nil {
-					resp.Captain = member
+				if member.Kind == agent.AgentKindOrchestrator && resp.Orchestrator == nil {
+					resp.Orchestrator = member
 					resp.LeadAgent = member
 				}
 			}

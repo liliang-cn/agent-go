@@ -21,7 +21,7 @@ func (h *Handler) HandleTeamTasks(w http.ResponseWriter, r *http.Request) {
 		teamID := strings.TrimSpace(r.URL.Query().Get("team_id"))
 		leadAgentName := strings.TrimSpace(r.URL.Query().Get("lead_agent_name"))
 		if leadAgentName == "" {
-			leadAgentName = strings.TrimSpace(r.URL.Query().Get("captain_name"))
+			leadAgentName = strings.TrimSpace(r.URL.Query().Get("orchestrator_name"))
 		}
 		afterRaw := strings.TrimSpace(r.URL.Query().Get("after"))
 		limit := 20
@@ -43,11 +43,11 @@ func (h *Handler) HandleTeamTasks(w http.ResponseWriter, r *http.Request) {
 		})
 	case http.MethodPost:
 		var req struct {
-			TeamID        string   `json:"team_id"`
-			LeadAgentName string   `json:"lead_agent_name"`
-			CaptainName   string   `json:"captain_name"`
-			Message       string   `json:"message"`
-			AgentNames    []string `json:"agent_names"`
+			TeamID           string   `json:"team_id"`
+			LeadAgentName    string   `json:"lead_agent_name"`
+			OrchestratorName string   `json:"orchestrator_name"`
+			Message          string   `json:"message"`
+			AgentNames       []string `json:"agent_names"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			JSONError(w, "Invalid request body", http.StatusBadRequest)
@@ -56,7 +56,7 @@ func (h *Handler) HandleTeamTasks(w http.ResponseWriter, r *http.Request) {
 
 		leadAgentName := strings.TrimSpace(req.LeadAgentName)
 		if leadAgentName == "" {
-			leadAgentName = strings.TrimSpace(req.CaptainName)
+			leadAgentName = strings.TrimSpace(req.OrchestratorName)
 		}
 		task, err := h.teamManager.EnqueueSharedTaskForTeam(r.Context(), strings.TrimSpace(req.TeamID), leadAgentName, req.AgentNames, strings.TrimSpace(req.Message))
 		if err != nil {
@@ -87,20 +87,20 @@ func mapSharedTaskForAPI(task *agent.SharedTask) map[string]any {
 		return nil
 	}
 	return map[string]any{
-		"id":              task.ID,
-		"team_id":         task.TeamID,
-		"captain_name":    task.CaptainName,
-		"lead_agent_name": task.CaptainName,
-		"agent_names":     task.AgentNames,
-		"prompt":          task.Prompt,
-		"ack_message":     task.AckMessage,
-		"status":          task.Status,
-		"queued_ahead":    task.QueuedAhead,
-		"result_text":     task.ResultText,
-		"results":         task.Results,
-		"created_at":      task.CreatedAt,
-		"started_at":      task.StartedAt,
-		"finished_at":     task.FinishedAt,
+		"id":                task.ID,
+		"team_id":           task.TeamID,
+		"orchestrator_name": task.OrchestratorName,
+		"lead_agent_name":   task.OrchestratorName,
+		"agent_names":       task.AgentNames,
+		"prompt":            task.Prompt,
+		"ack_message":       task.AckMessage,
+		"status":            task.Status,
+		"queued_ahead":      task.QueuedAhead,
+		"result_text":       task.ResultText,
+		"results":           task.Results,
+		"created_at":        task.CreatedAt,
+		"started_at":        task.StartedAt,
+		"finished_at":       task.FinishedAt,
 	}
 }
 

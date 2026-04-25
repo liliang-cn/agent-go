@@ -39,7 +39,7 @@ var AgentCmd = &cobra.Command{
 	Short: "Run agents and manage standalone agent profiles",
 	Long: `Run agent tasks, planning, and execution, or manage standalone agents.
 
-An agent can work independently, or it can join a team with a captain or specialist role.`,
+An agent can work independently, or it can join a team with a orchestrator or specialist role.`,
 }
 
 // runCmd runs an agent task
@@ -451,7 +451,7 @@ func init() {
 	agentUpdateCmd.Flags().StringVar(&agentInstructions, "instructions", "", "new agent system instructions")
 	agentUpdateCmd.Flags().StringVar(&agentProvider, "provider", "", "new preferred LLM provider")
 	agentUpdateCmd.Flags().StringVar(&agentModel, "model", "", "new preferred LLM model")
-	agentUpdateCmd.Flags().StringVar(&agentUpdateRole, "role", "", "set role to agent, captain, or specialist")
+	agentUpdateCmd.Flags().StringVar(&agentUpdateRole, "role", "", "set role to agent, orchestrator, or specialist")
 	agentUpdateCmd.Flags().StringVar(&agentMemoryType, "memory-type", "", "memory store type: file, cortex, memoryflow, graphflow")
 	agentUpdateCmd.Flags().BoolVar(&agentA2AEnabled, "a2a", false, "explicitly enable or disable A2A exposure for this standalone agent")
 
@@ -469,7 +469,7 @@ func init() {
 	agentA2AInvokeCmd.Flags().StringVar(&a2aPathPrefix, "path-prefix", "/a2a", "HTTP path prefix mounted by the A2A server")
 	agentA2AInvokeCmd.Flags().BoolVar(&a2aInvokeStream, "stream", false, "use A2A streaming invocation")
 
-	agentJoinCmd.Flags().StringVar(&agentUpdateRole, "role", "specialist", "role inside the team: specialist or captain")
+	agentJoinCmd.Flags().StringVar(&agentUpdateRole, "role", "specialist", "role inside the team: specialist or orchestrator")
 	agentJoinCmd.Flags().StringVar(&agentUpdateTeamID, "team-id", "", "target team ID")
 	agentJoinCmd.Flags().StringVar(&agentUpdateTeamName, "team", "", "target team name")
 }
@@ -481,7 +481,7 @@ func initAgentServices(ctx context.Context) (*rag.Client, *agent.Service, error)
 	var buildErr error
 
 	b := agent.New("AgentGo Frontdesk").
-		WithSystemPrompt("You are the system Frontdesk and captain agent. You can interact with users, and delegate tasks to specialized agents using the tools provided.").
+		WithSystemPrompt("You are the system Frontdesk and orchestrator agent. You can interact with users, and delegate tasks to specialized agents using the tools provided.").
 		WithRAG().
 		WithMCP().
 		WithMemory().

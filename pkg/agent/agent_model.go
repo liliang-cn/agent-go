@@ -6,12 +6,12 @@ import "time"
 type AgentKind string
 
 const (
-	AgentKindAgent      AgentKind = "agent"
-	AgentKindCaptain    AgentKind = "captain"
-	AgentKindLeadAgent  AgentKind = AgentKindCaptain
-	AgentKindLeader     AgentKind = AgentKindCaptain
-	AgentKindCommander  AgentKind = AgentKindCaptain
-	AgentKindSpecialist AgentKind = "specialist"
+	AgentKindAgent        AgentKind = "agent"
+	AgentKindOrchestrator AgentKind = "orchestrator"
+	AgentKindLeadAgent    AgentKind = AgentKindOrchestrator
+	AgentKindLeader       AgentKind = AgentKindOrchestrator
+	AgentKindCommander    AgentKind = AgentKindOrchestrator
+	AgentKindSpecialist   AgentKind = "specialist"
 )
 
 // AgentModel represents the configuration of a dynamic agent in the database.

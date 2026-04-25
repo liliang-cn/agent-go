@@ -49,7 +49,7 @@ Contextual Information:
 
 Classify this goal. Return JSON with intent_type, target_file (if applicable), topic, requirements, confidence, and when possible:
 - requires_tools: true if the request should mainly be fulfilled via tools/MCP/filesystem/memory actions
-- preferred_agent: one of Assistant, Operator, Stakeholder, Archivist, Verifier
+- preferred_agent: one of Responder, Operator, Evaluator, Archivist, Verifier
 - transition: tool_first, prefer_tooling, or text_first`
 
 	// 2. Planner System Prompt (Planning)

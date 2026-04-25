@@ -126,7 +126,7 @@ func (s *AgentGoDB) initSchema() error {
 			a2a_id TEXT UNIQUE,
 			team_id TEXT,
 			name TEXT UNIQUE NOT NULL,
-			kind TEXT DEFAULT 'captain',
+			kind TEXT DEFAULT 'orchestrator',
 			description TEXT NOT NULL,
 			instructions TEXT NOT NULL,
 			model TEXT,
@@ -264,7 +264,7 @@ func (s *AgentGoDB) initSchema() error {
 			session_id TEXT,
 			team_id TEXT NOT NULL,
 			team_name TEXT,
-			captain_name TEXT NOT NULL,
+			orchestrator_name TEXT NOT NULL,
 			agent_names TEXT NOT NULL,
 			prompt TEXT NOT NULL,
 			ack_message TEXT,
@@ -1403,21 +1403,21 @@ func (s *AgentGoDB) DeleteMembershipsByTeam(teamID string) error {
 
 // SharedTask represents a multi-agent task
 type SharedTask struct {
-	ID          string     `json:"id"`
-	SessionID   string     `json:"session_id"`
-	TeamID      string     `json:"team_id"`
-	TeamName    string     `json:"team_name"`
-	CaptainName string     `json:"captain_name"`
-	AgentNames  []string   `json:"agent_names"`
-	Prompt      string     `json:"prompt"`
-	AckMessage  string     `json:"ack_message"`
-	Status      string     `json:"status"`
-	QueuedAhead int        `json:"queued_ahead"`
-	ResultText  string     `json:"result_text"`
-	Results     []byte     `json:"results"` // JSON encoded
-	CreatedAt   time.Time  `json:"created_at"`
-	StartedAt   *time.Time `json:"started_at,omitempty"`
-	FinishedAt  *time.Time `json:"finished_at,omitempty"`
+	ID               string     `json:"id"`
+	SessionID        string     `json:"session_id"`
+	TeamID           string     `json:"team_id"`
+	TeamName         string     `json:"team_name"`
+	OrchestratorName string     `json:"orchestrator_name"`
+	AgentNames       []string   `json:"agent_names"`
+	Prompt           string     `json:"prompt"`
+	AckMessage       string     `json:"ack_message"`
+	Status           string     `json:"status"`
+	QueuedAhead      int        `json:"queued_ahead"`
+	ResultText       string     `json:"result_text"`
+	Results          []byte     `json:"results"` // JSON encoded
+	CreatedAt        time.Time  `json:"created_at"`
+	StartedAt        *time.Time `json:"started_at,omitempty"`
+	FinishedAt       *time.Time `json:"finished_at,omitempty"`
 }
 
 // SaveSharedTask saves or updates a shared task
@@ -1429,7 +1429,7 @@ func (s *AgentGoDB) SaveSharedTask(task *SharedTask) error {
 
 	query := `
 		INSERT INTO shared_tasks (
-			id, session_id, team_id, team_name, captain_name, agent_names, prompt, ack_message,
+			id, session_id, team_id, team_name, orchestrator_name, agent_names, prompt, ack_message,
 			status, queued_ahead, result_text, results, created_at, started_at, finished_at
 		)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1437,7 +1437,7 @@ func (s *AgentGoDB) SaveSharedTask(task *SharedTask) error {
 			session_id = excluded.session_id,
 			team_id = excluded.team_id,
 			team_name = excluded.team_name,
-			captain_name = excluded.captain_name,
+			orchestrator_name = excluded.orchestrator_name,
 			agent_names = excluded.agent_names,
 			prompt = excluded.prompt,
 			ack_message = excluded.ack_message,
@@ -1450,7 +1450,7 @@ func (s *AgentGoDB) SaveSharedTask(task *SharedTask) error {
 			finished_at = excluded.finished_at
 	`
 	_, err := s.db.Exec(query,
-		task.ID, task.SessionID, task.TeamID, task.TeamName, task.CaptainName,
+		task.ID, task.SessionID, task.TeamID, task.TeamName, task.OrchestratorName,
 		string(agentNamesJSON), task.Prompt, task.AckMessage, task.Status,
 		task.QueuedAhead, task.ResultText, task.Results,
 		task.CreatedAt, task.StartedAt, task.FinishedAt,
@@ -1464,7 +1464,7 @@ func (s *AgentGoDB) ListSharedTasks() ([]*SharedTask, error) {
 	defer s.mu.RUnlock()
 
 	query := `
-		SELECT id, session_id, team_id, team_name, captain_name, agent_names, prompt, ack_message,
+		SELECT id, session_id, team_id, team_name, orchestrator_name, agent_names, prompt, ack_message,
 		       status, queued_ahead, result_text, results, created_at, started_at, finished_at
 		FROM shared_tasks
 		ORDER BY created_at ASC
@@ -1480,7 +1480,7 @@ func (s *AgentGoDB) ListSharedTasks() ([]*SharedTask, error) {
 		var task SharedTask
 		var agentNamesJSON []byte
 		if err := rows.Scan(
-			&task.ID, &task.SessionID, &task.TeamID, &task.TeamName, &task.CaptainName,
+			&task.ID, &task.SessionID, &task.TeamID, &task.TeamName, &task.OrchestratorName,
 			&agentNamesJSON, &task.Prompt, &task.AckMessage, &task.Status,
 			&task.QueuedAhead, &task.ResultText, &task.Results,
 			&task.CreatedAt, &task.StartedAt, &task.FinishedAt,
@@ -1791,13 +1791,13 @@ func (s *AgentGoDB) GetTeamAgents(teamID string) ([]*AgentModel, error) {
 func NormalizeAgentKind(kind string) string {
 	kind = strings.TrimSpace(kind)
 	if kind == "" {
-		return "captain"
+		return "orchestrator"
 	}
 	switch kind {
-	case "captain", "specialist", "agent", "leader", "lead", "lead-agent", "commander":
-		return "captain"
+	case "orchestrator", "specialist", "agent", "leader", "lead", "lead-agent", "commander":
+		return "orchestrator"
 	default:
-		return "captain"
+		return "orchestrator"
 	}
 }
 

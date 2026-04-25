@@ -7,8 +7,8 @@ import (
 )
 
 func buildStandaloneAgentPrompt(cfg *config.Config, model *AgentModel) string {
-	if isStakeholderAgentModel(model) {
-		return buildStakeholderAgentPrompt(model)
+	if isEvaluatorAgentModel(model) {
+		return buildEvaluatorAgentPrompt(model)
 	}
 
 	lines := []string{
@@ -30,7 +30,7 @@ func buildStandaloneAgentPrompt(cfg *config.Config, model *AgentModel) string {
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
-func buildStakeholderAgentPrompt(model *AgentModel) string {
+func buildEvaluatorAgentPrompt(model *AgentModel) string {
 	if model == nil {
 		return ""
 	}
@@ -43,16 +43,16 @@ func shouldIncludeTaskCompleteHint(model *AgentModel) bool {
 	}
 
 	switch strings.TrimSpace(strings.ToLower(model.Name)) {
-	case strings.ToLower(BuiltInConciergeAgentName):
+	case strings.ToLower(BuiltInDispatcherAgentName):
 		return false
 	default:
 		return true
 	}
 }
 
-func isStakeholderAgentModel(model *AgentModel) bool {
+func isEvaluatorAgentModel(model *AgentModel) bool {
 	if model == nil {
 		return false
 	}
-	return strings.EqualFold(strings.TrimSpace(model.Name), defaultStakeholderAgentName)
+	return strings.EqualFold(strings.TrimSpace(model.Name), defaultEvaluatorAgentName)
 }

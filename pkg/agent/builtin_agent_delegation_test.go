@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestConciergeBuiltInDelegationTargetsIntentRouterOnly(t *testing.T) {
+func TestDispatcherBuiltInDelegationTargetsIntentRouterOnly(t *testing.T) {
 	store, err := NewStore(filepath.Join(t.TempDir(), "agent.db"))
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
@@ -17,18 +17,18 @@ func TestConciergeBuiltInDelegationTargetsIntentRouterOnly(t *testing.T) {
 		t.Fatalf("seed default members failed: %v", err)
 	}
 
-	svc, err := manager.GetAgentService(BuiltInConciergeAgentName)
+	svc, err := manager.GetAgentService(BuiltInDispatcherAgentName)
 	if err != nil {
-		t.Fatalf("get concierge service failed: %v", err)
+		t.Fatalf("get dispatcher service failed: %v", err)
 	}
 	if !svc.agent.HasTool("route_builtin_request") {
-		t.Fatal("expected concierge to have route_builtin_request")
+		t.Fatal("expected dispatcher to have route_builtin_request")
 	}
 	if svc.agent.HasTool("delegate_builtin_agent") {
-		t.Fatal("did not expect concierge to expose delegate_builtin_agent directly")
+		t.Fatal("did not expect dispatcher to expose delegate_builtin_agent directly")
 	}
 	if !svc.toolRegistry.Has("route_builtin_request") {
-		t.Fatal("expected concierge tool registry to include route_builtin_request")
+		t.Fatal("expected dispatcher tool registry to include route_builtin_request")
 	}
 	routeMeta := svc.toolRegistry.MetadataOf("route_builtin_request")
 	if routeMeta.InterruptBehavior != InterruptBehaviorBlock {
@@ -82,9 +82,9 @@ func TestIntentRouterBuiltInDelegationTargetsCoreSpecialists(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		defaultAssistantAgentName,
+		defaultResponderAgentName,
 		defaultOperatorAgentName,
-		defaultStakeholderAgentName,
+		defaultEvaluatorAgentName,
 		defaultArchivistAgentName,
 		defaultVerifierAgentName,
 	} {
@@ -92,8 +92,8 @@ func TestIntentRouterBuiltInDelegationTargetsCoreSpecialists(t *testing.T) {
 			t.Fatalf("expected IntentRouter delegable built-ins to include %s, got %+v", want, names)
 		}
 	}
-	if names[defaultConciergeAgentName] {
-		t.Fatalf("did not expect IntentRouter to delegate back to Concierge, got %+v", names)
+	if names[defaultDispatcherAgentName] {
+		t.Fatalf("did not expect IntentRouter to delegate back to Dispatcher, got %+v", names)
 	}
 	if names[defaultIntentRouterAgentName] {
 		t.Fatalf("did not expect IntentRouter to delegate to itself, got %+v", names)

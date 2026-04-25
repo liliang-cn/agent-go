@@ -74,21 +74,21 @@ type SharedTaskResult struct {
 
 // SharedTask is a queued team task owned by one team lead agent.
 type SharedTask struct {
-	ID          string             `json:"id"`
-	SessionID   string             `json:"session_id,omitempty"`
-	TeamID      string             `json:"team_id"`
-	TeamName    string             `json:"team_name,omitempty"`
-	CaptainName string             `json:"captain_name"`
-	AgentNames  []string           `json:"agent_names"`
-	Prompt      string             `json:"prompt"`
-	AckMessage  string             `json:"ack_message"`
-	Status      SharedTaskStatus   `json:"status"`
-	QueuedAhead int                `json:"queued_ahead"`
-	ResultText  string             `json:"result_text,omitempty"`
-	Results     []SharedTaskResult `json:"results,omitempty"`
-	CreatedAt   time.Time          `json:"created_at"`
-	StartedAt   *time.Time         `json:"started_at,omitempty"`
-	FinishedAt  *time.Time         `json:"finished_at,omitempty"`
+	ID               string             `json:"id"`
+	SessionID        string             `json:"session_id,omitempty"`
+	TeamID           string             `json:"team_id"`
+	TeamName         string             `json:"team_name,omitempty"`
+	OrchestratorName string             `json:"orchestrator_name"`
+	AgentNames       []string           `json:"agent_names"`
+	Prompt           string             `json:"prompt"`
+	AckMessage       string             `json:"ack_message"`
+	Status           SharedTaskStatus   `json:"status"`
+	QueuedAhead      int                `json:"queued_ahead"`
+	ResultText       string             `json:"result_text,omitempty"`
+	Results          []SharedTaskResult `json:"results,omitempty"`
+	CreatedAt        time.Time          `json:"created_at"`
+	StartedAt        *time.Time         `json:"started_at,omitempty"`
+	FinishedAt       *time.Time         `json:"finished_at,omitempty"`
 }
 
 // SeedDefaultMembers seeds the built-in default team and standalone agents.
@@ -130,10 +130,10 @@ func (m *TeamManager) SeedDefaultMembers() error {
 			return err
 		}
 	}
-	if err := m.ensureDefaultTeamCaptain(ctx, agentName, teamName); err != nil {
+	if err := m.ensureDefaultTeamOrchestrator(ctx, agentName, teamName); err != nil {
 		return err
 	}
-	if err := m.ensureDefaultTeamConcierge(ctx, agentName, teamName); err != nil {
+	if err := m.ensureDefaultTeamDispatcher(ctx, agentName, teamName); err != nil {
 		return err
 	}
 	if err := m.ensureDefaultTeamSpecialists(ctx, agentName); err != nil {
@@ -296,22 +296,22 @@ func (m *TeamManager) getTeamName() string {
 }
 
 // EnqueueSharedTask queues a team task under one team lead agent and returns an immediate acknowledgement.
-func (m *TeamManager) EnqueueSharedTask(ctx context.Context, captainName string, agentNames []string, prompt string) (*SharedTask, error) {
-	return m.EnqueueSharedTaskForTeam(ctx, "", captainName, agentNames, prompt)
+func (m *TeamManager) EnqueueSharedTask(ctx context.Context, orchestratorName string, agentNames []string, prompt string) (*SharedTask, error) {
+	return m.EnqueueSharedTaskForTeam(ctx, "", orchestratorName, agentNames, prompt)
 }
 
 // EnqueueSharedTaskForTeam queues a team task for a specific team and lead agent.
-func (m *TeamManager) EnqueueSharedTaskForTeam(ctx context.Context, teamID, captainName string, agentNames []string, prompt string) (*SharedTask, error) {
+func (m *TeamManager) EnqueueSharedTaskForTeam(ctx context.Context, teamID, orchestratorName string, agentNames []string, prompt string) (*SharedTask, error) {
 	if strings.TrimSpace(prompt) == "" {
 		return nil, fmt.Errorf("message required")
 	}
-	team, captain, err := m.resolveSharedTaskContext(strings.TrimSpace(teamID), strings.TrimSpace(captainName))
+	team, orchestrator, err := m.resolveSharedTaskContext(strings.TrimSpace(teamID), strings.TrimSpace(orchestratorName))
 	if err != nil {
 		return nil, err
 	}
 
 	if len(agentNames) == 0 {
-		agentNames = []string{captain.Name}
+		agentNames = []string{orchestrator.Name}
 	}
 
 	for _, name := range agentNames {
@@ -319,21 +319,21 @@ func (m *TeamManager) EnqueueSharedTaskForTeam(ctx context.Context, teamID, capt
 		if memberErr != nil {
 			return nil, fmt.Errorf("cannot load team agent %s: %w", name, memberErr)
 		}
-		if member.Kind == AgentKindCaptain && !strings.EqualFold(name, captain.Name) {
-			return nil, fmt.Errorf("%s is also a team lead agent and cannot be delegated from %s", name, captain.Name)
+		if member.Kind == AgentKindOrchestrator && !strings.EqualFold(name, orchestrator.Name) {
+			return nil, fmt.Errorf("%s is also a team lead agent and cannot be delegated from %s", name, orchestrator.Name)
 		}
 	}
 
 	now := time.Now()
 	task := &SharedTask{
-		ID:          uuid.New().String(),
-		TeamID:      team.ID,
-		TeamName:    team.Name,
-		CaptainName: captain.Name,
-		AgentNames:  append([]string(nil), agentNames...),
-		Prompt:      strings.TrimSpace(prompt),
-		Status:      SharedTaskStatusQueued,
-		CreatedAt:   now,
+		ID:               uuid.New().String(),
+		TeamID:           team.ID,
+		TeamName:         team.Name,
+		OrchestratorName: orchestrator.Name,
+		AgentNames:       append([]string(nil), agentNames...),
+		Prompt:           strings.TrimSpace(prompt),
+		Status:           SharedTaskStatusQueued,
+		CreatedAt:        now,
 	}
 
 	m.queueMu.Lock()
@@ -343,7 +343,7 @@ func (m *TeamManager) EnqueueSharedTaskForTeam(ctx context.Context, teamID, capt
 		queuedAhead++
 	}
 	task.QueuedAhead = queuedAhead
-	task.AckMessage = buildSharedTaskAck(captain.Name, queuedAhead)
+	task.AckMessage = buildSharedTaskAck(orchestrator.Name, queuedAhead)
 	m.sharedTasks[task.ID] = task
 	m.taskQueues[team.ID] = append(m.taskQueues[team.ID], task.ID)
 	shouldStartWorker := !m.queueRunning[team.ID]
@@ -381,9 +381,9 @@ func (m *TeamManager) EnqueueSharedTaskForTeam(ctx context.Context, teamID, capt
 	return cloneSharedTask(task), nil
 }
 
-// ListSharedTasks returns recent queued or completed team tasks for one captain.
-func (m *TeamManager) ListSharedTasks(captainName string, since time.Time, limit int) []*SharedTask {
-	return m.listSharedTasks("", captainName, since, limit)
+// ListSharedTasks returns recent queued or completed team tasks for one orchestrator.
+func (m *TeamManager) ListSharedTasks(orchestratorName string, since time.Time, limit int) []*SharedTask {
+	return m.listSharedTasks("", orchestratorName, since, limit)
 }
 
 // ListSharedTasksForTeam returns recent queued or completed team tasks for one team.
@@ -391,7 +391,7 @@ func (m *TeamManager) ListSharedTasksForTeam(teamID string, since time.Time, lim
 	return m.listSharedTasks(teamID, "", since, limit)
 }
 
-func (m *TeamManager) listSharedTasks(teamID, captainName string, since time.Time, limit int) []*SharedTask {
+func (m *TeamManager) listSharedTasks(teamID, orchestratorName string, since time.Time, limit int) []*SharedTask {
 	m.queueMu.Lock()
 	defer m.queueMu.Unlock()
 
@@ -400,7 +400,7 @@ func (m *TeamManager) listSharedTasks(teamID, captainName string, since time.Tim
 		if teamID != "" && !strings.EqualFold(task.TeamID, teamID) {
 			continue
 		}
-		if captainName != "" && !strings.EqualFold(task.CaptainName, captainName) {
+		if orchestratorName != "" && !strings.EqualFold(task.OrchestratorName, orchestratorName) {
 			continue
 		}
 		if !since.IsZero() && task.CreatedAt.Before(since) && (task.FinishedAt == nil || task.FinishedAt.Before(since)) {
@@ -482,11 +482,11 @@ func (m *TeamManager) executeSharedTask(ctx context.Context, task *SharedTask) {
 	m.executeSharedTaskStream(ctx, task)
 }
 
-func buildSharedTaskAck(captainName string, queuedAhead int) string {
+func buildSharedTaskAck(orchestratorName string, queuedAhead int) string {
 	if queuedAhead > 0 {
-		return fmt.Sprintf("%s received that. It is queued behind %d task(s).", captainName, queuedAhead)
+		return fmt.Sprintf("%s received that. It is queued behind %d task(s).", orchestratorName, queuedAhead)
 	}
-	return fmt.Sprintf("%s received that. Starting it now.", captainName)
+	return fmt.Sprintf("%s received that. Starting it now.", orchestratorName)
 }
 
 func (m *TeamManager) restoreSharedTasks() {
@@ -557,7 +557,7 @@ func cloneSharedTask(task *SharedTask) *SharedTask {
 	return &cloned
 }
 
-// ListMembers returns all registered captains and specialists that belong to teams.
+// ListMembers returns all registered orchestrators and specialists that belong to teams.
 func (m *TeamManager) ListMembers() ([]*AgentModel, error) {
 	all, err := m.store.ListAgentModels()
 	if err != nil {
@@ -622,7 +622,7 @@ func (m *TeamManager) CreateTeam(_ context.Context, team *Team) (*Team, error) {
 
 	leadAgentName := defaultTeamLeadName(team.Name)
 	if existing, err := m.store.GetAgentModelByName(leadAgentName); err == nil {
-		if _, err := m.JoinTeam(context.Background(), existing.Name, team.ID, AgentKindCaptain); err != nil {
+		if _, err := m.JoinTeam(context.Background(), existing.Name, team.ID, AgentKindOrchestrator); err != nil {
 			return nil, err
 		}
 	} else {
@@ -630,10 +630,10 @@ func (m *TeamManager) CreateTeam(_ context.Context, team *Team) (*Team, error) {
 			ID:           uuid.New().String(),
 			TeamID:       team.ID,
 			Name:         leadAgentName,
-			Kind:         AgentKindCaptain,
-			Description:  fmt.Sprintf("Default captain agent for %s.", team.Name),
-			Instructions: fmt.Sprintf("You are the captain agent for team %s. Help directly when possible and coordinate specialists when useful.", team.Name),
-			MCPTools:     defaultMemberMCPTools("Captain"),
+			Kind:         AgentKindOrchestrator,
+			Description:  fmt.Sprintf("Default orchestrator agent for %s.", team.Name),
+			Instructions: fmt.Sprintf("You are the orchestrator agent for team %s. Help directly when possible and coordinate specialists when useful.", team.Name),
+			MCPTools:     defaultMemberMCPTools("Orchestrator"),
 			EnableRAG:    true,
 			EnableMemory: true,
 			EnableMCP:    true,
@@ -658,11 +658,11 @@ func (m *TeamManager) GetTeamByA2AID(a2aID string) (*Team, error) {
 	return m.store.GetTeamByA2AID(strings.TrimSpace(a2aID))
 }
 
-func (m *TeamManager) AddCaptain(ctx context.Context, teamID, name, description, instructions string) (*AgentModel, error) {
+func (m *TeamManager) AddOrchestrator(ctx context.Context, teamID, name, description, instructions string) (*AgentModel, error) {
 	return m.CreateMember(ctx, &AgentModel{
 		TeamID:       strings.TrimSpace(teamID),
 		Name:         strings.TrimSpace(name),
-		Kind:         AgentKindCaptain,
+		Kind:         AgentKindOrchestrator,
 		Description:  strings.TrimSpace(description),
 		Instructions: strings.TrimSpace(instructions),
 	})
@@ -678,18 +678,18 @@ func (m *TeamManager) AddSpecialist(ctx context.Context, teamID, name, descripti
 	})
 }
 
-func (m *TeamManager) ListCaptains() ([]*AgentModel, error) {
+func (m *TeamManager) ListOrchestrators() ([]*AgentModel, error) {
 	members, err := m.ListMembers()
 	if err != nil {
 		return nil, err
 	}
-	captains := make([]*AgentModel, 0, len(members))
+	orchestrators := make([]*AgentModel, 0, len(members))
 	for _, member := range members {
-		if member.Kind == AgentKindCaptain {
-			captains = append(captains, member)
+		if member.Kind == AgentKindOrchestrator {
+			orchestrators = append(orchestrators, member)
 		}
 	}
-	return captains, nil
+	return orchestrators, nil
 }
 
 func (m *TeamManager) ListSpecialists() ([]*AgentModel, error) {
@@ -895,12 +895,12 @@ func (m *TeamManager) buildServiceForModel(model *AgentModel) (*Service, error) 
 		newSvc.agent.SetAllowedSkills([]string{}) // none allowed if empty
 	}
 
-	if hasMembershipRole(model.Teams, AgentKindCaptain) {
-		m.RegisterCaptainTools(newSvc)
-		configureCaptainService(newSvc)
+	if hasMembershipRole(model.Teams, AgentKindOrchestrator) {
+		m.RegisterOrchestratorTools(newSvc)
+		configureOrchestratorService(newSvc)
 	}
-	if strings.EqualFold(strings.TrimSpace(model.Name), defaultConciergeAgentName) {
-		m.RegisterConciergeTools(newSvc)
+	if strings.EqualFold(strings.TrimSpace(model.Name), defaultDispatcherAgentName) {
+		m.RegisterDispatcherTools(newSvc)
 	}
 	m.registerBuiltInAgentDelegationTools(newSvc, model)
 	m.registerAgentMessagingTools(newSvc, model)
@@ -933,11 +933,11 @@ func primaryMemoryTeamID(model *AgentModel) string {
 
 func (m *TeamManager) buildTeamSystemPromptForModel(cfg *config.Config, model *AgentModel) string {
 	base := buildTeamSystemPrompt(cfg, model)
-	if model == nil || !hasMembershipRole(model.Teams, AgentKindCaptain) {
+	if model == nil || !hasMembershipRole(model.Teams, AgentKindOrchestrator) {
 		return base
 	}
 
-	roster := strings.TrimSpace(m.buildCaptainRosterContext(model))
+	roster := strings.TrimSpace(m.buildOrchestratorRosterContext(model))
 	if roster == "" {
 		return base
 	}
@@ -1000,9 +1000,9 @@ func buildTeamSystemPrompt(cfg *config.Config, model *AgentModel) string {
 		lines = append(lines, "- Active project root: "+projectRoot)
 		lines = append(lines, "- Stay inside the active project root unless the user explicitly asks for another location.")
 	}
-	if model != nil && hasMembershipRole(model.Teams, AgentKindCaptain) {
+	if model != nil && hasMembershipRole(model.Teams, AgentKindOrchestrator) {
 		lines = append(lines,
-			"- You are the captain for this team.",
+			"- You are the orchestrator for this team.",
 			"- Handle direct user requests when possible and delegate specialist work only when that improves the result.",
 			"- Prefer assigning multi-step or implementation-heavy work to named team members via async team tasks instead of doing it yourself.",
 			"- Use async team task submission first for coding, file-writing, research, and verification work. Only use synchronous delegation when you truly need an immediate inline sub-result.",
@@ -1012,14 +1012,14 @@ func buildTeamSystemPrompt(cfg *config.Config, model *AgentModel) string {
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
-func (m *TeamManager) buildCaptainRosterContext(model *AgentModel) string {
-	if model == nil || !hasMembershipRole(model.Teams, AgentKindCaptain) {
+func (m *TeamManager) buildOrchestratorRosterContext(model *AgentModel) string {
+	if model == nil || !hasMembershipRole(model.Teams, AgentKindOrchestrator) {
 		return ""
 	}
 
 	lines := []string{
-		"Captain responsibilities and team roster:",
-		"- Your role: captain / team lead.",
+		"Orchestrator responsibilities and team roster:",
+		"- Your role: orchestrator / team lead.",
 	}
 	if desc := strings.TrimSpace(model.Description); desc != "" {
 		lines = append(lines, "- Your responsibility summary: "+desc)
@@ -1029,7 +1029,7 @@ func (m *TeamManager) buildCaptainRosterContext(model *AgentModel) string {
 	}
 
 	for _, membership := range model.Teams {
-		if membership.Role != AgentKindCaptain {
+		if membership.Role != AgentKindOrchestrator {
 			continue
 		}
 		teamLabel := strings.TrimSpace(membership.TeamName)
@@ -1080,10 +1080,10 @@ func compareAgentModelsForRoster(a, b *AgentModel) int {
 		}
 	}
 	if a.Kind != b.Kind {
-		if a.Kind == AgentKindCaptain {
+		if a.Kind == AgentKindOrchestrator {
 			return -1
 		}
-		if b.Kind == AgentKindCaptain {
+		if b.Kind == AgentKindOrchestrator {
 			return 1
 		}
 	}
@@ -1189,7 +1189,7 @@ func defaultMemberMCPTools(name string) []string {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "operator", "verifier":
 		return []string{"*"}
-	case "assistant", "captain", "stakeholder":
+	case "assistant", "orchestrator", "evaluator":
 		return []string{
 			"mcp_filesystem_list_allowed_directories",
 			"mcp_filesystem_list_directory",
@@ -1494,17 +1494,17 @@ func dispatchRunOptions(agentName string) []RunOption {
 	}
 }
 
-// RegisterCaptainTools adds the team management tools to the frontdesk lead agent.
-func (m *TeamManager) RegisterCaptainTools(captain *Service) {
-	if captain == nil {
+// RegisterOrchestratorTools adds the team management tools to the frontdesk lead agent.
+func (m *TeamManager) RegisterOrchestratorTools(orchestrator *Service) {
+	if orchestrator == nil {
 		return
 	}
 
 	register := func(name, description string, parameters map[string]interface{}, metadata ToolMetadata, handler func(context.Context, map[string]interface{}) (interface{}, error)) {
-		if captain.toolRegistry != nil && captain.toolRegistry.Has(name) {
+		if orchestrator.toolRegistry != nil && orchestrator.toolRegistry.Has(name) {
 			return
 		}
-		captain.AddToolWithMetadata(name, description, parameters, handler, metadata)
+		orchestrator.AddToolWithMetadata(name, description, parameters, handler, metadata)
 	}
 
 	// 1. discover_agents
@@ -1558,7 +1558,7 @@ func (m *TeamManager) RegisterCaptainTools(captain *Service) {
 		},
 	}
 	register(submitAsyncDef.Function.Name, submitAsyncDef.Function.Description, submitAsyncDef.Function.Parameters, ToolMetadata{InterruptBehavior: InterruptBehaviorBlock}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-		lead, team, err := m.resolveCaptainServiceContext(captain)
+		lead, team, err := m.resolveOrchestratorServiceContext(orchestrator)
 		if err != nil {
 			return nil, err
 		}
@@ -1571,18 +1571,18 @@ func (m *TeamManager) RegisterCaptainTools(captain *Service) {
 			return nil, fmt.Errorf("agent_names is required")
 		}
 
-		task, err := m.SubmitTeamTask(ctx, captain.CurrentSessionID(), team.ID, prompt, agentNames)
+		task, err := m.SubmitTeamTask(ctx, orchestrator.CurrentSessionID(), team.ID, prompt, agentNames)
 		if err != nil {
 			return nil, err
 		}
 		return map[string]interface{}{
-			"task_id":      task.ID,
-			"team_id":      task.TeamID,
-			"team_name":    team.Name,
-			"captain_name": lead.Name,
-			"agent_names":  append([]string(nil), task.AgentNames...),
-			"ack_message":  task.AckMessage,
-			"status":       task.Status,
+			"task_id":           task.ID,
+			"team_id":           task.TeamID,
+			"team_name":         team.Name,
+			"orchestrator_name": lead.Name,
+			"agent_names":       append([]string(nil), task.AgentNames...),
+			"ack_message":       task.AckMessage,
+			"status":            task.Status,
 		}, nil
 	})
 
@@ -1617,7 +1617,7 @@ func (m *TeamManager) RegisterCaptainTools(captain *Service) {
 		Type: "function",
 		Function: domain.ToolFunction{
 			Name:        "list_team_tasks",
-			Description: "List recent async tasks for the captain's current team.",
+			Description: "List recent async tasks for the orchestrator's current team.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -1630,7 +1630,7 @@ func (m *TeamManager) RegisterCaptainTools(captain *Service) {
 		},
 	}
 	register(listTasksDef.Function.Name, listTasksDef.Function.Description, listTasksDef.Function.Parameters, ToolMetadata{ReadOnly: true, ConcurrencySafe: true, InterruptBehavior: InterruptBehaviorCancel}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-		_, team, err := m.resolveCaptainServiceContext(captain)
+		_, team, err := m.resolveOrchestratorServiceContext(orchestrator)
 		if err != nil {
 			return nil, err
 		}
@@ -1639,16 +1639,16 @@ func (m *TeamManager) RegisterCaptainTools(captain *Service) {
 		out := make([]map[string]interface{}, 0, len(tasks))
 		for _, task := range tasks {
 			out = append(out, map[string]interface{}{
-				"task_id":      task.ID,
-				"captain_name": task.CaptainName,
-				"agent_names":  append([]string(nil), task.AgentNames...),
-				"prompt":       task.Prompt,
-				"status":       task.Status,
-				"ack_message":  task.AckMessage,
-				"result_text":  task.ResultText,
-				"created_at":   task.CreatedAt,
-				"started_at":   task.StartedAt,
-				"finished_at":  task.FinishedAt,
+				"task_id":           task.ID,
+				"orchestrator_name": task.OrchestratorName,
+				"agent_names":       append([]string(nil), task.AgentNames...),
+				"prompt":            task.Prompt,
+				"status":            task.Status,
+				"ack_message":       task.AckMessage,
+				"result_text":       task.ResultText,
+				"created_at":        task.CreatedAt,
+				"started_at":        task.StartedAt,
+				"finished_at":       task.FinishedAt,
 			})
 		}
 		return out, nil
@@ -1686,23 +1686,157 @@ func (m *TeamManager) RegisterCaptainTools(captain *Service) {
 		stream, _ := args["stream"].(bool)
 		return m.dispatchTaskWithOptionalStream(ctx, agentName, instruction, "", nil, stream)
 	})
+
+	// 6. delegate_pipeline
+	pipelineDef := domain.ToolDefinition{
+		Type: "function",
+		Function: domain.ToolFunction{
+			Name:        "delegate_pipeline",
+			Description: "Run a sequence of agents as a streaming pipeline where each step's output feeds the next. Use trigger_pattern on a step to start the following step early — as soon as that pattern appears in the streaming output — without waiting for the step to finish.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"initial_input": map[string]interface{}{
+						"type":        "string",
+						"description": "The starting prompt fed into the first pipeline step.",
+					},
+					"steps": map[string]interface{}{
+						"type":        "array",
+						"description": "Ordered list of pipeline steps.",
+						"items": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"agent_name": map[string]interface{}{
+									"type":        "string",
+									"description": "Name of the team agent for this step.",
+								},
+								"prompt": map[string]interface{}{
+									"type":        "string",
+									"description": "Optional prompt template. Use {input} to embed the upstream step's output. If omitted, upstream output is used directly.",
+								},
+								"trigger_pattern": map[string]interface{}{
+									"type":        "string",
+									"description": "Optional substring. When this appears in the current step's streaming output, the next step starts immediately with the accumulated output so far.",
+								},
+							},
+							"required": []string{"agent_name"},
+						},
+					},
+				},
+				"required": []string{"initial_input", "steps"},
+			},
+		},
+	}
+	register(pipelineDef.Function.Name, pipelineDef.Function.Description, pipelineDef.Function.Parameters, ToolMetadata{InterruptBehavior: InterruptBehaviorBlock}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+		initialInput := getStringArg(args, "initial_input")
+		stepsRaw, _ := args["steps"].([]interface{})
+
+		steps := make([]PipelineStep, 0, len(stepsRaw))
+		for _, raw := range stepsRaw {
+			m, ok := raw.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			agentName, _ := m["agent_name"].(string)
+			prompt, _ := m["prompt"].(string)
+			triggerPattern, _ := m["trigger_pattern"].(string)
+			if strings.TrimSpace(agentName) == "" {
+				continue
+			}
+			steps = append(steps, PipelineStep{
+				AgentName:      strings.TrimSpace(agentName),
+				Prompt:         strings.TrimSpace(prompt),
+				TriggerPattern: strings.TrimSpace(triggerPattern),
+			})
+		}
+		if len(steps) == 0 {
+			return nil, fmt.Errorf("delegate_pipeline: steps must contain at least one valid entry")
+		}
+
+		pipelineEvents, err := m.RunPipeline(ctx, steps, initialInput)
+		if err != nil {
+			return nil, err
+		}
+
+		sink := eventSinkFromContext(ctx)
+		results, pipelineErr := func() ([]string, error) {
+			type stepState struct {
+				text    strings.Builder
+				hasText bool
+			}
+			collectors := make(map[int]*stepState)
+			var firstErr error
+
+			for pEvt := range pipelineEvents {
+				if pEvt.Event == nil {
+					continue
+				}
+				if sink != nil {
+					sink(cloneAgentEvent(pEvt.Event))
+				}
+				idx := pEvt.StepIndex
+				if collectors[idx] == nil {
+					collectors[idx] = &stepState{}
+				}
+				c := collectors[idx]
+				switch pEvt.Type {
+				case EventTypePartial:
+					c.text.WriteString(pEvt.Content)
+					c.hasText = true
+				case EventTypeComplete, EventTypeBlocked:
+					if t := strings.TrimSpace(pEvt.Content); t != "" {
+						c.text.Reset()
+						c.text.WriteString(t)
+						c.hasText = true
+					}
+				case EventTypeError:
+					if firstErr == nil && pEvt.Content != "" {
+						firstErr = errors.New(pEvt.Content)
+					}
+				}
+			}
+
+			maxIdx := -1
+			for idx := range collectors {
+				if idx > maxIdx {
+					maxIdx = idx
+				}
+			}
+			if maxIdx < 0 {
+				return nil, firstErr
+			}
+			out := make([]string, maxIdx+1)
+			for idx, c := range collectors {
+				out[idx] = strings.TrimSpace(c.text.String())
+			}
+			return out, firstErr
+		}()
+
+		if pipelineErr != nil {
+			return nil, pipelineErr
+		}
+		if len(results) == 0 {
+			return "", nil
+		}
+		return results[len(results)-1], nil
+	})
 }
 
 // RegisterCommanderTools is kept as a compatibility alias for older call sites.
 func (m *TeamManager) RegisterCommanderTools(commander *Service) {
-	m.RegisterCaptainTools(commander)
+	m.RegisterOrchestratorTools(commander)
 }
 
-func (m *TeamManager) resolveCaptainServiceContext(captain *Service) (*AgentModel, *Team, error) {
-	if captain == nil || captain.agent == nil {
-		return nil, nil, fmt.Errorf("captain service is not initialized")
+func (m *TeamManager) resolveOrchestratorServiceContext(orchestrator *Service) (*AgentModel, *Team, error) {
+	if orchestrator == nil || orchestrator.agent == nil {
+		return nil, nil, fmt.Errorf("orchestrator service is not initialized")
 	}
-	member, err := m.GetMemberByName(captain.agent.Name())
+	member, err := m.GetMemberByName(orchestrator.agent.Name())
 	if err != nil {
 		return nil, nil, err
 	}
 	for _, membership := range member.Teams {
-		if membership.Role == AgentKindCaptain {
+		if membership.Role == AgentKindOrchestrator {
 			team, teamErr := m.store.GetTeam(membership.TeamID)
 			if teamErr != nil {
 				return nil, nil, teamErr
@@ -1710,5 +1844,5 @@ func (m *TeamManager) resolveCaptainServiceContext(captain *Service) (*AgentMode
 			return member, team, nil
 		}
 	}
-	return nil, nil, fmt.Errorf("%s is not a team captain", captain.agent.Name())
+	return nil, nil, fmt.Errorf("%s is not a team orchestrator", orchestrator.agent.Name())
 }

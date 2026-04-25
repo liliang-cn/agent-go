@@ -7,9 +7,9 @@ import (
 )
 
 var coreDelegableBuiltInAgentNames = []string{
-	defaultAssistantAgentName,
+	defaultResponderAgentName,
 	defaultOperatorAgentName,
-	defaultStakeholderAgentName,
+	defaultEvaluatorAgentName,
 	defaultArchivistAgentName,
 	defaultVerifierAgentName,
 }

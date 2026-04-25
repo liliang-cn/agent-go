@@ -30,7 +30,7 @@ func TestRunOptionWithPTCEnabledCanDisablePTCForRun(t *testing.T) {
 
 func TestPrepareDispatchRequestIncludesTaskID(t *testing.T) {
 	manager := &TeamManager{}
-	_, opts := manager.prepareDispatchRequest("Assistant", "hello", "session-1", "task-42", nil)
+	_, opts := manager.prepareDispatchRequest("Responder", "hello", "session-1", "task-42", nil)
 
 	cfg := DefaultRunConfig()
 	for _, opt := range opts {
@@ -82,7 +82,7 @@ func TestAsyncTaskDefaultsTaskID(t *testing.T) {
 		SessionID: "session-1",
 		Kind:      AsyncTaskKindAgent,
 		Status:    AsyncTaskStatusQueued,
-		AgentName: "Assistant",
+		AgentName: "Responder",
 		CreatedAt: time.Now(),
 	}
 	manager.upsertAsyncTask(task)
@@ -108,13 +108,13 @@ func TestUnifiedTaskHydratesMessagesForTask(t *testing.T) {
 		SessionID: "creator-session",
 		Kind:      AsyncTaskKindAgent,
 		Status:    AsyncTaskStatusCompleted,
-		AgentName: "Assistant",
+		AgentName: "Responder",
 		Prompt:    "do work",
 		CreatedAt: time.Now(),
 	}
 	manager.upsertAsyncTask(task)
 
-	session := NewSession("Assistant")
+	session := NewSession("Responder")
 	session.ID = "runtime-session"
 	session.AddMessage(domain.Message{Role: "user", Content: "first turn", TaskID: "task-1"})
 	session.AddMessage(domain.Message{Role: "assistant", Content: "tool call", TaskID: "task-1", ToolCalls: []domain.ToolCall{{
@@ -159,7 +159,7 @@ func TestTaskYieldResumePersistsFutureState(t *testing.T) {
 		SessionID: "session-future",
 		Kind:      AsyncTaskKindAgent,
 		Status:    AsyncTaskStatusRunning,
-		AgentName: "Assistant",
+		AgentName: "Responder",
 		Prompt:    "wait for input",
 		CreatedAt: time.Now(),
 	}
@@ -208,7 +208,7 @@ func TestTaskServiceFacade(t *testing.T) {
 		SessionID: "session-service",
 		Kind:      AsyncTaskKindAgent,
 		Status:    AsyncTaskStatusRunning,
-		AgentName: "Assistant",
+		AgentName: "Responder",
 		Prompt:    "do work",
 		CreatedAt: time.Now(),
 	})
@@ -259,7 +259,7 @@ func TestTaskServiceSubmitReturnsCanonicalTask(t *testing.T) {
 
 	submitted, err := manager.Tasks().Submit(t.Context(), TaskSubmitOptions{
 		SessionID: "session-submit",
-		AgentName: defaultAssistantAgentName,
+		AgentName: defaultResponderAgentName,
 		Input:     "say hello",
 	})
 	if err != nil {

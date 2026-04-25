@@ -17,7 +17,7 @@ var explainRoutingCmd = &cobra.Command{
 	Short: "Explain how AgentGo routes a request",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		svc, err := agent.New(agent.BuiltInConciergeAgentName).
+		svc, err := agent.New(agent.BuiltInDispatcherAgentName).
 			WithConfig(Cfg).
 			WithDBPath(Cfg.AgentDBPath()).
 			WithPTC(false).

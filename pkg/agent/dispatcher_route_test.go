@@ -39,7 +39,7 @@ func TestRouteBuiltInRequestDispatchesArchivistWithMemorySavePrefix(t *testing.T
 	}
 
 	result, err := routeBuiltInRequestWithDispatcher(context.Background(), "明天下午17：00去万达吃饭", domain.MemoryQueryContext{
-		AgentID: "Concierge",
+		AgentID: "Dispatcher",
 		TeamID:  defaultTeamID,
 	}, nil, dispatch)
 	if err != nil {
@@ -95,7 +95,7 @@ func TestRouteBuiltInRequestRunsOptimizerWhenNeeded(t *testing.T) {
 	}
 
 	result, err := routeBuiltInRequestWithDispatcher(context.Background(), "明天天气怎么样", domain.MemoryQueryContext{
-		AgentID: "Concierge",
+		AgentID: "Dispatcher",
 		TeamID:  defaultTeamID,
 	}, nil, dispatch)
 	if err != nil {
@@ -126,7 +126,7 @@ func TestRouteBuiltInRequestStartsRouterAndOptimizerConcurrently(t *testing.T) {
 			close(routerStarted)
 			select {
 			case <-optimizerStarted:
-				return "TARGET_AGENT: Assistant\nINTENT_TYPE: general_qa\nREASON: parallel routing\nNEEDS_OPTIMIZATION: no", nil
+				return "TARGET_AGENT: Responder\nINTENT_TYPE: general_qa\nREASON: parallel routing\nNEEDS_OPTIMIZATION: no", nil
 			case <-time.After(500 * time.Millisecond):
 				return "", fmt.Errorf("optimizer did not start before router finished")
 			}
@@ -138,7 +138,7 @@ func TestRouteBuiltInRequestStartsRouterAndOptimizerConcurrently(t *testing.T) {
 			case <-time.After(500 * time.Millisecond):
 				return "", fmt.Errorf("router did not start before optimizer finished")
 			}
-		case defaultAssistantAgentName:
+		case defaultResponderAgentName:
 			return "ok", nil
 		default:
 			return "", fmt.Errorf("unexpected agent %s", agentName)
@@ -146,14 +146,14 @@ func TestRouteBuiltInRequestStartsRouterAndOptimizerConcurrently(t *testing.T) {
 	}
 
 	result, err := routeBuiltInRequestWithDispatcher(context.Background(), "帮我总结一下", domain.MemoryQueryContext{
-		AgentID: "Concierge",
+		AgentID: "Dispatcher",
 		TeamID:  defaultTeamID,
 	}, nil, dispatch)
 	if err != nil {
 		t.Fatalf("routeBuiltInRequestWithDispatcher failed: %v", err)
 	}
-	if result.TargetAgent != defaultAssistantAgentName {
-		t.Fatalf("expected Assistant target, got %+v", result)
+	if result.TargetAgent != defaultResponderAgentName {
+		t.Fatalf("expected Responder target, got %+v", result)
 	}
 }
 
@@ -175,7 +175,7 @@ func TestParseIntentRouterDecisionNormalizesTargetAgent(t *testing.T) {
 func TestParseIntentRouterDecisionParsesNeedsOptimization(t *testing.T) {
 	t.Parallel()
 
-	decision := parseIntentRouterDecision("TARGET_AGENT: Assistant\nINTENT_TYPE: general_qa\nREASON: test\nNEEDS_OPTIMIZATION: yes")
+	decision := parseIntentRouterDecision("TARGET_AGENT: Responder\nINTENT_TYPE: general_qa\nREASON: test\nNEEDS_OPTIMIZATION: yes")
 	if !decision.NeedsOptimization {
 		t.Fatal("expected NeedsOptimization=true")
 	}
@@ -197,7 +197,7 @@ func TestRouteBuiltInRequestStabilizesExplicitMemorySaveRouting(t *testing.T) {
 
 		switch agentName {
 		case defaultIntentRouterAgentName:
-			return "TARGET_AGENT: Assistant\nINTENT_TYPE: general_qa\nREASON: misread request\nNEEDS_OPTIMIZATION: yes", nil
+			return "TARGET_AGENT: Responder\nINTENT_TYPE: general_qa\nREASON: misread request\nNEEDS_OPTIMIZATION: yes", nil
 		case defaultPromptOptimizerAgentName:
 			return optimizedPromptBeginMarker + "\n请先解释“夜航计划”具体是什么意思\n" + optimizedPromptEndMarker, nil
 		case defaultArchivistAgentName:
@@ -209,7 +209,7 @@ func TestRouteBuiltInRequestStabilizesExplicitMemorySaveRouting(t *testing.T) {
 	}
 
 	result, err := routeBuiltInRequestWithDispatcher(context.Background(), "请记住：北极星项目组代号是 Nebula-42。", domain.MemoryQueryContext{
-		AgentID: "Concierge",
+		AgentID: "Dispatcher",
 		TeamID:  defaultTeamID,
 	}, nil, dispatch)
 	if err != nil {
@@ -236,13 +236,13 @@ func TestRouteBuiltInRequestStabilizesExplicitMemorySaveRouting(t *testing.T) {
 	}
 }
 
-func TestRouteBuiltInRequestOverridesAssistantWithArchivistForImplicitMemoryRecall(t *testing.T) {
+func TestRouteBuiltInRequestOverridesResponderWithArchivistForImplicitMemoryRecall(t *testing.T) {
 	t.Parallel()
 
 	dispatch := func(ctx context.Context, agentName, prompt string, opts []RunOption) (string, error) {
 		switch agentName {
 		case defaultIntentRouterAgentName:
-			return "TARGET_AGENT: Assistant\nINTENT_TYPE: general_qa\nREASON: explanatory question\nNEEDS_OPTIMIZATION: no", nil
+			return "TARGET_AGENT: Responder\nINTENT_TYPE: general_qa\nREASON: explanatory question\nNEEDS_OPTIMIZATION: no", nil
 		case defaultPromptOptimizerAgentName:
 			return optimizedPromptBeginMarker + "\n如果有人提到移动端掉帧，应该找谁？夜航计划指的是什么？蓝色标签又代表什么？只用一行回答。\n" + optimizedPromptEndMarker, nil
 		case defaultArchivistAgentName:
@@ -253,7 +253,7 @@ func TestRouteBuiltInRequestOverridesAssistantWithArchivistForImplicitMemoryReca
 	}
 
 	result, err := routeBuiltInRequestWithDispatcher(context.Background(), "如果有人提到移动端掉帧，应该找谁？夜航计划指的是什么？蓝色标签又代表什么？只用一行回答。", domain.MemoryQueryContext{
-		AgentID: "Concierge",
+		AgentID: "Dispatcher",
 		TeamID:  defaultTeamID,
 	}, nil, dispatch)
 	if err != nil {
@@ -270,14 +270,14 @@ func TestRouteBuiltInRequestOverridesAssistantWithArchivistForImplicitMemoryReca
 	}
 }
 
-func TestFallbackBuiltInRouteDecisionDefaultsToAssistantForGenericRequests(t *testing.T) {
+func TestFallbackBuiltInRouteDecisionDefaultsToResponderForGenericRequests(t *testing.T) {
 	t.Parallel()
 
 	decision := fallbackBuiltInRouteDecision("让宠物狗跑起来")
 	// Fallback heuristic uses only intent recognition patterns; generic action
-	// requests without file/memory/search patterns default to Assistant.
-	if decision.TargetAgent != defaultAssistantAgentName {
-		t.Fatalf("expected Assistant target for generic request, got %+v", decision)
+	// requests without file/memory/search patterns default to Responder.
+	if decision.TargetAgent != defaultResponderAgentName {
+		t.Fatalf("expected Responder target for generic request, got %+v", decision)
 	}
 }
 

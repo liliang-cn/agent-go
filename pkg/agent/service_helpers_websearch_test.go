@@ -182,7 +182,7 @@ func TestBuildWebSearchPromptNote(t *testing.T) {
 	}
 }
 
-func TestBuildWebSearchPromptNoteSkipsConcierge(t *testing.T) {
+func TestBuildWebSearchPromptNoteSkipsDispatcher(t *testing.T) {
 	svc := &Service{
 		cfg: &config.Config{
 			Tooling: config.ToolingConfig{
@@ -193,9 +193,9 @@ func TestBuildWebSearchPromptNoteSkipsConcierge(t *testing.T) {
 		},
 	}
 
-	note := svc.buildWebSearchPromptNote(NewAgentWithConfig(BuiltInConciergeAgentName, "concierge", nil))
+	note := svc.buildWebSearchPromptNote(NewAgentWithConfig(BuiltInDispatcherAgentName, "dispatcher", nil))
 	if note != "" {
-		t.Fatalf("expected concierge to skip web search note, got %q", note)
+		t.Fatalf("expected dispatcher to skip web search note, got %q", note)
 	}
 }
 

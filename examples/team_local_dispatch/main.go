@@ -29,19 +29,19 @@ func main() {
 
 	fmt.Println("=== Team Local Dispatch Example ===")
 	fmt.Printf("Example home: %s\n", cfg.Home)
-	fmt.Println("Dispatching directly to Assistant...")
+	fmt.Println("Dispatching directly to Responder...")
 
-	reply, err := manager.DispatchTask(ctx, "Assistant", "Reply with exactly: LOCAL_DISPATCH_OK")
+	reply, err := manager.DispatchTask(ctx, "Responder", "Reply with exactly: LOCAL_DISPATCH_OK")
 	if err != nil {
 		log.Fatalf("dispatch task: %v", err)
 	}
 
-	status, err := manager.GetAgentStatus("Assistant")
+	status, err := manager.GetAgentStatus("Responder")
 	if err != nil {
 		log.Fatalf("get agent status: %v", err)
 	}
 
-	fmt.Printf("Assistant reply: %s\n", reply)
+	fmt.Printf("Responder reply: %s\n", reply)
 	fmt.Printf("Runtime mode: %s | Workers: %d | Queue depth: %d | Processed: %d\n",
 		status.RuntimeMode, status.WorkerCount, status.QueueDepth, status.ProcessedMessages)
 }

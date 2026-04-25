@@ -183,7 +183,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 	// Create Agent service using Builder
 	agentgolog.Infof("Creating agent service with Builder...")
 	b := agent.New("AgentGo Frontdesk").
-		WithSystemPrompt("You are the system Frontdesk and captain agent. You can interact with users, and delegate tasks to specialized agents using the tools provided.").
+		WithSystemPrompt("You are the system Frontdesk and orchestrator agent. You can interact with users, and delegate tasks to specialized agents using the tools provided.").
 		WithDebug().
 		WithPTC().
 		WithMCP().
@@ -213,8 +213,8 @@ func runServer(cmd *cobra.Command, args []string) error {
 			if err := teamManager.SeedDefaultMembers(); err != nil {
 				agentgolog.Warn("Failed to seed default team members: %v", err)
 			}
-			teamManager.RegisterCaptainTools(agentService)
-			agentgolog.Infof("Team manager and captain-agent tools initialized")
+			teamManager.RegisterOrchestratorTools(agentService)
+			agentgolog.Infof("Team manager and orchestrator-agent tools initialized")
 		}
 	}
 

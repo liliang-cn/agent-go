@@ -2,10 +2,13 @@ package providers
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -185,7 +188,7 @@ func TestToOpenAIMessages(t *testing.T) {
 			shouldError: false,
 		},
 		{
-			name: "Assistant with tool calls",
+			name: "Responder with tool calls",
 			messages: []domain.Message{
 				{
 					Role:    "assistant",
@@ -232,6 +235,88 @@ func TestToOpenAIMessages(t *testing.T) {
 				assert.Equal(t, len(tt.messages), len(result))
 			}
 		})
+	}
+}
+
+func TestToOpenAIMessagesUserImageBase64(t *testing.T) {
+	const pngBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aK9sAAAAASUVORK5CYII="
+	result, err := toOpenAIMessages([]domain.Message{
+		{
+			Role:    "user",
+			Content: "What is in this image?",
+			Parts: []domain.MessagePart{
+				domain.ImageBase64Part(pngBase64, "image/png"),
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("toOpenAIMessages() error = %v", err)
+	}
+
+	serialized, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	got := string(serialized)
+	if !strings.Contains(got, "\"type\":\"image_url\"") {
+		t.Fatalf("expected image_url content part, got %s", got)
+	}
+	if !strings.Contains(got, "\"url\":\"data:image/png;base64,"+pngBase64+"\"") {
+		t.Fatalf("expected inline base64 image data url, got %s", got)
+	}
+	if !strings.Contains(got, "What is in this image?") {
+		t.Fatalf("expected text content to be preserved, got %s", got)
+	}
+}
+
+func TestToOpenAIMessagesUserImageLocalPath(t *testing.T) {
+	const pngBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aK9sAAAAASUVORK5CYII="
+	data, err := base64.StdEncoding.DecodeString(pngBase64)
+	if err != nil {
+		t.Fatalf("DecodeString() error = %v", err)
+	}
+
+	path := filepath.Join(t.TempDir(), "tiny.png")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	result, err := toOpenAIMessages([]domain.Message{
+		{
+			Role: "user",
+			Parts: []domain.MessagePart{
+				domain.ImageLocalPathPart(path),
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("toOpenAIMessages() error = %v", err)
+	}
+
+	serialized, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	got := string(serialized)
+	if !strings.Contains(got, "\"url\":\"data:image/png;base64,"+pngBase64+"\"") {
+		t.Fatalf("expected local file to be encoded as image/png data url, got %s", got)
+	}
+}
+
+func TestToOpenAIMessagesRejectsImagePartForSystemMessage(t *testing.T) {
+	_, err := toOpenAIMessages([]domain.Message{
+		{
+			Role: "system",
+			Parts: []domain.MessagePart{
+				domain.ImageBase64Part("ZmFrZQ==", "image/png"),
+			},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected system image part conversion to fail")
+	}
+	if got := err.Error(); !strings.Contains(got, "image parts are only supported for user messages") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

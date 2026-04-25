@@ -452,19 +452,19 @@ func isBuiltInAgent(model *agent.AgentModel, teamNames map[string]string) bool {
 		return false
 	}
 	switch strings.TrimSpace(model.ID) {
-	case "agent-concierge-001", "agent-assistant-001", "agent-operator-001", "agent-captain-001", "agent-stakeholder-001", "agent-archivist-001", "agent-verifier-001":
+	case "agent-dispatcher-001", "agent-assistant-001", "agent-operator-001", "agent-orchestrator-001", "agent-evaluator-001", "agent-archivist-001", "agent-verifier-001":
 		return true
 	}
-	if strings.EqualFold(model.Name, "Concierge") && len(model.Teams) == 0 {
+	if strings.EqualFold(model.Name, "Dispatcher") && len(model.Teams) == 0 {
 		return true
 	}
-	if strings.EqualFold(model.Name, "Assistant") && len(model.Teams) == 0 {
+	if strings.EqualFold(model.Name, "Responder") && len(model.Teams) == 0 {
 		return true
 	}
 	if strings.EqualFold(model.Name, "Operator") && len(model.Teams) == 0 {
 		return true
 	}
-	if strings.EqualFold(model.Name, "Stakeholder") && len(model.Teams) == 0 {
+	if strings.EqualFold(model.Name, "Evaluator") && len(model.Teams) == 0 {
 		return true
 	}
 	if strings.EqualFold(model.Name, "Archivist") && len(model.Teams) == 0 {
@@ -474,7 +474,7 @@ func isBuiltInAgent(model *agent.AgentModel, teamNames map[string]string) bool {
 		return true
 	}
 	for _, membership := range model.Teams {
-		if membership.Role == agent.AgentKindCaptain && strings.EqualFold(model.Name, "Captain") && strings.TrimSpace(membership.TeamID) == "team-default-001" {
+		if membership.Role == agent.AgentKindOrchestrator && strings.EqualFold(model.Name, "Orchestrator") && strings.TrimSpace(membership.TeamID) == "team-default-001" {
 			return true
 		}
 	}
@@ -489,17 +489,17 @@ func normalizeAgentRole(input string) (agent.AgentKind, error) {
 		return agent.AgentKindAgent, nil
 	case "specialist":
 		return agent.AgentKindSpecialist, nil
-	case "captain", "lead", "lead-agent", "leader":
-		return agent.AgentKindCaptain, nil
+	case "orchestrator", "lead", "lead-agent", "leader":
+		return agent.AgentKindOrchestrator, nil
 	default:
-		return "", fmt.Errorf("invalid role %q: use agent, captain, or specialist", input)
+		return "", fmt.Errorf("invalid role %q: use agent, orchestrator, or specialist", input)
 	}
 }
 
 func kindDisplay(kind agent.AgentKind) string {
 	switch kind {
-	case agent.AgentKindCaptain:
-		return "captain"
+	case agent.AgentKindOrchestrator:
+		return "orchestrator"
 	case agent.AgentKindSpecialist:
 		return "specialist"
 	case agent.AgentKindAgent:

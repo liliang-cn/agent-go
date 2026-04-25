@@ -77,7 +77,7 @@ func (f *fakeCatalog) GetTeamByA2AID(a2aID string) (*agentpkg.Team, error) {
 func (f *fakeCatalog) GetLeadAgentForTeam(teamID string) (*agentpkg.AgentModel, error) {
 	for _, team := range f.teams {
 		if team != nil && team.ID == teamID {
-			if agent, ok := f.agents[team.Name+" Captain"]; ok {
+			if agent, ok := f.agents[team.Name+" Orchestrator"]; ok {
 				return agent, nil
 			}
 		}
@@ -104,19 +104,19 @@ func (f *fakeCatalog) SubmitTeamRequest(ctx context.Context, req *agentpkg.TeamR
 		return nil, err
 	}
 	task := &agentpkg.TeamResponse{
-		ProtocolVersion: agentpkg.TeamGatewayProtocolVersion,
-		ID:              "team-response-" + team.ID,
-		RequestID:       req.ID,
-		SessionID:       req.SessionID,
-		TeamID:          team.ID,
-		TeamName:        team.Name,
-		CaptainName:     lead.Name,
-		AgentNames:      append([]string(nil), req.AgentNames...),
-		Prompt:          req.Prompt,
-		Status:          agentpkg.TeamResponseStatusCompleted,
-		AckMessage:      "accepted",
-		ResultText:      "team response",
-		CreatedAt:       req.RequestedAt,
+		ProtocolVersion:  agentpkg.TeamGatewayProtocolVersion,
+		ID:               "team-response-" + team.ID,
+		RequestID:        req.ID,
+		SessionID:        req.SessionID,
+		TeamID:           team.ID,
+		TeamName:         team.Name,
+		OrchestratorName: lead.Name,
+		AgentNames:       append([]string(nil), req.AgentNames...),
+		Prompt:           req.Prompt,
+		Status:           agentpkg.TeamResponseStatusCompleted,
+		AckMessage:       "accepted",
+		ResultText:       "team response",
+		CreatedAt:        req.RequestedAt,
 	}
 	f.tasks[task.ID] = task
 	return task, nil
@@ -136,40 +136,40 @@ func (f *fakeCatalog) SubscribeTeamResponse(taskID string) (<-chan *agentpkg.Tea
 	}
 	ch := make(chan *agentpkg.TeamResponseEvent, 4)
 	ch <- &agentpkg.TeamResponseEvent{
-		ID:              "evt-started",
-		ProtocolVersion: agentpkg.TeamGatewayProtocolVersion,
-		ResponseID:      task.ID,
-		RequestID:       task.RequestID,
-		TeamID:          task.TeamID,
-		TeamName:        task.TeamName,
-		CaptainName:     task.CaptainName,
-		Type:            agentpkg.TeamResponseEventTypeStarted,
-		Status:          agentpkg.TeamResponseStatusRunning,
-		Message:         "started",
+		ID:               "evt-started",
+		ProtocolVersion:  agentpkg.TeamGatewayProtocolVersion,
+		ResponseID:       task.ID,
+		RequestID:        task.RequestID,
+		TeamID:           task.TeamID,
+		TeamName:         task.TeamName,
+		OrchestratorName: task.OrchestratorName,
+		Type:             agentpkg.TeamResponseEventTypeStarted,
+		Status:           agentpkg.TeamResponseStatusRunning,
+		Message:          "started",
 	}
 	ch <- &agentpkg.TeamResponseEvent{
-		ID:              "evt-progress",
-		ProtocolVersion: agentpkg.TeamGatewayProtocolVersion,
-		ResponseID:      task.ID,
-		RequestID:       task.RequestID,
-		TeamID:          task.TeamID,
-		TeamName:        task.TeamName,
-		CaptainName:     task.CaptainName,
-		Type:            agentpkg.TeamResponseEventTypeProgress,
-		Status:          agentpkg.TeamResponseStatusRunning,
-		Runtime:         &agentpkg.Event{Type: agentpkg.EventTypePartial, Content: "partial team output"},
+		ID:               "evt-progress",
+		ProtocolVersion:  agentpkg.TeamGatewayProtocolVersion,
+		ResponseID:       task.ID,
+		RequestID:        task.RequestID,
+		TeamID:           task.TeamID,
+		TeamName:         task.TeamName,
+		OrchestratorName: task.OrchestratorName,
+		Type:             agentpkg.TeamResponseEventTypeProgress,
+		Status:           agentpkg.TeamResponseStatusRunning,
+		Runtime:          &agentpkg.Event{Type: agentpkg.EventTypePartial, Content: "partial team output"},
 	}
 	ch <- &agentpkg.TeamResponseEvent{
-		ID:              "evt-completed",
-		ProtocolVersion: agentpkg.TeamGatewayProtocolVersion,
-		ResponseID:      task.ID,
-		RequestID:       task.RequestID,
-		TeamID:          task.TeamID,
-		TeamName:        task.TeamName,
-		CaptainName:     task.CaptainName,
-		Type:            agentpkg.TeamResponseEventTypeCompleted,
-		Status:          agentpkg.TeamResponseStatusCompleted,
-		Message:         task.ResultText,
+		ID:               "evt-completed",
+		ProtocolVersion:  agentpkg.TeamGatewayProtocolVersion,
+		ResponseID:       task.ID,
+		RequestID:        task.RequestID,
+		TeamID:           task.TeamID,
+		TeamName:         task.TeamName,
+		OrchestratorName: task.OrchestratorName,
+		Type:             agentpkg.TeamResponseEventTypeCompleted,
+		Status:           agentpkg.TeamResponseStatusCompleted,
+		Message:          task.ResultText,
 	}
 	close(ch)
 	return ch, func() {}, nil
@@ -220,10 +220,10 @@ func (richFakeRunner) RunStream(_ context.Context, _ string) (<-chan *agentpkg.E
 func TestServerListsOnlyStandaloneOptedInAgents(t *testing.T) {
 	server, err := NewServer(&fakeCatalog{
 		agents: map[string]*agentpkg.AgentModel{
-			"Assistant": {Name: "Assistant", EnableA2A: true},
-			"Writer":    {Name: "Writer", EnableA2A: true},
-			"Captain":   {Name: "Captain", EnableA2A: true, Teams: []agentpkg.TeamMembership{{TeamID: "s1"}}},
-			"Hidden":    {Name: "Hidden", EnableA2A: false},
+			"Responder":    {Name: "Responder", EnableA2A: true},
+			"Writer":       {Name: "Writer", EnableA2A: true},
+			"Orchestrator": {Name: "Orchestrator", EnableA2A: true, Teams: []agentpkg.TeamMembership{{TeamID: "s1"}}},
+			"Hidden":       {Name: "Hidden", EnableA2A: false},
 		},
 	}, Config{Enabled: true, PublicBaseURL: "https://agentgo.example", PathPrefix: "/a2a", IncludeBuiltInAgents: true, IncludeCustomAgents: true})
 	if err != nil {
@@ -380,16 +380,16 @@ func TestServerBuildsTeamCard(t *testing.T) {
 	}
 }
 
-func TestServerInvokesA2ATeamViaCaptain(t *testing.T) {
+func TestServerInvokesA2ATeamViaOrchestrator(t *testing.T) {
 	server, err := NewServer(&fakeCatalog{
 		agents: map[string]*agentpkg.AgentModel{
-			"Docs Team Captain": {Name: "Docs Team Captain"},
+			"Docs Team Orchestrator": {Name: "Docs Team Orchestrator"},
 		},
 		teams: map[string]*agentpkg.Team{
 			"Docs Team": {ID: "s1", Name: "Docs Team", Description: "Coordinates docs work", EnableA2A: true},
 		},
 		runners: map[string]AgentRunner{
-			"Docs Team Captain": &fakeRunner{text: "team response"},
+			"Docs Team Orchestrator": &fakeRunner{text: "team response"},
 		},
 	}, Config{Enabled: true, PublicBaseURL: "https://agentgo.example", PathPrefix: "/a2a", IncludeBuiltInAgents: true, IncludeCustomAgents: true})
 	if err != nil {

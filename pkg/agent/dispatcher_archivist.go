@@ -11,9 +11,9 @@ const (
 	archivistVerifierPrefix = "VERIFIER_NEEDED:"
 )
 
-func (m *TeamManager) configureConciergeArchivistHook(concierge *Service) {
-	m.ConfigureFollowUpAgentHook(concierge, FollowUpAgentPolicy{
-		HookDescription: "concierge_archivist_async_review",
+func (m *TeamManager) configureDispatcherArchivistHook(dispatcher *Service) {
+	m.ConfigureFollowUpAgentHook(dispatcher, FollowUpAgentPolicy{
+		HookDescription: "dispatcher_archivist_async_review",
 		AgentName:       ArchivistAgentName,
 		Priority:        100,
 		ScenarioTags:    []string{"memory_router", "save", "recall", "cleanup"},
@@ -59,7 +59,7 @@ func buildArchivistReviewPromptFromHook(data HookData) string {
 	}
 
 	return fmt.Sprintf(`You are Archivist, the background memory-routing agent for AgentGo.
-Review this completed Concierge conversation turn and decide whether memory work is needed.
+Review this completed Dispatcher conversation turn and decide whether memory work is needed.
 
 Your job:
 - First decide whether this turn is memory-related.
@@ -80,15 +80,15 @@ Constraints:
 Output rule:
 - If no memory action is needed, reply exactly: NO_MEMORY_ACTION_NEEDED
 - If memory action is needed, do the memory work first, then reply with one short user-facing supplement message only, prefixed with "Supplement:".
-- Keep the supplement under 2 sentences and do not repeat the full Concierge answer.
+- Keep the supplement under 2 sentences and do not repeat the full Dispatcher answer.
 
 Conversation context:
 - Session ID: %s
 - Intent: %s
-- Concierge tools used: %s
+- Dispatcher tools used: %s
 - User message: %s
-- Concierge reply: %s
-- Retrieved memories from Concierge turn:
+- Dispatcher reply: %s
+- Retrieved memories from Dispatcher turn:
 %s
 `, strings.TrimSpace(data.SessionID), intent, toolSummary, strings.TrimSpace(data.Goal), reply, memorySummary)
 }

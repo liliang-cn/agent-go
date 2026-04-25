@@ -158,7 +158,7 @@ func (c cliInvokeCatalog) GetTeamByA2AID(a2aID string) (*agent.Team, error) {
 func (c cliInvokeCatalog) GetLeadAgentForTeam(teamID string) (*agent.AgentModel, error) {
 	for _, team := range c.teams {
 		if team != nil && team.ID == teamID {
-			if model, ok := c.agents[team.Name+" Captain"]; ok {
+			if model, ok := c.agents[team.Name+" Orchestrator"]; ok {
 				return model, nil
 			}
 		}
@@ -323,7 +323,7 @@ func TestGetManagerUsesTempConfigHome(t *testing.T) {
 	if err != nil {
 		t.Fatalf("getManager failed: %v", err)
 	}
-	model, err := manager.GetAgentByName("Assistant")
+	model, err := manager.GetAgentByName("Responder")
 	if err != nil {
 		t.Fatalf("GetAgentByName failed: %v", err)
 	}

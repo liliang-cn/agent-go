@@ -312,19 +312,19 @@ func TestServerLoadSessionReplaysHistory(t *testing.T) {
 		t.Fatalf("expected 2 replayed updates, got %d", len(updates))
 	}
 
-	var sawUser, sawAssistant bool
+	var sawUser, sawResponder bool
 	for _, update := range updates {
 		switch {
 		case update.Update.UserMessageChunk != nil && update.Update.UserMessageChunk.Content.Text.Text == "remember this":
 			sawUser = true
 		case update.Update.AgentMessageChunk != nil && update.Update.AgentMessageChunk.Content.Text.Text == "I will remember this":
-			sawAssistant = true
+			sawResponder = true
 		}
 	}
 	if !sawUser {
 		t.Fatalf("expected replayed user message, got %#v", updates)
 	}
-	if !sawAssistant {
+	if !sawResponder {
 		t.Fatalf("expected replayed assistant message, got %#v", updates)
 	}
 }

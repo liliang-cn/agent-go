@@ -7,23 +7,23 @@ import (
 	"github.com/liliang-cn/agent-go/v2/pkg/config"
 )
 
-func TestBuildStandaloneAgentPromptOmitsTaskCompleteHintForConcierge(t *testing.T) {
+func TestBuildStandaloneAgentPromptOmitsTaskCompleteHintForDispatcher(t *testing.T) {
 	cfg := &config.Config{Home: "/tmp/agentgo"}
 	model := &AgentModel{
-		Name:         BuiltInConciergeAgentName,
-		Instructions: "concierge instructions",
+		Name:         BuiltInDispatcherAgentName,
+		Instructions: "dispatcher instructions",
 	}
 
 	got := buildStandaloneAgentPrompt(cfg, model)
 	if strings.Contains(got, "Call task_complete as soon as you have the final answer.") {
-		t.Fatalf("expected concierge standalone prompt to omit task_complete hint, got %q", got)
+		t.Fatalf("expected dispatcher standalone prompt to omit task_complete hint, got %q", got)
 	}
 }
 
-func TestBuildStandaloneAgentPromptKeepsTaskCompleteHintForAssistant(t *testing.T) {
+func TestBuildStandaloneAgentPromptKeepsTaskCompleteHintForResponder(t *testing.T) {
 	cfg := &config.Config{Home: "/tmp/agentgo"}
 	model := &AgentModel{
-		Name:         "Assistant",
+		Name:         "Responder",
 		Instructions: "assistant instructions",
 	}
 
@@ -36,24 +36,24 @@ func TestBuildStandaloneAgentPromptKeepsTaskCompleteHintForAssistant(t *testing.
 	}
 }
 
-func TestBuildStandaloneAgentPromptUsesDedicatedTemplateForStakeholder(t *testing.T) {
+func TestBuildStandaloneAgentPromptUsesDedicatedTemplateForEvaluator(t *testing.T) {
 	cfg := &config.Config{Home: "/tmp/agentgo"}
 	model := &AgentModel{
-		Name:         defaultStakeholderAgentName,
-		Instructions: "stakeholder instructions",
+		Name:         defaultEvaluatorAgentName,
+		Instructions: "evaluator instructions",
 	}
 
 	got := buildStandaloneAgentPrompt(cfg, model)
-	if got != "stakeholder instructions" {
-		t.Fatalf("expected stakeholder prompt to use dedicated template, got %q", got)
+	if got != "evaluator instructions" {
+		t.Fatalf("expected evaluator prompt to use dedicated template, got %q", got)
 	}
 	if strings.Contains(got, "Runtime context:") {
-		t.Fatalf("expected stakeholder prompt to omit runtime context, got %q", got)
+		t.Fatalf("expected evaluator prompt to omit runtime context, got %q", got)
 	}
 	if strings.Contains(got, "Shared writable workspace") {
-		t.Fatalf("expected stakeholder prompt to omit workspace hint, got %q", got)
+		t.Fatalf("expected evaluator prompt to omit workspace hint, got %q", got)
 	}
 	if strings.Contains(got, "Call task_complete as soon as you have the final answer.") {
-		t.Fatalf("expected stakeholder prompt to omit task_complete hint, got %q", got)
+		t.Fatalf("expected evaluator prompt to omit task_complete hint, got %q", got)
 	}
 }

@@ -504,7 +504,7 @@ func (s *Service) RunStreamWithOptions(ctx context.Context, goal string, opts ..
 		createdAt: startedAt,
 	})
 
-	if routedEvents, ok, err := s.streamDirectConciergeRoute(ctx, session, goal); ok {
+	if routedEvents, ok, err := s.streamDirectDispatcherRoute(ctx, session, goal); ok {
 		return s.observeRunStream(session, taskID, goal, startedAt, routedEvents), err
 	}
 
@@ -606,7 +606,7 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 	}
 	s.rememberMemoryQueryContext(session, s.resolveMemoryQueryContext(session))
 
-	if routedResult, ok, err := s.executeDirectConciergeRoute(runCtx, session, goal); ok {
+	if routedResult, ok, err := s.executeDirectDispatcherRoute(runCtx, session, goal); ok {
 		if err != nil {
 			runErr = err
 			return nil, runErr

@@ -74,7 +74,7 @@ func (s *Service) CompactMessages(ctx context.Context, messages []domain.Message
 		case "user":
 			conversationText.WriteString(fmt.Sprintf("User: %s\n", stripDiscoveredToolsTag(msg.Content)))
 		case "assistant":
-			conversationText.WriteString(fmt.Sprintf("Assistant: %s\n", msg.Content))
+			conversationText.WriteString(fmt.Sprintf("Responder: %s\n", msg.Content))
 		}
 	}
 
@@ -301,7 +301,11 @@ func extractExplicitMemorySaveContent(goal string) string {
 }
 
 func (s *Service) answerExplicitMemoryRecall(ctx context.Context, goal string, intent *IntentRecognitionResult, memoryContext string, memories []*domain.MemoryWithScore, cfg *RunConfig) (string, bool, error) {
-	if s == nil || s.llmService == nil || !isExplicitMemoryRecallIntent(goal, intent) {
+	if s == nil || s.llmService == nil {
+		return "", false, nil
+	}
+	// Allow answering if we already have high-score memories even when intent isn't explicitly memory_recall
+	if len(memories) == 0 && !isExplicitMemoryRecallIntent(goal, intent) {
 		return "", false, nil
 	}
 

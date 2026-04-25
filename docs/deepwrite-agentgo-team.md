@@ -26,7 +26,7 @@ Team name:
 
 Always-on coordinator:
 
-- `WritingCaptain`
+- `WritingOrchestrator`
 
 Core specialists:
 
@@ -132,11 +132,11 @@ Storage:
 
 Owner:
 
-- `WritingCaptain` and `Archivist`
+- `WritingOrchestrator` and `Archivist`
 
 ## Agent Definitions
 
-## 1. WritingCaptain
+## 1. WritingOrchestrator
 
 Role:
 
@@ -154,7 +154,7 @@ Responsibilities:
 System prompt draft:
 
 ```text
-You are WritingCaptain, the orchestration lead for DeepWrite.
+You are WritingOrchestrator, the orchestration lead for DeepWrite.
 Your job is to interpret the user's writing request, choose the right specialist, and coordinate task flow.
 Do not rewrite content yourself unless the task is trivial and no specialist is needed.
 Prefer:
@@ -474,7 +474,7 @@ Output:
 
 For MVP, use these active agents:
 
-- `WritingCaptain`
+- `WritingOrchestrator`
 - `Drafter`
 - `Rewriter`
 - `VersionKeeper`
@@ -518,7 +518,7 @@ Recommended runtime setup:
 
 Recommended execution pattern:
 
-- `WritingCaptain` handles entry and task splitting
+- `WritingOrchestrator` handles entry and task splitting
 - synchronous local edits use `delegate_to_subagent`
 - long-running generation/review can use background task submission
 - state updates stream back to the editor sidebar
@@ -529,7 +529,7 @@ Keep the first release narrow.
 
 Use this sequence:
 
-1. `WritingCaptain`
+1. `WritingOrchestrator`
 2. `Drafter`
 3. `Rewriter`
 4. `VersionKeeper`

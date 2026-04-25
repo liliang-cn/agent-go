@@ -326,7 +326,7 @@ func TestQueryLoopState_TracksBudgetAndToolTotals(t *testing.T) {
 func TestExecuteToolCallsWithOptions_EmitsYieldedStateOnRecoverableError(t *testing.T) {
 	t.Parallel()
 
-	agent := NewAgent("Assistant")
+	agent := NewAgent("Responder")
 	agent.AddToolWithMetadata("boom_tool", "fails", map[string]interface{}{}, func(context.Context, map[string]interface{}) (interface{}, error) {
 		return nil, errors.New("boom")
 	}, ToolMetadata{ReadOnly: true, ConcurrencySafe: true, InterruptBehavior: InterruptBehaviorCancel})
@@ -380,7 +380,7 @@ func TestExecuteToolCallsWithOptions_EmitsYieldedStateOnRecoverableError(t *test
 func TestExecuteToolCallsWithOptions_PreservesInputOrderAcrossConcurrentBatch(t *testing.T) {
 	t.Parallel()
 
-	agent := NewAgent("Assistant")
+	agent := NewAgent("Responder")
 	agent.AddToolWithMetadata("slow_tool", "slow", map[string]interface{}{}, func(context.Context, map[string]interface{}) (interface{}, error) {
 		time.Sleep(40 * time.Millisecond)
 		return "slow", nil
@@ -510,7 +510,7 @@ func TestRegisterBuiltInTools_Metadata(t *testing.T) {
 
 func TestAgentToolMetadata_IsVisibleToServiceLookup(t *testing.T) {
 	svc := &Service{}
-	agent := NewAgent("Assistant")
+	agent := NewAgent("Responder")
 	agent.AddToolWithMetadata(
 		"local_read",
 		"Local read helper",
@@ -526,7 +526,7 @@ func TestAgentToolMetadata_IsVisibleToServiceLookup(t *testing.T) {
 }
 
 func TestAgentAddTool_InfersMetadata(t *testing.T) {
-	agent := NewAgent("Assistant")
+	agent := NewAgent("Responder")
 	agent.AddTool("read_file", "Read file", map[string]interface{}{"type": "object"}, nil)
 
 	meta := agent.MetadataOf("read_file")

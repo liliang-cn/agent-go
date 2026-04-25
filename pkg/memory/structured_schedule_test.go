@@ -53,9 +53,9 @@ func TestServiceAddAppliesStructuredCorrectionToPriorEvent(t *testing.T) {
 	svc := NewService(memStore, nil, nil, DefaultConfig())
 	initial := &domain.Memory{
 		ID:         "trip-initial",
-		SessionID:  "agent:Assistant",
+		SessionID:  "agent:Responder",
 		ScopeType:  domain.MemoryScopeAgent,
-		ScopeID:    "Assistant",
+		ScopeID:    "Responder",
 		Type:       domain.MemoryTypeFact,
 		Content:    "周二三宝要去春游，然后就放假了。",
 		Importance: 0.8,
@@ -67,9 +67,9 @@ func TestServiceAddAppliesStructuredCorrectionToPriorEvent(t *testing.T) {
 
 	correction := &domain.Memory{
 		ID:         "trip-correction",
-		SessionID:  "agent:Assistant",
+		SessionID:  "agent:Responder",
 		ScopeType:  domain.MemoryScopeAgent,
-		ScopeID:    "Assistant",
+		ScopeID:    "Responder",
 		Type:       domain.MemoryTypeFact,
 		Content:    "三宝是跟着学校去春游，不用我。",
 		Importance: 0.85,

@@ -8,20 +8,20 @@ import (
 )
 
 const (
-	defaultConciergeAgentID         = "agent-concierge-001"
-	defaultConciergeAgentName       = "Concierge"
+	defaultDispatcherAgentID        = "agent-dispatcher-001"
+	defaultDispatcherAgentName      = "Dispatcher"
 	defaultIntentRouterAgentID      = "agent-intent-router-001"
 	defaultIntentRouterAgentName    = "IntentRouter"
 	defaultPromptOptimizerAgentID   = "agent-prompt-optimizer-001"
 	defaultPromptOptimizerAgentName = "PromptOptimizer"
-	defaultCaptainAgentID           = "agent-captain-001"
-	defaultCaptainAgentName         = "Captain"
-	defaultAssistantAgentID         = "agent-assistant-001"
-	defaultAssistantAgentName       = "Assistant"
+	defaultOrchestratorAgentID      = "agent-orchestrator-001"
+	defaultOrchestratorAgentName    = "Orchestrator"
+	defaultResponderAgentID         = "agent-assistant-001"
+	defaultResponderAgentName       = "Responder"
 	defaultOperatorAgentID          = "agent-operator-001"
 	defaultOperatorAgentName        = "Operator"
-	defaultStakeholderAgentID       = "agent-stakeholder-001"
-	defaultStakeholderAgentName     = "Stakeholder"
+	defaultEvaluatorAgentID         = "agent-evaluator-001"
+	defaultEvaluatorAgentName       = "Evaluator"
 	defaultArchivistAgentID         = "agent-archivist-001"
 	defaultArchivistAgentName       = "Archivist"
 	defaultVerifierAgentID          = "agent-verifier-001"
@@ -29,24 +29,24 @@ const (
 )
 
 const (
-	BuiltInConciergeAgentName       = defaultConciergeAgentName
+	BuiltInDispatcherAgentName      = defaultDispatcherAgentName
 	BuiltInIntentRouterAgentName    = defaultIntentRouterAgentName
 	BuiltInPromptOptimizerAgentName = defaultPromptOptimizerAgentName
-	BuiltInCaptainAgentName         = defaultCaptainAgentName
+	BuiltInOrchestratorAgentName    = defaultOrchestratorAgentName
 )
 
 const (
-	defaultConciergeAgentDescription       = "Always-on user entry agent for intake, status checks, and dispatching work."
+	defaultDispatcherAgentDescription      = "Always-on user entry agent for intake, status checks, and dispatching work."
 	defaultIntentRouterAgentDescription    = "Built-in intent recognition router that classifies requests and delegates them to the right specialist."
 	defaultPromptOptimizerAgentDescription = "Built-in prompt optimizer that rewrites user requests into cleaner downstream instructions."
 )
 
-func defaultConciergeInstructions(agentName string) string {
-	return fmt.Sprintf("You are Concierge, the always-on dispatch agent for %s. Your only job is intake, routing, status inspection, and task dispatch. Do not do substantive work yourself unless the user is asking for dispatch metadata, agent or team status, or task status. For almost every substantive user request, call route_builtin_request with the user's request. That tool runs PromptOptimizer and IntentRouter in parallel, then dispatches to the correct specialist and returns the inline result. Do not use submit_agent_task or submit_team_task for ordinary user requests; only use those async submission tools when the user explicitly asks for background, queued, or asynchronous work. Do not manually impersonate downstream execution or claim that something was saved, recalled, verified, or executed unless route_builtin_request or a status tool has already confirmed it. Keep replies concise, acknowledge queued work clearly, and never pretend background work is already finished. When the user asks for progress, use get_task_status or list_session_tasks. Do not end by saying what the downstream agent will do next; dispatch and return the concrete result, blocker, failure, or yielded task status.", agentName)
+func defaultDispatcherInstructions(agentName string) string {
+	return fmt.Sprintf("You are Dispatcher, the always-on dispatch agent for %s. Your only job is intake, routing, status inspection, and task dispatch. Do not do substantive work yourself unless the user is asking for dispatch metadata, agent or team status, or task status. For almost every substantive user request, call route_builtin_request with the user's request. That tool runs PromptOptimizer and IntentRouter in parallel, then dispatches to the correct specialist and returns the inline result. Do not use submit_agent_task or submit_team_task for ordinary user requests; only use those async submission tools when the user explicitly asks for background, queued, or asynchronous work. Do not manually impersonate downstream execution or claim that something was saved, recalled, verified, or executed unless route_builtin_request or a status tool has already confirmed it. Keep replies concise, acknowledge queued work clearly, and never pretend background work is already finished. When the user asks for progress, use get_task_status or list_session_tasks. Do not end by saying what the downstream agent will do next; dispatch and return the concrete result, blocker, failure, or yielded task status.", agentName)
 }
 
 func defaultIntentRouterInstructions(agentName string) string {
-	return fmt.Sprintf("You are IntentRouter, the built-in intent recognition agent for %s. Your only job is to use the LLM to classify the user's request and choose the single best-fit built-in standalone agent. Do not do substantive work yourself. Use Assistant for general Q&A, drafting, explanation, and everyday requests. Use Operator for execution, file work, runnable validation, environment inspection, command-driven tasks, MCP-backed actions, desktop automation, local app control, device control, and any request that sounds like the system should do something rather than merely explain it. When a request could be satisfied by a configured MCP server or external tool, prefer Operator. Use Archivist for remembering facts, recalling prior memory, schedules, preferences, and memory hygiene. Treat plain schedule-like statements such as appointments, meetings, or plans with dates or times as Archivist tasks even when the user does not explicitly say remember. Do not ask for calendar-management details like reminder lead time, exact venue branch, or relative-date expansion unless the user explicitly asks to create a formal calendar event or reminder. Use Verifier for recall conflict checks or confidence-sensitive validation. Use Stakeholder for product, business, scope, priority, and acceptance-criteria questions. Return concise routing decisions that are easy for Concierge to consume.", agentName)
+	return fmt.Sprintf("You are IntentRouter, the built-in intent recognition agent for %s. Your only job is to use the LLM to classify the user's request and choose the single best-fit built-in standalone agent. Do not do substantive work yourself. Use Responder for general Q&A, drafting, explanation, and everyday requests. Use Operator for execution, file work, runnable validation, environment inspection, command-driven tasks, MCP-backed actions, desktop automation, local app control, device control, and any request that sounds like the system should do something rather than merely explain it. When a request could be satisfied by a configured MCP server or external tool, prefer Operator. Use Archivist for remembering facts, recalling prior memory, schedules, preferences, and memory hygiene. Treat plain schedule-like statements such as appointments, meetings, or plans with dates or times as Archivist tasks even when the user does not explicitly say remember. Do not ask for calendar-management details like reminder lead time, exact venue branch, or relative-date expansion unless the user explicitly asks to create a formal calendar event or reminder. Use Verifier for recall conflict checks or confidence-sensitive validation. Use Evaluator for product, business, scope, priority, and acceptance-criteria questions. Return concise routing decisions that are easy for Dispatcher to consume.", agentName)
 }
 
 func defaultPromptOptimizerInstructions(agentName string) string {
@@ -60,11 +60,11 @@ func appendFinishOrBlockInstructions(instructions string) string {
 func defaultBuiltInStandaloneAgents(agentName string) []*AgentModel {
 	return []*AgentModel{
 		{
-			ID:           defaultConciergeAgentID,
-			Name:         defaultConciergeAgentName,
+			ID:           defaultDispatcherAgentID,
+			Name:         defaultDispatcherAgentName,
 			Kind:         AgentKindAgent,
-			Description:  defaultConciergeAgentDescription,
-			Instructions: defaultConciergeInstructions(agentName),
+			Description:  defaultDispatcherAgentDescription,
+			Instructions: defaultDispatcherInstructions(agentName),
 			EnableMemory: true,
 		},
 		{
@@ -84,12 +84,12 @@ func defaultBuiltInStandaloneAgents(agentName string) []*AgentModel {
 			EnableMemory: false,
 		},
 		{
-			ID:           defaultAssistantAgentID,
-			Name:         defaultAssistantAgentName,
+			ID:           defaultResponderAgentID,
+			Name:         defaultResponderAgentName,
 			Kind:         AgentKindAgent,
 			Description:  "A general-purpose standalone assistant agent for everyday requests.",
-			Instructions: appendFinishOrBlockInstructions("You are Assistant, a general-purpose standalone agent. Help directly, stay pragmatic, and work independently unless a team explicitly asks for your involvement."),
-			MCPTools:     defaultMemberMCPTools(defaultAssistantAgentName),
+			Instructions: appendFinishOrBlockInstructions("You are Responder, a general-purpose standalone agent. Help directly, stay pragmatic, and work independently unless a team explicitly asks for your involvement."),
+			MCPTools:     defaultMemberMCPTools(defaultResponderAgentName),
 			EnableRAG:    true,
 			EnableMemory: true,
 			EnableMCP:    true,
@@ -106,12 +106,12 @@ func defaultBuiltInStandaloneAgents(agentName string) []*AgentModel {
 			EnableMCP:    true,
 		},
 		{
-			ID:           defaultStakeholderAgentID,
-			Name:         defaultStakeholderAgentName,
+			ID:           defaultEvaluatorAgentID,
+			Name:         defaultEvaluatorAgentName,
 			Kind:         AgentKindAgent,
 			Description:  "Product/business representative for goals, scope, priorities, and acceptance criteria.",
-			Instructions: appendFinishOrBlockInstructions("You are Stakeholder, a standalone stakeholder-representative agent. Work like a product manager or business representative. Clarify goals, priorities, constraints, trade-offs, risks, and acceptance criteria from a user and product perspective. Prefer requirement clarification, acceptance criteria, risk lists, and prioritization recommendations. Do not write code unless the user explicitly asks you to."),
-			MCPTools:     defaultMemberMCPTools(defaultStakeholderAgentName),
+			Instructions: appendFinishOrBlockInstructions("You are Evaluator, a standalone evaluator-representative agent. Work like a product manager or business representative. Clarify goals, priorities, constraints, trade-offs, risks, and acceptance criteria from a user and product perspective. Prefer requirement clarification, acceptance criteria, risk lists, and prioritization recommendations. Do not write code unless the user explicitly asks you to."),
+			MCPTools:     defaultMemberMCPTools(defaultEvaluatorAgentName),
 			EnableRAG:    true,
 			EnableMemory: true,
 			EnableMCP:    true,
@@ -141,14 +141,14 @@ func defaultBuiltInStandaloneAgents(agentName string) []*AgentModel {
 	}
 }
 
-func defaultBuiltInCaptain(agentName, teamName string) *AgentModel {
+func defaultBuiltInOrchestrator(agentName, teamName string) *AgentModel {
 	return &AgentModel{
-		ID:           defaultCaptainAgentID,
-		Name:         defaultCaptainAgentName,
+		ID:           defaultOrchestratorAgentID,
+		Name:         defaultOrchestratorAgentName,
 		Kind:         AgentKindAgent,
-		Description:  fmt.Sprintf("The built-in captain agent for %s. Coordinates team work and handles shared tasks.", teamName),
-		Instructions: appendFinishOrBlockInstructions(fmt.Sprintf("You are Captain, the built-in captain agent for %s. Handle direct team requests when possible and coordinate specialists when that improves the result.", teamName)),
-		MCPTools:     defaultMemberMCPTools(defaultCaptainAgentName),
+		Description:  fmt.Sprintf("The built-in orchestrator agent for %s. Coordinates team work and handles shared tasks.", teamName),
+		Instructions: appendFinishOrBlockInstructions(fmt.Sprintf("You are Orchestrator, the built-in orchestrator agent for %s. Handle direct team requests when possible and coordinate specialists when that improves the result.", teamName)),
+		MCPTools:     defaultMemberMCPTools(defaultOrchestratorAgentName),
 		EnableRAG:    true,
 		EnableMemory: true,
 		EnableMCP:    true,
@@ -158,9 +158,9 @@ func defaultBuiltInCaptain(agentName, teamName string) *AgentModel {
 func defaultTeamLeadName(teamName string) string {
 	name := strings.TrimSpace(teamName)
 	if name == "" {
-		return "Captain"
+		return "Orchestrator"
 	}
-	return name + " Captain"
+	return name + " Orchestrator"
 }
 
 func isAutoGeneratedTeamLeadName(teamName, agentName string) bool {
@@ -169,12 +169,12 @@ func isAutoGeneratedTeamLeadName(teamName, agentName string) bool {
 	if teamName == "" || agentName == "" {
 		return false
 	}
-	return agentName == teamName+" Captain" || agentName == teamName+" Assistant"
+	return agentName == teamName+" Orchestrator" || agentName == teamName+" Responder"
 }
 
 func isBuiltInStandaloneAgentName(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case strings.ToLower(defaultConciergeAgentName), strings.ToLower(defaultIntentRouterAgentName), strings.ToLower(defaultPromptOptimizerAgentName), strings.ToLower(defaultAssistantAgentName), strings.ToLower(defaultOperatorAgentName), strings.ToLower(defaultStakeholderAgentName), strings.ToLower(defaultArchivistAgentName), strings.ToLower(defaultVerifierAgentName):
+	case strings.ToLower(defaultDispatcherAgentName), strings.ToLower(defaultIntentRouterAgentName), strings.ToLower(defaultPromptOptimizerAgentName), strings.ToLower(defaultResponderAgentName), strings.ToLower(defaultOperatorAgentName), strings.ToLower(defaultEvaluatorAgentName), strings.ToLower(defaultArchivistAgentName), strings.ToLower(defaultVerifierAgentName):
 		return true
 	default:
 		return false
@@ -183,7 +183,7 @@ func isBuiltInStandaloneAgentName(name string) bool {
 
 func isBuiltInDispatchOnlyAgentName(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case strings.ToLower(defaultConciergeAgentName), strings.ToLower(defaultIntentRouterAgentName), strings.ToLower(defaultPromptOptimizerAgentName):
+	case strings.ToLower(defaultDispatcherAgentName), strings.ToLower(defaultIntentRouterAgentName), strings.ToLower(defaultPromptOptimizerAgentName):
 		return true
 	default:
 		return false
@@ -233,61 +233,61 @@ func (m *TeamManager) ensureBuiltInStandaloneAgent(ctx context.Context, builtin 
 	return err
 }
 
-func (m *TeamManager) ensureDefaultTeamCaptain(ctx context.Context, agentName, teamName string) error {
-	captainBuiltin := defaultBuiltInCaptain(agentName, teamName)
+func (m *TeamManager) ensureDefaultTeamOrchestrator(ctx context.Context, agentName, teamName string) error {
+	orchestratorBuiltin := defaultBuiltInOrchestrator(agentName, teamName)
 
-	if err := m.ensureBuiltInStandaloneAgent(ctx, captainBuiltin); err != nil {
+	if err := m.ensureBuiltInStandaloneAgent(ctx, orchestratorBuiltin); err != nil {
 		return err
 	}
 
-	captain, err := m.store.GetAgentModelByName(defaultCaptainAgentName)
+	orchestrator, err := m.store.GetAgentModelByName(defaultOrchestratorAgentName)
 	if err != nil {
 		return err
 	}
 
 	if err := m.store.SaveTeamMembership(&TeamMembership{
-		AgentID: captain.ID,
+		AgentID: orchestrator.ID,
 		TeamID:  defaultTeamID,
-		Role:    AgentKindCaptain,
+		Role:    AgentKindOrchestrator,
 	}); err != nil {
 		return err
 	}
 
-	m.clearCachedAgent(captain.Name)
+	m.clearCachedAgent(orchestrator.Name)
 	return nil
 }
 
-func (m *TeamManager) ensureDefaultTeamConcierge(ctx context.Context, agentName, teamName string) error {
-	// Build Concierge agent model directly
-	conciergeBuiltin := &AgentModel{
-		ID:           defaultConciergeAgentID,
-		Name:         defaultConciergeAgentName,
+func (m *TeamManager) ensureDefaultTeamDispatcher(ctx context.Context, agentName, teamName string) error {
+	// Build Dispatcher agent model directly
+	dispatcherBuiltin := &AgentModel{
+		ID:           defaultDispatcherAgentID,
+		Name:         defaultDispatcherAgentName,
 		Kind:         AgentKindAgent,
-		Description:  defaultConciergeAgentDescription,
-		Instructions: defaultConciergeInstructions(agentName),
+		Description:  defaultDispatcherAgentDescription,
+		Instructions: defaultDispatcherInstructions(agentName),
 		EnableMemory: true,
 	}
 
 	// Ensure the standalone agent exists
-	if err := m.ensureBuiltInStandaloneAgent(ctx, conciergeBuiltin); err != nil {
+	if err := m.ensureBuiltInStandaloneAgent(ctx, dispatcherBuiltin); err != nil {
 		return err
 	}
 
-	concierge, err := m.store.GetAgentModelByName(defaultConciergeAgentName)
+	dispatcher, err := m.store.GetAgentModelByName(defaultDispatcherAgentName)
 	if err != nil {
 		return err
 	}
 
-	// Add Concierge to default team as a specialist
+	// Add Dispatcher to default team as a specialist
 	if err := m.store.SaveTeamMembership(&TeamMembership{
-		AgentID: concierge.ID,
+		AgentID: dispatcher.ID,
 		TeamID:  defaultTeamID,
 		Role:    AgentKindSpecialist,
 	}); err != nil {
 		return err
 	}
 
-	m.clearCachedAgent(concierge.Name)
+	m.clearCachedAgent(dispatcher.Name)
 	return nil
 }
 
@@ -299,9 +299,9 @@ func (m *TeamManager) ensureDefaultTeamSpecialists(ctx context.Context, agentNam
 	}{
 		{defaultIntentRouterAgentName, defaultIntentRouterAgentID},
 		{defaultPromptOptimizerAgentName, defaultPromptOptimizerAgentID},
-		{defaultAssistantAgentName, defaultAssistantAgentID},
+		{defaultResponderAgentName, defaultResponderAgentID},
 		{defaultOperatorAgentName, defaultOperatorAgentID},
-		{defaultStakeholderAgentName, defaultStakeholderAgentID},
+		{defaultEvaluatorAgentName, defaultEvaluatorAgentID},
 		{defaultArchivistAgentName, defaultArchivistAgentID},
 		{defaultVerifierAgentName, defaultVerifierAgentID},
 	}

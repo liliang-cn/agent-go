@@ -113,12 +113,12 @@ func TestRuntimeForwardSubAgentEventRewritesTerminalEvents(t *testing.T) {
 	t.Parallel()
 
 	runtime := &Runtime{
-		currentAgent: NewAgent("Assistant"),
+		currentAgent: NewAgent("Responder"),
 		eventChan:    make(chan *Event, 4),
 	}
 
-	runtime.forwardSubAgentEvent(&Event{Type: EventTypeComplete, AgentName: "Assistant", Content: "done"})
-	runtime.forwardSubAgentEvent(&Event{Type: EventTypeError, AgentName: "Assistant", Content: "boom"})
+	runtime.forwardSubAgentEvent(&Event{Type: EventTypeComplete, AgentName: "Responder", Content: "done"})
+	runtime.forwardSubAgentEvent(&Event{Type: EventTypeError, AgentName: "Responder", Content: "boom"})
 
 	complete := <-runtime.eventChan
 	errEvt := <-runtime.eventChan
@@ -135,7 +135,7 @@ func TestRuntimeEmitToolCallAndResult_BlockingToolEmitsStateUpdates(t *testing.T
 	t.Parallel()
 
 	svc := &Service{
-		agent:           NewAgent("Assistant"),
+		agent:           NewAgent("Responder"),
 		toolRegistry:    NewToolRegistry(),
 		inProgressTools: make(map[string]int),
 	}
@@ -192,7 +192,7 @@ func TestRuntimeBlockingToolStateUpdate_TracksRemainingCount(t *testing.T) {
 	t.Parallel()
 
 	svc := &Service{
-		agent:           NewAgent("Assistant"),
+		agent:           NewAgent("Responder"),
 		toolRegistry:    NewToolRegistry(),
 		inProgressTools: make(map[string]int),
 	}
@@ -229,7 +229,7 @@ func TestRuntimeEmitTurnState_IncludesStageAndReason(t *testing.T) {
 	t.Parallel()
 
 	svc := &Service{
-		agent:           NewAgent("Assistant"),
+		agent:           NewAgent("Responder"),
 		inProgressTools: make(map[string]int),
 	}
 	runtime := &Runtime{
@@ -269,7 +269,7 @@ func TestRuntimeEmitToolState_IncludesQueuedExecutingCompleted(t *testing.T) {
 	t.Parallel()
 
 	svc := &Service{
-		agent:           NewAgent("Assistant"),
+		agent:           NewAgent("Responder"),
 		inProgressTools: make(map[string]int),
 	}
 	runtime := &Runtime{

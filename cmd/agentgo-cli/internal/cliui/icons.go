@@ -3,7 +3,7 @@ package cliui
 const (
 	UserPrompt  = "💬 You: "
 	Thinking    = "⏳ Thinking..."
-	Concierge   = "🛎 Concierge"
+	Dispatcher  = "🛎 Dispatcher"
 	Session     = "📝"
 	Tip         = "💡"
 	Memory      = "🧠"

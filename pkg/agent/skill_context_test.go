@@ -103,7 +103,7 @@ disable-model-invocation: false
 	}
 	svc.rememberRelevantSkillsForSession("session-skills-filter", []string{"docs-review"})
 
-	tools := svc.collectAllAvailableTools(context.Background(), NewAgent("Assistant"))
+	tools := svc.collectAllAvailableTools(context.Background(), NewAgent("Responder"))
 	names := make([]string, 0, len(tools))
 	for _, tool := range tools {
 		names = append(names, tool.Function.Name)
@@ -169,7 +169,7 @@ disable-model-invocation: false
 	session.SetContext(sessionContextTaskID, "task-1")
 	ctx := withCurrentSession(context.Background(), session)
 
-	before := svc.collectAllAvailableTools(ctx, NewAgent("Assistant"))
+	before := svc.collectAllAvailableTools(ctx, NewAgent("Responder"))
 	beforeNames := make([]string, 0, len(before))
 	for _, tool := range before {
 		beforeNames = append(beforeNames, tool.Function.Name)
@@ -182,7 +182,7 @@ disable-model-invocation: false
 	}
 
 	svc.markRelevantSkillSatisfied("session-skill-first", "task-1")
-	after := svc.collectAllAvailableTools(ctx, NewAgent("Assistant"))
+	after := svc.collectAllAvailableTools(ctx, NewAgent("Responder"))
 	afterNames := make([]string, 0, len(after))
 	for _, tool := range after {
 		afterNames = append(afterNames, tool.Function.Name)

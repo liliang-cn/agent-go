@@ -74,20 +74,20 @@ type EventRuntime struct {
 }
 
 type Event struct {
-	ID          string        `json:"id"`
-	TaskID      string        `json:"task_id"`
-	SessionID   string        `json:"session_id,omitempty"`
-	Kind        Kind          `json:"kind"`
-	Status      Status        `json:"status"`
-	Type        string        `json:"type"`
-	TeamID      string        `json:"team_id,omitempty"`
-	TeamName    string        `json:"team_name,omitempty"`
-	CaptainName string        `json:"captain_name,omitempty"`
-	AgentName   string        `json:"agent_name,omitempty"`
-	Message     string        `json:"message,omitempty"`
-	DurationMs  int64         `json:"duration_ms,omitempty"`
-	Runtime     *EventRuntime `json:"runtime,omitempty"`
-	Timestamp   time.Time     `json:"timestamp"`
+	ID               string        `json:"id"`
+	TaskID           string        `json:"task_id"`
+	SessionID        string        `json:"session_id,omitempty"`
+	Kind             Kind          `json:"kind"`
+	Status           Status        `json:"status"`
+	Type             string        `json:"type"`
+	TeamID           string        `json:"team_id,omitempty"`
+	TeamName         string        `json:"team_name,omitempty"`
+	OrchestratorName string        `json:"orchestrator_name,omitempty"`
+	AgentName        string        `json:"agent_name,omitempty"`
+	Message          string        `json:"message,omitempty"`
+	DurationMs       int64         `json:"duration_ms,omitempty"`
+	Runtime          *EventRuntime `json:"runtime,omitempty"`
+	Timestamp        time.Time     `json:"timestamp"`
 }
 
 // RoundStats captures per-round execution metrics.

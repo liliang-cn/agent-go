@@ -917,7 +917,7 @@ func (s *Service) Chat(ctx context.Context, sessionID string, message string, op
 		answer = s.cleanThinkingTags(answer)
 	}
 
-	// 7. Store Assistant Message
+	// 7. Store Responder Message
 	ansVector, _ := s.embedder.Embed(ctx, answer) // Ignore error, best effort
 
 	asstMsg := &domain.ChatMessage{
@@ -993,7 +993,7 @@ func (s *Service) buildChatPrompt(query string, recent []*domain.ChatMessage, re
 		sb.WriteString(fmt.Sprintf("User: %s\n", query))
 	}
 
-	sb.WriteString("\nAssistant:")
+	sb.WriteString("\nResponder:")
 
 	return sb.String()
 }

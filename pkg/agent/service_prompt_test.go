@@ -72,10 +72,10 @@ func (promptTestMemoryService) AddMentalModel(ctx context.Context, model *domain
 	return nil
 }
 
-func TestBuildSystemPromptOmitsOperationalNotesForConcierge(t *testing.T) {
-	concierge := NewAgentWithConfig(BuiltInConciergeAgentName, "concierge instructions", nil)
+func TestBuildSystemPromptOmitsOperationalNotesForDispatcher(t *testing.T) {
+	dispatcher := NewAgentWithConfig(BuiltInDispatcherAgentName, "dispatcher instructions", nil)
 	svc := &Service{
-		agent:         concierge,
+		agent:         dispatcher,
 		promptManager: prompt.NewManager(),
 		cfg: &config.Config{
 			Tooling: config.ToolingConfig{
@@ -84,15 +84,15 @@ func TestBuildSystemPromptOmitsOperationalNotesForConcierge(t *testing.T) {
 		},
 	}
 
-	got := svc.buildSystemPrompt(context.Background(), concierge)
+	got := svc.buildSystemPrompt(context.Background(), dispatcher)
 	if strings.Contains(got, "\nRules:\n") {
-		t.Fatalf("expected concierge prompt to omit rules, got %q", got)
+		t.Fatalf("expected dispatcher prompt to omit rules, got %q", got)
 	}
 	if strings.Contains(got, "Web search capability:") {
-		t.Fatalf("expected concierge prompt to omit web search note, got %q", got)
+		t.Fatalf("expected dispatcher prompt to omit web search note, got %q", got)
 	}
-	if !strings.Contains(got, "concierge instructions") {
-		t.Fatalf("expected concierge instructions in prompt, got %q", got)
+	if !strings.Contains(got, "dispatcher instructions") {
+		t.Fatalf("expected dispatcher instructions in prompt, got %q", got)
 	}
 }
 
@@ -120,8 +120,8 @@ func TestBuildSystemPromptOmitsOperationalNotesForIntentRouter(t *testing.T) {
 	}
 }
 
-func TestBuildSystemPromptKeepsOperationalNotesForAssistant(t *testing.T) {
-	assistant := NewAgentWithConfig("Assistant", "assistant instructions", nil)
+func TestBuildSystemPromptKeepsOperationalNotesForResponder(t *testing.T) {
+	assistant := NewAgentWithConfig("Responder", "assistant instructions", nil)
 	svc := &Service{
 		agent:         assistant,
 		promptManager: prompt.NewManager(),
@@ -145,7 +145,7 @@ func TestBuildSystemPromptKeepsOperationalNotesForAssistant(t *testing.T) {
 }
 
 func TestBuildSystemPromptIncludesMemoryToolGuidanceWhenMemoryToolsCallable(t *testing.T) {
-	assistant := NewAgentWithConfig("Assistant", "assistant instructions", nil)
+	assistant := NewAgentWithConfig("Responder", "assistant instructions", nil)
 	registry := NewToolRegistry()
 	registry.Register(domain.ToolDefinition{
 		Type: "function",
@@ -187,7 +187,7 @@ func TestBuildSystemPromptIncludesMemoryToolGuidanceWhenMemoryToolsCallable(t *t
 }
 
 func TestBuildSystemPromptIncludesMemoryToolGuidanceInFileMode(t *testing.T) {
-	assistant := NewAgentWithConfig("Assistant", "assistant instructions", nil)
+	assistant := NewAgentWithConfig("Responder", "assistant instructions", nil)
 	registry := NewToolRegistry()
 	registry.Register(domain.ToolDefinition{
 		Type: "function",
@@ -218,7 +218,7 @@ func TestBuildSystemPromptIncludesMemoryToolGuidanceInFileMode(t *testing.T) {
 }
 
 func TestBuildSystemPromptIncludesAgentMessagingGuidanceWhenMessagingToolsCallable(t *testing.T) {
-	assistant := NewAgentWithConfig("Assistant", "assistant instructions", nil)
+	assistant := NewAgentWithConfig("Responder", "assistant instructions", nil)
 	registry := NewToolRegistry()
 	registry.Register(domain.ToolDefinition{
 		Type: "function",
@@ -261,7 +261,7 @@ func TestBuildSystemPromptIncludesAgentMessagingGuidanceWhenMessagingToolsCallab
 }
 
 func TestBuildSystemPrompt_InsertsDynamicBoundaryBeforeDynamicSections(t *testing.T) {
-	assistant := NewAgentWithConfig("Assistant", "assistant instructions", nil)
+	assistant := NewAgentWithConfig("Responder", "assistant instructions", nil)
 	registry := NewToolRegistry()
 	registry.Register(domain.ToolDefinition{
 		Type: "function",
@@ -300,7 +300,7 @@ func TestBuildSystemPrompt_InsertsDynamicBoundaryBeforeDynamicSections(t *testin
 }
 
 func TestBuildSystemPromptSections_StartWithBaseSection(t *testing.T) {
-	assistant := NewAgentWithConfig("Assistant", "assistant instructions", nil)
+	assistant := NewAgentWithConfig("Responder", "assistant instructions", nil)
 	svc := &Service{
 		agent:         assistant,
 		promptManager: prompt.NewManager(),
@@ -324,7 +324,7 @@ func TestBuildSystemPromptSections_StartWithBaseSection(t *testing.T) {
 }
 
 func TestBuildSystemPromptSections_SplitsBaseIntoCoreSections(t *testing.T) {
-	assistant := NewAgentWithConfig("Assistant", "assistant instructions", nil)
+	assistant := NewAgentWithConfig("Responder", "assistant instructions", nil)
 	svc := &Service{
 		agent:         assistant,
 		promptManager: prompt.NewManager(),
@@ -353,7 +353,7 @@ func TestBuildSystemPromptSections_SplitsBaseIntoCoreSections(t *testing.T) {
 }
 
 func TestBuildDynamicSystemPromptSections_UsesNamedSections(t *testing.T) {
-	assistant := NewAgentWithConfig("Assistant", "assistant instructions", nil)
+	assistant := NewAgentWithConfig("Responder", "assistant instructions", nil)
 	registry := NewToolRegistry()
 	registry.Register(domain.ToolDefinition{
 		Type: "function",
@@ -403,7 +403,7 @@ func TestBuildDynamicSystemPromptSections_UsesNamedSections(t *testing.T) {
 }
 
 func TestBuildSystemPrompt_RegistersAndResolvesSections(t *testing.T) {
-	assistant := NewAgentWithConfig("Assistant", "assistant instructions", nil)
+	assistant := NewAgentWithConfig("Responder", "assistant instructions", nil)
 	pm := prompt.NewManager()
 
 	svc := &Service{

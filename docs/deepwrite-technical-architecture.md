@@ -146,7 +146,7 @@ Responsibilities:
 
 DeepWrite-specific team:
 
-- `WritingCaptain`
+- `WritingOrchestrator`
 - `Outliner`
 - `Drafter`
 - `Rewriter`
@@ -204,7 +204,7 @@ DeepWrite should expose product tools instead of letting agents mutate editor st
 ```text
 Home / Draft Wizard
   -> RunDraft(input)
-  -> WritingCaptain interprets request
+  -> WritingOrchestrator interprets request
   -> Outliner (optional)
   -> Drafter produces content
   -> Reviewer (optional)
@@ -217,7 +217,7 @@ Home / Draft Wizard
 ```text
 Editor selection + instruction
   -> RunRewrite(input)
-  -> WritingCaptain routes to Rewriter
+  -> WritingOrchestrator routes to Rewriter
   -> Archivist injects style/session memory
   -> Rewriter returns candidate revision
   -> SuggestionService stores suggestion

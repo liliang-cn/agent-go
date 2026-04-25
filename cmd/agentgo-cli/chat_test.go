@@ -25,7 +25,7 @@ func TestDelegatedResultLooksFailed(t *testing.T) {
 func TestParseDelegatedTasks(t *testing.T) {
 	isKnown := func(name string) bool {
 		switch name {
-		case "Assistant", "Coder", "Writer":
+		case "Responder", "Coder", "Writer":
 			return true
 		default:
 			return false
@@ -56,14 +56,14 @@ func TestParseDelegatedTasks(t *testing.T) {
 	})
 
 	t.Run("multiple agents", func(t *testing.T) {
-		tasks, err := parseDelegatedTasks("@Assistant 查一下 2024 欧冠冠军 @Coder 把上一步结果写到 result.txt", isKnown)
+		tasks, err := parseDelegatedTasks("@Responder 查一下 2024 欧冠冠军 @Coder 把上一步结果写到 result.txt", isKnown)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if len(tasks) != 2 {
 			t.Fatalf("expected 2 tasks, got %d", len(tasks))
 		}
-		if tasks[0].AgentName != "Assistant" || tasks[0].Instruction != "查一下 2024 欧冠冠军" {
+		if tasks[0].AgentName != "Responder" || tasks[0].Instruction != "查一下 2024 欧冠冠军" {
 			t.Fatalf("unexpected first task: %+v", tasks[0])
 		}
 		if tasks[1].AgentName != "Coder" || tasks[1].Instruction != "把上一步结果写到 result.txt" {
@@ -89,7 +89,7 @@ func TestParseDelegatedTasks(t *testing.T) {
 	})
 
 	t.Run("unknown later mention treated as text", func(t *testing.T) {
-		tasks, err := parseDelegatedTasks("@Assistant 调查 @Unknown 这个名字会不会被保留", isKnown)
+		tasks, err := parseDelegatedTasks("@Responder 调查 @Unknown 这个名字会不会被保留", isKnown)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}

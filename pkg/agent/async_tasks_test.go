@@ -27,7 +27,7 @@ func TestSubscribeTaskReplaysBacklogForTerminalTask(t *testing.T) {
 		SessionID: "session-1",
 		Kind:      AsyncTaskKindAgent,
 		Status:    AsyncTaskStatusQueued,
-		AgentName: "Assistant",
+		AgentName: "Responder",
 		CreatedAt: time.Now(),
 	}
 	manager.upsertAsyncTask(task)
@@ -38,7 +38,7 @@ func TestSubscribeTaskReplaysBacklogForTerminalTask(t *testing.T) {
 		AgentName: task.AgentName,
 		Timestamp: task.CreatedAt,
 	}, false)
-	manager.completeAsyncTask(task.ID, "done", "Assistant")
+	manager.completeAsyncTask(task.ID, "done", "Responder")
 
 	events, _, err := manager.SubscribeTask(task.ID)
 	if err != nil {
@@ -114,10 +114,10 @@ func TestSubscribeTaskReceivesLiveRuntimeEvent(t *testing.T) {
 	manager.emitTaskEvent(task.ID, &TaskEvent{
 		TaskID:    task.ID,
 		Type:      TaskEventTypeRuntime,
-		AgentName: "Captain",
+		AgentName: "Orchestrator",
 		Runtime: &Event{
 			Type:      EventTypeToolCall,
-			AgentName: "Captain",
+			AgentName: "Orchestrator",
 			ToolName:  "mcp_filesystem_read_file",
 			Timestamp: time.Now(),
 		},
@@ -140,14 +140,14 @@ func TestSubscribeTaskReceivesLiveRuntimeEvent(t *testing.T) {
 func TestEnsureAsyncTaskForSharedTaskIndexesSession(t *testing.T) {
 	manager := newTaskTestManager()
 	shared := &SharedTask{
-		ID:          "shared-1",
-		TeamID:      "team-1",
-		CaptainName: "Captain",
-		AgentNames:  []string{"Captain"},
-		Prompt:      "hello",
-		Status:      SharedTaskStatusQueued,
-		AckMessage:  "Captain received that.",
-		CreatedAt:   time.Now(),
+		ID:               "shared-1",
+		TeamID:           "team-1",
+		OrchestratorName: "Orchestrator",
+		AgentNames:       []string{"Orchestrator"},
+		Prompt:           "hello",
+		Status:           SharedTaskStatusQueued,
+		AckMessage:       "Orchestrator received that.",
+		CreatedAt:        time.Now(),
 	}
 
 	task := manager.ensureAsyncTaskForSharedTask(shared, "session-3", "AgentGo Team")
@@ -196,15 +196,15 @@ func TestExecuteSharedTaskStreamCreatesChildTasksPerAgent(t *testing.T) {
 	}
 
 	shared := &SharedTask{
-		ID:          "shared-root",
-		SessionID:   "team-session",
-		TeamID:      "team-1",
-		TeamName:    "AgentGo Team",
-		CaptainName: "Captain",
-		AgentNames:  []string{"Assistant", "Operator"},
-		Prompt:      "do shared work",
-		Status:      SharedTaskStatusQueued,
-		CreatedAt:   time.Now(),
+		ID:               "shared-root",
+		SessionID:        "team-session",
+		TeamID:           "team-1",
+		TeamName:         "AgentGo Team",
+		OrchestratorName: "Orchestrator",
+		AgentNames:       []string{"Responder", "Operator"},
+		Prompt:           "do shared work",
+		Status:           SharedTaskStatusQueued,
+		CreatedAt:        time.Now(),
 	}
 
 	manager.executeSharedTaskStream(context.Background(), shared)

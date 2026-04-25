@@ -133,15 +133,15 @@ func (m *TeamManager) ResumeTask(_ context.Context, taskID string, input any) (*
 	switch resumed.Kind {
 	case AsyncTaskKindTeam:
 		shared := &SharedTask{
-			ID:          resumed.ID,
-			SessionID:   resumed.SessionID,
-			TeamID:      resumed.TeamID,
-			TeamName:    resumed.TeamName,
-			CaptainName: resumed.CaptainName,
-			AgentNames:  append([]string(nil), resumed.AgentNames...),
-			Prompt:      resumed.Prompt,
-			Status:      SharedTaskStatusQueued,
-			CreatedAt:   resumed.CreatedAt,
+			ID:               resumed.ID,
+			SessionID:        resumed.SessionID,
+			TeamID:           resumed.TeamID,
+			TeamName:         resumed.TeamName,
+			OrchestratorName: resumed.OrchestratorName,
+			AgentNames:       append([]string(nil), resumed.AgentNames...),
+			Prompt:           resumed.Prompt,
+			Status:           SharedTaskStatusQueued,
+			CreatedAt:        resumed.CreatedAt,
 		}
 		m.queueMu.Lock()
 		m.sharedTasks[shared.ID] = shared
@@ -193,17 +193,17 @@ func (m *TeamManager) CancelTask(_ context.Context, taskID string) (*AsyncTask, 
 		}
 	})
 	m.emitTaskEvent(taskID, &TaskEvent{
-		TaskID:      task.ID,
-		SessionID:   task.SessionID,
-		Kind:        task.Kind,
-		Status:      task.Status,
-		Type:        TaskEventTypeCancelled,
-		TeamID:      task.TeamID,
-		TeamName:    task.TeamName,
-		CaptainName: task.CaptainName,
-		AgentName:   firstNonEmptyTaskAgent(task),
-		Message:     task.ResultText,
-		Timestamp:   finishedAt,
+		TaskID:           task.ID,
+		SessionID:        task.SessionID,
+		Kind:             task.Kind,
+		Status:           task.Status,
+		Type:             TaskEventTypeCancelled,
+		TeamID:           task.TeamID,
+		TeamName:         task.TeamName,
+		OrchestratorName: task.OrchestratorName,
+		AgentName:        firstNonEmptyTaskAgent(task),
+		Message:          task.ResultText,
+		Timestamp:        finishedAt,
 	}, true)
 	return task, nil
 }
@@ -215,5 +215,5 @@ func firstNonEmptyTaskAgent(task *AsyncTask) string {
 	if strings.TrimSpace(task.AgentName) != "" {
 		return strings.TrimSpace(task.AgentName)
 	}
-	return strings.TrimSpace(task.CaptainName)
+	return strings.TrimSpace(task.OrchestratorName)
 }

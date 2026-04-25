@@ -64,7 +64,7 @@ func TestServiceExecutionLoopState_TracksTransitionAndMetrics(t *testing.T) {
 		[]domain.Message{{Role: "user", Content: "inspect repo"}},
 		&IntentRecognitionResult{Transition: "tool_first"},
 		3,
-		NewAgent("Assistant"),
+		NewAgent("Responder"),
 	)
 
 	state.beginRound()
@@ -122,7 +122,7 @@ func TestExecuteWithLLM_StateMachineCarriesToolRoundForward(t *testing.T) {
 		},
 	}
 
-	agent := NewAgent("Assistant")
+	agent := NewAgent("Responder")
 	agent.AddToolWithMetadata(
 		"echo_tool",
 		"Echo input",
@@ -193,7 +193,7 @@ func TestRunPersistsNonStreamingTaskEventsAndFrames(t *testing.T) {
 		},
 	}
 
-	agent := NewAgent("Assistant")
+	agent := NewAgent("Responder")
 	agent.AddToolWithMetadata(
 		"echo_tool",
 		"Echo input",
@@ -257,7 +257,7 @@ func TestExecuteWithLLM_NudgesWhenToolsAvailableButUnused(t *testing.T) {
 		},
 	}
 
-	agent := NewAgent("Assistant")
+	agent := NewAgent("Responder")
 	agent.AddToolWithMetadata(
 		"echo_tool",
 		"Echo input",
@@ -318,7 +318,7 @@ func TestExecuteWithLLM_AutoContinuesAfterEmptyTextResponse(t *testing.T) {
 		},
 	}
 
-	agent := NewAgent("Assistant")
+	agent := NewAgent("Responder")
 	svc := &Service{
 		llmService:      llm,
 		agent:           agent,
@@ -376,7 +376,7 @@ func TestExecuteWithLLM_AppendsAnalysisPromptAfterToolRound(t *testing.T) {
 		},
 	}
 
-	agent := NewAgent("Assistant")
+	agent := NewAgent("Responder")
 	agent.AddToolWithMetadata(
 		"echo_tool",
 		"Echo input",
@@ -446,7 +446,7 @@ func TestExecuteWithLLM_StopHookPreventsContinuationAfterToolRound(t *testing.T)
 		},
 	}
 
-	agent := NewAgent("Assistant")
+	agent := NewAgent("Responder")
 	agent.AddToolWithMetadata(
 		"echo_tool",
 		"Echo input",

@@ -4,12 +4,12 @@ import "context"
 
 // AddLeadAgent is the generic public API for adding a lead-role agent directly into a team.
 func (m *TeamManager) AddLeadAgent(ctx context.Context, teamID, name, description, instructions string) (*AgentModel, error) {
-	return m.AddCaptain(ctx, teamID, name, description, instructions)
+	return m.AddOrchestrator(ctx, teamID, name, description, instructions)
 }
 
 // ListLeadAgents is the generic public API for listing all lead-role team agents.
 func (m *TeamManager) ListLeadAgents() ([]*AgentModel, error) {
-	return m.ListCaptains()
+	return m.ListOrchestrators()
 }
 
 // AddTeamAgent is the generic public API for adding an agent directly into a team with a role.

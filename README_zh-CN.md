@@ -39,7 +39,7 @@ LLM 是执行核心，其他能力都围绕它组织。
 
 - 它提供统一的生成接口，Agent、PTC、工具选择以及可选 RAG 回答都基于它工作。
 - Provider 通过全局 pool 在运行时切换。
-- standalone agent、captain、specialist、built-in agent 最终都跑在同一套 LLM 抽象上。
+- standalone agent、orchestrator、specialist、built-in agent 最终都跑在同一套 LLM 抽象上。
 
 可以理解为：`prompt + tools + policy -> model call`
 
@@ -102,22 +102,22 @@ Agent 是基础运行单元。
 
 - 它有自己的 instructions、工具能力、可选的 RAG / Memory / PTC / Skills，以及会话执行循环。
 - Agent 可以是 built-in，也可以是用户自定义。
-- 内置 standalone agents 当前包括 `Concierge`、`Assistant`、`Operator`、`Stakeholder`。
+- 内置 standalone agents 当前包括 `Dispatcher`、`Responder`、`Operator`、`Evaluator`。
 
 常见定位：
 
-- `Assistant`：通用直接执行
+- `Responder`：通用直接执行
 - `Operator`：执行、验证、PTY 会话、coding-agent 调用
-- `Stakeholder`：产品/业务视角
-- `Concierge`：入口与编排
+- `Evaluator`：产品/业务视角
+- `Dispatcher`：入口与编排
 
 ### 8. Team
 
 Team 是建立在 Agent 之上的持久化团队层。
 
-- 一个 team 有一个 `captain` 和多个 `specialists`
-- `captain` 本质上仍然是 agent，只是带有团队编排规则
-- captain 对实现类任务优先走异步 team work
+- 一个 team 有一个 `orchestrator` 和多个 `specialists`
+- `orchestrator` 本质上仍然是 agent，只是带有团队编排规则
+- orchestrator 对实现类任务优先走异步 team work
 - team task 状态会持久化，所以新的 CLI 进程也能继续查看和跟踪
 
 可以理解为：`带队列和状态的持久化多 Agent 协作`
@@ -243,17 +243,17 @@ agentgo agent update Scout --model openai/gpt-5-mini
 agentgo agent run --agent Scout "总结当前仓库结构"
 
 # 内置 standalone agents 默认可用
-agentgo agent show Concierge
+agentgo agent show Dispatcher
 agentgo agent show Operator
 
-# 创建一个 team（会自动创建默认 captain）
+# 创建一个 team（会自动创建默认 orchestrator）
 agentgo team add "Docs Team" --description "文档和发布说明"
 
 # 让独立 Agent 加入 team
 agentgo agent join Scout --team "Docs Team" --role specialist
 
 # 通过默认领队 Agent 和某个 team agent 执行任务
-agentgo team go "@Captain @Scout 总结 UI 和后端的关系，并写入 workspace/ui_backend_overview.md"
+agentgo team go "@Orchestrator @Scout 总结 UI 和后端的关系，并写入 workspace/ui_backend_overview.md"
 
 # 查看 team 当前运行态；有 running/queued 任务时会自动 follow
 agentgo team status "Docs Team"
@@ -402,7 +402,7 @@ result.HasSources()  // true 表示使用了 RAG 检索结果
 - `GetAgentService`
 - `GetAgentStatus`, `ListAgentStatuses`
 
-内置 standalone agents（`Concierge`、`Assistant`、`Operator`、`Stakeholder`）会自动 seed，也可以像普通命名 agent 一样直接运行和查看。
+内置 standalone agents（`Dispatcher`、`Responder`、`Operator`、`Evaluator`）会自动 seed，也可以像普通命名 agent 一样直接运行和查看。
 
 ### 内置 Agent 委派 APIs
 
@@ -416,8 +416,8 @@ result.HasSources()  // true 表示使用了 RAG 检索结果
 这组接口的意义是：
 
 - 把执行类工作交给 `Operator`
-- 把通用工作交给 `Assistant`
-- 把业务/范围判断交给 `Stakeholder`
+- 把通用工作交给 `Responder`
+- 把业务/范围判断交给 `Evaluator`
 
 ---
 
@@ -527,18 +527,18 @@ results     := coordinator.WaitAll(ctx)
 
 AgentGo 默认会 seed 这些 standalone agents：
 
-- `Concierge` — `agentgo chat` 的 intake / orchestration agent
-- `Assistant` — 通用执行型 Agent
+- `Dispatcher` — `agentgo chat` 的 intake / orchestration agent
+- `Responder` — 通用执行型 Agent
 - `Operator` — 执行导向 Agent，适合文件操作、验证、PTY 会话和 coding-agent 调用
-- `Stakeholder` — 产品 / 业务代表
+- `Evaluator` — 产品 / 业务代表
 
 可以直接查看：
 
 ```bash
-agentgo agent show Concierge
-agentgo agent show Assistant
+agentgo agent show Dispatcher
+agentgo agent show Responder
 agentgo agent show Operator
-agentgo agent show Stakeholder
+agentgo agent show Evaluator
 ```
 
 ### Operator
@@ -581,15 +581,15 @@ agentgo agent run --agent Operator "调用 codex，让它输出精确文本：RE
 
 当前可委派的 built-in agents：
 
-- `Assistant`
+- `Responder`
 - `Operator`
-- `Stakeholder`
+- `Evaluator`
 
-这样自定义 Agent 在保留自身角色和能力的同时，可以显式把执行型工作交给 `Operator`，把业务判断交给 `Stakeholder`。
+这样自定义 Agent 在保留自身角色和能力的同时，可以显式把执行型工作交给 `Operator`，把业务判断交给 `Evaluator`。
 
 ## Team APIs
 
-AgentGo 也提供面向 `独立 Agent / Team / Team Agent` 的持久化管理 API。`captain` 只是 team 内的一种 agent 角色。
+AgentGo 也提供面向 `独立 Agent / Team / Team Agent` 的持久化管理 API。`orchestrator` 只是 team 内的一种 agent 角色。
 
 ```go
 store, err := agent.NewStore(filepath.Join(cfg.DataDir(), "agent.db"))
@@ -632,13 +632,13 @@ if err != nil {
 fmt.Println(result)
 ```
 
-Captain 的运行时行为：
+Orchestrator 的运行时行为：
 
-- `CreateTeam()` 或 `agentgo team add` 创建自定义 team 时，会自动生成一个默认 captain。
-- Captain 的 system prompt 会带上本 team 的 roster 和成员职责摘要。
-- 对于实现类任务，Captain 优先使用异步团队任务（`submit_team_async`）。
+- `CreateTeam()` 或 `agentgo team add` 创建自定义 team 时，会自动生成一个默认 orchestrator。
+- Orchestrator 的 system prompt 会带上本 team 的 roster 和成员职责摘要。
+- 对于实现类任务，Orchestrator 优先使用异步团队任务（`submit_team_async`）。
 - Team shared task 会持久化，新的 CLI 进程也能通过 `get_task_status` / `list_team_tasks` 查看。
-- Captain 默认不使用通用的 `delegate_to_subagent`。
+- Orchestrator 默认不使用通用的 `delegate_to_subagent`。
 
 ### 核心 Team-Manager APIs
 
@@ -646,7 +646,7 @@ Captain 的运行时行为：
 - `JoinTeam`, `LeaveTeam`, `GetAgentService`
 - `CreateTeam`, `ListTeams`, `GetTeamByName`
 - `AddTeamAgent`, `CreateTeamAgent`, `ListTeamAgents`, `GetTeamAgentByName`
-- `AddCaptain`, `AddSpecialist`, `ListCaptains`, `ListSpecialists`（角色化辅助方法）
+- `AddOrchestrator`, `AddSpecialist`, `ListOrchestrators`, `ListSpecialists`（角色化辅助方法）
 - `DispatchTask`, `DispatchTaskStream`
 - `EnqueueSharedTask`, `ListSharedTasks`
 - `SubmitAgentTask`, `SubmitTeamTask`, `GetTask`, `ListSessionTasks`
@@ -667,7 +667,7 @@ Captain 的运行时行为：
 
 - **Standalone agent APIs**：创建、运行、查看、更新
 - **Team APIs**：建队、入队、派活、追踪异步任务
-- **Built-in delegation APIs**：让自定义 agent 明确委派 `Assistant`、`Operator`、`Stakeholder`
+- **Built-in delegation APIs**：让自定义 agent 明确委派 `Responder`、`Operator`、`Evaluator`
 
 ---
 
@@ -719,10 +719,15 @@ result, _ := svc.Execute(ctx, plan.ID)
 
 推荐方式：
 
-- 默认使用 `file`。它最透明，最容易排查问题，也最适合没有 embedding 的本地使用。
-- 需要 DB-backed memory 时再使用 `cortex`。如果要语义向量召回，请配置 embedding provider；没有 embedding 时它只是 lexical/text recall，不是完整语义检索。
-- 需要会话型、日记型、wake-up/recall 生命周期语义时使用 `memoryflow`。
-- 需要把 memory 同时变成实体关系图谱时使用 `graphflow`。
+| 场景 | 推荐存储类型 |
+| ---- | ------------ |
+| 未配置 embedding model | `file` — 开箱即用，人类可读，最容易排查问题 |
+| 已配置 embedding model | `graphflow` — 语义向量召回 + 实体关系图谱，综合召回质量最佳 |
+
+- **`file`** 是默认值，无需 embedding model，完全透明可读。
+- **`graphflow`** 是配置了 embedding provider 之后的推荐升级选项。记忆存储在 CortexDB（`cortex.db`），结合向量检索与确定性图抽取，召回质量最高。
+- 需要 DB 存储但不需要图抽取时使用 `cortex`。
+- 需要日记型或会话生命周期语义时使用 `memoryflow`。
 
 运行时类型建议通过 CLI/UI 设置，或直接写入 `agentgo.db` 的 `memory.store_type`。当前 CLI 的运行时配置以 `agentgo.db` 为准；一旦 DB 中存在该值，`agentgo.toml` 不再是唯一 source of truth。
 

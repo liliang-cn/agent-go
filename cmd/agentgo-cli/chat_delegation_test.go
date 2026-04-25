@@ -4,7 +4,7 @@ import "testing"
 
 func TestBuildDelegatedTaskInstruction(t *testing.T) {
 	tasks := []delegatedTask{
-		{AgentName: "Assistant", Instruction: "first"},
+		{AgentName: "Responder", Instruction: "first"},
 		{AgentName: "Writer", Instruction: "second"},
 	}
 
@@ -13,7 +13,7 @@ func TestBuildDelegatedTaskInstruction(t *testing.T) {
 	}
 
 	got := buildDelegatedTaskInstruction(tasks, 1, "result from first")
-	want := "Previous result from @Assistant:\nresult from first\n\nYour task:\nsecond"
+	want := "Previous result from @Responder:\nresult from first\n\nYour task:\nsecond"
 	if got != want {
 		t.Fatalf("unexpected chained instruction:\nwant: %q\ngot:  %q", want, got)
 	}

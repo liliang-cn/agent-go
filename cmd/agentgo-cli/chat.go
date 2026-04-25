@@ -109,9 +109,9 @@ func runChat(cmd *cobra.Command, args []string) error {
 		agentManager.SetDisableMemory(true)
 	}
 
-	svc, err := buildChatConciergeService(chatCfg, agentDBPath, agentManager)
+	svc, err := buildChatDispatcherService(chatCfg, agentDBPath, agentManager)
 	if err != nil {
-		return fmt.Errorf("failed to build concierge service: %w", err)
+		return fmt.Errorf("failed to build dispatcher service: %w", err)
 	}
 	defer svc.Close()
 
@@ -167,31 +167,31 @@ func runChat(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func buildChatConciergeService(chatCfg *config.Config, agentDBPath string, manager *agent.TeamManager) (*agent.Service, error) {
+func buildChatDispatcherService(chatCfg *config.Config, agentDBPath string, manager *agent.TeamManager) (*agent.Service, error) {
 	if chatWithPTC && chatNoPTC {
 		return nil, fmt.Errorf("use either --with-ptc or --no-ptc, not both")
 	}
 
 	if manager != nil && !chatWithPTC {
-		if svc, err := manager.GetAgentService(agent.BuiltInConciergeAgentName); err == nil {
+		if svc, err := manager.GetAgentService(agent.BuiltInDispatcherAgentName); err == nil {
 			svc.SetDebug(debug)
 			svc.SetProgressCallback(progressCallback)
 			if chatNoPTC {
 				svc.SetPTC(nil)
 			}
-			manager.RegisterConciergeTools(svc)
+			manager.RegisterDispatcherTools(svc)
 			return svc, nil
 		}
 	}
 
-	systemPrompt := "You are Concierge, the always-on dispatch agent for AgentGo. Your only job is intake, routing, status inspection, and task dispatch. Do not do substantive work yourself unless the user is asking for dispatch metadata, agent or team status, or task status. For almost every substantive user request, call route_builtin_request with the user's request. That tool runs PromptOptimizer and IntentRouter in parallel, then dispatches to the correct specialist and returns the inline result. Do not use submit_agent_task or submit_team_task for ordinary user requests; only use those async submission tools when the user explicitly asks for background, queued, or asynchronous work. Do not manually claim that something was saved, recalled, verified, or executed unless a routing or status tool has already confirmed it. Keep replies concise, acknowledge queued work clearly, and never pretend background work is already finished."
+	systemPrompt := "You are Dispatcher, the always-on dispatch agent for AgentGo. Your only job is intake, routing, status inspection, and task dispatch. Do not do substantive work yourself unless the user is asking for dispatch metadata, agent or team status, or task status. For almost every substantive user request, call route_builtin_request with the user's request. That tool runs PromptOptimizer and IntentRouter in parallel, then dispatches to the correct specialist and returns the inline result. Do not use submit_agent_task or submit_team_task for ordinary user requests; only use those async submission tools when the user explicitly asks for background, queued, or asynchronous work. Do not manually claim that something was saved, recalled, verified, or executed unless a routing or status tool has already confirmed it. Keep replies concise, acknowledge queued work clearly, and never pretend background work is already finished."
 	if manager != nil {
-		if model, err := manager.GetAgentByName(agent.BuiltInConciergeAgentName); err == nil && strings.TrimSpace(model.Instructions) != "" {
+		if model, err := manager.GetAgentByName(agent.BuiltInDispatcherAgentName); err == nil && strings.TrimSpace(model.Instructions) != "" {
 			systemPrompt = strings.TrimSpace(model.Instructions)
 		}
 	}
 
-	builder := agent.New(agent.BuiltInConciergeAgentName).
+	builder := agent.New(agent.BuiltInDispatcherAgentName).
 		WithConfig(chatCfg).
 		WithSystemPrompt(systemPrompt).
 		WithDBPath(agentDBPath).
@@ -224,7 +224,7 @@ func buildChatConciergeService(chatCfg *config.Config, agentDBPath string, manag
 		return nil, err
 	}
 	if manager != nil {
-		manager.RegisterConciergeTools(svc)
+		manager.RegisterDispatcherTools(svc)
 	}
 	return svc, nil
 }
@@ -275,11 +275,11 @@ func displayResult(result *agent.ExecutionResult) {
 	}
 
 	if result.PTCResult != nil && result.PTCResult.Type != agent.PTCResultTypeText {
-		fmt.Printf("\n%s (PTC Mode):\n%s\n", cliui.Concierge, result.PTCResult.FormatForLLM())
+		fmt.Printf("\n%s (PTC Mode):\n%s\n", cliui.Dispatcher, result.PTCResult.FormatForLLM())
 	} else if result.FinalResult != nil {
-		fmt.Printf("\n%s: %s\n", cliui.Concierge, sanitizeChatDisplayText(fmt.Sprint(result.FinalResult)))
+		fmt.Printf("\n%s: %s\n", cliui.Dispatcher, sanitizeChatDisplayText(fmt.Sprint(result.FinalResult)))
 	} else {
-		fmt.Printf("\n%s: (empty response)\n", cliui.Concierge)
+		fmt.Printf("\n%s: (empty response)\n", cliui.Dispatcher)
 	}
 
 	if result != nil {
@@ -429,7 +429,7 @@ func runInteractiveChat(ctx context.Context, svc *agent.Service, manager *agent.
 	chatCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	fmt.Printf("%s AgentGo Concierge Chat\n", cliui.Concierge)
+	fmt.Printf("%s AgentGo Dispatcher Chat\n", cliui.Dispatcher)
 	if !chatNoPTC {
 		fmt.Printf("%s PTC Mode: Enabled (JS sandbox for complex logic)\n", cliui.PTC)
 	}
@@ -438,7 +438,7 @@ func runInteractiveChat(ctx context.Context, svc *agent.Service, manager *agent.
 	} else if chatShowMemory || verbose {
 		fmt.Printf("%s Memory Mode: Enabled (Showing retrievals)\n", cliui.Memory)
 	}
-	fmt.Printf("%s This chat talks to Concierge, the always-on intake agent for AgentGo.\n", cliui.Tip)
+	fmt.Printf("%s This chat talks to Dispatcher, the always-on intake agent for AgentGo.\n", cliui.Tip)
 	fmt.Printf("%s Type 'quit' or 'exit' to end, 'clear' to reset session\n", cliui.Tip)
 	fmt.Printf("%s Tip: Use '@AgentName <instruction>' to run a saved agent in the background\n", cliui.Tip)
 	fmt.Println()
@@ -546,7 +546,7 @@ func runInteractiveChat(ctx context.Context, svc *agent.Service, manager *agent.
 				}
 			}
 
-			// Process message normally (Concierge handling)
+			// Process message normally (Dispatcher handling)
 			done := make(chan struct{})
 			requests <- chatRequest{Input: input, Done: done}
 			<-done

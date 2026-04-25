@@ -280,7 +280,7 @@ func TestService_RetrieveAndInjectWithContextUsesScopeChain(t *testing.T) {
 	vector := []float64{0.1, 0.2, 0.3}
 	queryContext := domain.MemoryQueryContext{
 		SessionID: "session-1",
-		AgentID:   "Assistant",
+		AgentID:   "Responder",
 		TeamID:    "team-alpha",
 		UserID:    "user-1",
 	}
@@ -550,7 +550,7 @@ func TestService_StoreIfWorthwhile(t *testing.T) {
 
 		req := &domain.MemoryStoreRequest{
 			SessionID:  "session-heuristic",
-			AgentID:    "Assistant",
+			AgentID:    "Responder",
 			TaskGoal:   "Alice prefers coffee over tea.",
 			TaskResult: "Understood.",
 		}
@@ -564,7 +564,7 @@ func TestService_StoreIfWorthwhile(t *testing.T) {
 			return m.Content == "Alice prefers coffee over tea." &&
 				m.Type == domain.MemoryTypePreference &&
 				m.ScopeType == domain.MemoryScopeAgent &&
-				m.ScopeID == "Assistant"
+				m.ScopeID == "Responder"
 		})).Return(nil)
 
 		err := isolatedService.StoreIfWorthwhile(ctx, req)
@@ -623,7 +623,7 @@ func TestService_StoreIfWorthwhile(t *testing.T) {
 
 		req := &domain.MemoryStoreRequest{
 			SessionID:  "session-2",
-			AgentID:    "Assistant",
+			AgentID:    "Responder",
 			TeamID:     "team-alpha",
 			TaskGoal:   "Remember the user's drink preference",
 			TaskResult: "Alice prefers coffee over tea.",
@@ -639,8 +639,8 @@ func TestService_StoreIfWorthwhile(t *testing.T) {
 		isolatedStore.On("Store", ctx, mock.MatchedBy(func(m *domain.Memory) bool {
 			return m.Content == "Alice prefers coffee over tea." &&
 				m.ScopeType == domain.MemoryScopeAgent &&
-				m.ScopeID == "Assistant" &&
-				m.SessionID == "agent:Assistant"
+				m.ScopeID == "Responder" &&
+				m.SessionID == "agent:Responder"
 		})).Return(nil)
 
 		err := isolatedService.StoreIfWorthwhile(ctx, req)
@@ -659,7 +659,7 @@ func TestService_StoreIfWorthwhile(t *testing.T) {
 
 		req := &domain.MemoryStoreRequest{
 			SessionID:  "session-3",
-			AgentID:    "Assistant",
+			AgentID:    "Responder",
 			TeamID:     "team-alpha",
 			TaskGoal:   "Summarize the shared deployment coordination status",
 			TaskResult: "The team agreed the deployment checklist is approved and shared with all team members.",

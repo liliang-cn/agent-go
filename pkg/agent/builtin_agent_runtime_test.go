@@ -51,10 +51,10 @@ func TestBuiltInRuntimeSerializesRequestsPerAgent(t *testing.T) {
 	}
 
 	go func() {
-		_, _ = manager.DispatchTask(context.Background(), defaultAssistantAgentName, "first")
+		_, _ = manager.DispatchTask(context.Background(), defaultResponderAgentName, "first")
 	}()
 	go func() {
-		_, _ = manager.DispatchTask(context.Background(), defaultAssistantAgentName, "second")
+		_, _ = manager.DispatchTask(context.Background(), defaultResponderAgentName, "second")
 	}()
 
 	select {
@@ -96,7 +96,7 @@ func TestBuiltInRuntimeRunsDifferentAgentsInParallel(t *testing.T) {
 
 	manager.builtInDispatchOverride = func(ctx context.Context, agentName, instruction string, runOptions []RunOption) (*ExecutionResult, error) {
 		switch agentName {
-		case defaultAssistantAgentName:
+		case defaultResponderAgentName:
 			close(assistantStarted)
 		case defaultArchivistAgentName:
 			close(archivistStarted)
@@ -107,7 +107,7 @@ func TestBuiltInRuntimeRunsDifferentAgentsInParallel(t *testing.T) {
 	}
 
 	go func() {
-		_, _ = manager.DispatchTask(context.Background(), defaultAssistantAgentName, "assistant work")
+		_, _ = manager.DispatchTask(context.Background(), defaultResponderAgentName, "assistant work")
 	}()
 	go func() {
 		_, _ = manager.DispatchTask(context.Background(), defaultArchivistAgentName, "archivist work")
@@ -136,7 +136,7 @@ func TestBuiltInRuntimeRunsDifferentAgentsInParallel(t *testing.T) {
 	}
 }
 
-func TestConciergeRuntimeHandlesConcurrentRequests(t *testing.T) {
+func TestDispatcherRuntimeHandlesConcurrentRequests(t *testing.T) {
 	manager := newBuiltInRuntimeTestManager(t)
 
 	firstStarted := make(chan struct{})
@@ -147,7 +147,7 @@ func TestConciergeRuntimeHandlesConcurrentRequests(t *testing.T) {
 	var mu sync.Mutex
 	started := 0
 	manager.builtInDispatchOverride = func(ctx context.Context, agentName, instruction string, runOptions []RunOption) (*ExecutionResult, error) {
-		if agentName != defaultConciergeAgentName {
+		if agentName != defaultDispatcherAgentName {
 			return &ExecutionResult{Success: true, FinalResult: instruction}, nil
 		}
 		mu.Lock()
@@ -166,22 +166,22 @@ func TestConciergeRuntimeHandlesConcurrentRequests(t *testing.T) {
 	}
 
 	go func() {
-		_, _ = manager.DispatchTask(context.Background(), defaultConciergeAgentName, "user request 1")
+		_, _ = manager.DispatchTask(context.Background(), defaultDispatcherAgentName, "user request 1")
 	}()
 	go func() {
-		_, _ = manager.DispatchTask(context.Background(), defaultConciergeAgentName, "user request 2")
+		_, _ = manager.DispatchTask(context.Background(), defaultDispatcherAgentName, "user request 2")
 	}()
 
 	select {
 	case <-firstStarted:
 	case <-time.After(time.Second):
-		t.Fatal("first concierge request did not start")
+		t.Fatal("first dispatcher request did not start")
 	}
 
 	select {
 	case <-secondStarted:
 	case <-time.After(time.Second):
-		t.Fatal("second concierge request did not start concurrently")
+		t.Fatal("second dispatcher request did not start concurrently")
 	}
 
 	close(release)
@@ -190,7 +190,7 @@ func TestConciergeRuntimeHandlesConcurrentRequests(t *testing.T) {
 		select {
 		case <-callDone:
 		case <-time.After(time.Second):
-			t.Fatal("concierge concurrent dispatch did not complete")
+			t.Fatal("dispatcher concurrent dispatch did not complete")
 		}
 	}
 }
@@ -202,11 +202,11 @@ func TestBuiltInRuntimeStatusExposesWorkerObservability(t *testing.T) {
 		return &ExecutionResult{Success: true, FinalResult: "done"}, nil
 	}
 
-	if _, err := manager.DispatchTask(context.Background(), defaultAssistantAgentName, "status please"); err != nil {
+	if _, err := manager.DispatchTask(context.Background(), defaultResponderAgentName, "status please"); err != nil {
 		t.Fatalf("DispatchTask failed: %v", err)
 	}
 
-	status, err := manager.GetAgentStatus(defaultAssistantAgentName)
+	status, err := manager.GetAgentStatus(defaultResponderAgentName)
 	if err != nil {
 		t.Fatalf("GetAgentStatus failed: %v", err)
 	}
@@ -226,11 +226,11 @@ func TestBuiltInRuntimeStatusExposesWorkerObservability(t *testing.T) {
 		t.Fatalf("expected last correlation id to be populated, got %+v", status)
 	}
 
-	conciergeStatus, err := manager.GetAgentStatus(defaultConciergeAgentName)
+	dispatcherStatus, err := manager.GetAgentStatus(defaultDispatcherAgentName)
 	if err != nil {
-		t.Fatalf("GetAgentStatus(Concierge) failed: %v", err)
+		t.Fatalf("GetAgentStatus(Dispatcher) failed: %v", err)
 	}
-	if conciergeStatus.WorkerCount < 2 {
-		t.Fatalf("expected concierge worker count > 1, got %+v", conciergeStatus)
+	if dispatcherStatus.WorkerCount < 2 {
+		t.Fatalf("expected dispatcher worker count > 1, got %+v", dispatcherStatus)
 	}
 }

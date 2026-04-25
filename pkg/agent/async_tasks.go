@@ -49,43 +49,43 @@ const (
 	TaskEventTypeCancelled TaskEventType = "cancelled"
 )
 
-// AsyncTask is a background task created by Concierge or direct pkg callers.
+// AsyncTask is a background task created by Dispatcher or direct pkg callers.
 type AsyncTask struct {
-	ID          string          `json:"id"`
-	TaskID      string          `json:"task_id,omitempty"`
-	SessionID   string          `json:"session_id,omitempty"`
-	Kind        AsyncTaskKind   `json:"kind"`
-	Status      AsyncTaskStatus `json:"status"`
-	TeamID      string          `json:"team_id,omitempty"`
-	TeamName    string          `json:"team_name,omitempty"`
-	CaptainName string          `json:"captain_name,omitempty"`
-	AgentName   string          `json:"agent_name,omitempty"`
-	AgentNames  []string        `json:"agent_names,omitempty"`
-	Prompt      string          `json:"prompt"`
-	AckMessage  string          `json:"ack_message,omitempty"`
-	ResultText  string          `json:"result_text,omitempty"`
-	Error       string          `json:"error,omitempty"`
-	CreatedAt   time.Time       `json:"created_at"`
-	StartedAt   *time.Time      `json:"started_at,omitempty"`
-	FinishedAt  *time.Time      `json:"finished_at,omitempty"`
-	Events      []*TaskEvent    `json:"events,omitempty"`
+	ID               string          `json:"id"`
+	TaskID           string          `json:"task_id,omitempty"`
+	SessionID        string          `json:"session_id,omitempty"`
+	Kind             AsyncTaskKind   `json:"kind"`
+	Status           AsyncTaskStatus `json:"status"`
+	TeamID           string          `json:"team_id,omitempty"`
+	TeamName         string          `json:"team_name,omitempty"`
+	OrchestratorName string          `json:"orchestrator_name,omitempty"`
+	AgentName        string          `json:"agent_name,omitempty"`
+	AgentNames       []string        `json:"agent_names,omitempty"`
+	Prompt           string          `json:"prompt"`
+	AckMessage       string          `json:"ack_message,omitempty"`
+	ResultText       string          `json:"result_text,omitempty"`
+	Error            string          `json:"error,omitempty"`
+	CreatedAt        time.Time       `json:"created_at"`
+	StartedAt        *time.Time      `json:"started_at,omitempty"`
+	FinishedAt       *time.Time      `json:"finished_at,omitempty"`
+	Events           []*TaskEvent    `json:"events,omitempty"`
 }
 
 // TaskEvent is a task-level event that can wrap lower-level runtime events.
 type TaskEvent struct {
-	ID          string          `json:"id"`
-	TaskID      string          `json:"task_id"`
-	SessionID   string          `json:"session_id,omitempty"`
-	Kind        AsyncTaskKind   `json:"kind"`
-	Status      AsyncTaskStatus `json:"status"`
-	Type        TaskEventType   `json:"type"`
-	TeamID      string          `json:"team_id,omitempty"`
-	TeamName    string          `json:"team_name,omitempty"`
-	CaptainName string          `json:"captain_name,omitempty"`
-	AgentName   string          `json:"agent_name,omitempty"`
-	Message     string          `json:"message,omitempty"`
-	Runtime     *Event          `json:"runtime,omitempty"`
-	Timestamp   time.Time       `json:"timestamp"`
+	ID               string          `json:"id"`
+	TaskID           string          `json:"task_id"`
+	SessionID        string          `json:"session_id,omitempty"`
+	Kind             AsyncTaskKind   `json:"kind"`
+	Status           AsyncTaskStatus `json:"status"`
+	Type             TaskEventType   `json:"type"`
+	TeamID           string          `json:"team_id,omitempty"`
+	TeamName         string          `json:"team_name,omitempty"`
+	OrchestratorName string          `json:"orchestrator_name,omitempty"`
+	AgentName        string          `json:"agent_name,omitempty"`
+	Message          string          `json:"message,omitempty"`
+	Runtime          *Event          `json:"runtime,omitempty"`
+	Timestamp        time.Time       `json:"timestamp"`
 }
 
 // SubmitAgentTask submits a legacy async agent task.
@@ -158,17 +158,17 @@ func (m *TeamManager) SubmitTeamTask(ctx context.Context, sessionID, teamID, pro
 
 	task := m.ensureAsyncTaskForSharedTask(sharedTask, strings.TrimSpace(sessionID), team.Name)
 	m.emitTaskEvent(task.ID, &TaskEvent{
-		TaskID:      task.ID,
-		SessionID:   task.SessionID,
-		Kind:        task.Kind,
-		Status:      task.Status,
-		Type:        TaskEventTypeCreated,
-		TeamID:      task.TeamID,
-		TeamName:    task.TeamName,
-		CaptainName: task.CaptainName,
-		AgentName:   task.CaptainName,
-		Message:     task.AckMessage,
-		Timestamp:   task.CreatedAt,
+		TaskID:           task.ID,
+		SessionID:        task.SessionID,
+		Kind:             task.Kind,
+		Status:           task.Status,
+		Type:             TaskEventTypeCreated,
+		TeamID:           task.TeamID,
+		TeamName:         task.TeamName,
+		OrchestratorName: task.OrchestratorName,
+		AgentName:        task.OrchestratorName,
+		Message:          task.AckMessage,
+		Timestamp:        task.CreatedAt,
 	}, false)
 
 	return m.GetTask(task.ID)
@@ -333,17 +333,17 @@ func (m *TeamManager) executeSharedTaskStream(ctx context.Context, task *SharedT
 		existing.StartedAt = &startedAt
 	})
 	m.emitTaskEvent(asyncTask.ID, &TaskEvent{
-		TaskID:      asyncTask.ID,
-		SessionID:   asyncTask.SessionID,
-		Kind:        asyncTask.Kind,
-		Status:      asyncTask.Status,
-		Type:        TaskEventTypeStarted,
-		TeamID:      asyncTask.TeamID,
-		TeamName:    asyncTask.TeamName,
-		CaptainName: asyncTask.CaptainName,
-		AgentName:   asyncTask.CaptainName,
-		Message:     fmt.Sprintf("%s started team task.", asyncTask.CaptainName),
-		Timestamp:   startedAt,
+		TaskID:           asyncTask.ID,
+		SessionID:        asyncTask.SessionID,
+		Kind:             asyncTask.Kind,
+		Status:           asyncTask.Status,
+		Type:             TaskEventTypeStarted,
+		TeamID:           asyncTask.TeamID,
+		TeamName:         asyncTask.TeamName,
+		OrchestratorName: asyncTask.OrchestratorName,
+		AgentName:        asyncTask.OrchestratorName,
+		Message:          fmt.Sprintf("%s started team task.", asyncTask.OrchestratorName),
+		Timestamp:        startedAt,
 	}, false)
 
 	results := make([]SharedTaskResult, 0, len(task.AgentNames))
@@ -431,10 +431,10 @@ func (m *TeamManager) executeSharedTaskStream(ctx context.Context, task *SharedT
 	m.queueMu.Unlock()
 
 	if failed {
-		m.failAsyncTask(task.ID, task.CaptainName, errors.New(strings.Join(resultTextParts, "\n\n")))
+		m.failAsyncTask(task.ID, task.OrchestratorName, errors.New(strings.Join(resultTextParts, "\n\n")))
 		return
 	}
-	m.completeAsyncTask(task.ID, strings.Join(resultTextParts, "\n\n"), task.CaptainName)
+	m.completeAsyncTask(task.ID, strings.Join(resultTextParts, "\n\n"), task.OrchestratorName)
 }
 
 func (m *TeamManager) forwardRuntimeEvents(taskID string, events <-chan *Event) (string, bool, error) {

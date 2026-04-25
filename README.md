@@ -26,7 +26,7 @@ go get github.com/liliang-cn/agent-go/v2
 | **PTC**       | LLM writes JavaScript; tools run in a Goja sandbox — cuts round-trips                                      |
 | **Streaming** | Token-by-token channel; **Low-latency Streaming Tool Execution** and **Tombstone** recovery                |
 | **Providers** | OpenAI, Anthropic, Azure, DeepSeek, Ollama — switchable at runtime                                         |
-| **Teams**     | Persistent captains + specialists, **Actor-model subagent IPC**, async task queues, cross-process tracking |
+| **Teams**     | Persistent orchestrators + specialists, **Actor-model subagent IPC**, async task queues, cross-process tracking |
 | **Operator**  | Built-in execution agent with filesystem/web tools plus PTY and coding-agent session tooling               |
 
 ---
@@ -41,7 +41,7 @@ LLM is the execution core. Runtime capabilities are built around it.
 
 - It provides the base generation interface used by agents, PTC, tool selection, and optional RAG answers.
 - Providers are runtime-selectable through the global pool.
-- Standalone agents, captains, specialists, and built-in agents all eventually run on the same LLM abstraction.
+- Standalone agents, orchestrators, specialists, and built-in agents all eventually run on the same LLM abstraction.
 
 Think of it as: `prompt + tools + policy -> model call`.
 
@@ -104,22 +104,22 @@ An Agent is the basic runtime unit.
 
 - It has instructions, tool access, optional RAG/memory/PTC/skills, and a session-aware execution loop.
 - Agents can be built-in or user-defined.
-- Built-in standalone agents include `Concierge`, `Assistant`, `Operator`, and `Stakeholder`.
+- Built-in standalone agents include `Dispatcher`, `Responder`, `Operator`, and `Evaluator`.
 
 Key standalone patterns:
 
-- use `Assistant` for general-purpose direct work
+- use `Responder` for general-purpose direct work
 - use `Operator` for execution, validation, PTY sessions, and coding-agent invocation
-- use `Stakeholder` for product/business framing
-- use `Concierge` for intake and orchestration
+- use `Evaluator` for product/business framing
+- use `Dispatcher` for intake and orchestration
 
 ### 8. Team
 
 A Team is the persistent team layer on top of agents.
 
-- A team has one `captain` and multiple `specialists`.
-- The captain is still an agent, but with team-oriented orchestration rules.
-- Captains prefer async team work for implementation-heavy tasks.
+- A team has one `orchestrator` and multiple `specialists`.
+- The orchestrator is still an agent, but with team-oriented orchestration rules.
+- Orchestrators prefer async team work for implementation-heavy tasks.
 - Team task state is persisted, so new CLI processes can inspect or continue work.
 
 Think of it as: `persistent multi-agent coordination with queueing and status`.
@@ -245,17 +245,17 @@ agentgo agent update Scout --model openai/gpt-5-mini
 agentgo agent run --agent Scout "Summarize the current repo structure"
 
 # Built-in standalone agents are always available
-agentgo agent show Concierge
+agentgo agent show Dispatcher
 agentgo agent show Operator
 
-# Create a team (a default captain is created automatically)
+# Create a team (a default orchestrator is created automatically)
 agentgo team add "Docs Team" --description "Documentation and release notes"
 
 # Join the standalone agent to a team
 agentgo agent join Scout --team "Docs Team" --role specialist
 
-# Run a task through the default captain and a specialist
-agentgo team go "@Captain @Scout summarize the UI/backend relationship and write workspace/ui_backend_overview.md"
+# Run a task through the default orchestrator and a specialist
+agentgo team go "@Orchestrator @Scout summarize the UI/backend relationship and write workspace/ui_backend_overview.md"
 
 # Inspect runtime task state; follows while tasks are still running or queued
 agentgo team status "Docs Team"
@@ -399,7 +399,7 @@ At the manager level, standalone agents are persistent named runtimes:
 - `GetAgentService`
 - `GetAgentStatus`, `ListAgentStatuses`
 
-Built-in standalone agents (`Concierge`, `Assistant`, `Operator`, `Stakeholder`) are seeded automatically and can be treated like normal named agents.
+Built-in standalone agents (`Dispatcher`, `Responder`, `Operator`, `Evaluator`) are seeded automatically and can be treated like normal named agents.
 
 ### Built-in Agent Delegation APIs
 
@@ -410,7 +410,7 @@ User-created standalone agents automatically receive a small built-in delegation
 - `submit_builtin_agent_task`
 - `get_delegated_task_status`
 
-This is the primary way a custom agent can keep its own role while offloading execution to `Operator`, general work to `Assistant`, or business clarification to `Stakeholder`.
+This is the primary way a custom agent can keep its own role while offloading execution to `Operator`, general work to `Responder`, or business clarification to `Evaluator`.
 
 ---
 
@@ -526,23 +526,23 @@ results     := coordinator.WaitAll(ctx)
 AgentGo has three layers of agent concepts:
 
 - **Standalone agents**: long-lived named agents with their own role and tool budget
-- **Teams**: a persistent team with one `captain` and multiple `specialists`
+- **Teams**: a persistent team with one `orchestrator` and multiple `specialists`
 - **Built-in agents**: system-provided standalone agents that are always available
 
 The default built-ins are:
 
-- `Concierge`: intake/orchestration for `agentgo chat`
-- `Assistant`: general-purpose direct worker
+- `Dispatcher`: intake/orchestration for `agentgo chat`
+- `Responder`: general-purpose direct worker
 - `Operator`: execution/validation agent
-- `Stakeholder`: product/business representative
+- `Evaluator`: product/business representative
 
 Inspect them directly:
 
 ```bash
-agentgo agent show Concierge
-agentgo agent show Assistant
+agentgo agent show Dispatcher
+agentgo agent show Responder
 agentgo agent show Operator
-agentgo agent show Stakeholder
+agentgo agent show Evaluator
 ```
 
 ### Delegation Model
@@ -550,17 +550,17 @@ agentgo agent show Stakeholder
 AgentGo now supports two delegation axes:
 
 - **Team delegation**
-  - `captain -> specialists`
+  - `orchestrator -> specialists`
   - supports synchronous dispatch and persisted async team tasks
 - **Built-in delegation**
-  - `custom agent -> Assistant / Operator / Stakeholder`
+  - `custom agent -> Responder / Operator / Evaluator`
   - useful when the custom agent should keep its own role but offload execution or business clarification
 
 Conceptually:
 
-- use **Assistant** when you want a general-purpose built-in doer
+- use **Responder** when you want a general-purpose built-in doer
 - use **Operator** when the task is about execution, validation, files, PTY-backed commands, or coding-agent invocation
-- use **Stakeholder** when the task is about requirements, scope, tradeoffs, or acceptance criteria
+- use **Evaluator** when the task is about requirements, scope, tradeoffs, or acceptance criteria
 
 ### Operator Concept
 
@@ -598,12 +598,12 @@ User-created standalone agents automatically get a small built-in delegation API
 This means a custom agent can keep its own role and capabilities, but still delegate:
 
 - execution to `Operator`
-- general work to `Assistant`
-- product/business clarification to `Stakeholder`
+- general work to `Responder`
+- product/business clarification to `Evaluator`
 
 ## Team APIs
 
-AgentGo exposes a team-oriented manager API for standalone agents and team agents. A `captain` is just an agent role inside a team.
+AgentGo exposes a team-oriented manager API for standalone agents and team agents. A `orchestrator` is just an agent role inside a team.
 
 ```go
 store, err := agent.NewStore(filepath.Join(cfg.DataDir(), "agent.db"))
@@ -646,13 +646,13 @@ if err != nil {
 fmt.Println(result)
 ```
 
-### Captain Runtime Model
+### Orchestrator Runtime Model
 
-- A custom team created via `CreateTeam()` or `agentgo team add` automatically gets a default captain.
-- The captain receives team roster and role summaries in its system prompt.
-- Captains prefer async team work for implementation-heavy tasks.
+- A custom team created via `CreateTeam()` or `agentgo team add` automatically gets a default orchestrator.
+- The orchestrator receives team roster and role summaries in its system prompt.
+- Orchestrators prefer async team work for implementation-heavy tasks.
 - Shared team tasks are persisted and can be inspected from new CLI processes.
-- Captains do not use generic `delegate_to_subagent` by default.
+- Orchestrators do not use generic `delegate_to_subagent` by default.
 
 ### Core Team-Manager APIs
 
@@ -660,7 +660,7 @@ fmt.Println(result)
 - `JoinTeam`, `LeaveTeam`, `GetAgentService`
 - `CreateTeam`, `ListTeams`, `GetTeamByName`
 - `AddTeamAgent`, `CreateTeamAgent`, `ListTeamAgents`, `GetTeamAgentByName`
-- `AddCaptain`, `AddSpecialist`, `ListCaptains`, `ListSpecialists` (role-specific helpers)
+- `AddOrchestrator`, `AddSpecialist`, `ListOrchestrators`, `ListSpecialists` (role-specific helpers)
 - `DispatchTask`, `DispatchTaskStream`
 - `EnqueueSharedTask`, `ListSharedTasks`
 - `SubmitAgentTask`, `SubmitTeamTask`, `GetTask`, `ListSessionTasks`
@@ -679,7 +679,7 @@ In practice, the API layers look like this:
 
 - **Standalone agent APIs**: create, run, inspect, update
 - **Team APIs**: create teams, join agents, dispatch tasks, track async work
-- **Built-in delegation APIs**: let a custom agent explicitly call `Assistant`, `Operator`, or `Stakeholder`
+- **Built-in delegation APIs**: let a custom agent explicitly call `Responder`, `Operator`, or `Evaluator`
 
 ---
 
@@ -731,10 +731,15 @@ Structured runtime config lives in `data/agentgo.db`.
 
 Recommendation:
 
-- Start with `file`. It is the most transparent and easiest to debug.
-- Use `cortex` when you want database-backed memory. Add an embedding provider if you need semantic vector recall; without embeddings it is lexical/text recall, not full semantic search.
-- Use `memoryflow` for session-centric agent memory workflows, diary-like memory, and future wake-up/recall lifecycle integrations.
-- Use `graphflow` when memory content should also be analyzed as a relationship graph.
+| Situation | Recommended store |
+| --------- | ----------------- |
+| No embedding model configured | `file` — works out of the box, human-readable, easiest to debug |
+| Embedding model configured | `graphflow` — semantic vector recall + entity/relation graph, best overall recall quality |
+
+- **`file`** is the default. It requires no embedding model and is fully transparent.
+- **`graphflow`** is the recommended upgrade once an embedding provider is set. It stores memories in CortexDB (`cortex.db`) and combines vector search with deterministic graph extraction for higher-quality recall.
+- Use `cortex` if you want database-backed storage without graph extraction.
+- Use `memoryflow` for diary-style or session-lifecycle-aware memory workflows.
 
 Set the runtime type through the CLI/UI or by persisting `memory.store_type` in `agentgo.db`. The current CLI runtime configuration is DB-backed; `agentgo.toml` is not the source of truth once `agentgo.db` has a value.
 

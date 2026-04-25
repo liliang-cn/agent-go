@@ -61,21 +61,21 @@ func (m *TeamManager) ensureAsyncTaskForSharedTask(task *SharedTask, sessionID, 
 	}
 
 	asyncTask := &AsyncTask{
-		ID:          task.ID,
-		TaskID:      strings.TrimSpace(task.ID),
-		SessionID:   strings.TrimSpace(sessionID),
-		Kind:        AsyncTaskKindTeam,
-		Status:      asyncStatusFromSharedTask(task.Status),
-		TeamID:      task.TeamID,
-		TeamName:    strings.TrimSpace(teamName),
-		CaptainName: task.CaptainName,
-		AgentNames:  append([]string(nil), task.AgentNames...),
-		Prompt:      task.Prompt,
-		AckMessage:  task.AckMessage,
-		ResultText:  task.ResultText,
-		CreatedAt:   task.CreatedAt,
-		StartedAt:   cloneTimePtr(task.StartedAt),
-		FinishedAt:  cloneTimePtr(task.FinishedAt),
+		ID:               task.ID,
+		TaskID:           strings.TrimSpace(task.ID),
+		SessionID:        strings.TrimSpace(sessionID),
+		Kind:             AsyncTaskKindTeam,
+		Status:           asyncStatusFromSharedTask(task.Status),
+		TeamID:           task.TeamID,
+		TeamName:         strings.TrimSpace(teamName),
+		OrchestratorName: task.OrchestratorName,
+		AgentNames:       append([]string(nil), task.AgentNames...),
+		Prompt:           task.Prompt,
+		AckMessage:       task.AckMessage,
+		ResultText:       task.ResultText,
+		CreatedAt:        task.CreatedAt,
+		StartedAt:        cloneTimePtr(task.StartedAt),
+		FinishedAt:       cloneTimePtr(task.FinishedAt),
 	}
 	m.upsertAsyncTask(asyncTask)
 	m.queueMu.Lock()
@@ -149,8 +149,8 @@ func (m *TeamManager) emitTaskEvent(taskID string, evt *TaskEvent, terminal bool
 		if evt.TeamName == "" {
 			evt.TeamName = task.TeamName
 		}
-		if evt.CaptainName == "" {
-			evt.CaptainName = task.CaptainName
+		if evt.OrchestratorName == "" {
+			evt.OrchestratorName = task.OrchestratorName
 		}
 		task.Events = appendTaskEvent(task.Events, cloneTaskEvent(evt))
 	}

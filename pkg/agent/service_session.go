@@ -205,7 +205,7 @@ func (s *Service) CompactSession(ctx context.Context, sessionID string) (string,
 		case "user":
 			conversationText.WriteString(fmt.Sprintf("User: %s\n", stripDiscoveredToolsTag(msg.Content)))
 		case "assistant":
-			conversationText.WriteString(fmt.Sprintf("Assistant: %s\n", msg.Content))
+			conversationText.WriteString(fmt.Sprintf("Responder: %s\n", msg.Content))
 		}
 	}
 
