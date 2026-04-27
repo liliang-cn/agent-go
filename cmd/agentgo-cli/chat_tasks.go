@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/liliang-cn/agent-go/v2/cmd/agentgo-cli/internal/cliui"
 	"github.com/liliang-cn/agent-go/v2/cmd/agentgo-cli/internal/lineinput"
@@ -29,6 +30,10 @@ func newChatTaskFollower(manager *agent.TeamManager) *chatTaskFollower {
 }
 
 func (f *chatTaskFollower) StartSessionTasks(ctx context.Context, sessionID string) {
+	f.StartSessionTasksSince(ctx, sessionID, time.Time{})
+}
+
+func (f *chatTaskFollower) StartSessionTasksSince(ctx context.Context, sessionID string, since time.Time) {
 	if f == nil || f.manager == nil {
 		return
 	}
@@ -44,6 +49,9 @@ func (f *chatTaskFollower) StartSessionTasks(ctx context.Context, sessionID stri
 	}
 	for _, task := range tasks {
 		if task == nil || task.SessionID != sessionID {
+			continue
+		}
+		if !since.IsZero() && task.CreatedAt.Before(since) {
 			continue
 		}
 		f.mu.Lock()
@@ -95,6 +103,37 @@ func (f *chatTaskFollower) StartTaskIDs(ctx context.Context, taskIDs []string) {
 	}
 }
 
+func waitForChatSessionTasks(ctx context.Context, manager *agent.TeamManager, sessionID string, since time.Time) {
+	if manager == nil {
+		return
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return
+	}
+	tasks, err := manager.Tasks().List(ctx, agent.TaskListOptions{Limit: 50})
+	if err != nil {
+		printChatTaskBlock(fmt.Sprintf("%s Task list failed: %v", cliui.Error, err))
+		return
+	}
+	for _, task := range tasks {
+		if task == nil || task.SessionID != sessionID {
+			continue
+		}
+		if !since.IsZero() && task.CreatedAt.Before(since) {
+			continue
+		}
+		if isTerminalTask(task.Status) {
+			printChatTaskSnapshot(task)
+			continue
+		}
+		_, err := waitForCanonicalTask(ctx, manager, task.ID, true)
+		if err != nil {
+			printChatTaskBlock(fmt.Sprintf("%s Task wait failed for %s: %v", cliui.Error, shortTaskID(task.ID), err))
+		}
+	}
+}
+
 func (f *chatTaskFollower) followTask(ctx context.Context, taskID string) {
 	events, unsubscribe, err := f.manager.SubscribeTask(taskID)
 	if err != nil {
@@ -102,6 +141,9 @@ func (f *chatTaskFollower) followTask(ctx context.Context, taskID string) {
 		return
 	}
 	defer unsubscribe()
+
+	renderer := &chatTaskStreamRenderer{}
+	defer renderer.Flush()
 
 	for {
 		select {
@@ -111,11 +153,92 @@ func (f *chatTaskFollower) followTask(ctx context.Context, taskID string) {
 			if !ok {
 				return
 			}
-			renderChatTaskEvent(evt)
+			renderer.Handle(evt)
 			if evt.Type == agent.TaskEventTypeCompleted || evt.Type == agent.TaskEventTypeBlocked || evt.Type == agent.TaskEventTypeFailed || evt.Type == agent.TaskEventTypeCancelled {
 				f.StartSessionTasks(ctx, evt.SessionID)
 			}
 		}
+	}
+}
+
+// chatTaskStreamRenderer renders a TaskEvent stream so that an agent's partial
+// (token) output is shown live, while preserving the existing block layout for
+// every other event type. It is stateful per task-watch loop: callers create
+// one renderer per Subscribe call and Flush it when the channel closes.
+type chatTaskStreamRenderer struct {
+	inPartial    bool
+	activeAgent  string
+	everStreamed bool
+	// writeStream defaults to lineinput.WriteAsyncStream and is overridable in tests.
+	writeStream func(string)
+}
+
+func (r *chatTaskStreamRenderer) write(chunk string) {
+	if r.writeStream != nil {
+		r.writeStream(chunk)
+		return
+	}
+	lineinput.WriteAsyncStream(chunk)
+}
+
+func (r *chatTaskStreamRenderer) Handle(evt *agent.TaskEvent) {
+	if evt == nil {
+		return
+	}
+
+	if evt.Type == agent.TaskEventTypeRuntime && evt.Runtime != nil && evt.Runtime.Type == agent.EventTypePartial {
+		chunk := evt.Runtime.Content
+		if chunk == "" {
+			return
+		}
+		agentName := strings.TrimSpace(evt.Runtime.AgentName)
+		if agentName == "" {
+			agentName = strings.TrimSpace(evt.AgentName)
+		}
+		if !r.inPartial || agentName != r.activeAgent {
+			if r.inPartial {
+				r.write("\n")
+			}
+			label := shortTaskID(evt.TaskID)
+			prefix := fmt.Sprintf("%s [%s] @%s ▸ ", cliui.AgentReply, label, agentName)
+			r.write(prefix)
+			r.inPartial = true
+			r.everStreamed = true
+			r.activeAgent = agentName
+		}
+		r.write(chunk)
+		return
+	}
+
+	// Any non-partial event ends an in-progress stream line.
+	if r.inPartial {
+		r.write("\n")
+		r.inPartial = false
+		r.activeAgent = ""
+	}
+
+	// If we already streamed the body, suppress the duplicate Completed body
+	// block — keep just the short "completed" marker line.
+	if evt.Type == agent.TaskEventTypeCompleted && r.everStreamed {
+		if renderFollowUpSupplement(evt.AgentName, evt.Message) {
+			return
+		}
+		line := fmt.Sprintf("%s [%s] Task completed", cliui.Success, shortTaskID(evt.TaskID))
+		if evt.AgentName != "" {
+			line += fmt.Sprintf(" by @%s", evt.AgentName)
+		}
+		printChatTaskBlock(line)
+		return
+	}
+
+	renderChatTaskEvent(evt)
+}
+
+func (r *chatTaskStreamRenderer) Flush() {
+	if r.inPartial {
+		r.write("\n")
+		r.inPartial = false
+		r.activeAgent = ""
 	}
 }
 

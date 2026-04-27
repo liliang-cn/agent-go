@@ -83,12 +83,21 @@ func waitForCanonicalTask(ctx context.Context, manager *agent.TeamManager, taskI
 	}
 	defer unsubscribe()
 
+	var renderer *chatTaskStreamRenderer
+	if render {
+		renderer = &chatTaskStreamRenderer{}
+		defer renderer.Flush()
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case evt, ok := <-events:
 			if !ok {
+				if renderer != nil {
+					renderer.Flush()
+				}
 				task, taskErr := manager.Tasks().Get(ctx, taskID)
 				if taskErr != nil {
 					return nil, taskErr
@@ -98,8 +107,8 @@ func waitForCanonicalTask(ctx context.Context, manager *agent.TeamManager, taskI
 				}
 				return task, nil
 			}
-			if render {
-				renderChatTaskEvent(evt)
+			if renderer != nil {
+				renderer.Handle(evt)
 			}
 			switch evt.Type {
 			case agent.TaskEventTypeCompleted, agent.TaskEventTypeBlocked, agent.TaskEventTypeCancelled:

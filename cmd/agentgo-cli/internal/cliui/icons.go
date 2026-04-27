@@ -13,6 +13,7 @@ const (
 	TaskCreated = "🗂"
 	TaskStarted = "▶"
 	Success     = "✅"
+	AgentReply  = "💭"
 	Error       = "❌"
 	Goodbye     = "👋"
 )

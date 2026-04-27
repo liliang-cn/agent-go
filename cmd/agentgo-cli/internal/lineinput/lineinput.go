@@ -103,6 +103,27 @@ func WriteAsyncLine(line string) {
 	renderActiveLocked()
 }
 
+// WriteAsyncStream writes streaming text without forcing a trailing newline.
+// It is intended for token-by-token output (e.g. delegated agent stream); it
+// preserves the prompt line by clearing/redrawing around the chunk.
+func WriteAsyncStream(chunk string) {
+	if chunk == "" {
+		return
+	}
+
+	editorMu.Lock()
+	defer editorMu.Unlock()
+
+	if active == nil {
+		fmt.Print(chunk)
+		return
+	}
+
+	clearActiveLineLocked()
+	fmt.Print(chunk)
+	renderActiveLocked()
+}
+
 func readLineFallback(prompt string) (string, error) {
 	fmt.Print(prompt)
 	reader := bufio.NewReader(os.Stdin)
