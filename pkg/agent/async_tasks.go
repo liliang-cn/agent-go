@@ -105,9 +105,10 @@ func (m *TeamManager) SubmitAgentTask(ctx context.Context, sessionID, agentName,
 		return nil, err
 	}
 
+	taskID := uuid.NewString()
 	task := &AsyncTask{
-		ID:        uuid.NewString(),
-		TaskID:    uuid.NewString(),
+		ID:        taskID,
+		TaskID:    taskID,
 		SessionID: strings.TrimSpace(sessionID),
 		Kind:      AsyncTaskKindAgent,
 		Status:    AsyncTaskStatusQueued,

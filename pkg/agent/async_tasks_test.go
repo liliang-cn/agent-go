@@ -167,6 +167,44 @@ func TestEnsureAsyncTaskForSharedTaskIndexesSession(t *testing.T) {
 	}
 }
 
+func TestSubmitAgentTaskUsesSameIDForRuntimeAndCanonical(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "agent.db"))
+	if err != nil {
+		t.Fatalf("new store failed: %v", err)
+	}
+	manager := NewTeamManager(store)
+
+	if err := manager.SeedDefaultMembers(); err != nil {
+		t.Fatalf("SeedDefaultMembers() error = %v", err)
+	}
+
+	// SubmitAgentTask used to assign two unrelated UUIDs to ID and TaskID,
+	// which made `manager.Tasks().Submit(...).ID` unusable with SubscribeTask
+	// because the in-memory map keys on AsyncTask.ID. Pin the invariant.
+	async, err := manager.SubmitAgentTask(context.Background(), "session-pin", BuiltInDispatcherAgentName, "ping")
+	if err != nil {
+		t.Fatalf("SubmitAgentTask() error = %v", err)
+	}
+	if async.ID == "" || async.TaskID == "" {
+		t.Fatalf("expected non-empty IDs, got id=%q taskID=%q", async.ID, async.TaskID)
+	}
+	if async.ID != async.TaskID {
+		t.Fatalf("AsyncTask.ID and TaskID must match: id=%q taskID=%q", async.ID, async.TaskID)
+	}
+
+	unified, err := manager.Tasks().Get(context.Background(), async.ID)
+	if err != nil {
+		t.Fatalf("Tasks().Get() error = %v", err)
+	}
+	if unified.ID != async.ID {
+		t.Fatalf("UnifiedTask.ID must match AsyncTask.ID: unified=%q async=%q", unified.ID, async.ID)
+	}
+
+	if _, _, err := manager.SubscribeTask(unified.ID); err != nil {
+		t.Fatalf("SubscribeTask(unified.ID) error = %v", err)
+	}
+}
+
 func TestExecuteSharedTaskStreamCreatesChildTasksPerAgent(t *testing.T) {
 	store, err := NewStore(filepath.Join(t.TempDir(), "agent.db"))
 	if err != nil {
