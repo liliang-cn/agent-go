@@ -1,0 +1,21 @@
+name: lint_dispatcher_no_bounce_back_self_heals
+description: >
+  When the dispatcher's first response narrates a routing intent
+  ("I will route this to ..."), dispatcher_no_bounce_back rejects it
+  and the runtime re-prompts. The model's second reply delivers a
+  concrete answer and the run completes.
+agent: Dispatcher
+register_lints:
+  - dispatcher_no_bounce_back
+input: "what's the current status?"
+llm_replies:
+  - "I will route this to Operator now."
+  - "Current status: all systems green."
+expect:
+  status: completed
+  final_text_match: "Current status"
+  final_text_must_not_match: "I will route"
+  llm_calls: 2
+  lint_violations:
+    - lint: dispatcher_no_bounce_back
+      count: 1

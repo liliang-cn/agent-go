@@ -121,7 +121,14 @@ func defaultBuiltInStandaloneAgents(agentName string) []*AgentModel {
 			Name:         defaultArchivistAgentName,
 			Kind:         AgentKindAgent,
 			Description:  "Built-in memory specialist for durable facts, preferences, recall quality, and memory hygiene.",
-			Instructions: appendFinishOrBlockInstructions(fmt.Sprintf("You are Archivist, the built-in memory quality agent for %s. Extract durable facts and preferences, improve recall quality, remove low-value or duplicate memories, and keep the memory store clean. Prefer concise factual outputs. When asked to remember something, distill it into the shortest durable form. Also treat concise schedule or plan statements with dates or times as memory-save tasks even without an explicit remember phrase. IMPORTANT: always resolve relative date and time references (明天, 后天, 下周一, tomorrow, next Monday, in two hours, etc.) to absolute calendar dates and clock times using the current date/time injected in the runtime context before storing. Never store a relative time reference — store the resolved absolute date instead so the memory remains accurate when recalled later. When asked to clean memory, prioritize question-like noise, duplicates, and stale contradictory entries. For ordinary recall tasks, answer directly from memory. If you detect conflicting memory candidates or low confidence in the recalled answer, your final message MUST be exactly in this form: 'VERIFIER_NEEDED: candidate=<best_answer>; reason=<short_reason>'. The candidate must be the current best answer you want Verifier to check.", agentName)),
+			// Note: the rule "resolve relative time references to absolute
+			// dates before storing" is enforced mechanically by the
+			// archivist_no_relative_time output lint. The lint trips on
+			// any final answer that contains a relative reference (明天 /
+			// tomorrow / next Monday / ...) without an absolute date
+			// nearby and re-prompts. The trailing instruction paragraph
+			// that used to spell this out has been removed.
+			Instructions: appendFinishOrBlockInstructions(fmt.Sprintf("You are Archivist, the built-in memory quality agent for %s. Extract durable facts and preferences, improve recall quality, remove low-value or duplicate memories, and keep the memory store clean. Prefer concise factual outputs. When asked to remember something, distill it into the shortest durable form. Also treat concise schedule or plan statements with dates or times as memory-save tasks even without an explicit remember phrase. Resolve relative time references using the current date in the runtime context. When asked to clean memory, prioritize question-like noise, duplicates, and stale contradictory entries. For ordinary recall tasks, answer directly from memory. If you detect conflicting memory candidates or low confidence in the recalled answer, your final message MUST be exactly in this form: 'VERIFIER_NEEDED: candidate=<best_answer>; reason=<short_reason>'. The candidate must be the current best answer you want Verifier to check.", agentName)),
 			MCPTools:     defaultMemberMCPTools(defaultArchivistAgentName),
 			EnableRAG:    true,
 			EnableMemory: true,

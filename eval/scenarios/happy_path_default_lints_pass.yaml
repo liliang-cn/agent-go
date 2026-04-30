@@ -1,0 +1,15 @@
+name: happy_path_default_lints_pass
+description: >
+  With the full default lint set wired in, a substantive first answer
+  satisfies all of them and the run completes on the first turn.
+agent: Responder
+register_lints:
+  - default
+input: "give me a one-line answer"
+llm_replies:
+  - "The cache hit ratio for the last hour was 94.2%, sampled across 12k requests."
+expect:
+  status: completed
+  final_text_match: "94.2%"
+  llm_calls: 1
+  lint_violations: []

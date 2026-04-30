@@ -43,19 +43,59 @@ type Runtime struct {
 
 	// Observability: current round (1-indexed, set at loop start)
 	currentRound int
+
+	// Output-lint retry budget. Decremented every time a final response is
+	// rejected by an OutputLint and re-prompted within the same task. When
+	// the budget is exhausted, the runtime blocks the task instead of
+	// looping forever.
+	lintRetryBudget int
 }
 
 // NewRuntime creates a new runtime instance
 func NewRuntime(svc *Service, session *Session, cfg *RunConfig) *Runtime {
 	return &Runtime{
-		svc:            svc,
-		eventChan:      make(chan *Event, 100), // Buffer events
-		currentAgent:   svc.resolveCurrentAgent(session),
-		session:        session,
-		cfg:            cfg,
-		pendingTools:   make(map[string]domain.ToolCall),
+		svc:             svc,
+		eventChan:       make(chan *Event, 100), // Buffer events
+		currentAgent:    svc.resolveCurrentAgent(session),
+		session:         session,
+		cfg:             cfg,
+		pendingTools:    make(map[string]domain.ToolCall),
 		completedTools: make(map[string]bool),
+		lintRetryBudget: defaultLintRetryBudget,
 	}
+}
+
+// runFinalLints consults the service's lint registry, returning the first
+// violation if any. If the service has no registry the call is a no-op.
+func (r *Runtime) runFinalLints(content string, turn int) *LintViolation {
+	if r == nil || r.svc == nil {
+		return nil
+	}
+	reg := r.svc.OutputLints()
+	if reg == nil {
+		return nil
+	}
+	agentName := ""
+	if r.currentAgent != nil {
+		agentName = r.currentAgent.Name()
+	}
+	taskID := ""
+	if r.session != nil {
+		taskID = currentTaskID(r.session)
+	}
+	sessionID := ""
+	if r.session != nil {
+		sessionID = r.session.GetID()
+	}
+	ctx := LintContext{
+		AgentName:  agentName,
+		TaskID:     taskID,
+		SessionID:  sessionID,
+		TurnIndex:  turn,
+		IsRetry:    r.lintRetryBudget < defaultLintRetryBudget,
+		RetryCount: defaultLintRetryBudget - r.lintRetryBudget,
+	}
+	return reg.Run(content, ctx)
 }
 
 // RunStream starts the event loop and returns a read-only channel of events
@@ -375,6 +415,27 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 				state.setLoopTransition(textDecision.Transition, textDecision.Reason)
 				state.noteRoundCompleted()
 				continue
+			}
+
+			// Output lints: deterministic checks on the model's free-form
+			// final answer. Failure consumes one slot of the per-task retry
+			// budget and re-prompts the model with structured feedback;
+			// exhausting the budget blocks the task.
+			if violation := r.runFinalLints(result.Content, round); violation != nil {
+				r.emit(EventTypeError, fmt.Sprintf("output lint %s rejected response: %s", violation.LintName, violation.Reason))
+				if r.lintRetryBudget > 0 {
+					r.lintRetryBudget--
+					messages = append(messages, domain.Message{
+						Role:    "user",
+						Content: FormatLintFeedback(violation),
+					})
+					state.Messages = messages
+					state.setLoopTransition(queryLoopTransitionLintRetry, fmt.Sprintf("lint:%s", violation.LintName))
+					state.noteRoundCompleted()
+					continue
+				}
+				r.blockRun(goal, fmt.Sprintf("output lint %s repeatedly rejected the response: %s", violation.LintName, violation.Reason), messages, true)
+				return
 			}
 
 			r.completeRun(goal, result.Content, messages, true)

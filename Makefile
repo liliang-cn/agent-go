@@ -1,4 +1,4 @@
-.PHONY: help build agentgo-cli agentgo-ui ui-build sync-ui-dist ui-dev ui-api-dev ui-web-dev ui-deps test check clean deps coverage-core
+.PHONY: help build agentgo-cli agentgo-ui ui-build sync-ui-dist ui-dev ui-api-dev ui-web-dev ui-deps test check clean deps coverage-core eval eval-verbose eval-live eval-all
 
 CORE_COVERAGE_PKGS := ./pkg/config ./pkg/cache ./cmd/agentgo-ui/internal/handler ./pkg/prompt ./pkg/ptc/runtime/goja ./pkg/ptc/store ./pkg/rag/embedder ./pkg/scheduler/executors
 UI_RUNNER := $(shell if command -v fnm >/dev/null 2>&1; then printf 'fnm exec --using=24'; else printf 'env'; fi)
@@ -17,6 +17,10 @@ help:
 	@echo "  test        - Run tests"
 	@echo "  check       - Run format, vet and tests"
 	@echo "  coverage-core - Run core unit-test coverage report"
+	@echo "  eval        - Run behavioral eval harness (mock-LLM scenarios, CI-safe)"
+	@echo "  eval-verbose - Same, with -v output"
+	@echo "  eval-live   - Run live-LLM scenarios via agentgo eval --profile=live"
+	@echo "  eval-all    - Run mock + live scenarios via agentgo eval --profile=all"
 	@echo "  clean       - Clean"
 	@echo "  deps        - Install deps"
 	@echo ""
@@ -86,6 +90,25 @@ coverage-core: fix-embed
 	@echo "Running core unit-test coverage..."
 	@go test $(CORE_COVERAGE_PKGS) -coverprofile=/tmp/agentgo-core.cover.out
 	@go tool cover -func=/tmp/agentgo-core.cover.out | tail -n 1
+
+# Behavioral eval harness — runs every scenario in eval/scenarios/ against a
+# mock LLM driven by the scenario's reply script. See eval/runner/scenario.go
+# for the YAML schema. CI-runnable; deterministic.
+eval:
+	@go test ./eval/runner/ -count=1 -timeout 120s
+
+eval-verbose:
+	@go test ./eval/runner/ -count=1 -v -timeout 120s
+
+# Live-LLM eval. Uses the configured agentgo provider pool (same as
+# `agentgo chat`). Non-deterministic — scenarios with `mode: live` are
+# expected to declare a `runs:` count and use loose assertions. This
+# target is NOT CI-runnable; it is for local sanity / regression checks.
+eval-live: agentgo-cli
+	@./bin/agentgo-cli eval --profile=live --save
+
+eval-all: agentgo-cli
+	@./bin/agentgo-cli eval --profile=all --save
 
 fix-embed:
 	@mkdir -p cmd/agentgo-ui/dist && touch cmd/agentgo-ui/dist/index.html

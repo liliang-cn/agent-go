@@ -1,0 +1,19 @@
+name: live_dispatcher_no_bounce_back
+description: >
+  Real-LLM check: when asked a simple system question, Dispatcher
+  should not narrate routing intent ("I will route this to ..."). The
+  dispatcher_no_bounce_back lint is wired via TeamManager-equivalent
+  defaults; it may legitimately self-heal up to the runtime's retry
+  budget, but the final answer must not include a bounce-back phrase.
+mode: live
+agent: Dispatcher
+runs: 2
+
+input: "what is the current date?"
+
+expect:
+  status: completed
+  final_text_must_not_match: "re:I will route|让 .* 处理|转交给"
+  max_lint_violations:
+    dispatcher_no_bounce_back: 2
+    no_planning_only_finish: 2

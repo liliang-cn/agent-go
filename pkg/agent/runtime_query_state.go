@@ -49,6 +49,7 @@ const (
 	queryLoopTransitionToolExecutionError   = "tool_execution_error"
 	queryLoopTransitionTextResponse         = "text_response"
 	queryLoopTransitionMaxTurnsExceeded     = "max_turns_exceeded"
+	queryLoopTransitionLintRetry            = "lint_retry"
 )
 
 type queryLoopState struct {

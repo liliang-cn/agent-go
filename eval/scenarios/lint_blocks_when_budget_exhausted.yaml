@@ -1,0 +1,21 @@
+name: lint_blocks_when_budget_exhausted
+description: >
+  When a lint always rejects the model's response, the runtime should
+  exhaust its retry budget and emit a Blocked event naming the lint,
+  rather than looping forever.
+agent: Dispatcher
+register_lints:
+  - dispatcher_no_bounce_back
+input: "do the thing"
+llm_replies:
+  - "I will route it to Operator."
+  - "I will route it to Operator again."
+  - "I will route it to Operator one more time."
+  - "I will route it to Operator forever."
+expect:
+  status: blocked
+  final_text_match: "dispatcher_no_bounce_back"
+  llm_calls: 3
+  lint_violations:
+    - lint: dispatcher_no_bounce_back
+      count: 3

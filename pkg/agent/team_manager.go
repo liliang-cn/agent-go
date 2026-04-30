@@ -908,6 +908,7 @@ func (m *TeamManager) buildServiceForModel(model *AgentModel) (*Service, error) 
 	if strings.EqualFold(strings.TrimSpace(model.Name), defaultOperatorAgentName) {
 		registerOperatorTools(newSvc)
 	}
+	applyBuiltInOutputLints(newSvc, model)
 
 	if label := configuredModelLabel(model); label != "" {
 		newSvc.agent.SetModel(label)

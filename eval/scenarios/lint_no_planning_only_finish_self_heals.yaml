@@ -1,0 +1,20 @@
+name: lint_no_planning_only_finish_self_heals
+description: >
+  When the model ends with a planning phrase ("Next steps: ...") instead
+  of delivering a result, no_planning_only_finish rejects it. The model
+  retries with a substantive answer and the run completes.
+agent: Operator
+register_lints:
+  - no_planning_only_finish
+input: "summarize the README"
+llm_replies:
+  - "Next steps: I'll read the README and summarize it."
+  - "README documents three CLI subcommands: build, test, deploy."
+expect:
+  status: completed
+  final_text_match: "three CLI subcommands"
+  final_text_must_not_match: "Next steps"
+  llm_calls: 2
+  lint_violations:
+    - lint: no_planning_only_finish
+      count: 1

@@ -1,0 +1,21 @@
+name: lint_archivist_no_relative_time_self_heals
+description: >
+  When Archivist returns a memory acknowledgement that contains a
+  relative time reference ("明天") without an absolute date,
+  archivist_no_relative_time rejects it. On retry the agent emits
+  the resolved absolute date and the run completes.
+agent: Archivist
+register_lints:
+  - archivist_no_relative_time
+input: "记一下明天和老王 6 点吃饭"
+llm_replies:
+  - "已记下：明天和老王 6 点吃饭。"
+  - "已记下：2026-04-30 18:00 与老王吃饭。"
+expect:
+  status: completed
+  final_text_match: "2026-04-30"
+  final_text_must_not_match: "re:^已记下：明天和老王"
+  llm_calls: 2
+  lint_violations:
+    - lint: archivist_no_relative_time
+      count: 1

@@ -9,6 +9,7 @@ import (
 	"github.com/liliang-cn/agent-go/v2/cmd/agentgo-cli/acp"
 	"github.com/liliang-cn/agent-go/v2/cmd/agentgo-cli/agent"
 	cachecmd "github.com/liliang-cn/agent-go/v2/cmd/agentgo-cli/cache"
+	evalcmd "github.com/liliang-cn/agent-go/v2/cmd/agentgo-cli/eval"
 	"github.com/liliang-cn/agent-go/v2/cmd/agentgo-cli/mcp"
 	"github.com/liliang-cn/agent-go/v2/cmd/agentgo-cli/memory"
 	"github.com/liliang-cn/agent-go/v2/cmd/agentgo-cli/ptc"
@@ -142,6 +143,9 @@ func init() {
 
 	// Add Cache command
 	RootCmd.AddCommand(cachecmd.Cmd)
+
+	// Add Eval command
+	RootCmd.AddCommand(evalcmd.Cmd)
 
 	RootCmd.AddCommand(llmCmd)
 	RootCmd.AddCommand(embeddingCmd)

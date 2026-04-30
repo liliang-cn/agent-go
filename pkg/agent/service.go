@@ -106,6 +106,12 @@ type Service struct {
 	// Execution history storage
 	historyStore *HistoryStore
 
+	// outputLints is the registry of post-output lint rules consulted by the
+	// runtime before emitting a final completion event. Lazily initialized via
+	// OutputLints(); see pkg/agent/output_lint.go.
+	outputLintsMu sync.RWMutex
+	outputLints   *OutputLintRegistry
+
 	// Public access to underlying services
 	LLM     domain.Generator
 	MCP     *mcp.Service // Full access to MCP service (Chat, StartServers, etc.)
@@ -455,6 +461,44 @@ func (s *Service) ExecutePlan(ctx context.Context, plan *Plan) (*ExecutionResult
 	}
 
 	return result, nil
+}
+
+// OutputLints returns the post-output lint registry for this service. The
+// registry is lazily created on first access. Lints registered here are
+// consulted by the runtime before emitting a final completion event.
+func (s *Service) OutputLints() *OutputLintRegistry {
+	if s == nil {
+		return nil
+	}
+	s.outputLintsMu.RLock()
+	reg := s.outputLints
+	s.outputLintsMu.RUnlock()
+	if reg != nil {
+		return reg
+	}
+	s.outputLintsMu.Lock()
+	defer s.outputLintsMu.Unlock()
+	if s.outputLints == nil {
+		s.outputLints = NewOutputLintRegistry()
+	}
+	return s.outputLints
+}
+
+// RegisterOutputLint adds a lint to the service's registry. If agents is
+// empty the lint runs for every agent; otherwise it runs only for agents
+// whose name matches one of the provided values (case-insensitive).
+func (s *Service) RegisterOutputLint(lint OutputLint, agents ...string) {
+	if s == nil || lint == nil {
+		return
+	}
+	reg := s.OutputLints()
+	if len(agents) == 0 {
+		reg.RegisterGlobal(lint)
+		return
+	}
+	for _, name := range agents {
+		reg.RegisterForAgent(name, lint)
+	}
 }
 
 // RunStream executes a goal and returns a stream of events

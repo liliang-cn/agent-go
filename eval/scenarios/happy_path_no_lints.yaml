@@ -1,0 +1,14 @@
+name: happy_path_no_lints
+description: >
+  Sanity check: with zero lints registered, the model's first answer is
+  passed straight through to completion without any retries.
+agent: Responder
+register_lints: []
+input: "what is 2 + 2?"
+llm_replies:
+  - "2 + 2 = 4."
+expect:
+  status: completed
+  final_text_match: "4"
+  llm_calls: 1
+  lint_violations: []

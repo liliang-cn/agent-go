@@ -28,3 +28,6 @@ task_plan.md
 # Local logs
 .playwright-mcp/*.log
 tmp/air-agentgo-ui/build-errors.log
+
+# Eval harness output (keep eval/results/.gitkeep, ignore actual runs)
+eval/results/*.json

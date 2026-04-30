@@ -1,0 +1,17 @@
+name: live_responder_short_answer
+description: >
+  Sanity check for the live profile: ask the configured real LLM a
+  one-shot factual question and confirm it returns something non-empty
+  in under a few turns. Doesn't pin specific text — just shape and
+  termination.
+mode: live
+agent: Responder
+runs: 2
+
+input: "Reply with one short sentence: what is 2 plus 2?"
+
+expect:
+  status: completed
+  final_text_must_not_match: "re:^\\s*$"
+  max_lint_violations:
+    no_planning_only_finish: 1
