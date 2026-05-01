@@ -204,6 +204,14 @@ type RunConfig struct {
 	// DisablePTC forces this run through direct function calling even if the
 	// service has PTC enabled.
 	DisablePTC bool
+
+	// ResumeMessages, when non-empty, makes the runtime skip its normal
+	// initial-history assembly and instead use these messages as the
+	// task's starting point. Used by Tasks().Resume to rebuild a run
+	// from a TaskCheckpoint snapshot. The runtime treats the last
+	// message as already-delivered context and prompts the model for
+	// the next round.
+	ResumeMessages []domain.Message
 }
 
 // ErrorHandlerFunc handles errors during agent execution
@@ -295,6 +303,19 @@ func WithSessionID(sessionID string) RunOption {
 // WithTaskID sets a specific task ID for the run.
 func WithTaskID(taskID string) RunOption {
 	return func(c *RunConfig) { c.TaskID = taskID }
+}
+
+// WithResumeMessages seeds the runtime with a pre-assembled message
+// history (typically restored from a TaskCheckpoint). The runtime skips
+// its normal context-prep step and starts the loop with these messages.
+func WithResumeMessages(msgs []domain.Message) RunOption {
+	return func(c *RunConfig) {
+		if len(msgs) == 0 {
+			return
+		}
+		c.ResumeMessages = make([]domain.Message, len(msgs))
+		copy(c.ResumeMessages, msgs)
+	}
 }
 
 func WithParentTaskID(parentTaskID string) RunOption {

@@ -50,6 +50,7 @@ type TeamManager struct {
 	builtInDispatchOverride       builtInRuntimeDispatchFunc
 	builtInStreamDispatchOverride builtInRuntimeStreamDispatchFunc
 	disableMemory                 bool
+	checkpointWriter              *checkpointWriter
 }
 
 type SharedTaskStatus string
@@ -205,6 +206,7 @@ func NewTeamManager(s *Store) *TeamManager {
 		agentMailboxes:  make(map[string]*agentMailbox),
 		builtInRuntimes: make(map[string]*builtInAgentRuntime),
 	}
+	manager.checkpointWriter = newCheckpointWriter(s)
 	manager.restoreSharedTasks()
 	return manager
 }
@@ -909,6 +911,7 @@ func (m *TeamManager) buildServiceForModel(model *AgentModel) (*Service, error) 
 		registerOperatorTools(newSvc)
 	}
 	applyBuiltInOutputLints(newSvc, model)
+	newSvc.SetCheckpointSink(m)
 
 	if label := configuredModelLabel(model); label != "" {
 		newSvc.agent.SetModel(label)

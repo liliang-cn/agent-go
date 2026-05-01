@@ -133,17 +133,29 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 	prepared := r.svc.prepareConversationContext(prepCtx, goal, r.session, prepareConversationOptions{includeIntent: true})
 	r.emitCheckpoint("context_prepared", prepStart, time.Now(), time.Since(prepStart))
 
-	// 2. Build initial messages using the same layered assembly strategy as the non-streaming path.
+	// 2. Build initial messages. Resume path (cfg.ResumeMessages) bypasses
+	// normal layered assembly and starts from the snapshot directly so the
+	// model picks up where the previous run left off.
 	const maxRounds = 20
-	state := newQueryLoopState(goal, prepared.messages, prepared.intent, maxRounds)
+	resuming := r.cfg != nil && len(r.cfg.ResumeMessages) > 0
+	initialMessages := prepared.messages
+	if resuming {
+		initialMessages = make([]domain.Message, len(r.cfg.ResumeMessages))
+		copy(initialMessages, r.cfg.ResumeMessages)
+	}
+	state := newQueryLoopState(goal, initialMessages, prepared.intent, maxRounds)
 	taskID := currentTaskID(r.session)
 	state.TaskID = taskID
 	state.setStage(TurnStagePreparingContext, "starting turn setup", 0)
 	r.emitLoopState(state)
 
 	messages := state.Messages
-	// Ensure the current user message is in the session before starting
-	r.session.AddMessage(withTaskID(domain.Message{Role: "user", Content: goal}, taskID))
+	// On a fresh run, record the user's goal in the session. On resume
+	// the messages already include it (or a follow-up was appended by
+	// the caller), so don't double-add.
+	if !resuming {
+		r.session.AddMessage(withTaskID(domain.Message{Role: "user", Content: goal}, taskID))
+	}
 	for round := 0; round < maxRounds; round++ {
 		// Check cancellation
 		if ctx.Err() != nil {
@@ -448,6 +460,37 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 	}
 }
 
+// persistTerminalCheckpoint writes a snapshot at the moment the runtime
+// decides a task is done (completeRun) or blocked (blockRun). This
+// guarantees every task that produced any output leaves at least one
+// checkpoint behind, so `task replay` can re-run even short happy-path
+// tasks. Errors are logged at debug level only — checkpoint write must
+// never block the terminal event.
+func (r *Runtime) persistTerminalCheckpoint(taskID string, reason CheckpointReason, finalText string, messages []domain.Message) {
+	if r == nil || r.svc == nil {
+		return
+	}
+	sink := r.svc.CheckpointSink()
+	if sink == nil {
+		return
+	}
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return
+	}
+	agentName := ""
+	if r.currentAgent != nil {
+		agentName = r.currentAgent.Name()
+	}
+	sessionID := ""
+	if r.session != nil {
+		sessionID = r.session.GetID()
+	}
+	if err := sink.WriteCheckpoint(taskID, reason, r.currentRound, sessionID, agentName, finalText, string(reason), messages); err != nil {
+		r.svc.logger.Debug("failed to write terminal task checkpoint", slog.String("task_id", taskID), slog.String("error", err.Error()))
+	}
+}
+
 // executeToolOrHandoff executes a tool call and handles agent switching
 func (r *Runtime) executeToolOrHandoff(ctx context.Context, tc domain.ToolCall) (interface{}, error, bool) {
 	ctx = withEventSink(ctx, r.forwardSubAgentEvent)
@@ -548,6 +591,12 @@ func (r *Runtime) persistMessages(messages []domain.Message) {
 }
 
 func (r *Runtime) completeRun(goal, content string, messages []domain.Message, persistHistory bool) {
+	// Final-state checkpoint: capture the message history immediately before
+	// the terminal Complete event is emitted. This means a 1-round task
+	// still produces a snapshot, and `task replay` can re-run from "the
+	// state right before the agent decided it was done".
+	r.persistTerminalCheckpoint(currentTaskID(r.session), CheckpointReasonTaskComplete, content, messages)
+
 	r.emitTurnState(TurnStageCompleted, "run completed", 0, 0, nil)
 	r.eventChan <- &Event{
 		ID:        uuid.New().String(),
@@ -577,6 +626,8 @@ func (r *Runtime) completeRun(goal, content string, messages []domain.Message, p
 }
 
 func (r *Runtime) blockRun(goal, blocker string, messages []domain.Message, persistHistory bool) {
+	r.persistTerminalCheckpoint(currentTaskID(r.session), CheckpointReasonTaskBlocked, blocker, messages)
+
 	r.emitTurnState(TurnStageCompleted, "run blocked", 0, 0, nil)
 	r.eventChan <- &Event{
 		ID:        uuid.New().String(),

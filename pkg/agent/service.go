@@ -112,6 +112,13 @@ type Service struct {
 	outputLintsMu sync.RWMutex
 	outputLints   *OutputLintRegistry
 
+	// checkpointSink, when non-nil, is called by the runtime at every
+	// round boundary so the message history can be persisted for
+	// Tasks().Resume. TeamManager.buildServiceForModel wires this up;
+	// services built directly via agent.New(...).Build() leave it nil
+	// and skip persistence.
+	checkpointSink CheckpointSink
+
 	// Public access to underlying services
 	LLM     domain.Generator
 	MCP     *mcp.Service // Full access to MCP service (Chat, StartServers, etc.)

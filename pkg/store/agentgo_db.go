@@ -240,6 +240,57 @@ func (s *AgentGoDB) initSchema() error {
 		return fmt.Errorf("failed to create agent_plans table: %w", err)
 	}
 
+	// Task plans table stores lightweight work plans. Items are JSON so the
+	// framework can evolve plan-item fields without repeated schema churn.
+	_, err = s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS task_plans (
+			id TEXT PRIMARY KEY,
+			session_id TEXT,
+			parent_task_id TEXT,
+			goal TEXT NOT NULL,
+			items TEXT NOT NULL,
+			created_at DATETIME NOT NULL,
+			updated_at DATETIME NOT NULL
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create task_plans table: %w", err)
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_task_plans_session_id ON task_plans(session_id)`); err != nil {
+		return fmt.Errorf("failed to create task_plans session index: %w", err)
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_task_plans_parent_task_id ON task_plans(parent_task_id)`); err != nil {
+		return fmt.Errorf("failed to create task_plans parent index: %w", err)
+	}
+
+	// Task checkpoints table stores periodic snapshots of an in-flight
+	// task so a crashed/cancelled run can be resumed from the last
+	// successful state instead of starting over. Each checkpoint captures
+	// the task's message history at a deterministic boundary (round end,
+	// after a successful tool call, after a terminal sentinel). Snapshots
+	// are kept lightweight: messages are JSON-serialized; older
+	// checkpoints for the same task are pruned by the writer.
+	_, err = s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS task_checkpoints (
+			id TEXT PRIMARY KEY,
+			task_id TEXT NOT NULL,
+			seq INTEGER NOT NULL,
+			round INTEGER NOT NULL,
+			after_tool TEXT,
+			session_id TEXT,
+			agent_name TEXT,
+			messages TEXT NOT NULL,
+			final_text TEXT,
+			created_at DATETIME NOT NULL
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create task_checkpoints table: %w", err)
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_task_checkpoints_task_seq ON task_checkpoints(task_id, seq)`); err != nil {
+		return fmt.Errorf("failed to create task_checkpoints index: %w", err)
+	}
+
 	// Agent sessions table
 	_, err = s.db.Exec(`
 		CREATE TABLE IF NOT EXISTS agent_sessions (
@@ -570,6 +621,104 @@ func (s *AgentGoDB) SavePlan(plan *Plan) error {
 
 	_, err := s.db.Exec(query, plan.ID, plan.Goal, plan.SessionID, plan.Steps, plan.Status, plan.Reasoning, plan.Error, plan.CreatedAt, plan.UpdatedAt)
 	return err
+}
+
+// TaskPlan is a lightweight work plan persisted alongside agent plans.
+// Items is opaque JSON so the framework can evolve plan-item shape
+// without churning the schema.
+//
+// Reconstructed from callsites in pkg/agent/store.go after the original
+// in-memory edits were lost during a stash/drop accident; signatures
+// match what the wrappers expect. Verify against any planned upgrades
+// before relying on field set being complete.
+type TaskPlan struct {
+	ID           string    `json:"id"`
+	SessionID    string    `json:"session_id"`
+	ParentTaskID string    `json:"parent_task_id"`
+	Goal         string    `json:"goal"`
+	Items        []byte    `json:"items"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// SaveTaskPlan inserts or replaces a task plan row.
+func (s *AgentGoDB) SaveTaskPlan(plan *TaskPlan) error {
+	if plan == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	query := `
+		INSERT INTO task_plans (id, session_id, parent_task_id, goal, items, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			session_id = excluded.session_id,
+			parent_task_id = excluded.parent_task_id,
+			goal = excluded.goal,
+			items = excluded.items,
+			updated_at = excluded.updated_at
+	`
+	_, err := s.db.Exec(query, plan.ID, plan.SessionID, plan.ParentTaskID, plan.Goal, plan.Items, plan.CreatedAt, plan.UpdatedAt)
+	return err
+}
+
+// GetTaskPlan loads one task plan by ID.
+func (s *AgentGoDB) GetTaskPlan(id string) (*TaskPlan, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var plan TaskPlan
+	err := s.db.QueryRow(`
+		SELECT id, session_id, parent_task_id, goal, items, created_at, updated_at
+		FROM task_plans WHERE id = ?
+	`, id).Scan(&plan.ID, &plan.SessionID, &plan.ParentTaskID, &plan.Goal, &plan.Items, &plan.CreatedAt, &plan.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &plan, nil
+}
+
+// ListTaskPlans returns task plans, optionally filtered by session ID.
+// Newest first.
+func (s *AgentGoDB) ListTaskPlans(sessionID string, limit int) ([]*TaskPlan, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if limit <= 0 {
+		limit = 100
+	}
+	var rows *sql.Rows
+	var err error
+	if sessionID != "" {
+		rows, err = s.db.Query(`
+			SELECT id, session_id, parent_task_id, goal, items, created_at, updated_at
+			FROM task_plans WHERE session_id = ?
+			ORDER BY created_at DESC
+			LIMIT ?
+		`, sessionID, limit)
+	} else {
+		rows, err = s.db.Query(`
+			SELECT id, session_id, parent_task_id, goal, items, created_at, updated_at
+			FROM task_plans
+			ORDER BY created_at DESC
+			LIMIT ?
+		`, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []*TaskPlan
+	for rows.Next() {
+		plan := &TaskPlan{}
+		if err := rows.Scan(&plan.ID, &plan.SessionID, &plan.ParentTaskID, &plan.Goal, &plan.Items, &plan.CreatedAt, &plan.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, plan)
+	}
+	return out, rows.Err()
 }
 
 // GetPlan retrieves a plan by ID

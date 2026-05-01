@@ -27,12 +27,14 @@ var tasksCmd = &cobra.Command{
 }
 
 var (
-	textOutput    bool
-	jsonOutput    bool
-	schedulerOnly bool
-	inspectFrames bool
-	inspectEvents bool
-	inspectJSON   bool
+	textOutput             bool
+	jsonOutput             bool
+	schedulerOnly          bool
+	inspectFrames          bool
+	inspectEvents          bool
+	inspectJSON            bool
+	taskReplayCheckpointID string
+	taskReplayFollowUp     string
 )
 
 var taskListCmd = &cobra.Command{
@@ -64,6 +66,8 @@ func init() {
 	tasksCmd.AddCommand(taskTraceCmd)
 	tasksCmd.AddCommand(taskYieldCmd)
 	tasksCmd.AddCommand(taskResumeCmd)
+	tasksCmd.AddCommand(taskReplayCmd)
+	tasksCmd.AddCommand(taskCheckpointsCmd)
 	tasksCmd.AddCommand(taskCancelCmd)
 	taskListCmd.Flags().BoolVar(&textOutput, "text", false, "Output as plain text")
 	taskListCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output as JSON")
@@ -71,6 +75,8 @@ func init() {
 	taskInspectCmd.Flags().BoolVar(&inspectFrames, "frames", false, "Include task LLM/tool frames")
 	taskInspectCmd.Flags().BoolVar(&inspectEvents, "events", false, "Include task events")
 	taskInspectCmd.Flags().BoolVar(&inspectJSON, "json", false, "Output as JSON")
+	taskReplayCmd.Flags().StringVar(&taskReplayCheckpointID, "checkpoint", "", "Replay from a specific checkpoint ID (default: latest)")
+	taskReplayCmd.Flags().StringVar(&taskReplayFollowUp, "follow-up", "", "Optional user instruction appended to the resumed history")
 }
 
 var taskGetCmd = &cobra.Command{
@@ -180,6 +186,72 @@ var taskResumeCmd = &cobra.Command{
 			return err
 		}
 		fmt.Printf("Task %s resumed (%s).\n", task.ID, task.Status)
+		return nil
+	},
+}
+
+var taskReplayCmd = &cobra.Command{
+	Use:   "replay [task-id]",
+	Short: "Re-run a task from its latest TaskCheckpoint (crash/cancel recovery)",
+	Long: `Replay (resume from checkpoint) loads the latest snapshot of a task's
+message history and re-runs the agent from that point. Distinct from
+'task resume', which resumes a yielded task with new user input.
+
+Use --checkpoint to pick a specific checkpoint by ID.
+Use --follow-up to append a user instruction to the resumed history.`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		manager, err := taskManager()
+		if err != nil {
+			return err
+		}
+		taskID := args[0]
+		opts := agentpkg.CheckpointResumeOptions{
+			CheckpointID: taskReplayCheckpointID,
+			FollowUp:     taskReplayFollowUp,
+		}
+		task, err := manager.Tasks().ResumeFromCheckpoint(cmd.Context(), taskID, opts)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Task %s replaying from checkpoint... ", task.ID)
+		// Block until the resumed run terminates so the CLI process
+		// doesn't exit before the goroutine produces output.
+		final, err := manager.Tasks().Await(cmd.Context(), taskID)
+		if err != nil {
+			fmt.Println()
+			return err
+		}
+		fmt.Printf("[%s]\n", final.Status)
+		if text := strings.TrimSpace(final.Output); text != "" {
+			fmt.Println(text)
+		}
+		return nil
+	},
+}
+
+var taskCheckpointsCmd = &cobra.Command{
+	Use:   "checkpoints [task-id]",
+	Short: "List checkpoints for a task (most recent first)",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		manager, err := taskManager()
+		if err != nil {
+			return err
+		}
+		cps, err := manager.ListCheckpoints(args[0], 0)
+		if err != nil {
+			return err
+		}
+		if len(cps) == 0 {
+			fmt.Println("(no checkpoints)")
+			return nil
+		}
+		fmt.Printf("%-36s  %-4s  %-7s  %-16s  %s\n", "CHECKPOINT_ID", "SEQ", "ROUND", "AGENT", "CREATED")
+		for _, cp := range cps {
+			fmt.Printf("%-36s  %-4d  %-7d  %-16s  %s\n",
+				cp.ID, cp.Seq, cp.Round, cp.AgentName, cp.CreatedAt.Format("2006-01-02 15:04:05"))
+		}
 		return nil
 	},
 }
