@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	storepkg "github.com/liliang-cn/agent-go/v2/pkg/store"
@@ -43,6 +44,7 @@ func (nt *NullTime) Scan(value interface{}) error {
 type Storage struct {
 	db        *sql.DB
 	canonical *storepkg.AgentGoDB
+	mu        sync.Mutex
 }
 
 // NewStorage creates a new storage instance
@@ -56,6 +58,20 @@ func NewStorage(dbPath string) (*Storage, error) {
 	db, err := sql.Open("sqlite", dbPath) // modernc.org/sqlite uses "sqlite" not "sqlite3"
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
+	}
+	db.SetMaxOpenConns(4)
+	db.SetMaxIdleConns(1)
+	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("failed to set busy timeout: %w", err)
+	}
+	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("failed to enable WAL mode: %w", err)
+	}
+	if _, err := db.Exec("PRAGMA synchronous=NORMAL"); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("failed to set synchronous mode: %w", err)
 	}
 
 	storage := &Storage{db: db}
@@ -173,6 +189,9 @@ func (s *Storage) migrate() error {
 
 // CreateTask inserts a new task
 func (s *Storage) CreateTask(task *Task) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	parametersJSON, err := json.Marshal(task.Parameters)
 	if err != nil {
 		return fmt.Errorf("failed to marshal parameters: %w", err)
@@ -368,14 +387,18 @@ func (s *Storage) UpdateTask(task *Task) error {
 
 // DeleteTask deletes a task and its execution history
 func (s *Storage) DeleteTask(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	// Start transaction
 	tx, err := s.db.Begin()
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
+	committed := false
 	defer func() {
-		if err := tx.Rollback(); err != nil {
-			fmt.Printf("Warning: failed to rollback transaction: %v\n", err)
+		if !committed {
+			_ = tx.Rollback()
 		}
 	}()
 
@@ -404,6 +427,7 @@ func (s *Storage) DeleteTask(id string) error {
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
+	committed = true
 
 	return nil
 }
