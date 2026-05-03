@@ -4,812 +4,194 @@
 
 > “AgentGo? It's useless and it consumes a lot of tokens.” -- some guy on the internet
 
-[中文文档](README_zh-CN.md) · [API Reference](references/API.md) · [Architecture](references/ARCHITECTURE.md)
+AgentGo is a Go framework for building agent systems that can run locally, use tools, keep memory, and coordinate work through teams.
 
-AgentGo is a Go framework for building Agent / Team based systems. Team, Agent, Task, Memory, MCP/tools, Skills, and PTC form the core runtime; CLI and UI are optional adapters. RAG is an optional knowledge-retrieval plugin for external documents when embeddings are configured.
+It is centered on `pkg/agent`. The CLI and UI are adapters around the framework, not the core.
 
-You do not need an embedding model for the default experience. Basic agent runtime, MCP, skills, file-backed memory, tasks, and PTC work without vector search. Configure embeddings only when you explicitly want RAG, semantic vector recall, or vector-heavy retrieval.
+## Install
 
 ```bash
 go get github.com/liliang-cn/agent-go/v2
 ```
 
----
+## Core Ideas
 
-## What AgentGo does
+- **Agent**: a named runtime with instructions, tools, memory, and sessions.
+- **Team**: a persistent group of agents with an orchestrator and specialists.
+- **Task**: a first-class unit of work with status, events, frames, and output.
+- **Task plan**: a lightweight work plan whose items can be submitted as real tasks.
+- **Memory**: durable local context, separate from cache and RAG.
+- **MCP**: tool integration layer for filesystem, web, and external capabilities.
+- **Skills**: reusable Markdown/YAML workflows.
+- **PTC**: optional JavaScript tool orchestration in a Goja sandbox.
+- **RAG**: optional document retrieval when embeddings are configured.
 
-| Capability    | Details                                                                                                    |
-| ------------- | ---------------------------------------------------------------------------------------------------------- |
-| **Agent**     | Multi-turn reasoning loop with planning, **Auto-continuation**, and **Asynchronous Context Forking**       |
-| **Memory**    | **Cognitive Layer**: Evolution (Fact → Observation) + **LLM-as-a-Judge Retrieval** + **Subconscious Worker** |
-| **Tools**     | MCP (Model Context Protocol), Skills (YAML+Markdown), custom inline tools                                  |
-| **PTC**       | LLM writes JavaScript; tools run in a Goja sandbox — cuts round-trips                                      |
-| **Streaming** | Token-by-token channel; **Low-latency Streaming Tool Execution** and **Tombstone** recovery                |
-| **Providers** | OpenAI, Anthropic, Azure, DeepSeek, Ollama — switchable at runtime                                         |
-| **Teams**     | Persistent orchestrators + specialists, **Actor-model subagent IPC**, async task queues, cross-process tracking |
-| **Operator**  | Built-in execution agent with filesystem/web tools plus PTY and coding-agent session tooling               |
-
----
-
-## Conceptual Model
-
-AgentGo is easiest to understand as a small runtime core plus optional knowledge plugins:
-
-### 1. LLM
-
-LLM is the execution core. Runtime capabilities are built around it.
-
-- It provides the base generation interface used by agents, PTC, tool selection, and optional RAG answers.
-- Providers are runtime-selectable through the global pool.
-- Standalone agents, orchestrators, specialists, and built-in agents all eventually run on the same LLM abstraction.
-
-Think of it as: `prompt + tools + policy -> model call`.
-
-### 2. Task
-
-Task is the first-class execution unit.
-
-- Team is the process, Agent is the thread, and Task is the function invocation / activation frame.
-- A task can span multiple LLM/tool frames while remaining one logical call.
-- Task state is persisted with frames, events, continuation, awaiting state, and queue class (`task` or `microtask`).
-- Tasks follow a Finish-Or-Block contract: they should end as `completed`, `blocked`, `failed`, or `yielded`, not as vague “next steps” or “would do” text.
-
-Think of it as: `input -> frames/events -> output`.
-
-Finish-Or-Block is part of the default runtime prompt and built-in agent policy. Agents are expected to execute until verified completion, call `task_blocked` with a concrete blocker when execution cannot continue, fail with traceable errors, or yield when external input is genuinely required.
-
-### 3. Memory
-
-Memory is the durable internal context layer.
-
-- It stores facts, preferences, observations, and other reusable knowledge learned from interaction.
-- It is separate from cache and separate from RAG documents.
-- File memory works even when no embedder is available.
-
-Think of it as: `what the system has learned over time`.
-
-### 4. MCP
-
-MCP is the tool transport layer.
-
-- It standardizes tool access, whether the tool is built-in or external.
-- AgentGo always includes built-in filesystem and websearch servers.
-- MCP is how agents interact with files, web pages, and other process-like capabilities without hardcoding every operation into the model prompt.
-
-Think of it as: `how agents touch the outside world`.
-
-### 5. Skills
-
-Skills are reusable workflows expressed as Markdown/YAML.
-
-- They are higher-level than raw tools.
-- They encode domain-specific procedures, instructions, and reusable operator playbooks.
-- They can be user-invocable or model-invocable depending on configuration.
-
-Think of them as: `portable expert workflows`.
-
-### 6. PTC
-
-PTC (Programmatic Tool Calling) is the structured orchestration layer.
-
-- Instead of emitting one tool call at a time, the model writes JavaScript to coordinate tools.
-- This reduces round-trips for multi-step logic and data shaping.
-- It is best for tool-heavy workflows where the model needs procedural control.
-
-Think of it as: `LLM-authored tool orchestration code`.
-
-### 7. Agent
-
-An Agent is the basic runtime unit.
-
-- It has instructions, tool access, optional RAG/memory/PTC/skills, and a session-aware execution loop.
-- Agents can be built-in or user-defined.
-- Built-in standalone agents include `Dispatcher`, `Responder`, `Operator`, and `Evaluator`.
-
-Key standalone patterns:
-
-- use `Responder` for general-purpose direct work
-- use `Operator` for execution, validation, PTY sessions, and coding-agent invocation
-- use `Evaluator` for product/business framing
-- use `Dispatcher` for intake and orchestration
-
-### 8. Team
-
-A Team is the persistent team layer on top of agents.
-
-- A team has one `orchestrator` and multiple `specialists`.
-- The orchestrator is still an agent, but with team-oriented orchestration rules.
-- Orchestrators prefer async team work for implementation-heavy tasks.
-- Team task state is persisted, so new CLI processes can inspect or continue work.
-
-Think of it as: `persistent multi-agent coordination with queueing and status`.
-
-
-### Optional: RAG
-
-RAG is not part of the default runtime path. It is an optional knowledge-retrieval plugin for external/project documents.
-
-- It ingests documents, chunks them, embeds them, and stores them in SQLite/vector storage.
-- It requires embeddings for the useful vector retrieval path.
-- Use it for external documents and project knowledge, not for durable internal agent memory.
-
-Think of it as: `documents + embeddings -> retrieval context`.
-
-### Agent OS Analogy
-
-AgentGo can be mapped to modern operating system concepts:
-- **Team = Process**: A resource-isolated boundary with its own shared memory and task queue.
-- **Agent = Thread**: The execution entity with a specific role and prompt, sharing the team's resources.
-- **Task = Function call**: A first-class invocation frame with input, output, frames, events, and continuation state.
-- **SubAgent = Coroutine**: Lightweight context forks dynamically spawned by the Agent for asynchronous, parallel tasks.
-- **Memory = Virtual Memory**: LLM-based intelligent retrieval acts as `Page In`, while auto-compaction acts as `Page Out`.
-- **Subconscious = Daemon**: A background worker pool that silently extracts and consolidates memories after a session ends.
-
-### API Shape
-
-At a high level the APIs map to those concepts like this:
-
-- **LLM / Agent runtime**
-  - `Ask`, `Chat`, `Run`, `RunStream`
-- **Memory**
-  - `WithMemory`, `memory_save`, `memory_recall`
-- **MCP**
-  - `WithMCP`, built-in filesystem/websearch tools, external MCP servers
-- **Skills**
-  - `WithSkills`, skill registration and invocation
-- **PTC**
-  - `WithPTC`, `execute_javascript`, `callTool()`
-- **Task**
-  - `manager.Tasks().Get/List/Await/Yield/Resume/Cancel`, `agentgo task trace`, `agentgo task inspect`
-- **Team**
-  - `CreateTeam`, `JoinTeam`, `DispatchTask`, `SubmitTeamTask`, `GetTask`
-- **Optional RAG**
-  - `WithRAG`, `rag_query`, document ingest/query flows
-
-The practical layering is:
-
-`LLM -> tools/PTC -> Agent -> Team`
-
-with `Memory`, `MCP`, and `Skills` as core attachable capabilities; `RAG` is an optional external-knowledge plugin when embeddings are configured.
-
----
-
-## Quick Start
-
-### Simple Q&A
+## Minimal Agent
 
 ```go
-svc, _ := agent.New("assistant").
-    WithPrompt("You are a helpful assistant.").
-    Build()
-defer svc.Close()
+package main
 
-reply, _ := svc.Ask(ctx, "What is Go?")
-fmt.Println(reply)
-```
+import (
+	"context"
+	"fmt"
 
-### With RAG (document knowledge base)
+	"github.com/liliang-cn/agent-go/v2/pkg/agent"
+)
 
-```go
-svc, _ := agent.New("assistant").
-    WithPrompt("Answer questions based on the provided documents.").
-    WithRAG().
-    WithDBPath("~/.agentgo/data/agent.db").
-    Build()
-defer svc.Close()
+func main() {
+	ctx := context.Background()
 
-// Ingest once
-svc.Run(ctx, "Ingest ./docs/")
+	svc, err := agent.New("assistant").
+		WithPrompt("You are a concise Go assistant.").
+		Build()
+	if err != nil {
+		panic(err)
+	}
+	defer svc.Close()
 
-// Query
-reply, _ := svc.Ask(ctx, "What does the spec say about error handling?")
-```
-
-### Multi-turn chat with cognitive memory
-
-```go
-svc, _ := agent.New("assistant").
-    WithMemory().
-    Build()
-defer svc.Close()
-
-svc.Chat(ctx, "My name is Alice and I work on the Go team.")
-reply, _ := svc.Chat(ctx, "What team am I on?")
-// → "You're on the Go team, Alice." (Recall via hybrid vector/index search)
-```
-
-### CLI Interface
-
-Run the interactive chat with memory visibility:
-
-```bash
-# Start interactive chat showing retrieved memories and reasoning
-go run ./cmd/agentgo-cli chat --show-memory
-
-# Enable JavaScript sandbox for complex logic
-go run ./cmd/agentgo-cli chat --with-ptc
-```
-
-Run team workflows from the CLI:
-
-```bash
-# Create a standalone agent
-agentgo agent add Scout --description "Independent field agent" \
-  --instructions "Work independently, answer directly, and use tools when needed."
-
-# Inspect or update that agent
-agentgo agent show Scout
-agentgo agent update Scout --model openai/gpt-5-mini
-
-# Run a stored agent directly
-agentgo agent run --agent Scout "Summarize the current repo structure"
-
-# Built-in standalone agents are always available
-agentgo agent show Dispatcher
-agentgo agent show Operator
-
-# Create a team (a default orchestrator is created automatically)
-agentgo team add "Docs Team" --description "Documentation and release notes"
-
-# Join the standalone agent to a team
-agentgo agent join Scout --team "Docs Team" --role specialist
-
-# Run a task through the default orchestrator and a specialist
-agentgo team go "@Orchestrator @Scout summarize the UI/backend relationship and write workspace/ui_backend_overview.md"
-
-# Inspect runtime task state; follows while tasks are still running or queued
-agentgo team status "Docs Team"
-
-# Run direct execution work through the built-in Operator
-agentgo agent run --agent Operator "Write workspace/operator_probe.txt with the text: OPERATOR_OK"
-
-# Leave the team again
-agentgo agent leave Scout
-
-# Delete the team when you're done
-agentgo team delete "Docs Team"
-```
-
----
-
-## Cognitive Memory (Hindsight & PageIndex)
-
-AgentGo implements an evolving memory layer inspired by **Hindsight** (Cognitive Hierarchy) and **PageIndex** (Structural Navigation).
-
-| Concept                | Description                                                                                                     |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------- |
-| **Facts**              | Raw atomic data points extracted from conversations (e.g., "User likes Go").                                    |
-| **Observations**       | LLM-consolidated insights synthesized from multiple facts via **Reflect()**.                                    |
-| **Hierarchical Index** | A `_index/` directory with Markdown summaries for lightning-fast reasoning navigation.                          |
-| **Hybrid Search**      | Parallel **Vector Search** (similarity) + **Index Navigator** (reasoning) fused via RRF.                        |
-| **Traceability**       | Every observation tracks its **EvidenceIDs**, providing a clear audit trail of why the agent "knows" something. |
-
-### Memory Evolution
-
-1. **Extraction**: Agent identifies a fact during chat.
-2. **Indexing**: Fact is stored in a Markdown file with YAML metadata (Confidence, SourceType).
-3. **Reflection**: Periodically (e.g., every 5 facts), a background worker triggers `Reflect()` to merge facts into high-level Observations.
-4. **Superseded**: When information changes, old memories are marked as `stale` and linked to new ones via `SupersededBy`.
-
----
-
-## Builder
-
-```go
-// Implement your own module
-type Module interface {
-    ID() string
-    RegisterTools(registry *ToolRegistry) error
+	reply, err := svc.Ask(ctx, "What is AgentGo?")
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(reply)
 }
-
-svc, _ := agent.New("agent").
-    WithModule(NewMyCustomModule()).
-    Build()
 ```
 
----
-
-## Tool Registration With Runtime Metadata
-
-AgentGo tools can now declare execution semantics directly. This lets the runtime make better decisions about batching, cancellation, permissions, and streaming state updates.
+## Agent With Memory
 
 ```go
-svc, _ := agent.New("assistant").Build()
+svc, _ := agent.New("assistant").
+	WithMemory().
+	Build()
 defer svc.Close()
 
-svc.Register(
-    agent.BuildTool("workspace_summary").
-        Description("Return a compact summary of the active workspace.").
-        ReadOnly(true).
-        InterruptBehavior(agent.InterruptBehaviorCancel).
-        Handler(func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-            return map[string]any{
-                "workspace": "current project",
-                "mode":      "demo",
-            }, nil
-        }).
-        Build(),
-)
+svc.Chat(ctx, "My name is Alice and I prefer short answers.")
+result, _ := svc.Chat(ctx, "What do you know about me?")
 
-svc.AddToolWithMetadata(
-    "write_release_note",
-    "Write a release note file.",
-    map[string]interface{}{
-        "type": "object",
-        "properties": map[string]interface{}{
-            "path": map[string]interface{}{"type": "string"},
-            "body": map[string]interface{}{"type": "string"},
-        },
-        "required": []string{"path", "body"},
-    },
-    func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-        return "ok", nil
-    },
-    agent.ToolMetadata{
-        Destructive:       true,
-        InterruptBehavior: agent.InterruptBehaviorBlock,
-    },
-)
+fmt.Println(result.Text())
 ```
 
----
-
-## Agent APIs
-
-### Runtime Invocation
-
-| Method                    | Returns                     | Session         | Use case              |
-| ------------------------- | --------------------------- | --------------- | --------------------- |
-| `Ask(ctx, prompt)`        | `(string, error)`           | no              | one-shot Q&A          |
-| `Chat(ctx, prompt)`       | `(*ExecutionResult, error)` | yes (auto UUID) | conversational        |
-| `Run(ctx, goal, ...opts)` | `(*ExecutionResult, error)` | optional        | full agent loop       |
-| `Stream(ctx, prompt)`     | `<-chan string`             | no              | live token output     |
-| `ChatStream(ctx, prompt)` | `<-chan string`             | yes             | conversational + live |
-| `RunStream(ctx, goal)`    | `(<-chan *Event, error)`    | optional        | full event visibility |
+## Team Manager
 
 ```go
-result, _ := svc.Run(ctx, "goal",
-    agent.WithMaxTurns(20),
-    agent.WithTemperature(0.7),
-    agent.WithSessionID("my-session"),
-    agent.WithStoreHistory(true),
-)
-
-result.Text()        // final answer as string
-result.Err()         // non-nil if agent reported an error
-result.HasSources()  // true when RAG chunks were used
-```
-
-`RunStream()` now emits richer `state_update` events, including:
-
-- `turn_stage`
-- `loop_transition`
-- `transition_reason`
-- `tool_state`
-- `preferred_agent`
-- `requires_tools`
-- `transition`
-
-### Standalone Agent Management
-
-At the manager level, standalone agents are persistent named runtimes:
-
-- `CreateAgent`, `UpdateAgent`, `DeleteAgent`
-- `GetAgentByName`, `ListAgents`, `ListStandaloneAgents`
-- `GetAgentService`
-- `GetAgentStatus`, `ListAgentStatuses`
-
-Built-in standalone agents (`Dispatcher`, `Responder`, `Operator`, `Evaluator`) are seeded automatically and can be treated like normal named agents.
-
-### Built-in Agent Delegation APIs
-
-User-created standalone agents automatically receive a small built-in delegation surface:
-
-- `list_builtin_agents`
-- `delegate_builtin_agent`
-- `submit_builtin_agent_task`
-- `get_delegated_task_status`
-
-This is the primary way a custom agent can keep its own role while offloading execution to `Operator`, general work to `Responder`, or business clarification to `Evaluator`.
-
----
-
-## Programmatic Tool Calling (PTC)
-
-With `WithPTC()`, the LLM generates JavaScript instead of JSON tool calls. The code runs in a Goja sandbox where `callTool()` is available:
-
-```go
-svc, _ := agent.New("analyst").
-    WithPTC().
-    WithTool(teamDef, teamHandler, "data").
-    WithTool(expenseDef, expenseHandler, "data").
-    Build()
-
-// The LLM can now write:
-//   const team = callTool("get_team", { dept: "eng" });
-//   return team.members.map(m => ({
-//     name: m.name,
-//     spend: callTool("get_expenses", { id: m.id }).total
-//   }));
-```
-
-**When to use PTC:** multiple dependent tool calls in one shot, data transformation before it hits the context window, conditional tool logic.
-
----
-
-## Memory
-
-Memory and cache are different subsystems:
-
-| Subsystem  | Storage                                 | What for                                                           |
-| ---------- | --------------------------------------- | ------------------------------------------------------------------ |
-| **Memory** | Markdown/YAML files or SQLite + vectors | Durable facts, observations, preferences, and reasoning context    |
-| **Cache**  | In-memory or file-backed JSON entries   | Disposable acceleration artifacts for query/vector/LLM/chunk reuse |
-
-```go
-// Enable cognitive memory
-svc, _ := agent.New("agent").WithMemory().Build()
-
-// LongRun agents share the same memory automatically
-lr, _ := agent.NewLongRun(svc).
-    WithInterval(5 * time.Minute).
-    WithWorkDir("~/.agentgo/longrun").
-    Build()
-```
-
-For file-backed memory stores, AgentGo now exposes prompt-friendly entrypoints and session helpers:
-
-```go
-fileStore, _ := store.NewFileMemoryStore("./memory")
-
-_ = fileStore.WriteSessionMemory("session-123", "Current draft: keep the tone concise.")
-sessionNote, _ := fileStore.ReadSessionMemory("session-123")
-entrypoint, _ := fileStore.ReadEntrypoint() // reads MEMORY.md
-headers, _ := fileStore.SelectRelevantHeaders(context.Background(), "Go backend concise tone", 3)
-
-fmt.Println(sessionNote)
-fmt.Println(entrypoint)
-fmt.Println(headers)
-```
-
-Memory degrades gracefully:
-
-- no embedder -> file memory still works
-- file-backed memory uses Markdown + YAML frontmatter and PageIndex-style retrieval
-- file-backed memory now maintains `MEMORY.md`, `_session/*.md`, and header selection APIs
-- `remember:` prompts can be written directly to memory
-- ordinary dialogue can also be extracted into memory via `StoreIfWorthwhile`
-
-Cache is separate from memory:
-
-- use `agentgo cache status|put|get|delete|clear`
-- configure `cache.store_type = "memory"` or `cache.store_type = "file"`
-
----
-
-## Autonomous Agents (LongRun)
-
-LongRun runs an agent on a schedule with a persistent task queue:
-
-```go
-lr, _ := agent.NewLongRun(svc).
-    WithInterval(10 * time.Minute).
-    WithMaxActions(5).
-    Build()
-
-lr.AddTask(ctx, "Monitor RSS feeds and summarize new entries", nil)
-lr.Start(ctx)
-// ...
-lr.Stop()
-```
-
-Features: SQLite task queue, heartbeat file, cron-style scheduling, shared DB memory with the parent agent.
-
----
-
-## Multi-Agent Orchestration
-
-```go
-// Handoffs — specialist agents
-orchestrator.RegisterAgent(researchAgent)
-orchestrator.RegisterAgent(writerAgent)
-// The LLM routes to the right agent via transfer_to_* tool calls
-
-// SubAgents — scoped delegation
-coordinator := agent.NewSubAgentCoordinator()
-resultChan  := coordinator.RunAsync(ctx, subAgent)
-results     := coordinator.WaitAll(ctx)
-```
-
-### Agent Model
-
-AgentGo has three layers of agent concepts:
-
-- **Standalone agents**: long-lived named agents with their own role and tool budget
-- **Teams**: a persistent team with one `orchestrator` and multiple `specialists`
-- **Built-in agents**: system-provided standalone agents that are always available
-
-The default built-ins are:
-
-- `Dispatcher`: intake/orchestration for `agentgo chat`
-- `Responder`: general-purpose direct worker
-- `Operator`: execution/validation agent
-- `Evaluator`: product/business representative
-
-Inspect them directly:
-
-```bash
-agentgo agent show Dispatcher
-agentgo agent show Responder
-agentgo agent show Operator
-agentgo agent show Evaluator
-```
-
-### Delegation Model
-
-AgentGo now supports two delegation axes:
-
-- **Team delegation**
-  - `orchestrator -> specialists`
-  - supports synchronous dispatch and persisted async team tasks
-- **Built-in delegation**
-  - `custom agent -> Responder / Operator / Evaluator`
-  - useful when the custom agent should keep its own role but offload execution or business clarification
-
-Conceptually:
-
-- use **Responder** when you want a general-purpose built-in doer
-- use **Operator** when the task is about execution, validation, files, PTY-backed commands, or coding-agent invocation
-- use **Evaluator** when the task is about requirements, scope, tradeoffs, or acceptance criteria
-
-### Operator Concept
-
-`Operator` is the built-in execution layer.
-
-At a concept level, it provides two API families:
-
-- **PTY session APIs**
-  - start a command session
-  - send more input
-  - inspect output/status
-  - interrupt or stop the session
-- **Coding-agent APIs**
-  - start or inspect provider-aware sessions for `claude`, `gemini`, `codex`, and `opencode`
-  - run one-shot coding-agent calls without forcing the model to guess shell commands
-
-In practice, `Operator` is what `QA`, `PM`, or custom agents should delegate to when they need actual execution instead of just reasoning.
-
-Simple CLI examples:
-
-```bash
-agentgo agent run --agent Operator "Write workspace/operator_probe.txt with the text: OPERATOR_OK"
-agentgo agent run --agent Operator "Call codex and make it output exactly: RES_FROM_CODEX"
-```
-
-### Custom Agents + Built-ins
-
-User-created standalone agents automatically get a small built-in delegation API:
-
-- `list_builtin_agents`
-- `delegate_builtin_agent`
-- `submit_builtin_agent_task`
-- `get_delegated_task_status`
-
-This means a custom agent can keep its own role and capabilities, but still delegate:
-
-- execution to `Operator`
-- general work to `Responder`
-- product/business clarification to `Evaluator`
-
-## Team APIs
-
-AgentGo exposes a team-oriented manager API for standalone agents and team agents. A `orchestrator` is just an agent role inside a team.
-
-```go
-store, err := agent.NewStore(filepath.Join(cfg.DataDir(), "agent.db"))
-if err != nil {
-    panic(err)
-}
-
+store, _ := agent.NewStore("agentgo.db")
 manager := agent.NewTeamManager(store)
-if err := manager.SeedDefaultMembers(); err != nil {
-    panic(err)
-}
+_ = manager.SeedDefaultMembers()
 
-scout, err := manager.CreateAgent(ctx, &agent.AgentModel{
-    Name:         "Scout",
-    Kind:         agent.AgentKindAgent,
-    Description:  "Independent field agent",
-    Instructions: "Work independently and answer directly.",
+task, _ := manager.Tasks().Submit(ctx, agent.TaskSubmitOptions{
+	SessionID: "demo-session",
+	AgentName: "Operator",
+	Input:     "Check the current repository status.",
 })
-if err != nil {
-    panic(err)
-}
 
-docsTeam, err := manager.CreateTeam(ctx, &agent.Team{
-    Name:        "Docs Team",
-    Description: "Documentation and release notes",
-})
-if err != nil {
-    panic(err)
-}
-
-writer, err := manager.JoinTeam(ctx, scout.Name, docsTeam.ID, agent.AgentKindSpecialist)
-if err != nil {
-    panic(err)
-}
-
-result, err := manager.DispatchTask(ctx, writer.Name, "Write workspace/ui_backend_overview.md")
-if err != nil {
-    panic(err)
-}
-fmt.Println(result)
+done, _ := manager.Tasks().Await(ctx, task.ID)
+fmt.Println(done.Status)
+fmt.Println(done.Output)
 ```
 
-### Orchestrator Runtime Model
+## Task Plans
 
-- A custom team created via `CreateTeam()` or `agentgo team add` automatically gets a default orchestrator.
-- The orchestrator receives team roster and role summaries in its system prompt.
-- Orchestrators prefer async team work for implementation-heavy tasks.
-- Shared team tasks are persisted and can be inspected from new CLI processes.
-- Orchestrators do not use generic `delegate_to_subagent` by default.
-
-### Core Team-Manager APIs
-
-- `CreateAgent`, `UpdateAgent`, `DeleteAgent`, `GetAgentByName`, `ListAgents`, `ListStandaloneAgents`
-- `JoinTeam`, `LeaveTeam`, `GetAgentService`
-- `CreateTeam`, `ListTeams`, `GetTeamByName`
-- `AddTeamAgent`, `CreateTeamAgent`, `ListTeamAgents`, `GetTeamAgentByName`
-- `AddOrchestrator`, `AddSpecialist`, `ListOrchestrators`, `ListSpecialists` (role-specific helpers)
-- `DispatchTask`, `DispatchTaskStream`
-- `EnqueueSharedTask`, `ListSharedTasks`
-- `SubmitAgentTask`, `SubmitTeamTask`, `GetTask`, `ListSessionTasks`
-
-### Team Runtime / Status APIs
-
-For runtime orchestration and monitoring:
-
-- `GetTeamStatus`, `ListTeamStatuses`
-- `GetAgentStatus`, `ListAgentStatuses`
-- `GetLeadAgentForTeam`
-- `SubscribeTask` for async task progress streams
-- `DispatchTaskStreamWithOptions`, `ChatWithMemberStream`, `ChatWithMemberStreamWithOptions`
-
-In practice, the API layers look like this:
-
-- **Standalone agent APIs**: create, run, inspect, update
-- **Team APIs**: create teams, join agents, dispatch tasks, track async work
-- **Built-in delegation APIs**: let a custom agent explicitly call `Responder`, `Operator`, or `Evaluator`
-
----
-
-## Planning (deterministic workflow)
+Task plans are coordination records. Actual execution still happens through tasks.
 
 ```go
-plan, _   := svc.Plan(ctx, "Deploy the new service")
-// inspect plan.Steps, edit if needed
-result, _ := svc.Execute(ctx, plan.ID)
+plan, _ := manager.Plans().Create(ctx, agent.TaskPlanCreateOptions{
+	SessionID: "demo-session",
+	Goal:      "Verify the CLI task-plan flow",
+	Items: []agent.TaskPlanItem{
+		{
+			ID:         "inspect",
+			Subject:    "Inspect CLI output",
+			OwnerAgent: "Operator",
+			Blocks:     []string{"summarize"},
+		},
+		{
+			ID:         "summarize",
+			Subject:    "Summarize result",
+			OwnerAgent: "Responder",
+			BlockedBy:  []string{"inspect"},
+		},
+	},
+})
+
+task, _ := manager.Plans().SubmitItem(ctx, plan.ID, "inspect", agent.TaskPlanSubmitItemOptions{})
+fmt.Println(task.ID)
 ```
 
----
-
-## Configuration & Storage
-
-Runtime layout is derived from `AGENTGO_HOME` (default: `~/.agentgo`).
-Structured runtime config lives in `data/agentgo.db`.
-
-### Directory layout (default `home = ~/.agentgo`)
-
-```
-~/.agentgo/
-├── mcpServers.json           ← MCP server definitions
-├── data/
-│   ├── agentgo.db            ← Control plane: providers, runtime config, agent/team metadata
-│   ├── cortex.db             ← Brain store: memory, vectors, graph, knowledge
-│   └── memories/             ← File memory store (Markdown + YAML frontmatter)
-├── skills/                  ← SKILL.md files
-├── intents/                 ← Intent YAML files
-└── workspace/               ← Agent working directory
-```
-
-### SQLite files
-
-| File                 | Default path              | Purpose                                                      |
-| -------------------- | ------------------------- | ------------------------------------------------------------ |
-| `agentgo.db`         | `$home/data/agentgo.db`   | Runtime config, providers, MCP/skills paths, agent/team data |
-| `cortex.db`          | `$home/data/cortex.db`    | Brain store for memory, vectors, graph, and knowledge        |
-| `history.db` _(opt)_ | via `WithHistoryDBPath()` | Detailed tool-call logs — only created when `WithStoreHistory(true)` |
-
-### Memory store types
-
-| `store_type`           | Storage          | Best for                                      | Embedder requirement |
-| ---------------------- | ---------------- | --------------------------------------------- | -------------------- |
-| `file` _(default)_     | `data/memories/` | Most reliable default, local debugging, human-readable memory | Not required |
-| `cortex`               | `data/cortex.db` | Database-backed memory buckets and production-style local persistence | Optional; without one it uses lexical/text fallback |
-| `memoryflow`           | `data/cortex.db` | CortexDB MemoryFlow diary/session workflow and agent memory lifecycle | Optional; works without embeddings |
-| `graphflow`            | `data/cortex.db` | Memory that should also become an entity/relation graph | Optional; current graph extraction is deterministic |
-
-Recommendation:
-
-| Situation | Recommended store |
-| --------- | ----------------- |
-| No embedding model configured | `file` — works out of the box, human-readable, easiest to debug |
-| Embedding model configured | `graphflow` — semantic vector recall + entity/relation graph, best overall recall quality |
-
-- **`file`** is the default. It requires no embedding model and is fully transparent.
-- **`graphflow`** is the recommended upgrade once an embedding provider is set. It stores memories in CortexDB (`cortex.db`) and combines vector search with deterministic graph extraction for higher-quality recall.
-- Use `cortex` if you want database-backed storage without graph extraction.
-- Use `memoryflow` for diary-style or session-lifecycle-aware memory workflows.
-
-Set the runtime type through the CLI/UI or by persisting `memory.store_type` in `agentgo.db`. The current CLI runtime configuration is DB-backed; `agentgo.toml` is not the source of truth once `agentgo.db` has a value.
-
-### Cache store types
-
-| `store_type`         | Storage                         | Purpose                            |
-| -------------------- | ------------------------------- | ---------------------------------- |
-| `memory` _(default)_ | in-process memory               | Fast ephemeral cache               |
-| `file`               | `data/cache/<namespace>/*.json` | Restart-friendly cache persistence |
-
-### Runtime settings
-
-AgentGo derives the runtime storage layout automatically from `AGENTGO_HOME`:
-
-- workspace: `$home/workspace`
-- MCP filesystem allowlist: `$home/workspace`
-- brain database: `$home/data/cortex.db`
-- memory store: `$home/data/memories` for `file`, or `$home/data/cortex.db` for `cortex`, `memoryflow`, and `graphflow`
-- cache directory: `$home/data/cache`
-
-The remaining structured runtime values live in `agentgo.db`, including:
-
-- LLM providers and pool strategy
-- embedding providers and `rag.embedding_model`
-- MCP config paths
-- skills load paths
-- per-agent preferred provider/model
-
-### Cache CLI
+## CLI
 
 ```bash
-agentgo cache status
-agentgo cache put query my-key my-value --ttl 5m
-agentgo cache get query my-key
-agentgo cache clear query
+# Chat with Dispatcher
+agentgo chat
+
+# Ask once
+agentgo chat "Create a small task plan for validating this repo"
+
+# Inspect plans in the current chat session
+agentgo chat --session my-session
+# then type:
+# /plans
+# /plan ready <plan_id>
+# /plan submit <plan_id> <item_id> [agent_name]
+
+# Manage agents
+agentgo agent list
+agentgo agent show Dispatcher
+agentgo agent run --agent Operator "Run git status and summarize it"
+
+# Manage teams
+agentgo team list
+agentgo team add "Docs Team" --description "Documentation work"
+
+# Inspect tasks
+agentgo task list
+agentgo task get <task_id>
+agentgo task trace <task_id>
+
+# Manage LLM providers
+agentgo llm list
+agentgo llm add --name local --url http://localhost:11434/v1 --model qwen2.5
 ```
 
----
+## Storage
 
-## Providers
+By default AgentGo uses:
 
-Providers are configured in `agentgo.db` and managed through the CLI/UI/runtime APIs.
-
-Supported: OpenAI · Anthropic · Azure OpenAI · DeepSeek · Ollama (local)
-
----
-
-## Examples
-
-```
-examples/
-├── quickstart/               — simplest possible agent
-├── agent/
-│   ├── agent_usage/          — builder patterns, tool registration
-│   ├── multi_agent_orchestration/ — handoffs + streaming
-│   ├── longrun/              — autonomous scheduled agent
-│   └── realtime_chat/        — WebSocket session
-├── rag/                      — document ingestion + Q&A
-├── memory/
-│   ├── chat_with_memory/     — DB memory + chat
-│   └── smart_fusion/         — memory merging
-├── ptc/
-│   ├── custom_tools/         — JS sandbox tool orchestration
-│   └── memory_chat/          — PTC + memory
-├── skills/                   — Skill files
-└── mcp/                      — MCP tool servers
+```text
+~/.agentgo/
+├── data/
+│   ├── agentgo.db     # config, providers, agents, teams, tasks, plans
+│   └── cortex.db      # optional memory/vector/graph storage
+├── memories/          # file memory when enabled
+├── skills/            # local skills
+└── workspace/         # agent working directory
 ```
 
----
+Override the home directory with:
+
+```bash
+AGENTGO_HOME=/path/to/home agentgo chat
+```
+
+## Repository Layout
+
+```text
+pkg/agent      framework core: agents, teams, tasks, task plans
+pkg/mcp        MCP tools and servers
+pkg/memory     durable memory
+pkg/rag        optional retrieval
+pkg/skills     skill loading
+pkg/providers  LLM provider pool
+pkg/store      SQLite storage
+cmd/           CLI and UI adapters
+examples/      runnable examples
+```
+
+## Development
+
+```bash
+make test
+```
 
 ## License
 
-MIT — Copyright (c) 2024–2026 AgentGo Authors
+MIT
