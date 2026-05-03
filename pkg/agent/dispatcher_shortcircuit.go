@@ -43,7 +43,15 @@ func (s *Service) shouldShortCircuitDispatcherRoute(goal string) bool {
 		"background", "asynchronous", "async", "queue", "queued", "later", "in the background",
 		"后台", "异步", "排队", "稍后", "先挂着",
 	}
+	planHints := []string{
+		"task plan", "task_plan", "work plan", "plan item", "planned work", "create plan",
+		"list plan", "submit plan", "ready item",
+		"工作计划", "任务计划", "拆计划", "拆工作计划", "计划项", "创建计划", "列出计划", "提交计划",
+	}
 	if containsAny(lower, statusHints) || containsAny(lower, asyncHints) {
+		return false
+	}
+	if containsAny(lower, planHints) {
 		return false
 	}
 

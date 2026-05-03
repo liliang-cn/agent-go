@@ -116,9 +116,10 @@ func TestSeedDefaultMembersCreatesBuiltInsByDefault(t *testing.T) {
 	if dispatcher.Description != "Always-on user entry agent for intake, status checks, and dispatching work." {
 		t.Fatalf("unexpected Dispatcher description: %q", dispatcher.Description)
 	}
-	if !strings.Contains(dispatcher.Instructions, "only job is intake, routing, status inspection, and task dispatch") ||
+	if !strings.Contains(dispatcher.Instructions, "only job is intake, routing, status inspection, task planning, and task dispatch") ||
 		!strings.Contains(dispatcher.Instructions, "call route_builtin_request") ||
 		!strings.Contains(dispatcher.Instructions, "runs PromptOptimizer and IntentRouter in parallel") ||
+		!strings.Contains(dispatcher.Instructions, "task_plan_create") ||
 		!strings.Contains(dispatcher.Instructions, "Do not use submit_agent_task or submit_team_task for ordinary user requests") {
 		t.Fatalf("expected Dispatcher prompt to focus on dispatch-only routing, got %q", dispatcher.Instructions)
 	}

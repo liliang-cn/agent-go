@@ -317,6 +317,8 @@ func (m *TeamManager) RegisterDispatcherTools(dispatcher *Service) {
 		}
 		return out, nil
 	})
+
+	m.registerTaskPlanTools(dispatcher, dispatcher.CurrentSessionID)
 }
 
 var dispatcherBaseAllowedToolNames = map[string]struct{}{
@@ -335,12 +337,17 @@ var dispatcherBaseAllowedToolNames = map[string]struct{}{
 	"get_task_status":       {},
 	"list_session_tasks":    {},
 	"list_team_tasks":       {},
+	"task_plan_create":      {},
+	"task_plan_list":        {},
+	"task_plan_update":      {},
+	"task_plan_submit_item": {},
 }
 
 func configureDispatcherService(dispatcher *Service) {
 	if dispatcher == nil {
 		return
 	}
+	ensureDispatcherTaskPlanInstructions(dispatcher)
 	allowedToolNames := dispatcherAllowedToolNames(dispatcher)
 
 	if dispatcher.toolRegistry != nil {
@@ -375,6 +382,22 @@ func configureDispatcherService(dispatcher *Service) {
 			}
 		}
 	}
+}
+
+func ensureDispatcherTaskPlanInstructions(dispatcher *Service) {
+	if dispatcher == nil || dispatcher.agent == nil {
+		return
+	}
+	const planInstruction = "When the user asks to create, list, inspect, update, or submit a task plan/work plan/计划, handle it directly with task_plan_create, task_plan_list, task_plan_update, or task_plan_submit_item. Do not route those task-plan requests through route_builtin_request, and never claim a plan was created unless the task_plan_* tool returned successfully."
+	instructions := strings.TrimSpace(dispatcher.agent.Instructions())
+	if strings.Contains(instructions, "task_plan_create") && strings.Contains(instructions, "Do not route those task-plan requests") {
+		return
+	}
+	if instructions == "" {
+		dispatcher.agent.SetInstructions(planInstruction)
+		return
+	}
+	dispatcher.agent.SetInstructions(instructions + "\n\n" + planInstruction)
 }
 
 func dispatcherAllowedToolNames(dispatcher *Service) map[string]struct{} {

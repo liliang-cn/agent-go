@@ -97,6 +97,64 @@ func (s *Store) ListPlans(sessionID string, limit int) ([]*Plan, error) {
 	return result, nil
 }
 
+func (s *Store) SaveTaskPlan(plan *TaskPlan) error {
+	if s == nil || s.agentGoDB == nil || plan == nil {
+		return nil
+	}
+	itemsJSON, _ := json.Marshal(plan.Items)
+	return s.agentGoDB.SaveTaskPlan(&store.TaskPlan{
+		ID:           plan.ID,
+		SessionID:    plan.SessionID,
+		ParentTaskID: plan.ParentTaskID,
+		Goal:         plan.Goal,
+		Items:        itemsJSON,
+		CreatedAt:    plan.CreatedAt,
+		UpdatedAt:    plan.UpdatedAt,
+	})
+}
+
+func (s *Store) GetTaskPlan(id string) (*TaskPlan, error) {
+	if s == nil || s.agentGoDB == nil {
+		return nil, fmt.Errorf("store is not initialized")
+	}
+	persisted, err := s.agentGoDB.GetTaskPlan(id)
+	if err != nil {
+		return nil, err
+	}
+	return taskPlanFromStore(persisted), nil
+}
+
+func (s *Store) ListTaskPlans(sessionID string, limit int) ([]*TaskPlan, error) {
+	if s == nil || s.agentGoDB == nil {
+		return nil, nil
+	}
+	persisted, err := s.agentGoDB.ListTaskPlans(sessionID, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*TaskPlan, 0, len(persisted))
+	for _, plan := range persisted {
+		out = append(out, taskPlanFromStore(plan))
+	}
+	return out, nil
+}
+
+func taskPlanFromStore(plan *store.TaskPlan) *TaskPlan {
+	if plan == nil {
+		return nil
+	}
+	out := &TaskPlan{
+		ID:           plan.ID,
+		SessionID:    plan.SessionID,
+		ParentTaskID: plan.ParentTaskID,
+		Goal:         plan.Goal,
+		CreatedAt:    plan.CreatedAt,
+		UpdatedAt:    plan.UpdatedAt,
+	}
+	_ = json.Unmarshal(plan.Items, &out.Items)
+	return out
+}
+
 // SaveSession saves or updates an agent session
 func (s *Store) SaveSession(session *Session) error {
 	messages := make([]store.ChatMessage, len(session.Messages))

@@ -1,6 +1,12 @@
 package main
 
-import "testing"
+import (
+	"context"
+	"strings"
+	"testing"
+
+	"github.com/liliang-cn/agent-go/v2/pkg/agent"
+)
 
 func TestDelegatedResultLooksFailed(t *testing.T) {
 	tests := []struct {
@@ -106,5 +112,71 @@ func TestSanitizeChatDisplayText(t *testing.T) {
 	got := sanitizeChatDisplayText("<think>internal reasoning</think>\n\nDone")
 	if got != "Done" {
 		t.Fatalf("expected think blocks to be removed, got %q", got)
+	}
+}
+
+func TestPrintChatPlanSnapshot(t *testing.T) {
+	plan := &agent.TaskPlan{
+		ID:   "12345678-plan",
+		Goal: "ship task plans",
+		Items: []agent.TaskPlanItem{
+			{ID: "inspect", Subject: "Inspect code", Status: agent.PlanItemStatusCompleted, OwnerAgent: "Coder"},
+			{ID: "verify", Subject: "Verify behavior", Status: agent.PlanItemStatusPending, BlockedBy: []string{"inspect"}},
+		},
+	}
+
+	output := captureStdout(t, func() {
+		printChatPlanSnapshot(plan)
+	})
+
+	if !strings.Contains(output, "Plan 12345678: ship task plans") {
+		t.Fatalf("missing plan header: %q", output)
+	}
+	if !strings.Contains(output, "pending:1 in_progress:0 completed:1 blocked:0 failed:0") {
+		t.Fatalf("missing plan counts: %q", output)
+	}
+	if !strings.Contains(output, "- [completed] inspect Inspect code @Coder") {
+		t.Fatalf("missing item line: %q", output)
+	}
+}
+
+func TestHandleChatPlanCommandListsCurrentSessionPlans(t *testing.T) {
+	store, err := agent.NewStore(t.TempDir() + "/agentgo.db")
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	manager := agent.NewTeamManager(store)
+	_, err = manager.Plans().Create(context.Background(), agent.TaskPlanCreateOptions{
+		SessionID: "session-a",
+		Goal:      "visible plan",
+		Items:     []agent.TaskPlanItem{{ID: "one", Subject: "First step"}},
+	})
+	if err != nil {
+		t.Fatalf("Create visible plan error = %v", err)
+	}
+	_, err = manager.Plans().Create(context.Background(), agent.TaskPlanCreateOptions{
+		SessionID: "session-b",
+		Goal:      "hidden plan",
+		Items:     []agent.TaskPlanItem{{ID: "two", Subject: "Second step"}},
+	})
+	if err != nil {
+		t.Fatalf("Create hidden plan error = %v", err)
+	}
+
+	output := captureStdout(t, func() {
+		handled, err := handleChatPlanCommand(context.Background(), manager, "session-a", "/plans", nil)
+		if err != nil {
+			t.Fatalf("handleChatPlanCommand error = %v", err)
+		}
+		if !handled {
+			t.Fatal("expected /plans to be handled")
+		}
+	})
+
+	if !strings.Contains(output, "visible plan") {
+		t.Fatalf("missing visible plan: %q", output)
+	}
+	if strings.Contains(output, "hidden plan") {
+		t.Fatalf("unexpected hidden session plan: %q", output)
 	}
 }

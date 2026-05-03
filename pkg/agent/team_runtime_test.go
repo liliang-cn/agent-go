@@ -187,6 +187,9 @@ func TestRegisterDispatcherToolsExposesStatusAndSubmission(t *testing.T) {
 	if !svc.agent.HasTool("submit_agent_task") {
 		t.Fatal("expected submit_agent_task to be available on Dispatcher")
 	}
+	if !svc.agent.HasTool("task_plan_create") || !svc.agent.HasTool("task_plan_list") || !svc.agent.HasTool("task_plan_submit_item") {
+		t.Fatal("expected task plan tools to be available on Dispatcher")
+	}
 	listTeamsMeta := svc.toolRegistry.MetadataOf("list_teams")
 	if !listTeamsMeta.ReadOnly || !listTeamsMeta.ConcurrencySafe || listTeamsMeta.InterruptBehavior != InterruptBehaviorCancel {
 		t.Fatalf("unexpected list_teams metadata: %+v", listTeamsMeta)

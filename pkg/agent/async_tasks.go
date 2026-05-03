@@ -496,6 +496,7 @@ func (m *TeamManager) completeAsyncTask(taskID, finalText, agentName string) {
 		Message:   task.ResultText,
 		Timestamp: finishedAt,
 	}, true)
+	m.updateTaskPlanItemForExecutionTask(taskID, PlanItemStatusCompleted, task.ResultText, "")
 }
 
 func (m *TeamManager) blockAsyncTask(taskID, blocker, agentName string) {
@@ -518,6 +519,7 @@ func (m *TeamManager) blockAsyncTask(taskID, blocker, agentName string) {
 		Message:   task.ResultText,
 		Timestamp: finishedAt,
 	}, true)
+	m.updateTaskPlanItemForExecutionTask(taskID, PlanItemStatusBlocked, task.ResultText, task.Error)
 }
 
 func (m *TeamManager) taskSessionID(taskID string) string {
@@ -548,4 +550,5 @@ func (m *TeamManager) failAsyncTask(taskID, agentName string, err error) {
 		Message:   task.Error,
 		Timestamp: finishedAt,
 	}, true)
+	m.updateTaskPlanItemForExecutionTask(taskID, PlanItemStatusFailed, "", task.Error)
 }

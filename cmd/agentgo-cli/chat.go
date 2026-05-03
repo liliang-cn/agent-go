@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/liliang-cn/agent-go/v2/cmd/agentgo-cli/internal/cliui"
 	"github.com/liliang-cn/agent-go/v2/cmd/agentgo-cli/internal/lineinput"
@@ -148,6 +149,7 @@ func runChat(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	turnStartedAt := time.Now()
 	result, err := svc.Chat(ctx, message)
 	if err != nil {
 		return fmt.Errorf("chat failed: %w", err)
@@ -157,6 +159,8 @@ func runChat(cmd *cobra.Command, args []string) error {
 	if follower := newChatTaskFollower(agentManager); follower != nil {
 		follower.StartTaskIDs(ctx, executionResultAsyncTaskIDs(result))
 	}
+	waitForChatSessionTasks(ctx, agentManager, svc.CurrentSessionID(), turnStartedAt)
+	printChatPlanList(ctx, agentManager, svc.CurrentSessionID(), 10)
 
 	// Show session ID after first message
 	if currentSessionID == "" {
@@ -441,6 +445,7 @@ func runInteractiveChat(ctx context.Context, svc *agent.Service, manager *agent.
 	fmt.Printf("%s This chat talks to Dispatcher, the always-on intake agent for AgentGo.\n", cliui.Tip)
 	fmt.Printf("%s Type 'quit' or 'exit' to end, 'clear' to reset session\n", cliui.Tip)
 	fmt.Printf("%s Tip: Use '@AgentName <instruction>' to run a saved agent in the background\n", cliui.Tip)
+	fmt.Printf("%s Tip: Use '/plans', '/plan ready', or '/plan submit <plan> <item> [agent]' to inspect plan work\n", cliui.Tip)
 	fmt.Println()
 
 	// Setup signal handling for graceful shutdown
@@ -478,6 +483,7 @@ func runInteractiveChat(ctx context.Context, svc *agent.Service, manager *agent.
 					if taskFollower != nil {
 						taskFollower.StartSessionTasks(chatCtx, svc.CurrentSessionID())
 					}
+					printChatPlanList(chatCtx, manager, svc.CurrentSessionID(), 10)
 					fmt.Println()
 				}
 				if req.Done != nil {
@@ -524,6 +530,13 @@ func runInteractiveChat(ctx context.Context, svc *agent.Service, manager *agent.
 			if input == "clear" || input == "reset" {
 				svc.ResetSession()
 				fmt.Printf("✓ Session reset (new: %s)\n", svc.CurrentSessionID())
+				continue
+			}
+
+			if handled, planErr := handleChatPlanCommand(chatCtx, manager, svc.CurrentSessionID(), input, taskFollower); handled {
+				if planErr != nil {
+					fmt.Printf("%s %v\n\n", cliui.Error, planErr)
+				}
 				continue
 			}
 

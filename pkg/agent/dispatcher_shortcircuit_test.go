@@ -41,6 +41,21 @@ func (m *dispatcherShortcutMemoryService) StoreIfWorthwhile(ctx context.Context,
 	return nil
 }
 
+func TestDispatcherDoesNotShortCircuitTaskPlanRequests(t *testing.T) {
+	svc := &Service{
+		agent:        NewAgentWithConfig(BuiltInDispatcherAgentName, "dispatcher", nil),
+		toolRegistry: NewToolRegistry(),
+	}
+	svc.toolRegistry.Register(toolDef("route_builtin_request"), nil, CategoryCustom)
+
+	if svc.shouldShortCircuitDispatcherRoute("请创建一个两步 task plan") {
+		t.Fatal("expected task plan requests to stay on Dispatcher tools instead of route_builtin_request")
+	}
+	if !svc.shouldShortCircuitDispatcherRoute("帮我写一段产品介绍") {
+		t.Fatal("expected ordinary substantive requests to keep direct Dispatcher routing")
+	}
+}
+
 func (m *dispatcherShortcutMemoryService) Add(context.Context, *domain.Memory) error    { return nil }
 func (m *dispatcherShortcutMemoryService) Update(context.Context, string, string) error { return nil }
 func (m *dispatcherShortcutMemoryService) Search(context.Context, string, int) ([]*domain.MemoryWithScore, error) {

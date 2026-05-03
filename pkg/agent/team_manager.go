@@ -42,6 +42,8 @@ type TeamManager struct {
 	sessionTasks                  map[string][]string
 	taskSubs                      map[string]map[chan *TaskEvent]struct{}
 	taskCancels                   map[string]context.CancelFunc
+	planMu                        sync.RWMutex
+	taskPlans                     map[string]*TaskPlan
 	teamGatewayMu                 sync.RWMutex
 	teamRequests                  map[string]*TeamRequest
 	mailboxMu                     sync.RWMutex
@@ -202,11 +204,13 @@ func NewTeamManager(s *Store) *TeamManager {
 		sessionTasks:    make(map[string][]string),
 		taskSubs:        make(map[string]map[chan *TaskEvent]struct{}),
 		taskCancels:     make(map[string]context.CancelFunc),
+		taskPlans:       make(map[string]*TaskPlan),
 		teamRequests:    make(map[string]*TeamRequest),
 		agentMailboxes:  make(map[string]*agentMailbox),
 		builtInRuntimes: make(map[string]*builtInAgentRuntime),
 	}
 	manager.checkpointWriter = newCheckpointWriter(s)
+	manager.restoreTaskPlans()
 	manager.restoreSharedTasks()
 	return manager
 }
@@ -1659,7 +1663,9 @@ func (m *TeamManager) RegisterOrchestratorTools(orchestrator *Service) {
 		return out, nil
 	})
 
-	// 5. delegate_task
+	m.registerTaskPlanTools(orchestrator, orchestrator.CurrentSessionID)
+
+	// 9. delegate_task
 	delegateDef := domain.ToolDefinition{
 		Type: "function",
 		Function: domain.ToolFunction{
@@ -1692,7 +1698,7 @@ func (m *TeamManager) RegisterOrchestratorTools(orchestrator *Service) {
 		return m.dispatchTaskWithOptionalStream(ctx, agentName, instruction, "", nil, stream)
 	})
 
-	// 6. delegate_pipeline
+	// 10. delegate_pipeline
 	pipelineDef := domain.ToolDefinition{
 		Type: "function",
 		Function: domain.ToolFunction{
