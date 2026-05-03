@@ -414,13 +414,22 @@ func buildOpenAIChatCompletionParams(messages []domain.Message, tools []domain.T
 		}
 		params.Tools = openaiTools
 
+		// Map opts.ToolChoice into the SDK's union param. The OpenAI
+		// spec (and DeepSeek's compatible API) accepts:
+		//   - "auto" / "required" / "none" as plain strings
+		//   - {"type": "function", "function": {"name": <fn>}} to force
+		//     a specific tool by name
+		// Earlier code wrongly converted "required" into a named-tool
+		// choice pinned to tools[0], which DeepSeek's reasoner rejects
+		// with `does not support this tool_choice`. Send strings as
+		// strings; only fall through to the named form when ToolChoice
+		// looks like an actual function name.
 		if opts != nil && opts.ToolChoice != "" {
 			switch opts.ToolChoice {
-			case "required":
-				params.ToolChoice = openai.ToolChoiceOptionFunctionToolChoice(openai.ChatCompletionNamedToolChoiceFunctionParam{
-					Name: tools[0].Function.Name,
-				})
-			case "auto", "none":
+			case "auto", "required", "none":
+				params.ToolChoice = openai.ChatCompletionToolChoiceOptionUnionParam{
+					OfAuto: openai.String(opts.ToolChoice),
+				}
 			default:
 				params.ToolChoice = openai.ToolChoiceOptionFunctionToolChoice(openai.ChatCompletionNamedToolChoiceFunctionParam{
 					Name: opts.ToolChoice,
@@ -465,6 +474,57 @@ func cloneOptionsWithoutNativeWebSearch(opts *domain.GenerationOptions) *domain.
 	cloned := *opts
 	cloned.WebSearchMode = domain.WebSearchModeMCP
 	return &cloned
+}
+
+// shouldRetryOpenAIWithoutToolChoice reports whether the upstream error
+// is "this model does not support tool_choice" (DeepSeek's reasoner
+// models reject any tool_choice value — even "required" or "auto" —
+// when chained with reasoning_content; some OpenAI o-series variants
+// also reject named-tool choice). When the upstream rejects the param
+// we retry once with tool_choice stripped — the model can still emit
+// tool calls organically; it just can't be forced.
+func shouldRetryOpenAIWithoutToolChoice(opts *domain.GenerationOptions, err error) bool {
+	if opts == nil || strings.TrimSpace(opts.ToolChoice) == "" || err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	if !strings.Contains(msg, "tool_choice") {
+		return false
+	}
+	return strings.Contains(msg, "does not support") ||
+		strings.Contains(msg, "not supported") ||
+		strings.Contains(msg, "unsupported") ||
+		strings.Contains(msg, "invalid")
+}
+
+func cloneOptionsWithoutToolChoice(opts *domain.GenerationOptions) *domain.GenerationOptions {
+	if opts == nil {
+		return &domain.GenerationOptions{}
+	}
+	cloned := *opts
+	cloned.ToolChoice = ""
+	return &cloned
+}
+
+// applyOpenAIRetryFallbacks composes the compatibility fallbacks (drop
+// native web search, drop tool_choice). Returns a re-derived options
+// struct if any apply, or nil when the error isn't one of the known
+// "feature unsupported" patterns.
+func applyOpenAIRetryFallbacks(opts *domain.GenerationOptions, err error) *domain.GenerationOptions {
+	current := opts
+	changed := false
+	if shouldRetryOpenAIWithoutNativeWebSearch(current, err) {
+		current = cloneOptionsWithoutNativeWebSearch(current)
+		changed = true
+	}
+	if shouldRetryOpenAIWithoutToolChoice(current, err) {
+		current = cloneOptionsWithoutToolChoice(current)
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return current
 }
 
 // Generate generates text using OpenAI API
@@ -563,8 +623,8 @@ func (p *OpenAILLMProvider) GenerateWithTools(ctx context.Context, messages []do
 
 	completion, err := p.client.Chat.Completions.New(ctx, params)
 	if err != nil {
-		if shouldRetryOpenAIWithoutNativeWebSearch(opts, err) {
-			retryParams, buildErr := buildOpenAIChatCompletionParams(messages, tools, cloneOptionsWithoutNativeWebSearch(opts), p.config.LLMModel)
+		if retryOpts := applyOpenAIRetryFallbacks(opts, err); retryOpts != nil {
+			retryParams, buildErr := buildOpenAIChatCompletionParams(messages, tools, retryOpts, p.config.LLMModel)
 			if buildErr != nil {
 				return nil, buildErr
 			}
@@ -616,8 +676,8 @@ func (p *OpenAILLMProvider) StreamWithTools(ctx context.Context, messages []doma
 	}
 
 	err := p.streamWithToolsOnce(ctx, messages, tools, opts, callback)
-	if shouldRetryOpenAIWithoutNativeWebSearch(opts, err) {
-		return p.streamWithToolsOnce(ctx, messages, tools, cloneOptionsWithoutNativeWebSearch(opts), callback)
+	if retryOpts := applyOpenAIRetryFallbacks(opts, err); retryOpts != nil {
+		return p.streamWithToolsOnce(ctx, messages, tools, retryOpts, callback)
 	}
 	return err
 }

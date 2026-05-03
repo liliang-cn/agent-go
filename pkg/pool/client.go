@@ -270,7 +270,18 @@ func buildPoolGenerateWithToolsRequest(modelName string, messages []domain.Messa
 			reqBody["max_tokens"] = opts.MaxTokens
 		}
 		if opts.ToolChoice != "" {
-			reqBody["tool_choice"] = opts.ToolChoice
+			switch opts.ToolChoice {
+			case "auto", "required", "none":
+				reqBody["tool_choice"] = opts.ToolChoice
+			default:
+				// Named tool form — OpenAI/DeepSeek both want a struct here.
+				reqBody["tool_choice"] = map[string]interface{}{
+					"type": "function",
+					"function": map[string]interface{}{
+						"name": opts.ToolChoice,
+					},
+				}
+			}
 		}
 		if domain.UsesNativeWebSearch(opts.WebSearchMode) {
 			reqBody["web_search_options"] = map[string]interface{}{
@@ -294,6 +305,48 @@ func shouldRetryPoolWithoutNativeWebSearch(opts *domain.GenerationOptions, err e
 		strings.Contains(msg, "unknown field")
 }
 
+// shouldRetryPoolWithoutToolChoice reports whether the upstream rejected
+// the tool_choice parameter (DeepSeek's reasoner models reject any
+// tool_choice value when chained with reasoning_content; some OpenAI
+// o-series variants reject named-tool choice). On hit, retry once with
+// tool_choice stripped — the model can still call tools organically.
+func shouldRetryPoolWithoutToolChoice(opts *domain.GenerationOptions, err error) bool {
+	if opts == nil || strings.TrimSpace(opts.ToolChoice) == "" || err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	if !strings.Contains(msg, "tool_choice") {
+		return false
+	}
+	return strings.Contains(msg, "does not support") ||
+		strings.Contains(msg, "not supported") ||
+		strings.Contains(msg, "unsupported") ||
+		strings.Contains(msg, "invalid")
+}
+
+// applyPoolRetryFallbacks composes the compatibility fallbacks (drop
+// native web search, drop tool_choice). Returns a new options struct
+// when something applies, nil otherwise.
+func applyPoolRetryFallbacks(opts *domain.GenerationOptions, err error) *domain.GenerationOptions {
+	if opts == nil || err == nil {
+		return nil
+	}
+	cur := *opts
+	changed := false
+	if shouldRetryPoolWithoutNativeWebSearch(&cur, err) {
+		cur.WebSearchMode = domain.WebSearchModeMCP
+		changed = true
+	}
+	if shouldRetryPoolWithoutToolChoice(&cur, err) {
+		cur.ToolChoice = ""
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return &cur
+}
+
 // GenerateWithTools 使用工具生成
 func (c *Client) GenerateWithTools(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions) (*domain.GenerationResult, error) {
 	if opts == nil {
@@ -303,10 +356,8 @@ func (c *Client) GenerateWithTools(ctx context.Context, messages []domain.Messag
 
 	resp, err := c.doRequest(ctx, "/chat/completions", reqBody)
 	if err != nil {
-		if shouldRetryPoolWithoutNativeWebSearch(opts, err) {
-			retryOpts := *opts
-			retryOpts.WebSearchMode = domain.WebSearchModeMCP
-			resp, err = c.doRequest(ctx, "/chat/completions", buildPoolGenerateWithToolsRequest(c.modelName, messages, tools, &retryOpts))
+		if retryOpts := applyPoolRetryFallbacks(opts, err); retryOpts != nil {
+			resp, err = c.doRequest(ctx, "/chat/completions", buildPoolGenerateWithToolsRequest(c.modelName, messages, tools, retryOpts))
 		}
 	}
 	if err != nil {
