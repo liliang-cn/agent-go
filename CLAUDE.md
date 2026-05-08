@@ -29,6 +29,14 @@ make coverage-core  # focused coverage report for the core packages listed in $C
 make deps           # go mod download && tidy
 make clean          # removes bin/, cmd/agentgo-ui/dist, .agentgo/data/*.db
 
+# Behavioral eval harness — runs scenarios under eval/scenarios/ against
+# either a scripted MockLLM (CI-safe, deterministic) or the configured
+# real provider. See "Eval harness" below.
+make eval           # mock-only run, uses go test
+make eval-verbose   # same with -v
+make eval-live      # real provider, builds CLI and runs `agentgo eval --profile=live --save`
+make eval-all       # mock + live
+
 # UI dev (Vite + Go API together; API is air-reloaded on :7127)
 make ui-dev
 make ui-api-dev     # Go API only with air
@@ -67,6 +75,38 @@ Tool execution has its own state model — `ReadOnly`, `ConcurrencySafe`, `Destr
 
 Sessions used to be the only boundary; tasks (`task_id` in `pkg/domain/types.go` and `pkg/agent/types.go`) are now propagated through async/team dispatch and used for history filtering. Treat `task_id` as load-bearing — when adding a new piece of state (history, memory, discovered tools, retries), scope it by task where possible.
 
+### Task checkpoint + replay (v2.70.0)
+
+Every terminal `completeRun` / `blockRun` writes a `TaskCheckpoint` snapshot of the message history to `task_checkpoints` (capped at `MaxCheckpointsPerTask=32`, pruned by `checkpointWriter`). The wiring lives in `pkg/agent/task_checkpoint.go` + `task_checkpoint_manager.go`; `Service.SetCheckpointSink(...)` is what the runtime calls — TeamManager auto-wires this in `buildServiceForModel`, services built directly via `agent.New(...).Build()` skip persistence.
+
+To re-run a crashed/cancelled task from its latest snapshot: `manager.Tasks().ResumeFromCheckpoint(ctx, taskID, CheckpointResumeOptions{FollowUp: "..."})`. CLI surface: `agentgo task replay <id> [--checkpoint X] [--follow-up "..."]` and `agentgo task checkpoints <id>`.
+
+The `WithResumeMessages([]domain.Message)` `RunOption` is what makes the runtime skip its normal context-prep step and start the loop from a snapshot.
+
+### Output lint registry (v2.69.0 / harness engineering)
+
+`pkg/agent/output_lint.go` ships a deterministic post-output-check layer. When the model produces a free-form final answer, the runtime consults `Service.OutputLints()`; on violation it appends structured feedback as a system message and re-prompts (bounded by `defaultLintRetryBudget = 2`; exhaustion → `task_blocked`).
+
+Three built-in lints in `pkg/agent/output_lints_builtin.go`:
+- `dispatcher_no_bounce_back` — Dispatcher must not narrate routing intent
+- `archivist_no_relative_time` — Archivist must resolve `明天 / tomorrow / next ...` to absolute dates
+- `no_planning_only_finish` — final text mustn't read like "Next steps:" / "I will..."
+
+TeamManager auto-wires the agent-scoped lints (`applyBuiltInOutputLints`) when it builds Dispatcher / Archivist services. User-built services via `agent.New(...).Build()` are unaffected — opt in with `agent.RegisterDefaultOutputLints(svc)` or `svc.RegisterOutputLint(lint, agentNames...)`.
+
+The discipline (Hashimoto): when a model keeps making the same mistake, **don't add another sentence to the prompt — write a lint** in `output_lints_builtin.go` and the runtime will reject + retry deterministically.
+
+### Eval harness (v2.69.0)
+
+`eval/runner/` is a behavioral eval driver: every YAML in `eval/scenarios/` defines an `input`, an entry agent, optional lint registrations, expected `status`/`final_text_match` constraints, and optional `lint_violations` counts. Two profiles:
+
+- **mock** (default, CI-safe): `MockLLM` plays back a scripted `llm_replies` sequence — deterministic.
+- **live**: scenarios with `mode: live` run against the configured provider pool (same setup as `agentgo chat`). Loose assertions (regex, max-violation caps).
+
+CLI: `agentgo eval [--profile=mock|live|all] [--filter=substring] [--runs=N] [--save]`. `--save` writes a timestamped JSON to `eval/results/` (gitignored). The pretty terminal table comes from `eval/runner/results.go:FormatSummary`.
+
+When a harness change (lint, prompt cut, tool-prep tweak) lands, run `make eval-live` and diff the result JSON against the previous run — that's the harness-engineering loop.
+
 ### PTC = Programmatic Tool Calling
 
 `pkg/ptc/` runs model-written JavaScript in a Goja sandbox so the model can `callTool(name, args)` inside loops/filters instead of doing N tool-call rounds through the chat protocol. PTC is **default-on**. See `PTC.md` for the design rationale; the short version: large intermediate data stays in the sandbox, only the small final result re-enters context. Tools used by PTC must return stable structured shapes (`{ ok, data, error }`-ish), not freeform strings.
@@ -97,7 +137,9 @@ Skills aren't all dumped into the prompt. The runtime surfaces a small relevant 
 
 ### CLI structure
 
-`cmd/agentgo-cli/root.go` registers cobra subcommands from sibling sub-packages: `agent/`, `team/`, `mcp/`, `memory/`, `ptc/`, `rag/`, `skills/`, `acp/`, `cache/`, plus top-level files for `chat`, `llm`, `embedding`, `status`, `tasks`, `config`, `explain`, `session`, `resources`. New commands go in those sub-packages. The root `PersistentPreRunE` loads config, sets log level from `--verbose/--debug/--quiet`, and lazily initializes the global pool service for any command except `cache`.
+`cmd/agentgo-cli/root.go` registers cobra subcommands from sibling sub-packages: `agent/`, `team/`, `mcp/`, `memory/`, `ptc/`, `rag/`, `skills/`, `acp/`, `cache/`, `eval/`, plus top-level files for `chat`, `llm`, `embedding`, `status`, `tasks`, `config`, `explain`, `session`, `resources`. New commands go in those sub-packages. The root `PersistentPreRunE` loads config, sets log level from `--verbose/--debug/--quiet`, and lazily initializes the global pool service for any command except `cache`.
+
+`tasks.go` bundles the canonical task surface: `task list / get / inspect / trace / yield / resume / replay / checkpoints / cancel`. `replay` is the checkpoint-driven re-run; `resume` is the older yield-and-resume-with-input flow.
 
 ### UI
 
@@ -107,6 +149,8 @@ Skills aren't all dumped into the prompt. The runtime surfaces a small relevant 
 
 - **Identity = session UUID, not userID.** Conversations are keyed by UUID. Don't introduce `userID` as a primary identity field for chat / task / plan APIs. Use `github.com/google/uuid`.
 - **Concurrency.** Recent commits (`fix agent concurrency races`) tightened goroutine sharing in dispatcher/team manager paths. Run `go test -race` for changes touching `pkg/agent/dispatcher_*`, `pkg/agent/team_*`, `pkg/agent/async_tasks*`, or `pkg/agent/store.go`.
+- **Provider compatibility fallbacks.** `pkg/pool/client.go` and `pkg/providers/openai.go` both have `applyRetryFallbacks` helpers that strip `web_search_options` or `tool_choice` and retry once when the upstream rejects them with "unsupported / does not support / invalid" errors. DeepSeek's reasoner (e.g. `deepseek-v4-flash`) needs the `tool_choice` fallback. When adding new optional params, mirror the same shape: detect the rejection, strip, retry once.
+- **`tool_choice` JSON shape.** `"auto" / "required" / "none"` go in as plain strings; named-tool choice is `{"type":"function","function":{"name":"X"}}`. Don't reuse the named-tool form for `"required"` — DeepSeek and some OpenAI variants reject that.
 - **Use random high ports** (3000+, e.g. 3076, 6759, 43510) for any new dev port; avoid 8080 and other common defaults.
 - **Releases:** the `/release` slash command in `.claude/commands/release.md` does the version bump. Manual: `git tag -a vX.Y.Z`, then `git push --tags`. Bump rules: `feat:` → minor, `fix:`/`docs:`/`chore:` → patch, `BREAKING CHANGE:` → major. **No co-author lines in commits.**
 - **No summary docs** unless explicitly requested. Don't create `*_SUMMARY.md` / `NOTES.md` / `IMPLEMENTATION.md` after finishing work.
@@ -115,7 +159,10 @@ Skills aren't all dumped into the prompt. The runtime surfaces a small relevant 
 ## Debugging entry points
 
 - Provider connectivity: `agentgo status --verbose`
+- Provider compat probe: `agentgo llm test <name>` (single round trip), `agentgo llm rank <name>` (6-test capability rank)
 - MCP servers: `agentgo mcp status`, then `agentgo mcp tools call <server> <tool> '<json>'`; logs in `~/.agentgo/logs/`
 - Skills: `agentgo skills list` / `skills show <id>` / `skills run <id> --var k=v`
 - Tasks: `agentgo task list`, `agentgo task get <id>`, `agentgo task trace <id>`
+- Checkpoint recovery: `agentgo task checkpoints <id>`, `agentgo task replay <id> [--checkpoint X] [--follow-up "..."]`
+- Behavioral eval: `make eval` (mock) / `make eval-live` (real provider) / `agentgo eval --filter <name>`
 - Routing: `agentgo explain "..."` shows which agent/route would be picked

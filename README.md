@@ -25,6 +25,9 @@ go get github.com/liliang-cn/agent-go/v2
 - **Skills**: reusable Markdown/YAML workflows.
 - **PTC**: optional JavaScript tool orchestration in a Goja sandbox.
 - **RAG**: optional document retrieval when embeddings are configured.
+- **Output lints**: deterministic post-output checks that re-prompt the model on violation (instead of "please remember to..." paragraphs).
+- **Checkpoint + replay**: every terminal task writes a snapshot; crashed/cancelled runs can be re-played from the latest checkpoint.
+- **Eval harness**: scenario-driven behavioral evaluation, mock or live LLM, JSON output for cross-commit diffs.
 
 ## Minimal Agent
 
@@ -147,10 +150,43 @@ agentgo task list
 agentgo task get <task_id>
 agentgo task trace <task_id>
 
+# Crashed task? Re-play it from the last checkpoint.
+agentgo task checkpoints <task_id>
+agentgo task replay <task_id> --follow-up "and now also do X"
+
+# Behavioral eval — runs scenarios in eval/scenarios/
+agentgo eval                           # mock-only
+agentgo eval --profile=live --save     # real LLM, JSON to eval/results/
+
 # Manage LLM providers
 agentgo llm list
 agentgo llm add --name local --url http://localhost:11434/v1 --model qwen2.5
+agentgo llm test <name>                # one-shot connectivity check
+agentgo llm rank <name>                # 6-test capability rank
 ```
+
+## Output lints — moving "please don't" out of prompts
+
+When an agent keeps making the same mistake (narrating routing instead of doing it, storing relative dates, ending with "Next steps:..."), don't add another sentence to its instruction. Register a lint:
+
+```go
+svc.RegisterOutputLint(agent.LintFunc{
+    NameValue: "no_planning_only_finish",
+    Fn: func(text string, ctx agent.LintContext) (bool, string) {
+        if strings.HasSuffix(strings.TrimSpace(text), "Next steps:") {
+            return false, "response reads like a plan; deliver the work or call task_blocked"
+        }
+        return true, ""
+    },
+}, "Operator")  // empty agentNames = global
+```
+
+Built-ins (`agent.RegisterDefaultOutputLints(svc)`):
+- `dispatcher_no_bounce_back` — reject "I will route this..." style
+- `archivist_no_relative_time` — reject 明天 / tomorrow without an absolute date
+- `no_planning_only_finish` — reject planning-only endings
+
+When running through `TeamManager`, the agent-scoped lints are auto-wired for built-in agents (Dispatcher, Archivist).
 
 ## Storage
 
@@ -175,22 +211,29 @@ AGENTGO_HOME=/path/to/home agentgo chat
 ## Repository Layout
 
 ```text
-pkg/agent      framework core: agents, teams, tasks, task plans
+pkg/agent      framework core: agents, teams, tasks, task plans, lints, checkpoints
 pkg/mcp        MCP tools and servers
 pkg/memory     durable memory
 pkg/rag        optional retrieval
 pkg/skills     skill loading
-pkg/providers  LLM provider pool
+pkg/providers  LLM provider pool (with reasoner-model fallbacks)
+pkg/ptc        Programmatic Tool Calling — JS sandbox
 pkg/store      SQLite storage
 cmd/           CLI and UI adapters
+eval/          behavioral eval harness (scenarios + runner)
 examples/      runnable examples
 ```
 
 ## Development
 
 ```bash
-make test
+make test           # go test ./...
+make check          # fmt + vet + test
+make eval           # behavioral eval, mock-LLM, CI-safe
+make eval-live      # behavioral eval, real provider
 ```
+
+See `CLAUDE.md` and `PLAN.md` for the harness-engineering roadmap and operational guidance.
 
 ## License
 
