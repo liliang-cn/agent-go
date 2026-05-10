@@ -162,6 +162,23 @@ type GenerationOptions struct {
 	ToolChoice           string // "auto", "required", "none", or specific function name
 	WebSearchMode        WebSearchMode
 	WebSearchContextSize string
+	// Thinking controls reasoning-mode behaviour on providers that expose a
+	// structured `thinking` field (notably DeepSeek v4: `{"type": "disabled"}`
+	// turns off chain-of-thought tokens, which is a major latency / cost win
+	// on prompts where the model just needs to emit JSON). Nil = leave it to
+	// the provider default. Sent verbatim as-is to the upstream API.
+	Thinking *ThinkingOptions
+}
+
+// ThinkingOptions mirrors the provider-side `thinking` parameter shape used
+// by DeepSeek v4 (and providers that copied the field). Only Type is sent
+// today; new fields can be added without breaking callers.
+//
+// Common values:
+//   - "disabled" — skip reasoning entirely (fastest)
+//   - "enabled"  — explicit on (default for reasoning models)
+type ThinkingOptions struct {
+	Type string `json:"type"`
 }
 
 // Tool calling related types

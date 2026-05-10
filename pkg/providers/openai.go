@@ -455,6 +455,23 @@ func buildOpenAIChatCompletionParams(messages []domain.Message, tools []domain.T
 	return params, nil
 }
 
+// extraRequestOptions returns RequestOptions that map non-OpenAI-spec
+// `domain.GenerationOptions` fields (e.g. DeepSeek's `thinking`) into the raw
+// JSON body via openai-go's WithJSONSet. Returns nil-safe empty slice when no
+// extras apply, so callers can spread it unconditionally.
+func extraRequestOptions(opts *domain.GenerationOptions) []option.RequestOption {
+	if opts == nil {
+		return nil
+	}
+	var ros []option.RequestOption
+	if opts.Thinking != nil && opts.Thinking.Type != "" {
+		ros = append(ros, option.WithJSONSet("thinking", map[string]any{
+			"type": opts.Thinking.Type,
+		}))
+	}
+	return ros
+}
+
 func shouldRetryOpenAIWithoutNativeWebSearch(opts *domain.GenerationOptions, err error) bool {
 	if opts == nil || domain.NormalizeWebSearchMode(opts.WebSearchMode) != domain.WebSearchModeAuto || err == nil {
 		return false
@@ -551,7 +568,7 @@ func (p *OpenAILLMProvider) Generate(ctx context.Context, prompt string, opts *d
 		}
 	}
 
-	completion, err := p.client.Chat.Completions.New(ctx, params)
+	completion, err := p.client.Chat.Completions.New(ctx, params, extraRequestOptions(opts)...)
 	if err != nil {
 		return "", fmt.Errorf("%w: %v", domain.ErrGenerationFailed, err)
 	}
@@ -590,7 +607,7 @@ func (p *OpenAILLMProvider) Stream(ctx context.Context, prompt string, opts *dom
 		}
 	}
 
-	stream := p.client.Chat.Completions.NewStreaming(ctx, params)
+	stream := p.client.Chat.Completions.NewStreaming(ctx, params, extraRequestOptions(opts)...)
 
 	for stream.Next() {
 		chunk := stream.Current()
@@ -621,14 +638,14 @@ func (p *OpenAILLMProvider) GenerateWithTools(ctx context.Context, messages []do
 		return nil, err
 	}
 
-	completion, err := p.client.Chat.Completions.New(ctx, params)
+	completion, err := p.client.Chat.Completions.New(ctx, params, extraRequestOptions(opts)...)
 	if err != nil {
 		if retryOpts := applyOpenAIRetryFallbacks(opts, err); retryOpts != nil {
 			retryParams, buildErr := buildOpenAIChatCompletionParams(messages, tools, retryOpts, p.config.LLMModel)
 			if buildErr != nil {
 				return nil, buildErr
 			}
-			completion, err = p.client.Chat.Completions.New(ctx, retryParams)
+			completion, err = p.client.Chat.Completions.New(ctx, retryParams, extraRequestOptions(retryOpts)...)
 		}
 	}
 	if err != nil {
@@ -688,7 +705,7 @@ func (p *OpenAILLMProvider) streamWithToolsOnce(ctx context.Context, messages []
 		return err
 	}
 
-	stream := p.client.Chat.Completions.NewStreaming(ctx, params)
+	stream := p.client.Chat.Completions.NewStreaming(ctx, params, extraRequestOptions(opts)...)
 
 	for stream.Next() {
 		chunk := stream.Current()
@@ -783,7 +800,7 @@ func (p *OpenAILLMProvider) GenerateStructured(ctx context.Context, prompt strin
 		params.MaxCompletionTokens = openai.Int(int64(opts.MaxTokens))
 	}
 
-	resp, err := p.client.Chat.Completions.New(ctx, params)
+	resp, err := p.client.Chat.Completions.New(ctx, params, extraRequestOptions(opts)...)
 	if err != nil {
 		// Fallback: some OpenAI-compatible providers reject response_format entirely.
 		// Retry as a plain chat completion asking for JSON in the prompt.
@@ -836,7 +853,7 @@ func (p *OpenAILLMProvider) generateStructuredFallback(ctx context.Context, prom
 		}
 	}
 
-	resp, err := p.client.Chat.Completions.New(ctx, params)
+	resp, err := p.client.Chat.Completions.New(ctx, params, extraRequestOptions(opts)...)
 	if err != nil {
 		return nil, WrapStructuredOutputError(domain.ProviderOpenAI, err)
 	}
