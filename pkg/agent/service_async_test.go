@@ -161,9 +161,16 @@ func TestPersistedAsyncContinuationSupportsCrossServiceSendMessage(t *testing.T)
 	waitForSessionNotification(t, svc2.store, parent2.ID, "RESUME_DONE")
 }
 
+// asyncTaskWaitTimeout is generous enough to absorb slow CI runners
+// (hosted Linux with cold module cache + SQLite contention can take
+// several seconds for a task to flush its result row). 5s was the
+// previous value; it flaked on ubuntu-latest. Locally these waits
+// resolve in well under a second.
+const asyncTaskWaitTimeout = 30 * time.Second
+
 func waitForTaskOutput(t *testing.T, store *Store, taskID, wantOutput string) *taskpkg.Task {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(asyncTaskWaitTimeout)
 	for time.Now().Before(deadline) {
 		task, err := store.GetTask(taskID)
 		if err == nil && task != nil && strings.TrimSpace(task.Output) == wantOutput {
@@ -178,7 +185,7 @@ func waitForTaskOutput(t *testing.T, store *Store, taskID, wantOutput string) *t
 
 func waitForSessionNotification(t *testing.T, store *Store, sessionID, want string) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(asyncTaskWaitTimeout)
 	for time.Now().Before(deadline) {
 		session, err := store.GetSession(sessionID)
 		if err == nil && session != nil {
