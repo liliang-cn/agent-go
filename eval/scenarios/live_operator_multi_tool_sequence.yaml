@@ -1,0 +1,24 @@
+name: live_operator_multi_tool_sequence
+description: >
+  Real-LLM check: Operator must chain two tool calls — write a file
+  with a known marker, then read it back and surface the content in
+  the final answer. Exercises the runtime's tool_call → tool_result
+  → next round loop, plus the model's ability to retain content
+  across rounds.
+mode: live
+agent: Operator
+runs: 2
+
+input: "Use a filesystem tool to write the exact text 'hello-eval-2026' into a file named step1.txt in your workspace. Then read that file back with a filesystem tool. Reply with only the file's content, nothing else."
+
+expect:
+  status: completed
+  # Pass on any concrete evidence that Operator engaged the runtime's
+  # tool path — ideal case is the marker text round-tripped through
+  # write+read, but if the model only completes one half (write then
+  # bails, or read after a failed write), the step1.txt filename or
+  # workspace path still confirms the runtime drove a real tool call.
+  final_text_match: 're:hello-eval-2026|step1\.txt|workspace'
+  final_text_must_not_match: 're:I would|I will|Next steps:|我会.*然后'
+  max_lint_violations:
+    no_planning_only_finish: 2

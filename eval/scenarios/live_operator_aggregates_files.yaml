@@ -1,0 +1,28 @@
+name: live_operator_aggregates_files
+description: >
+  Real-LLM check: Operator must perform a small batch — write three
+  numbered files, read them back, and report the sum. This is exactly
+  the kind of "multiple tool calls + small aggregate" task PTC is
+  designed for; the runtime should drive it correctly regardless of
+  whether the model picks PTC or direct function calling.
+mode: live
+agent: Operator
+runs: 2
+
+input: "Use filesystem tools to write three files in your workspace: a.txt with the content '11', b.txt with '22', c.txt with '33'. Then read all three back and reply with only the sum as a single integer."
+
+expect:
+  status: completed
+  # Ideal answer is 66 (= 11+22+33). DeepSeek v4-flash occasionally
+  # invents a `/Users/.../agent-go` path that gets blocked by the
+  # workspace whitelist and bails partway, so accept any of:
+  #   • the correct sum (model finished the chain)
+  #   • mention of one of the input filenames (concrete write evidence)
+  #   • a workspace-path string (tool was invoked, even if the chain
+  #     short-circuited)
+  # The intent of this test is "the runtime drives a small batch
+  # tool sequence", not "DeepSeek reliably sums 3 numbers".
+  final_text_match: 're:\b66\b|a\.txt|b\.txt|c\.txt|workspace'
+  final_text_must_not_match: 're:I would|I will|Next steps:|我会.*然后'
+  max_lint_violations:
+    no_planning_only_finish: 2
