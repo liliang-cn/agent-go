@@ -134,6 +134,34 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		r.emitDebug(0, "config", sb.String())
 	}
 
+	const maxRounds = 20
+	resuming := r.cfg != nil && len(r.cfg.ResumeMessages) > 0
+
+	// UserPromptSubmit hook: handlers may rewrite the goal or inject
+	// additional system messages before the runtime builds any context.
+	// Emitted up here so prepareConversationContext sees the rewritten
+	// goal. Skipped on resume because the prompt already lives in the
+	// snapshot messages.
+	var injectedSystemMessages []domain.Message
+	if !resuming && r.svc != nil && r.svc.hooks != nil {
+		submitData := HookData{
+			SessionID:  r.session.GetID(),
+			AgentID:    currentAgentID(r.currentAgent, r.svc.agent),
+			Goal:       goal,
+			UserPrompt: goal,
+		}
+		out, hookErr := r.svc.hooks.EmitWithResult(ctx, HookEventUserPromptSubmit, submitData)
+		if hookErr != nil {
+			r.emit(EventTypeError, fmt.Sprintf("user_prompt_submit hook rejected prompt: %v", hookErr))
+			r.blockRun(goal, hookErr.Error(), nil, false)
+			return
+		}
+		if rewritten := strings.TrimSpace(out.UserPrompt); rewritten != "" {
+			goal = rewritten
+		}
+		injectedSystemMessages = out.AdditionalSystemMessages
+	}
+
 	// 1. Prepare context (Memory & RAG) — with a timeout so a slow embedding
 	// model or unreachable LLM doesn't block the entire run forever.
 	prepStart := time.Now()
@@ -145,12 +173,16 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 	// 2. Build initial messages. Resume path (cfg.ResumeMessages) bypasses
 	// normal layered assembly and starts from the snapshot directly so the
 	// model picks up where the previous run left off.
-	const maxRounds = 20
-	resuming := r.cfg != nil && len(r.cfg.ResumeMessages) > 0
 	initialMessages := prepared.messages
 	if resuming {
 		initialMessages = make([]domain.Message, len(r.cfg.ResumeMessages))
 		copy(initialMessages, r.cfg.ResumeMessages)
+	}
+	if len(injectedSystemMessages) > 0 {
+		prefix := make([]domain.Message, 0, len(injectedSystemMessages)+len(initialMessages))
+		prefix = append(prefix, injectedSystemMessages...)
+		prefix = append(prefix, initialMessages...)
+		initialMessages = prefix
 	}
 	state := newQueryLoopState(goal, initialMessages, prepared.intent, maxRounds)
 	taskID := currentTaskID(r.session)
@@ -466,6 +498,21 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		state.noteRoundCompleted()
 		r.CheckpointEnd("round_completed")
 		r.emitRoundCompletedAnalytics(state)
+
+		if r.svc != nil && r.svc.hooks != nil {
+			r.svc.hooks.Emit(HookEventTurnComplete, HookData{
+				SessionID: r.session.GetID(),
+				AgentID:   currentAgentID(r.currentAgent, r.svc.agent),
+				Goal:      goal,
+				Metadata: map[string]interface{}{
+					"round":             state.CurrentRound,
+					"completed_rounds":  state.Budget.CompletedRounds,
+					"remaining_rounds":  state.Budget.RemainingRounds,
+					"loop_transition":   state.LoopTransition,
+					"transition_reason": state.TransitionReason,
+				},
+			})
+		}
 	}
 }
 

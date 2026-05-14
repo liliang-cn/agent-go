@@ -248,53 +248,6 @@ func TestNotMatcher(t *testing.T) {
 	}
 }
 
-func TestConvenienceFunctions(t *testing.T) {
-	// Test convenience registration functions
-	var preToolCalled, postToolCalled, subagentStartCalled, subagentStopCalled bool
-
-	// Clear global registry for test isolation
-	GlobalHookRegistry().Clear()
-
-	OnPreToolUse(func(ctx context.Context, event HookEvent, data HookData) (interface{}, error) {
-		preToolCalled = true
-		return nil, nil
-	})
-
-	OnPostToolUse(func(ctx context.Context, event HookEvent, data HookData) (interface{}, error) {
-		postToolCalled = true
-		return nil, nil
-	})
-
-	OnSubagentStart(func(ctx context.Context, event HookEvent, data HookData) (interface{}, error) {
-		subagentStartCalled = true
-		return nil, nil
-	})
-
-	OnSubagentStop(func(ctx context.Context, event HookEvent, data HookData) (interface{}, error) {
-		subagentStopCalled = true
-		return nil, nil
-	})
-
-	// Emit events
-	GlobalHookRegistry().Emit(HookEventPreToolUse, HookData{})
-	GlobalHookRegistry().Emit(HookEventPostToolUse, HookData{})
-	GlobalHookRegistry().Emit(HookEventSubagentStart, HookData{})
-	GlobalHookRegistry().Emit(HookEventSubagentStop, HookData{})
-
-	if !preToolCalled {
-		t.Error("OnPreToolUse handler not called")
-	}
-	if !postToolCalled {
-		t.Error("OnPostToolUse handler not called")
-	}
-	if !subagentStartCalled {
-		t.Error("OnSubagentStart handler not called")
-	}
-	if !subagentStopCalled {
-		t.Error("OnSubagentStop handler not called")
-	}
-}
-
 func TestHookEnableDisable(t *testing.T) {
 	registry := NewHookRegistry()
 

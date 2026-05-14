@@ -24,9 +24,9 @@ import (
 type TaskCheckpoint struct {
 	ID        string           `json:"id"`
 	TaskID    string           `json:"task_id"`
-	Seq       int              `json:"seq"`              // monotonically increasing within a TaskID
-	Round     int              `json:"round"`            // runtime loop round at snapshot time
-	AfterTool string           `json:"after_tool"`       // optional: name of the tool whose result triggered the snapshot
+	Seq       int              `json:"seq"`        // monotonically increasing within a TaskID
+	Round     int              `json:"round"`      // runtime loop round at snapshot time
+	AfterTool string           `json:"after_tool"` // optional: name of the tool whose result triggered the snapshot
 	SessionID string           `json:"session_id"`
 	AgentName string           `json:"agent_name"`
 	Messages  []domain.Message `json:"messages"`
@@ -183,9 +183,9 @@ func (s *Store) DeleteTaskCheckpoints(taskID string) error {
 // checkpointWriter serializes per-task seq assignment + write + prune so
 // concurrent runtime callers don't race on Seq.
 type checkpointWriter struct {
-	mu       sync.Mutex
-	store    *Store
-	lastSeq  map[string]int // taskID -> last assigned seq
+	mu      sync.Mutex
+	store   *Store
+	lastSeq map[string]int // taskID -> last assigned seq
 }
 
 func newCheckpointWriter(store *Store) *checkpointWriter {

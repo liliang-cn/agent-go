@@ -470,7 +470,7 @@ func TestExecuteWithLLM_StopHookPreventsContinuationAfterToolRound(t *testing.T)
 		promptManager:   prompt.NewManager(),
 		toolRegistry:    NewToolRegistry(),
 		inProgressTools: make(map[string]int),
-		stopHookService: NewStopHookService(),
+		hooks:           NewHookRegistry(),
 	}
 	svc.registry.Register(agent)
 	svc.RegisterStopHook(StopHookConfig{

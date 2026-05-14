@@ -174,8 +174,8 @@ func runOnce(ctx context.Context, sc *Scenario, opts RunOptions) (*singleRun, er
 	}
 
 	var (
-		svc     *agent.Service
-		mock    *MockLLM
+		svc      *agent.Service
+		mock     *MockLLM
 		buildErr error
 	)
 

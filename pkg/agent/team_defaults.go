@@ -117,10 +117,10 @@ func defaultBuiltInStandaloneAgents(agentName string) []*AgentModel {
 			EnableMCP:    true,
 		},
 		{
-			ID:           defaultArchivistAgentID,
-			Name:         defaultArchivistAgentName,
-			Kind:         AgentKindAgent,
-			Description:  "Built-in memory specialist for durable facts, preferences, recall quality, and memory hygiene.",
+			ID:          defaultArchivistAgentID,
+			Name:        defaultArchivistAgentName,
+			Kind:        AgentKindAgent,
+			Description: "Built-in memory specialist for durable facts, preferences, recall quality, and memory hygiene.",
 			// Note: the rule "resolve relative time references to absolute
 			// dates before storing" is enforced mechanically by the
 			// archivist_no_relative_time output lint. The lint trips on

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 )
 
 // HookEvent defines the type of hook event
@@ -43,6 +44,12 @@ const (
 
 	// HookEventTurnComplete fires when a turn completes successfully
 	HookEventTurnComplete HookEvent = "turn_complete"
+
+	// HookEventUserPromptSubmit fires when a user prompt enters the runtime,
+	// before the agent loop starts. Handlers may rewrite the prompt via
+	// HookData.UserPrompt or inject system context via
+	// HookData.AdditionalSystemMessages.
+	HookEventUserPromptSubmit HookEvent = "user_prompt_submit"
 )
 
 // HookData contains data passed to hook handlers
@@ -70,28 +77,17 @@ type HookData struct {
 	// Stop hook fields
 	PreventContinuation bool   `json:"prevent_continuation,omitempty"`
 	StopReason          string `json:"stop_reason,omitempty"`
+	BlockingError       string `json:"blocking_error,omitempty"`
 	HookOutput          string `json:"hook_output,omitempty"`
 	HookError           string `json:"hook_error,omitempty"`
 	HookExitCode        int    `json:"hook_exit_code,omitempty"`
 	DurationMs          int64  `json:"duration_ms,omitempty"`
-}
 
-// StopHookResult is returned by stop hooks to control continuation behavior
-type StopHookResult struct {
-	// PreventContinuation if true, stops the agent loop from continuing
-	PreventContinuation bool `json:"prevent_continuation"`
-	// StopReason describes why continuation was prevented
-	StopReason string `json:"stop_reason,omitempty"`
-	// BlockingError is an error message to display to the user (blocks with message)
-	BlockingError string `json:"blocking_error,omitempty"`
-	// HookOutput captures stdout from the hook command
-	HookOutput string `json:"hook_output,omitempty"`
-	// HookError captures stderr from the hook command
-	HookError string `json:"hook_error,omitempty"`
-	// ExitCode from the hook command
-	ExitCode int `json:"exit_code,omitempty"`
-	// DurationMs execution time of the hook
-	DurationMs int64 `json:"duration_ms,omitempty"`
+	// UserPromptSubmit fields. Handlers may rewrite UserPrompt or append
+	// items to AdditionalSystemMessages; the runtime applies both before
+	// the loop starts.
+	UserPrompt               string           `json:"user_prompt,omitempty"`
+	AdditionalSystemMessages []domain.Message `json:"-"`
 }
 
 // HookHandler is a function that handles a hook event
@@ -123,19 +119,6 @@ type HookRegistry struct {
 	mu     sync.RWMutex
 	hooks  map[HookEvent][]*Hook
 	global []*Hook // Hooks for all events
-}
-
-var (
-	globalRegistry *HookRegistry
-	globalOnce     sync.Once
-)
-
-// GlobalHookRegistry returns the global hook registry singleton
-func GlobalHookRegistry() *HookRegistry {
-	globalOnce.Do(func() {
-		globalRegistry = NewHookRegistry()
-	})
-	return globalRegistry
 }
 
 // NewHookRegistry creates a new hook registry
@@ -408,28 +391,4 @@ func WithHookEnabled(enabled bool) HookOption {
 	return func(h *Hook) {
 		h.Enabled = enabled
 	}
-}
-
-// --- Convenience functions for common hooks (deprecated) ---
-// These functions register into the global HookRegistry which is no longer
-// used by Service. Use svc.RegisterHook(event, handler) instead.
-
-// Deprecated: use svc.RegisterHook(HookEventPreToolUse, handler).
-func OnPreToolUse(handler HookHandler, opts ...HookOption) string {
-	return GlobalHookRegistry().Register(HookEventPreToolUse, handler, opts...)
-}
-
-// Deprecated: use svc.RegisterHook(HookEventPostToolUse, handler).
-func OnPostToolUse(handler HookHandler, opts ...HookOption) string {
-	return GlobalHookRegistry().Register(HookEventPostToolUse, handler, opts...)
-}
-
-// Deprecated: use svc.RegisterHook(HookEventSubagentStart, handler).
-func OnSubagentStart(handler HookHandler, opts ...HookOption) string {
-	return GlobalHookRegistry().Register(HookEventSubagentStart, handler, opts...)
-}
-
-// Deprecated: use svc.RegisterHook(HookEventSubagentStop, handler).
-func OnSubagentStop(handler HookHandler, opts ...HookOption) string {
-	return GlobalHookRegistry().Register(HookEventSubagentStop, handler, opts...)
 }

@@ -336,15 +336,43 @@ func (s *Service) GetHooks() *HookRegistry {
 	return s.hooks
 }
 
-// RegisterStopHook registers a stop hook that runs at the end of each turn
-// Stop hooks can block continuation by returning a result with PreventContinuation=true
+// RegisterStopHook registers a shell-command stop hook into the unified
+// hook registry under HookEventStop. The command is executed at the end of
+// each turn (after tools, before continuation) and may instruct the runtime
+// to terminate the loop by writing JSON like
+// {"prevent_continuation":true,"stop_reason":"..."} to stdout.
+//
+// Go-callback stop hooks should use RegisterHook(HookEventStop, ...) directly.
 func (s *Service) RegisterStopHook(cfg StopHookConfig) {
-	s.stopHookService.RegisterStopHook(cfg)
+	if s == nil || s.hooks == nil {
+		return
+	}
+	id := s.hooks.Register(HookEventStop, func(ctx context.Context, _ HookEvent, data HookData) (interface{}, error) {
+		return runStopShellHook(ctx, cfg, data), nil
+	}, WithHookDescription(cfg.Description))
+
+	s.stopHookMu.Lock()
+	s.stopHookIDs = append(s.stopHookIDs, id)
+	s.stopHookMu.Unlock()
 }
 
-// UnregisterStopHooks removes all stop hooks
+// UnregisterStopHooks removes all shell-command stop hooks registered via
+// RegisterStopHook. Go-callback hooks registered directly via RegisterHook
+// are not affected.
 func (s *Service) UnregisterStopHooks() {
-	s.stopHookService.UnregisterStopHooks()
+	if s == nil {
+		return
+	}
+	s.stopHookMu.Lock()
+	ids := s.stopHookIDs
+	s.stopHookIDs = nil
+	s.stopHookMu.Unlock()
+	if s.hooks == nil {
+		return
+	}
+	for _, id := range ids {
+		s.hooks.Unregister(id)
+	}
 }
 
 // CreateSubAgent creates a sub-agent wrapper for isolated execution

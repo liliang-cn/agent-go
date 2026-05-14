@@ -92,8 +92,10 @@ type Service struct {
 	// Async sub-agent coordinator
 	asyncTasks *SubAgentCoordinator
 
-	// Stop hooks for end-of-turn execution
-	stopHookService *StopHookService
+	// Stop-hook tracking: maps StopHookConfig registrations to their hook IDs
+	// in the registry so UnregisterStopHooks can remove them.
+	stopHookMu  sync.Mutex
+	stopHookIDs []string
 
 	// toolRegistry is the unified registry for custom, RAG, and Memory tools.
 	// All modules register here so that both LLM listing and PTC callTool()
@@ -197,7 +199,6 @@ func NewService(
 		logger:                logger,
 		memoryScopeAgentID:    strings.TrimSpace(agent.Name()),
 		hooks:                 NewHookRegistry(),
-		stopHookService:       NewStopHookService(),
 		asyncTasks:            NewSubAgentCoordinator(),
 		toolRegistry:          NewToolRegistry(),
 		tokenCounter:          usage.NewTokenCounter(),

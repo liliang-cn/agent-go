@@ -8,17 +8,18 @@ import (
 	"os/exec"
 	"strings"
 	"time"
-
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 )
 
-// StopHookConfig configures a stop hook
+// StopHookConfig configures a shell-command stop hook. Stop hooks run at the
+// end of each turn (after tool execution, before the continuation decision)
+// and can block the loop by setting prevent_continuation in their JSON output.
 type StopHookConfig struct {
 	// Command is the shell command to execute
 	Command string
 	// Description explains what this hook does
 	Description string
-	// Blocking if true, the hook blocks continuation (returns error to user)
+	// Blocking if true, a non-zero exit blocks continuation with the stderr as
+	// the BlockingError message.
 	Blocking bool
 	// Timeout is the max execution time (0 = no limit)
 	Timeout time.Duration
@@ -26,100 +27,26 @@ type StopHookConfig struct {
 	EnvVars map[string]string
 }
 
-// StopHookExecutor executes stop hooks
-type StopHookExecutor struct {
-	hooks   []*StopHookConfig
-	abortCh chan struct{}
-}
-
-// NewStopHookExecutor creates a new stop hook executor
-func NewStopHookExecutor() *StopHookExecutor {
-	return &StopHookExecutor{
-		hooks:   make([]*StopHookConfig, 0),
-		abortCh: make(chan struct{}),
-	}
-}
-
-// Register adds a stop hook configuration
-func (e *StopHookExecutor) Register(cfg StopHookConfig) {
-	e.hooks = append(e.hooks, &cfg)
-}
-
-// Unregister removes all stop hooks
-func (e *StopHookExecutor) Unregister() {
-	e.hooks = nil
-}
-
-// Abort signals all running hooks to stop
-func (e *StopHookExecutor) Abort() {
-	close(e.abortCh)
-}
-
-// ExecuteStopHooks runs all registered stop hooks and returns aggregated results
-// It runs hooks in sequence, stopping if a blocking hook fails
-func (e *StopHookExecutor) ExecuteStopHooks(ctx context.Context, hookData HookData) *StopHookResult {
-	if len(e.hooks) == 0 {
-		return nil
-	}
-
-	aggregated := &StopHookResult{}
-	allOutput := &strings.Builder{}
-
-	for _, hook := range e.hooks {
-		result := e.executeSingleHook(ctx, hook, hookData)
-		if result == nil {
-			continue
-		}
-
-		// Accumulate output
-		if result.HookOutput != "" {
-			allOutput.WriteString(result.HookOutput)
-		}
-
-		// Track if any hook wants to prevent continuation
-		if result.PreventContinuation {
-			aggregated.PreventContinuation = true
-			if result.StopReason != "" {
-				aggregated.StopReason = result.StopReason
-			}
-		}
-
-		// If blocking hook failed, record the blocking error
-		if result.BlockingError != "" {
-			aggregated.BlockingError = result.BlockingError
-			aggregated.PreventContinuation = true
-			if aggregated.StopReason == "" {
-				aggregated.StopReason = result.BlockingError
-			}
-		}
-	}
-
-	if allOutput.Len() > 0 {
-		aggregated.HookOutput = allOutput.String()
-	}
-
-	// Return nil if nothing happened
-	if !aggregated.PreventContinuation && aggregated.BlockingError == "" && aggregated.HookOutput == "" {
-		return nil
-	}
-
-	return aggregated
-}
-
-// executeSingleHook runs a single stop hook
-func (e *StopHookExecutor) executeSingleHook(ctx context.Context, cfg *StopHookConfig, data HookData) *StopHookResult {
+// runStopShellHook executes a single shell stop-hook configuration and
+// returns the resulting HookData with the stop fields populated.
+//
+// Shell hook contract: the command may write JSON to stdout in the form
+//
+//	{"prevent_continuation": true, "stop_reason": "why"}
+//
+// to ask the runtime to stop the loop. Non-JSON stdout is propagated as
+// HookOutput for logging only.
+func runStopShellHook(ctx context.Context, cfg StopHookConfig, data HookData) HookData {
 	start := time.Now()
 
-	// Build command with context
-	cmdCtx, cancel := context.WithTimeout(ctx, cfg.Timeout)
-	defer cancel()
+	cmdCtx := ctx
+	if cfg.Timeout > 0 {
+		var cancel context.CancelFunc
+		cmdCtx, cancel = context.WithTimeout(ctx, cfg.Timeout)
+		defer cancel()
+	}
 
-	// Create the command
-	shell := "/bin/sh"
-	args := []string{"-c", cfg.Command}
-	cmd := exec.CommandContext(cmdCtx, shell, args...)
-
-	// Set up environment
+	cmd := exec.CommandContext(cmdCtx, "/bin/sh", "-c", cfg.Command)
 	env := []string{
 		fmt.Sprintf("AGENTGO_SESSION_ID=%s", data.SessionID),
 		fmt.Sprintf("AGENTGO_AGENT_ID=%s", data.AgentID),
@@ -130,42 +57,40 @@ func (e *StopHookExecutor) executeSingleHook(ctx context.Context, cfg *StopHookC
 	}
 	cmd.Env = env
 
-	// Capture output
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	// Execute
 	err := cmd.Run()
-	duration := time.Since(start)
 
-	result := &StopHookResult{
-		DurationMs: duration.Milliseconds(),
-		HookOutput: stdout.String(),
-		HookError:  stderr.String(),
-	}
+	data.DurationMs = time.Since(start).Milliseconds()
+	data.HookOutput = stdout.String()
+	data.HookError = stderr.String()
 
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			result.BlockingError = fmt.Sprintf("Stop hook timed out after %v: %s", cfg.Timeout, cfg.Command)
+		if cmdCtx.Err() == context.DeadlineExceeded {
+			data.BlockingError = fmt.Sprintf("Stop hook timed out after %v: %s", cfg.Timeout, cfg.Command)
+			data.PreventContinuation = true
 		} else {
-			result.ExitCode = -1
+			data.HookExitCode = -1
 			if exitErr, ok := err.(*exec.ExitError); ok {
-				result.ExitCode = exitErr.ExitCode()
+				data.HookExitCode = exitErr.ExitCode()
 			}
 			if cfg.Blocking {
-				result.BlockingError = fmt.Sprintf("Stop hook failed: %s (exit %d)", stderr.String(), result.ExitCode)
+				data.BlockingError = fmt.Sprintf("Stop hook failed: %s (exit %d)", stderr.String(), data.HookExitCode)
+				data.PreventContinuation = true
 			}
 		}
 	}
 
-	applyStopHookControl(stdout.String(), result)
-
-	return result
+	applyStopHookControl(stdout.String(), &data)
+	return data
 }
 
-func applyStopHookControl(output string, result *StopHookResult) {
-	if result == nil {
+// applyStopHookControl parses a JSON directive emitted by a shell hook on
+// stdout and applies the prevent_continuation / stop_reason fields to data.
+func applyStopHookControl(output string, data *HookData) {
+	if data == nil {
 		return
 	}
 	output = strings.TrimSpace(output)
@@ -179,15 +104,15 @@ func applyStopHookControl(output string, result *StopHookResult) {
 	}
 	if err := json.Unmarshal([]byte(output), &payload); err == nil {
 		if payload.PreventContinuation {
-			result.PreventContinuation = true
+			data.PreventContinuation = true
 		}
 		if strings.TrimSpace(payload.StopReason) != "" {
-			result.StopReason = strings.TrimSpace(payload.StopReason)
+			data.StopReason = strings.TrimSpace(payload.StopReason)
 		}
 	}
 }
 
-// ExecuteToolResultsHooks formats tool results for stop hook context
+// FormatToolResultsForHook formats tool results for stop hook context.
 func FormatToolResultsForHook(results []ToolExecutionResult) string {
 	if len(results) == 0 {
 		return ""
@@ -204,7 +129,6 @@ func FormatToolResultsForHook(results []ToolExecutionResult) string {
 	return strings.Join(lines, "\n")
 }
 
-// truncateForHook truncates tool output for hook context
 func truncateForHook(s string) string {
 	const maxLen = 500
 	if len(s) <= maxLen {
@@ -213,53 +137,30 @@ func truncateForHook(s string) string {
 	return s[:maxLen] + "... (truncated)"
 }
 
-// StopHookService provides stop hooks functionality for the agent service
-type StopHookService struct {
-	executor *StopHookExecutor
+// StopHookResult is the legacy shape returned to internal call sites that
+// still want the old result type. It is now a thin view over the Stop-hook
+// fields on HookData. New code should read those fields directly.
+type StopHookResult struct {
+	PreventContinuation bool
+	StopReason          string
+	BlockingError       string
+	HookOutput          string
+	HookError           string
+	ExitCode            int
+	DurationMs          int64
 }
 
-// NewStopHookService creates a new stop hook service
-func NewStopHookService() *StopHookService {
-	return &StopHookService{
-		executor: NewStopHookExecutor(),
+func stopHookResultFromData(data HookData) *StopHookResult {
+	if !data.PreventContinuation && data.BlockingError == "" && data.HookOutput == "" {
+		return nil
 	}
-}
-
-// RegisterStopHook registers a new stop hook
-func (s *StopHookService) RegisterStopHook(cfg StopHookConfig) {
-	s.executor.Register(cfg)
-}
-
-// UnregisterStopHooks removes all stop hooks
-func (s *StopHookService) UnregisterStopHooks() {
-	s.executor.Unregister()
-}
-
-// ExecuteStopHooks runs all registered stop hooks
-func (s *StopHookService) ExecuteStopHooks(ctx context.Context, sessionID, agentID, goal string, messages []domain.Message, lastToolResults []ToolExecutionResult) *StopHookResult {
-	hookData := HookData{
-		SessionID: sessionID,
-		AgentID:   agentID,
-		Goal:      goal,
-		Metadata: map[string]interface{}{
-			"message_count":     len(messages),
-			"tool_result_count": len(lastToolResults),
-		},
+	return &StopHookResult{
+		PreventContinuation: data.PreventContinuation,
+		StopReason:          data.StopReason,
+		BlockingError:       data.BlockingError,
+		HookOutput:          data.HookOutput,
+		HookError:           data.HookError,
+		ExitCode:            data.HookExitCode,
+		DurationMs:          data.DurationMs,
 	}
-
-	// Format recent messages summary
-	if len(messages) > 0 {
-		lastMsg := messages[len(messages)-1]
-		hookData.Metadata["last_message_role"] = lastMsg.Role
-		if lastMsg.Role == "assistant" {
-			hookData.Metadata["last_assistant_content"] = truncateForHook(lastMsg.Content)
-		}
-	}
-
-	// Format tool results
-	if len(lastToolResults) > 0 {
-		hookData.Metadata["tool_results"] = FormatToolResultsForHook(lastToolResults)
-	}
-
-	return s.executor.ExecuteStopHooks(ctx, hookData)
 }
