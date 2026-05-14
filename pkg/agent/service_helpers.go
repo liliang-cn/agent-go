@@ -461,7 +461,37 @@ func (s *Service) toolGenerationOptions(temperature float64, maxTokens int, tool
 	if toolChoice != "" {
 		opts.ToolChoice = toolChoice
 	}
+	// Forward the per-run Thinking knob (set via WithThinking) onto
+	// every tool round so DeepSeek/reasoner providers see a consistent
+	// setting throughout the task.
+	if t := s.currentThinkingOptions(); t != nil {
+		opts.Thinking = t
+	}
 	return opts
+}
+
+// currentThinkingOptions returns the run-scoped ThinkingOptions if
+// one was set by the runtime (from RunConfig.Thinking). Nil = provider
+// default.
+func (s *Service) currentThinkingOptions() *domain.ThinkingOptions {
+	if s == nil {
+		return nil
+	}
+	s.thinkingMu.RLock()
+	defer s.thinkingMu.RUnlock()
+	return s.thinkingOpts
+}
+
+// setCurrentThinkingOptions is called by the runtime at the start of a
+// run to push the RunConfig.Thinking knob onto the service, and again
+// (with nil) at the end to clear it.
+func (s *Service) setCurrentThinkingOptions(t *domain.ThinkingOptions) {
+	if s == nil {
+		return
+	}
+	s.thinkingMu.Lock()
+	s.thinkingOpts = t
+	s.thinkingMu.Unlock()
 }
 
 func (s *Service) ptcAvailableCallTools(ctx context.Context) []ptc.ToolInfo {

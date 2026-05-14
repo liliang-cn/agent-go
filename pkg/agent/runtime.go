@@ -60,7 +60,7 @@ func NewRuntime(svc *Service, session *Session, cfg *RunConfig) *Runtime {
 		session:         session,
 		cfg:             cfg,
 		pendingTools:    make(map[string]domain.ToolCall),
-		completedTools: make(map[string]bool),
+		completedTools:  make(map[string]bool),
 		lintRetryBudget: defaultLintRetryBudget,
 	}
 }
@@ -112,6 +112,15 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 	ctx = withCurrentSession(ctx, r.session)
 
 	r.emit(EventTypeStart, fmt.Sprintf("Starting task: %s", goal))
+
+	// Push the run-scoped Thinking knob (WithThinking) onto the service
+	// so toolGenerationOptions can read it on every per-round LLM call.
+	// Cleared on return so a later run on the same Service can't pick
+	// up a stale value.
+	if r.cfg != nil && r.cfg.Thinking != nil {
+		r.svc.setCurrentThinkingOptions(r.cfg.Thinking)
+		defer r.svc.setCurrentThinkingOptions(nil)
+	}
 
 	// --- DEBUG: LOG AGENT CONFIGURATION ---
 	if r.debugEnabled() {

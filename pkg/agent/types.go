@@ -212,6 +212,13 @@ type RunConfig struct {
 	// message as already-delivered context and prompts the model for
 	// the next round.
 	ResumeMessages []domain.Message
+
+	// Thinking, when non-nil, is forwarded to the provider as the
+	// `thinking` request field (DeepSeek v4 + reasoner-compatible
+	// providers). Use WithThinking(false) to disable chain-of-thought
+	// on tool-heavy / latency-sensitive runs. Nil = leave provider
+	// default in place.
+	Thinking *domain.ThinkingOptions
 }
 
 // ErrorHandlerFunc handles errors during agent execution
@@ -315,6 +322,22 @@ func WithResumeMessages(msgs []domain.Message) RunOption {
 		}
 		c.ResumeMessages = make([]domain.Message, len(msgs))
 		copy(c.ResumeMessages, msgs)
+	}
+}
+
+// WithThinking turns provider-side chain-of-thought on or off for this
+// run. Currently honored by DeepSeek v4 reasoner models (and providers
+// that mirror the same `thinking.type` field shape). Calling
+// `WithThinking(false)` on a tool-heavy or latency-sensitive run drops
+// per-call latency significantly because the model emits no
+// reasoning_content. Defaults to provider behaviour when unset.
+func WithThinking(enabled bool) RunOption {
+	return func(c *RunConfig) {
+		typeStr := "enabled"
+		if !enabled {
+			typeStr = "disabled"
+		}
+		c.Thinking = &domain.ThinkingOptions{Type: typeStr}
 	}
 }
 

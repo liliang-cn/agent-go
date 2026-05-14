@@ -283,6 +283,18 @@ func buildPoolGenerateWithToolsRequest(modelName string, messages []domain.Messa
 				}
 			}
 		}
+		// DeepSeek v4 (and reasoner-style models more broadly) accept a
+		// top-level `thinking` field: `{"type":"disabled"}` skips
+		// chain-of-thought, dropping latency a lot for tool-heavy runs.
+		// Other providers either ignore the field or 400 — the runtime
+		// only sets this when a caller explicitly opts in via
+		// WithThinking() / opts.Thinking, so non-DeepSeek paths default
+		// to "leave it alone".
+		if opts.Thinking != nil && opts.Thinking.Type != "" {
+			reqBody["thinking"] = map[string]interface{}{
+				"type": opts.Thinking.Type,
+			}
+		}
 		if domain.UsesNativeWebSearch(opts.WebSearchMode) {
 			reqBody["web_search_options"] = map[string]interface{}{
 				"search_context_size": domain.NormalizeWebSearchContextSize(opts.WebSearchContextSize),

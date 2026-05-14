@@ -119,6 +119,13 @@ type Service struct {
 	// and skip persistence.
 	checkpointSink CheckpointSink
 
+	// thinkingOpts carries the run-scoped DeepSeek-style `thinking`
+	// option set via WithThinking(). The runtime copies r.cfg.Thinking
+	// onto the service at loop start and clears it on return so
+	// toolGenerationOptions sees it on every per-round LLM call.
+	thinkingMu   sync.RWMutex
+	thinkingOpts *domain.ThinkingOptions
+
 	// Public access to underlying services
 	LLM     domain.Generator
 	MCP     *mcp.Service // Full access to MCP service (Chat, StartServers, etc.)
