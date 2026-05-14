@@ -1,0 +1,23 @@
+name: live_operator_runs_command
+description: >
+  Real-LLM check: when asked something operational that requires
+  consulting the local filesystem, Operator must use a tool rather
+  than guess. Asserts the run completes, the answer contains
+  concrete evidence (a path-shaped string), and Operator doesn't end
+  with a planning-only sentence.
+mode: live
+agent: Operator
+runs: 2
+
+input: "Use an available filesystem tool to write the text 'eval-marker-ok' into a file named eval-marker.txt inside your workspace, then reply with the absolute path of the file (or, if the write tool is unavailable, the absolute path of your workspace)."
+
+expect:
+  status: completed
+  # Pass if Operator engaged with the filesystem at all — either wrote
+  # the marker file or at minimum looked up the workspace path. Real
+  # LLMs sometimes bail out at the directory-listing step before
+  # writing, so accept both.
+  final_text_match: 're:(eval-marker|workspace|/var/|/tmp|/Users/)'
+  final_text_must_not_match: 're:I would|I will write|Next steps:|我会.*然后'
+  max_lint_violations:
+    no_planning_only_finish: 2

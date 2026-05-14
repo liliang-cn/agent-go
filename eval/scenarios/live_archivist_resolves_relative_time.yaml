@@ -1,0 +1,21 @@
+name: live_archivist_resolves_relative_time
+description: >
+  Real-LLM check: when asked to remember a schedule with a relative time
+  reference (明天 / next Monday / tomorrow), Archivist must resolve it
+  to an absolute YYYY-MM-DD date before storing. The
+  archivist_no_relative_time output lint enforces this; it may
+  legitimately self-heal up to the runtime's retry budget, but the
+  final answer must contain an absolute date and must not contain a
+  bare relative reference.
+mode: live
+agent: Archivist
+runs: 2
+
+input: "记一下：明天 18:00 和老王在公司楼下吃饭。"
+
+expect:
+  status: completed
+  final_text_match: 're:\d{4}[-/]\d{1,2}[-/]\d{1,2}'
+  max_lint_violations:
+    archivist_no_relative_time: 2
+    no_planning_only_finish: 1

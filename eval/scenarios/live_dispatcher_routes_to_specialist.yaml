@@ -1,0 +1,28 @@
+name: live_dispatcher_routes_to_specialist
+description: >
+  Real-LLM check: when the user asks Dispatcher to remember something,
+  Dispatcher must call route_builtin_request which dispatches via
+  IntentRouter + PromptOptimizer to Archivist. Asserts the final
+  answer reflects Archivist behavior — i.e. acknowledgement of the
+  stored fact with an absolute date — and Dispatcher itself does not
+  narrate routing intent.
+mode: live
+agent: Dispatcher
+runs: 2
+
+input: "请帮我记住：明天下午3点和老王开会。"
+
+expect:
+  status: completed
+  # Dispatcher's user-facing summary doesn't always echo the absolute
+  # date (Archivist returns it, Dispatcher summarizes), so we don't
+  # assert on date shape here — the Archivist scenario covers that.
+  # Instead we pin the two things that ARE Dispatcher's job:
+  #   1. acknowledge the save happened (substring match below)
+  #   2. don't narrate routing intent (negative pattern)
+  final_text_match: 're:saved|stored|记|存'
+  final_text_must_not_match: 're:I will route|让 .* 处理|转交给 [A-Za-z]'
+  max_lint_violations:
+    dispatcher_no_bounce_back: 2
+    archivist_no_relative_time: 2
+    no_planning_only_finish: 2

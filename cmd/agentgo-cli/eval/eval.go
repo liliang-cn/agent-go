@@ -193,13 +193,25 @@ func buildLiveBuilder() (evalrunner.LiveBuilder, error) {
 		evalCfg.RAG.Enabled = false
 		evalCfg.ApplyHomeLayout()
 
-		svc, err := agent.New(agentName).
-			WithPTC(false).
-			WithConfig(evalCfg).
-			WithLLM(llm).
-			Build()
+		// Build via TeamManager so live scenarios exercise the full
+		// agent ecosystem: route_builtin_request, registered MCP tools,
+		// auto-wired output lints (TeamManager calls
+		// applyBuiltInOutputLints for Dispatcher/Archivist), and the
+		// dispatcher tool catalogue. Standalone agent.New().Build()
+		// services miss all of this and only test the LLM-glue layer.
+		store, err := agent.NewStore(filepath.Join(home, "data", "agentgo.db"))
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("build eval store: %w", err)
+		}
+		mgr := agent.NewTeamManager(store)
+		mgr.SetConfig(evalCfg)
+		mgr.SetLLM(llm)
+		if err := mgr.SeedDefaultMembers(); err != nil {
+			return nil, fmt.Errorf("seed default members: %w", err)
+		}
+		svc, err := mgr.GetAgentService(agentName)
+		if err != nil {
+			return nil, fmt.Errorf("get agent service %q: %w", agentName, err)
 		}
 		// Live runs always wire the default lint set so the agent gets
 		// the same harness rules production code does. Scenario authors
