@@ -219,6 +219,14 @@ type RunConfig struct {
 	// on tool-heavy / latency-sensitive runs. Nil = leave provider
 	// default in place.
 	Thinking *domain.ThinkingOptions
+
+	// StructuredOutput, when non-nil, constrains the model's final answer
+	// to a JSON schema. Tier B (native response_format) is sent on every
+	// LLM call so the provider can fast-path compliant providers; Tier A
+	// (post-validation lint) runs on the final answer and re-prompts on
+	// invalid output, bounded by lintRetryBudget. Use WithStructuredOutput
+	// or WithStructuredOutputType to set this.
+	StructuredOutput *StructuredOutputSpec
 }
 
 // ErrorHandlerFunc handles errors during agent execution

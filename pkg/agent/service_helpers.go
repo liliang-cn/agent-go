@@ -467,7 +467,37 @@ func (s *Service) toolGenerationOptions(temperature float64, maxTokens int, tool
 	if t := s.currentThinkingOptions(); t != nil {
 		opts.Thinking = t
 	}
+	// Forward the per-run ResponseFormat (set via WithStructuredOutput).
+	// Tool calls bypass response_format on the provider side; this is
+	// only enforced when the model emits a text response.
+	if rf := s.currentResponseFormat(); rf != nil {
+		opts.ResponseFormat = rf
+	}
 	return opts
+}
+
+// currentResponseFormat returns the run-scoped ResponseFormat if one was
+// set by the runtime (from RunConfig.StructuredOutput). Nil = provider
+// default.
+func (s *Service) currentResponseFormat() *domain.ResponseFormat {
+	if s == nil {
+		return nil
+	}
+	s.responseFormatMu.RLock()
+	defer s.responseFormatMu.RUnlock()
+	return s.responseFormat
+}
+
+// setCurrentResponseFormat is called by the runtime at the start of a
+// run to push RunConfig.StructuredOutput onto the service, and again
+// (with nil) at the end to clear it.
+func (s *Service) setCurrentResponseFormat(rf *domain.ResponseFormat) {
+	if s == nil {
+		return
+	}
+	s.responseFormatMu.Lock()
+	s.responseFormat = rf
+	s.responseFormatMu.Unlock()
 }
 
 // currentThinkingOptions returns the run-scoped ThinkingOptions if

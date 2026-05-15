@@ -128,6 +128,12 @@ type Service struct {
 	thinkingMu   sync.RWMutex
 	thinkingOpts *domain.ThinkingOptions
 
+	// responseFormat carries the run-scoped structured-output spec set
+	// by the runtime when RunConfig.StructuredOutput is non-nil. Cleared
+	// at run end so a later run on the same Service can't inherit it.
+	responseFormatMu sync.RWMutex
+	responseFormat   *domain.ResponseFormat
+
 	// Public access to underlying services
 	LLM     domain.Generator
 	MCP     *mcp.Service // Full access to MCP service (Chat, StartServers, etc.)

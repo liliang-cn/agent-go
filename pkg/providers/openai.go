@@ -469,7 +469,42 @@ func extraRequestOptions(opts *domain.GenerationOptions) []option.RequestOption 
 			"type": opts.Thinking.Type,
 		}))
 	}
+	if rf := buildResponseFormatJSONBody(opts.ResponseFormat); rf != nil {
+		ros = append(ros, option.WithJSONSet("response_format", rf))
+	}
 	return ros
+}
+
+// buildResponseFormatJSONBody renders a domain.ResponseFormat into the
+// shape that openai-go expects when written via WithJSONSet. Returns nil
+// when the spec is empty so the field is omitted from the request body.
+func buildResponseFormatJSONBody(rf *domain.ResponseFormat) map[string]any {
+	if rf == nil || rf.Type == "" {
+		return nil
+	}
+	switch rf.Type {
+	case "json_object":
+		return map[string]any{"type": "json_object"}
+	case "json_schema":
+		js := map[string]any{}
+		if rf.Name != "" {
+			js["name"] = rf.Name
+		}
+		if rf.Strict {
+			js["strict"] = true
+		}
+		if len(rf.Schema) > 0 {
+			var schemaObj any
+			if err := json.Unmarshal(rf.Schema, &schemaObj); err == nil {
+				js["schema"] = schemaObj
+			}
+		}
+		return map[string]any{
+			"type":        "json_schema",
+			"json_schema": js,
+		}
+	}
+	return nil
 }
 
 func shouldRetryOpenAIWithoutNativeWebSearch(opts *domain.GenerationOptions, err error) bool {
@@ -523,10 +558,39 @@ func cloneOptionsWithoutToolChoice(opts *domain.GenerationOptions) *domain.Gener
 	return &cloned
 }
 
+// shouldRetryOpenAIWithoutResponseFormat reports whether the upstream
+// rejected the response_format parameter (older OpenAI-compat endpoints,
+// some local servers). On hit we strip the field and retry — the
+// structured-output lint still post-validates the answer so the contract
+// holds even on providers that ignore the schema entirely.
+func shouldRetryOpenAIWithoutResponseFormat(opts *domain.GenerationOptions, err error) bool {
+	if opts == nil || opts.ResponseFormat == nil || err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	if !strings.Contains(msg, "response_format") && !strings.Contains(msg, "json_schema") {
+		return false
+	}
+	return strings.Contains(msg, "unsupported") ||
+		strings.Contains(msg, "not supported") ||
+		strings.Contains(msg, "does not support") ||
+		strings.Contains(msg, "invalid") ||
+		strings.Contains(msg, "unknown")
+}
+
+func cloneOptionsWithoutResponseFormat(opts *domain.GenerationOptions) *domain.GenerationOptions {
+	if opts == nil {
+		return &domain.GenerationOptions{}
+	}
+	cloned := *opts
+	cloned.ResponseFormat = nil
+	return &cloned
+}
+
 // applyOpenAIRetryFallbacks composes the compatibility fallbacks (drop
-// native web search, drop tool_choice). Returns a re-derived options
-// struct if any apply, or nil when the error isn't one of the known
-// "feature unsupported" patterns.
+// native web search, drop tool_choice, drop response_format). Returns a
+// re-derived options struct if any apply, or nil when the error isn't
+// one of the known "feature unsupported" patterns.
 func applyOpenAIRetryFallbacks(opts *domain.GenerationOptions, err error) *domain.GenerationOptions {
 	current := opts
 	changed := false
@@ -536,6 +600,10 @@ func applyOpenAIRetryFallbacks(opts *domain.GenerationOptions, err error) *domai
 	}
 	if shouldRetryOpenAIWithoutToolChoice(current, err) {
 		current = cloneOptionsWithoutToolChoice(current)
+		changed = true
+	}
+	if shouldRetryOpenAIWithoutResponseFormat(current, err) {
+		current = cloneOptionsWithoutResponseFormat(current)
 		changed = true
 	}
 	if !changed {

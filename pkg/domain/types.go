@@ -2,6 +2,7 @@ package domain
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 )
 
@@ -168,6 +169,30 @@ type GenerationOptions struct {
 	// on prompts where the model just needs to emit JSON). Nil = leave it to
 	// the provider default. Sent verbatim as-is to the upstream API.
 	Thinking *ThinkingOptions
+
+	// ResponseFormat constrains the model's text output to a JSON shape
+	// (OpenAI structured outputs / DeepSeek json_object). Only affects
+	// turns where the model returns plain content; tool calls bypass this
+	// constraint by definition. Providers that don't recognize the field
+	// fall back to plain text via applyRetryFallbacks. Nil = leave it to
+	// the provider default.
+	ResponseFormat *ResponseFormat
+}
+
+// ResponseFormat mirrors the OpenAI-shape response_format parameter. Set
+// Type to "json_schema" with a Schema for strict validation, or to
+// "json_object" for a loose "must be valid JSON" constraint.
+type ResponseFormat struct {
+	// Type is "json_schema" or "json_object". Required.
+	Type string `json:"type"`
+	// Name is the schema name (required by OpenAI when Type == "json_schema").
+	Name string `json:"name,omitempty"`
+	// Schema is the JSON Schema specification. Ignored when Type == "json_object".
+	Schema json.RawMessage `json:"schema,omitempty"`
+	// Strict enables OpenAI's strict mode — providers that support it will
+	// refuse to emit JSON that doesn't validate. Defaults off; let the
+	// post-validation lint handle it on providers that ignore the flag.
+	Strict bool `json:"strict,omitempty"`
 }
 
 // ThinkingOptions mirrors the provider-side `thinking` parameter shape used

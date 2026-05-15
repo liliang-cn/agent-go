@@ -65,14 +65,11 @@ func NewRuntime(svc *Service, session *Session, cfg *RunConfig) *Runtime {
 	}
 }
 
-// runFinalLints consults the service's lint registry, returning the first
-// violation if any. If the service has no registry the call is a no-op.
+// runFinalLints consults both the service's lint registry and any per-run
+// lints derived from RunConfig (currently: structured output), returning
+// the first violation. A nil result means the response is clean.
 func (r *Runtime) runFinalLints(content string, turn int) *LintViolation {
 	if r == nil || r.svc == nil {
-		return nil
-	}
-	reg := r.svc.OutputLints()
-	if reg == nil {
 		return nil
 	}
 	agentName := ""
@@ -87,7 +84,7 @@ func (r *Runtime) runFinalLints(content string, turn int) *LintViolation {
 	if r.session != nil {
 		sessionID = r.session.GetID()
 	}
-	ctx := LintContext{
+	lintCtx := LintContext{
 		AgentName:  agentName,
 		TaskID:     taskID,
 		SessionID:  sessionID,
@@ -95,7 +92,19 @@ func (r *Runtime) runFinalLints(content string, turn int) *LintViolation {
 		IsRetry:    r.lintRetryBudget < defaultLintRetryBudget,
 		RetryCount: defaultLintRetryBudget - r.lintRetryBudget,
 	}
-	return reg.Run(content, ctx)
+	if reg := r.svc.OutputLints(); reg != nil {
+		if v := reg.Run(content, lintCtx); v != nil {
+			return v
+		}
+	}
+	if r.cfg != nil && r.cfg.StructuredOutput != nil {
+		if lint := NewStructuredOutputLint(r.cfg.StructuredOutput); lint != nil {
+			if ok, reason := lint.Check(content, lintCtx); !ok {
+				return &LintViolation{LintName: lint.Name(), Reason: reason}
+			}
+		}
+	}
+	return nil
 }
 
 // RunStream starts the event loop and returns a read-only channel of events
@@ -120,6 +129,17 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 	if r.cfg != nil && r.cfg.Thinking != nil {
 		r.svc.setCurrentThinkingOptions(r.cfg.Thinking)
 		defer r.svc.setCurrentThinkingOptions(nil)
+	}
+
+	// Push the run-scoped StructuredOutput onto the service so
+	// toolGenerationOptions can attach response_format on every LLM call
+	// (Tier B). The post-validation lint (Tier A) reads from r.cfg
+	// directly in runFinalLints — both flows share the same spec.
+	if r.cfg != nil && r.cfg.StructuredOutput != nil {
+		if rf := r.cfg.StructuredOutput.toDomainResponseFormat(); rf != nil {
+			r.svc.setCurrentResponseFormat(rf)
+			defer r.svc.setCurrentResponseFormat(nil)
+		}
 	}
 
 	// --- DEBUG: LOG AGENT CONFIGURATION ---
@@ -160,6 +180,19 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			goal = rewritten
 		}
 		injectedSystemMessages = out.AdditionalSystemMessages
+	}
+
+	// Structured output: prepend a system message describing the required
+	// JSON shape so the model knows the contract from turn 1. The
+	// post-validation lint catches deviations; the system hint reduces how
+	// often the lint actually has to fire.
+	if r.cfg != nil && r.cfg.StructuredOutput != nil {
+		if hint := buildStructuredOutputSystemHint(r.cfg.StructuredOutput); hint != "" {
+			injectedSystemMessages = append(injectedSystemMessages, domain.Message{
+				Role:    "system",
+				Content: hint,
+			})
+		}
 	}
 
 	// 1. Prepare context (Memory & RAG) — with a timeout so a slow embedding

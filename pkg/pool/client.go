@@ -295,6 +295,9 @@ func buildPoolGenerateWithToolsRequest(modelName string, messages []domain.Messa
 				"type": opts.Thinking.Type,
 			}
 		}
+		if rf := buildResponseFormatBody(opts.ResponseFormat); rf != nil {
+			reqBody["response_format"] = rf
+		}
 		if domain.UsesNativeWebSearch(opts.WebSearchMode) {
 			reqBody["web_search_options"] = map[string]interface{}{
 				"search_context_size": domain.NormalizeWebSearchContextSize(opts.WebSearchContextSize),
@@ -336,9 +339,29 @@ func shouldRetryPoolWithoutToolChoice(opts *domain.GenerationOptions, err error)
 		strings.Contains(msg, "invalid")
 }
 
+// shouldRetryPoolWithoutResponseFormat reports whether the upstream
+// rejected the response_format parameter. Older OpenAI-compat endpoints
+// and some local servers either ignore it (fine) or reject it (the case
+// we care about here). On hit, strip the field and retry; the
+// structured-output lint will still validate the answer post-hoc.
+func shouldRetryPoolWithoutResponseFormat(opts *domain.GenerationOptions, err error) bool {
+	if opts == nil || opts.ResponseFormat == nil || err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	if !strings.Contains(msg, "response_format") && !strings.Contains(msg, "json_schema") {
+		return false
+	}
+	return strings.Contains(msg, "unsupported") ||
+		strings.Contains(msg, "not supported") ||
+		strings.Contains(msg, "does not support") ||
+		strings.Contains(msg, "invalid") ||
+		strings.Contains(msg, "unknown")
+}
+
 // applyPoolRetryFallbacks composes the compatibility fallbacks (drop
-// native web search, drop tool_choice). Returns a new options struct
-// when something applies, nil otherwise.
+// native web search, drop tool_choice, drop response_format). Returns a
+// new options struct when something applies, nil otherwise.
 func applyPoolRetryFallbacks(opts *domain.GenerationOptions, err error) *domain.GenerationOptions {
 	if opts == nil || err == nil {
 		return nil
@@ -353,10 +376,47 @@ func applyPoolRetryFallbacks(opts *domain.GenerationOptions, err error) *domain.
 		cur.ToolChoice = ""
 		changed = true
 	}
+	if shouldRetryPoolWithoutResponseFormat(&cur, err) {
+		cur.ResponseFormat = nil
+		changed = true
+	}
 	if !changed {
 		return nil
 	}
 	return &cur
+}
+
+// buildResponseFormatBody renders a domain.ResponseFormat into the
+// shape expected by OpenAI-compat /chat/completions. Returns nil when
+// the spec is empty so the field is omitted from the request body.
+func buildResponseFormatBody(rf *domain.ResponseFormat) map[string]interface{} {
+	if rf == nil || rf.Type == "" {
+		return nil
+	}
+	switch rf.Type {
+	case "json_object":
+		return map[string]interface{}{"type": "json_object"}
+	case "json_schema":
+		js := map[string]interface{}{}
+		if rf.Name != "" {
+			js["name"] = rf.Name
+		}
+		if rf.Strict {
+			js["strict"] = true
+		}
+		if len(rf.Schema) > 0 {
+			// Send the schema as a structured object, not a JSON string.
+			var schemaObj interface{}
+			if err := json.Unmarshal(rf.Schema, &schemaObj); err == nil {
+				js["schema"] = schemaObj
+			}
+		}
+		return map[string]interface{}{
+			"type":        "json_schema",
+			"json_schema": js,
+		}
+	}
+	return nil
 }
 
 // GenerateWithTools 使用工具生成
