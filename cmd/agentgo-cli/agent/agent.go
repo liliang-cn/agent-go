@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -25,6 +26,13 @@ var (
 	skillsService  *skills.Service
 	skillsInitOnce sync.Once
 	skillsInitErr  error
+
+	// Structured-output flags for `agent run`. Load a JSON Schema from a
+	// file and the runtime enforces it on the final answer (Tier A lint +
+	// Tier B response_format).
+	runSchemaFile   string
+	runSchemaName   string
+	runSchemaStrict bool
 )
 
 // SetSharedVariables sets the shared variables from the root command
@@ -49,7 +57,13 @@ var runCmd = &cobra.Command{
 	Long: `Run one agent task through the AgentGo runtime.
 
 PTC (Programmatic Tool Calling) is enabled by default. Use --no-ptc only when
-you need legacy direct function-calling behavior.`,
+you need legacy direct function-calling behavior.
+
+Pass --schema FILE to constrain the agent's final answer to a JSON Schema.
+The runtime validates the response against the schema and re-prompts on
+mismatch (works on every provider). Providers that support OpenAI
+structured outputs additionally receive response_format for one-shot
+compliant JSON.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if EnablePTC && DisablePTC {
@@ -58,9 +72,50 @@ you need legacy direct function-calling behavior.`,
 		goal := args[0]
 		ctx := context.Background()
 
+		structSpec, err := loadStructuredOutputSpec(runSchemaFile, runSchemaName, runSchemaStrict)
+		if err != nil {
+			return err
+		}
+
 		// Use the new Event-Driven Stream Runner
-		return runStream(ctx, goal)
+		return runStream(ctx, goal, structSpec)
 	},
+}
+
+// loadStructuredOutputSpec reads a JSON Schema from disk and packages it
+// as a StructuredOutputSpec for WithStructuredOutput. Returns nil when no
+// schema path is set so callers can pass it through unchecked.
+func loadStructuredOutputSpec(path, name string, strict bool) (*agent.StructuredOutputSpec, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil, nil
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read schema file %q: %w", path, err)
+	}
+	// Validate the file parses as JSON so we fail at flag-parse time rather
+	// than after the model has already started a turn.
+	var probe interface{}
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return nil, fmt.Errorf("schema file %q is not valid JSON: %w", path, err)
+	}
+	resolvedName := strings.TrimSpace(name)
+	if resolvedName == "" {
+		base := path
+		if idx := strings.LastIndex(base, "/"); idx >= 0 {
+			base = base[idx+1:]
+		}
+		if idx := strings.LastIndex(base, "."); idx > 0 {
+			base = base[:idx]
+		}
+		resolvedName = base
+	}
+	return &agent.StructuredOutputSpec{
+		Name:   resolvedName,
+		Schema: json.RawMessage(raw),
+		Strict: strict,
+	}, nil
 }
 
 // executeCmd executes an existing plan by ID
@@ -417,6 +472,9 @@ func init() {
 	runCmd.Flags().BoolVar(&EnablePTC, "ptc", false, "Force Programmatic Tool Calling on (default; compatibility flag)")
 	runCmd.Flags().BoolVar(&DisablePTC, "no-ptc", false, "Disable Programmatic Tool Calling and use direct function calling")
 	runCmd.Flags().StringVar(&runAgentName, "agent", "", "run a stored agent by name")
+	runCmd.Flags().StringVar(&runSchemaFile, "schema", "", "constrain final answer to a JSON Schema (path to a .json file)")
+	runCmd.Flags().StringVar(&runSchemaName, "schema-name", "", "schema name (defaults to the schema filename); used by OpenAI structured outputs")
+	runCmd.Flags().BoolVar(&runSchemaStrict, "schema-strict", false, "enable strict mode: block the task when the model can't produce schema-compliant JSON")
 	executeCmd.Flags().BoolVar(&EnablePTC, "ptc", false, "Force Programmatic Tool Calling on (default; compatibility flag)")
 	executeCmd.Flags().BoolVar(&DisablePTC, "no-ptc", false, "Disable Programmatic Tool Calling and use direct function calling")
 	AgentCmd.AddCommand(runCmd)
@@ -585,9 +643,18 @@ func renderStreamEvent(w io.Writer, evt *agent.Event, state *streamRenderState) 
 	}
 }
 
-// runStream runs the agent with Event Loop streaming output
-func runStream(ctx context.Context, goal string) error {
+// runStream runs the agent with Event Loop streaming output. When
+// structSpec is non-nil the runtime constrains the final answer to the
+// supplied JSON Schema (Tier A lint + Tier B response_format).
+func runStream(ctx context.Context, goal string, structSpec *agent.StructuredOutputSpec) error {
 	fmt.Printf("🎯 Agent Goal: %s\n\n", goal)
+	if structSpec != nil {
+		strict := ""
+		if structSpec.Strict {
+			strict = " (strict)"
+		}
+		fmt.Printf("📐 Structured output: schema=%s%s\n\n", structSpec.Name, strict)
+	}
 
 	ragClient, agentService, err := initRunnableAgentService(ctx, strings.TrimSpace(runAgentName))
 	if err != nil {
@@ -598,8 +665,13 @@ func runStream(ctx context.Context, goal string) error {
 	}
 	defer agentService.Close()
 
+	opts := []agent.RunOption{agent.WithDebug(Debug)}
+	if structSpec != nil {
+		opts = append(opts, agent.WithStructuredOutput(structSpec))
+	}
+
 	// Start streaming
-	events, err := agentService.RunStreamWithOptions(ctx, goal, agent.WithDebug(Debug))
+	events, err := agentService.RunStreamWithOptions(ctx, goal, opts...)
 	if err != nil {
 		return err
 	}
