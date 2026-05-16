@@ -155,10 +155,16 @@ func taskPlanFromStore(plan *store.TaskPlan) *TaskPlan {
 	return out
 }
 
-// SaveSession saves or updates an agent session
+// SaveSession saves or updates an agent session.
+//
+// Important: take a defensive copy via Session.GetMessages (RLocked) before
+// translating to store records. Reading session.Messages directly races with
+// concurrent AddMessage calls and crashes with an index-out-of-range panic
+// when the underlying slice grows mid-iteration.
 func (s *Store) SaveSession(session *Session) error {
-	messages := make([]store.ChatMessage, len(session.Messages))
-	for i, m := range session.Messages {
+	src := session.GetMessages()
+	messages := make([]store.ChatMessage, len(src))
+	for i, m := range src {
 		messages[i] = store.ChatMessage{
 			Role:             m.Role,
 			Content:          m.Content,
