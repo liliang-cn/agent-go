@@ -4,6 +4,9 @@ import { useTranslation } from 'react-i18next'
 import { QueryTest } from './pages/QueryTest'
 import { Documents } from './pages/Documents'
 import { Run } from './pages/Run'
+import { Live } from './pages/Live'
+import { Tasks } from './pages/Tasks'
+import { TaskDetail } from './pages/TaskDetail'
 import { Chat } from './pages/Chat'
 import { Status } from './pages/Status'
 import { Skills } from './pages/Skills'
@@ -30,6 +33,12 @@ function Nav() {
       </NavLink>
       <NavLink to="/run" className={linkClass} data-testid="nav-run">
         {t('run')}
+      </NavLink>
+      <NavLink to="/live" className={linkClass} data-testid="nav-live">
+        Live
+      </NavLink>
+      <NavLink to="/tasks" className={linkClass} data-testid="nav-tasks">
+        Tasks
       </NavLink>
       <NavLink to="/chat" className={linkClass} data-testid="nav-chat">
         {t('chat')}
@@ -107,6 +116,9 @@ function App() {
         <Routes>
           <Route path="/" element={<Agent />} />
           <Route path="/run" element={<Run />} />
+          <Route path="/live" element={<Live />} />
+          <Route path="/tasks" element={<Tasks />} />
+          <Route path="/tasks/:id" element={<TaskDetail />} />
           <Route path="/chat" element={<Chat />} />
           <Route path="/skills" element={<Skills />} />
           <Route path="/mcp" element={<MCP />} />

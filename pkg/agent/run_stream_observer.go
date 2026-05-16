@@ -40,6 +40,11 @@ func (s *Service) observeRunStream(session *Session, taskID, goal string, starte
 				if evt.DurationMs > 0 {
 					metrics.totalDurationMs += evt.DurationMs
 				}
+				// Cost rolls forward as the runtime accrues spend across
+				// LLM rounds; the terminal event carries the final value.
+				if evt.EstimatedCostUSD > metrics.estimatedCostUSD {
+					metrics.estimatedCostUSD = evt.EstimatedCostUSD
+				}
 				// Extract round/token data from analytics events.
 				if evt.Type == EventTypeAnalytics && evt.AnalyticsEvent != nil {
 					ad := evt.AnalyticsEvent

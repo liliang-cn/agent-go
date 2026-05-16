@@ -656,6 +656,31 @@ export const api = {
   getOpsLogs: (limit = 20) =>
     fetchAPI<OpsLogsResponse>(`/ops/logs?limit=${limit}`),
 
+  // ---- Tasks (v2.69+) ------------------------------------------------
+
+  listTasks: (limit = 50) =>
+    fetchAPI<{ tasks: TaskSummary[] }>(`/tasks?limit=${limit}`),
+
+  getTask: (id: string) =>
+    fetchAPI<{ task: TaskDetail }>(`/tasks/${encodeURIComponent(id)}`),
+
+  getTaskTrace: (id: string) =>
+    fetchAPI<{ task: TaskDetail }>(`/tasks/${encodeURIComponent(id)}/trace`),
+
+  listTaskCheckpoints: (id: string, limit = 32) =>
+    fetchAPI<{ checkpoints: Checkpoint[] }>(
+      `/tasks/${encodeURIComponent(id)}/checkpoints?limit=${limit}`,
+    ),
+
+  replayTask: (id: string, body: ReplayTaskRequest = {}) =>
+    fetchAPI<{ task: TaskDetail }>(
+      `/tasks/${encodeURIComponent(id)}/replay`,
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      },
+    ),
+
   getSetup: () => fetchAPI<SetupState>("/setup"),
 
   applySetup: (data: ApplySetupRequest) =>
@@ -720,4 +745,162 @@ export interface ApplySetupRequest {
   serverPort: number;
   memoryStoreType: string;
   provider: SetupProvider;
+}
+
+// ----- Task surface (v2.69 - v2.74) ------------------------------------
+
+export type StopReason =
+  | "end_turn"
+  | "max_turns"
+  | "max_budget_usd"
+  | "refusal"
+  | "max_tokens"
+  | "lint_exhausted"
+  | "stop_hook"
+  | "error_during_execution";
+
+export interface TaskStats {
+  rounds?: number;
+  total_tokens?: number;
+  tool_calls?: number;
+  tools_used?: string[];
+  duration_ms?: number;
+  estimated_cost_usd?: number;
+}
+
+export interface TaskFrame {
+  session_id: string;
+  message: {
+    role: string;
+    content: string;
+    tool_calls?: unknown[];
+    tool_call_id?: string;
+    task_id?: string;
+  };
+}
+
+export interface TaskEvent {
+  id: string;
+  task_id: string;
+  session_id: string;
+  kind?: string;
+  status?: string;
+  type: string;
+  agent_name?: string;
+  team_name?: string;
+  message?: string;
+  duration_ms?: number;
+  timestamp?: string;
+}
+
+export interface TaskSummary {
+  id: string;
+  kind: string;
+  status: string;
+  session_id?: string;
+  runtime_session_id?: string;
+  parent_task_id?: string;
+  continuation_id?: string;
+  agent_name?: string;
+  agent_names?: string[];
+  team_id?: string;
+  team_name?: string;
+  input?: string;
+  output?: string;
+  error?: string;
+  created_at?: string;
+  started_at?: string;
+  finished_at?: string;
+  stats?: TaskStats;
+  source?: string;
+  source_id?: string;
+}
+
+export interface TaskDetail extends TaskSummary {
+  frames?: TaskFrame[];
+  events?: TaskEvent[];
+}
+
+export interface Checkpoint {
+  id: string;
+  task_id: string;
+  seq: number;
+  round: number;
+  after_tool?: string;
+  session_id?: string;
+  agent_name?: string;
+  message_count: number;
+  final_text?: string;
+  created_at?: string;
+}
+
+export interface ReplayTaskRequest {
+  checkpoint_id?: string;
+  follow_up?: string;
+}
+
+// ----- Streaming event payload from /api/agent/stream ------------------
+
+export interface StreamEvent {
+  type: string;
+  content?: string;
+  agent_name?: string;
+  tool_name?: string;
+  tool_args?: Record<string, unknown>;
+  tool_result?: unknown;
+  round?: number;
+  debug_type?: string;
+  stop_reason?: StopReason;
+  estimated_cost_usd?: number;
+  analytics?: {
+    name: string;
+    data: Record<string, unknown>;
+  };
+  timestamp?: string;
+}
+
+// streamAgent opens an SSE connection to /api/agent/stream and yields
+// parsed events. Callers should pass an AbortController.signal to stop.
+export async function* streamAgent(
+  message: string,
+  opts: { debug?: boolean; sessionId?: string; signal?: AbortSignal } = {},
+): AsyncGenerator<StreamEvent, void, unknown> {
+  const response = await fetch(`${API_BASE}/agent/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      message,
+      debug: opts.debug ?? false,
+      session_id: opts.sessionId ?? "",
+    }),
+    signal: opts.signal,
+  });
+  if (!response.ok || !response.body) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`agent stream failed: ${response.status} ${text}`);
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    // SSE frames are separated by a blank line.
+    let idx: number;
+    while ((idx = buf.indexOf("\n\n")) >= 0) {
+      const frame = buf.slice(0, idx);
+      buf = buf.slice(idx + 2);
+      // Each frame is "data: {...}". We don't use any other field types.
+      const line = frame.split("\n").find((l) => l.startsWith("data:"));
+      if (!line) continue;
+      const json = line.slice(5).trim();
+      if (!json) continue;
+      try {
+        yield JSON.parse(json) as StreamEvent;
+      } catch {
+        // Ignore malformed frames — the runtime is the source of truth.
+      }
+    }
+  }
 }

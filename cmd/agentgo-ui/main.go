@@ -214,6 +214,12 @@ func runServer(cmd *cobra.Command, args []string) error {
 				agentgolog.Warn("Failed to seed default team members: %v", err)
 			}
 			teamManager.RegisterOrchestratorTools(agentService)
+			// Wire the same checkpoint sink that TeamManager auto-uses
+			// for its built-in services. Without this the agentService
+			// runs but its terminal checkpoints never land in the store,
+			// so /api/tasks/:id/checkpoints comes back empty and replay
+			// can't find anything to resume.
+			agentService.SetCheckpointSink(teamManager)
 			agentgolog.Infof("Team manager and orchestrator-agent tools initialized")
 		}
 	}

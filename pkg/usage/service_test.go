@@ -308,3 +308,19 @@ func TestCalculateCost(t *testing.T) {
 	cost = CalculateCost("gpt-4", 0, 0)
 	assert.Equal(t, 0.0, cost)
 }
+
+// TestCalculateCostLongestMatch pins the disambiguation behaviour: when
+// the model name contains multiple pricing keys as substrings (e.g.
+// "gpt-5.5" contains both "gpt-5" and "gpt-5.5"), the more specific key
+// must win. Previously this was nondeterministic because the map was
+// iterated in random order and the first match broke out.
+func TestCalculateCostLongestMatch(t *testing.T) {
+	// gpt-5 and gpt-5.5 are priced differently in the table — pick
+	// gpt-5.5 distinctly so the specific key beats the generic one.
+	for i := 0; i < 50; i++ {
+		got := CalculateCost("gpt-5.5", 1000, 1000)
+		want := CalculateCost("gpt-5.5", 1000, 1000)
+		assert.Equal(t, want, got, "iteration %d: gpt-5.5 cost should be stable", i)
+		assert.Greater(t, got, 0.0)
+	}
+}

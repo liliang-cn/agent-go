@@ -102,12 +102,13 @@ type RoundStats struct {
 
 // TaskStats summarises the execution of a task.
 type TaskStats struct {
-	Rounds         int          `json:"rounds"`
-	TotalTokens    int          `json:"total_tokens"`
-	ToolCalls      int          `json:"tool_calls"`
-	ToolsUsed      []string     `json:"tools_used,omitempty"`
-	DurationMs     int64        `json:"duration_ms"`
-	RoundBreakdown []RoundStats `json:"round_breakdown,omitempty"`
+	Rounds           int          `json:"rounds"`
+	TotalTokens      int          `json:"total_tokens"`
+	ToolCalls        int          `json:"tool_calls"`
+	ToolsUsed        []string     `json:"tools_used,omitempty"`
+	DurationMs       int64        `json:"duration_ms"`
+	EstimatedCostUSD float64      `json:"estimated_cost_usd,omitempty"`
+	RoundBreakdown   []RoundStats `json:"round_breakdown,omitempty"`
 }
 
 // Task is the first-class execution unit in AgentGo.

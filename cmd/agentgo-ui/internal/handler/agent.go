@@ -127,6 +127,24 @@ func (h *Handler) HandleAgentStream(w http.ResponseWriter, r *http.Request) {
 			payload["round"] = evt.Round
 			payload["debug_type"] = evt.DebugType
 		}
+		// New harness fields (v2.72-v2.74). Terminal events carry the
+		// machine-readable stop_reason and the running cost; analytics
+		// events expose autocompact, llm latency, round-completed, etc.
+		if evt.StopReason != "" {
+			payload["stop_reason"] = string(evt.StopReason)
+		}
+		if evt.EstimatedCostUSD > 0 {
+			payload["estimated_cost_usd"] = evt.EstimatedCostUSD
+		}
+		if evt.AnalyticsEvent != nil {
+			payload["analytics"] = map[string]interface{}{
+				"name": evt.AnalyticsEvent.Name,
+				"data": evt.AnalyticsEvent.Data,
+			}
+		}
+		if !evt.Timestamp.IsZero() {
+			payload["timestamp"] = evt.Timestamp.Format("2006-01-02T15:04:05.000Z07:00")
+		}
 
 		data, _ := json.Marshal(payload)
 		if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {

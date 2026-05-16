@@ -78,3 +78,27 @@ func (s *TaskService) Cancel(ctx context.Context, taskID string) (*taskpkg.Task,
 	}
 	return s.manager.GetUnifiedTask(taskID)
 }
+
+// ListCheckpoints returns up to `limit` checkpoints for a task in
+// descending Seq order. Library-facing wrapper around the underlying
+// store call so external consumers (UI / API server) don't need a
+// reference to the package-private store.
+func (s *TaskService) ListCheckpoints(ctx context.Context, taskID string, limit int) ([]*TaskCheckpoint, error) {
+	_ = ctx
+	if s == nil || s.manager == nil || s.manager.store == nil {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = MaxCheckpointsPerTask
+	}
+	return s.manager.store.ListTaskCheckpoints(taskID, limit)
+}
+
+// GetCheckpoint loads a single checkpoint by its ID.
+func (s *TaskService) GetCheckpoint(ctx context.Context, checkpointID string) (*TaskCheckpoint, error) {
+	_ = ctx
+	if s == nil || s.manager == nil || s.manager.store == nil {
+		return nil, nil
+	}
+	return s.manager.store.GetTaskCheckpoint(checkpointID)
+}

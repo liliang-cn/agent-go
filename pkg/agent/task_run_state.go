@@ -171,11 +171,12 @@ func (s *Service) persistRunTaskStats(session *Session, taskID string, metrics *
 		return
 	}
 	stats := &taskpkg.TaskStats{
-		Rounds:      metrics.rounds,
-		TotalTokens: metrics.estimatedTokens,
-		ToolCalls:   metrics.toolCalls,
-		ToolsUsed:   metrics.toolsUsed,
-		DurationMs:  metrics.totalDurationMs,
+		Rounds:           metrics.rounds,
+		TotalTokens:      metrics.estimatedTokens,
+		ToolCalls:        metrics.toolCalls,
+		ToolsUsed:        metrics.toolsUsed,
+		DurationMs:       metrics.totalDurationMs,
+		EstimatedCostUSD: metrics.estimatedCostUSD,
 	}
 	for _, rs := range metrics.roundStats {
 		stats.RoundBreakdown = append(stats.RoundBreakdown, taskpkg.RoundStats{

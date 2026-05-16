@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"sort"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -205,11 +206,21 @@ func CalculateCost(model string, inputTokens, outputTokens int) float64 {
 	// These are example prices and should be updated with actual pricing
 	// Per-1K-token USD prices. Substring match: e.g. "gpt-4-turbo-2024-04-09"
 	// matches "gpt-4-turbo". Add new entries when a provider lands.
+	//
+	// Note on lookup order: the input/output maps below are scanned in
+	// Go's map-iteration order, which is randomized. For substrings that
+	// overlap (e.g. "gpt-5" inside "gpt-5.5"), the more specific entry
+	// must come first when both are considered; we put the specific one
+	// before the generic one in the chain below.
 	inputPricing := map[string]float64{
 		"gpt-3.5-turbo":     0.0005,
-		"gpt-4":             0.03,
-		"gpt-4-turbo":       0.01,
 		"gpt-4o":            0.005,
+		"gpt-4-turbo":       0.01,
+		"gpt-4":             0.03,
+		"gpt-5.5":           0.005,
+		"gpt-5":             0.005,
+		"o1":                0.015,
+		"o3-mini":           0.0011,
 		"claude-3-opus":     0.015,
 		"claude-3-sonnet":   0.003,
 		"claude-3-haiku":    0.00025,
@@ -224,9 +235,13 @@ func CalculateCost(model string, inputTokens, outputTokens int) float64 {
 
 	outputPricing := map[string]float64{
 		"gpt-3.5-turbo":     0.0015,
-		"gpt-4":             0.06,
-		"gpt-4-turbo":       0.03,
 		"gpt-4o":            0.015,
+		"gpt-4-turbo":       0.03,
+		"gpt-4":             0.06,
+		"gpt-5.5":           0.015,
+		"gpt-5":             0.015,
+		"o1":                0.06,
+		"o3-mini":           0.0044,
 		"claude-3-opus":     0.075,
 		"claude-3-sonnet":   0.015,
 		"claude-3-haiku":    0.00125,
@@ -240,22 +255,30 @@ func CalculateCost(model string, inputTokens, outputTokens int) float64 {
 	}
 
 	modelLower := strings.ToLower(model)
-	var inputPrice, outputPrice float64
 
-	// Find matching pricing
-	for key, price := range inputPricing {
-		if strings.Contains(modelLower, key) {
-			inputPrice = price
-			break
+	// Longest-substring-match wins. Map iteration in Go is randomized,
+	// so a naive `for k := range m { if contains(model, k) { return } }`
+	// would sometimes pick "gpt-5" over "gpt-5.5" depending on the run.
+	// We sort keys by length descending and pick the first one that
+	// matches — that's the most specific entry available.
+	lookupPrice := func(table map[string]float64) float64 {
+		keys := make([]string, 0, len(table))
+		for k := range table {
+			keys = append(keys, k)
 		}
+		sort.Slice(keys, func(i, j int) bool {
+			return len(keys[i]) > len(keys[j])
+		})
+		for _, k := range keys {
+			if strings.Contains(modelLower, k) {
+				return table[k]
+			}
+		}
+		return 0
 	}
 
-	for key, price := range outputPricing {
-		if strings.Contains(modelLower, key) {
-			outputPrice = price
-			break
-		}
-	}
+	inputPrice := lookupPrice(inputPricing)
+	outputPrice := lookupPrice(outputPricing)
 
 	// Calculate cost
 	inputCost := float64(inputTokens) / 1000.0 * inputPrice
