@@ -227,6 +227,22 @@ type RunConfig struct {
 	// invalid output, bounded by lintRetryBudget. Use WithStructuredOutput
 	// or WithStructuredOutputType to set this.
 	StructuredOutput *StructuredOutputSpec
+
+	// Compaction controls auto-compaction. When the message history's
+	// estimated token count exceeds CompactionThresholdTokens (or the
+	// per-turn diminishing-returns signal fires), the runtime collapses
+	// older history into a summary and continues. CompactionKeepRecent
+	// is the number of most-recent rounds preserved verbatim (default 6).
+	// Zero values fall back to defaults; use WithAutoCompaction to set.
+	CompactionThresholdTokens int
+	CompactionKeepRecent      int
+	DisableAutoCompaction     bool
+
+	// MaxBudgetUSD caps the estimated cumulative cost of the run in
+	// USD (input + output tokens × model pricing). When exceeded the
+	// runtime stops with StopReasonMaxBudgetUSD. Zero = unlimited. Use
+	// WithMaxBudgetUSD to set.
+	MaxBudgetUSD float64
 }
 
 // ErrorHandlerFunc handles errors during agent execution
@@ -331,6 +347,52 @@ func WithResumeMessages(msgs []domain.Message) RunOption {
 		c.ResumeMessages = make([]domain.Message, len(msgs))
 		copy(c.ResumeMessages, msgs)
 	}
+}
+
+// WithMaxBudgetUSD caps the run's estimated cumulative cost in USD.
+// When the running spend (input + output tokens × model pricing) crosses
+// the limit, the runtime stops with StopReasonMaxBudgetUSD as the final
+// outcome. Pass 0 (or omit) to leave the run unbounded.
+//
+// Cost is estimated using pkg/usage's per-model pricing table. Providers
+// that don't have a row in the table report cost as 0 — the cap effectively
+// has no force for those models. Add pricing in pkg/usage/token_counter.go
+// to enable caps on new providers.
+func WithMaxBudgetUSD(amount float64) RunOption {
+	return func(c *RunConfig) {
+		if amount < 0 {
+			amount = 0
+		}
+		c.MaxBudgetUSD = amount
+	}
+}
+
+// WithAutoCompaction enables in-loop history compaction. When the
+// estimated context tokens exceed thresholdTokens (or the runtime's
+// diminishing-returns signal fires), the runtime summarizes older
+// history into a single system message and continues. keepRecent is the
+// number of most-recent rounds preserved verbatim — 6 is a sensible
+// default that retains the model's working state.
+//
+// Pass 0 for either argument to keep the framework default
+// (CompactionDefaultThresholdTokens / CompactionDefaultKeepRecent).
+func WithAutoCompaction(thresholdTokens, keepRecent int) RunOption {
+	return func(c *RunConfig) {
+		c.DisableAutoCompaction = false
+		if thresholdTokens > 0 {
+			c.CompactionThresholdTokens = thresholdTokens
+		}
+		if keepRecent > 0 {
+			c.CompactionKeepRecent = keepRecent
+		}
+	}
+}
+
+// WithoutAutoCompaction disables in-loop compaction entirely so the
+// runtime keeps the full history until a hard stop. Useful when an
+// external archive process owns the history.
+func WithoutAutoCompaction() RunOption {
+	return func(c *RunConfig) { c.DisableAutoCompaction = true }
 }
 
 // WithThinking turns provider-side chain-of-thought on or off for this

@@ -203,6 +203,8 @@ func ExtractTokensFromResponse(provider string, response interface{}) (input int
 func CalculateCost(model string, inputTokens, outputTokens int) float64 {
 	// Model pricing in USD per 1K tokens
 	// These are example prices and should be updated with actual pricing
+	// Per-1K-token USD prices. Substring match: e.g. "gpt-4-turbo-2024-04-09"
+	// matches "gpt-4-turbo". Add new entries when a provider lands.
 	inputPricing := map[string]float64{
 		"gpt-3.5-turbo":     0.0005,
 		"gpt-4":             0.03,
@@ -212,6 +214,12 @@ func CalculateCost(model string, inputTokens, outputTokens int) float64 {
 		"claude-3-sonnet":   0.003,
 		"claude-3-haiku":    0.00025,
 		"claude-3.5-sonnet": 0.003,
+		"claude-4":          0.005,
+		"deepseek-v4-flash": 0.00027,
+		"deepseek-v4-pro":   0.00054,
+		"deepseek-chat":     0.00027,
+		"deepseek-coder":    0.00054,
+		"deepseek-reasoner": 0.00055,
 	}
 
 	outputPricing := map[string]float64{
@@ -223,6 +231,12 @@ func CalculateCost(model string, inputTokens, outputTokens int) float64 {
 		"claude-3-sonnet":   0.015,
 		"claude-3-haiku":    0.00125,
 		"claude-3.5-sonnet": 0.015,
+		"claude-4":          0.025,
+		"deepseek-v4-flash": 0.0011,
+		"deepseek-v4-pro":   0.00218,
+		"deepseek-chat":     0.0011,
+		"deepseek-coder":    0.00218,
+		"deepseek-reasoner": 0.0022,
 	}
 
 	modelLower := strings.ToLower(model)

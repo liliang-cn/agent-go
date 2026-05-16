@@ -233,8 +233,8 @@ func (l *scriptedStructuredLLM) recordOpts(opts *domain.GenerationOptions) {
 func TestRuntime_StructuredOutput_FullFlow(t *testing.T) {
 	llm := &scriptedStructuredLLM{
 		replies: []string{
-			`I think it is hot in Tokyo today.`,         // first try — fails lint (no JSON)
-			`{"city": "Tokyo", "temp_c": 28.5}`,         // retry — passes
+			`I think it is hot in Tokyo today.`, // first try — fails lint (no JSON)
+			`{"city": "Tokyo", "temp_c": 28.5}`, // retry — passes
 		},
 	}
 

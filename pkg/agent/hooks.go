@@ -50,6 +50,14 @@ const (
 	// HookData.UserPrompt or inject system context via
 	// HookData.AdditionalSystemMessages.
 	HookEventUserPromptSubmit HookEvent = "user_prompt_submit"
+
+	// HookEventPreCompact fires immediately before the runtime collapses
+	// older conversation history into a summary. Handlers receive the
+	// full pre-compaction message slice in HookData.MessagesBefore so
+	// they can archive the transcript before it's replaced.
+	// HookData.TriggerReason identifies what prompted the compaction
+	// (e.g. "token_threshold", "diminishing_returns").
+	HookEventPreCompact HookEvent = "pre_compact"
 )
 
 // HookData contains data passed to hook handlers
@@ -88,6 +96,13 @@ type HookData struct {
 	// the loop starts.
 	UserPrompt               string           `json:"user_prompt,omitempty"`
 	AdditionalSystemMessages []domain.Message `json:"-"`
+
+	// PreCompact fields. Read-only snapshots for archiving / observability;
+	// modifying them in a handler has no effect on the compaction. Add an
+	// archive hook on PreCompact to persist MessagesBefore before the
+	// summary collapses the history.
+	MessagesBefore []domain.Message `json:"-"`
+	TriggerReason  string           `json:"trigger_reason,omitempty"`
 }
 
 // HookHandler is a function that handles a hook event

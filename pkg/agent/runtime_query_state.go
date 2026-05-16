@@ -7,12 +7,15 @@ import (
 )
 
 type queryLoopBudget struct {
-	MaxRounds       int
-	CompletedRounds int
-	EstimatedTokens int
-	CompactionCount int
-	RecoveryCount   int
-	RemainingRounds int
+	MaxRounds        int
+	CompletedRounds  int
+	EstimatedTokens  int
+	InputTokens      int
+	OutputTokens     int
+	EstimatedCostUSD float64
+	CompactionCount  int
+	RecoveryCount    int
+	RemainingRounds  int
 
 	// Diminishing returns detection
 	continuationCount int   // rounds without meaningful progress
@@ -121,6 +124,21 @@ func (s *queryLoopState) noteTokens(tokens int) {
 		return
 	}
 	s.Budget.EstimatedTokens += tokens
+}
+
+// noteCost adds input/output tokens to the running totals and recomputes
+// the estimated cost via pkg/usage's per-model pricing table. Called once
+// per LLM round so the runtime can enforce MaxBudgetUSD.
+func (s *queryLoopState) noteCost(inputTokens, outputTokens int, costUSD float64) {
+	if inputTokens > 0 {
+		s.Budget.InputTokens += inputTokens
+	}
+	if outputTokens > 0 {
+		s.Budget.OutputTokens += outputTokens
+	}
+	if costUSD > 0 {
+		s.Budget.EstimatedCostUSD += costUSD
+	}
 }
 
 func (s *queryLoopState) noteRecovery(meta recoveryMeta) {

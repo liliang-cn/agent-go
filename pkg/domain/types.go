@@ -267,6 +267,13 @@ type GenerationResult struct {
 	ReasoningContent string     `json:"reasoning_content,omitempty"`
 	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
 	Finished         bool       `json:"finished"`
+	// FinishReason mirrors the provider's stop reason. Common values:
+	// "stop" (model produced a natural end), "tool_calls" (model wants a
+	// tool), "length" (hit max_tokens), "content_filter" (provider safety
+	// stop), "refusal" (explicit model refusal). Empty when the provider
+	// did not surface one. Used by the runtime to distinguish refusals
+	// from generic completions.
+	FinishReason string `json:"finish_reason,omitempty"`
 }
 
 // StructuredResult represents the result of structured generation

@@ -25,6 +25,7 @@ func (s *Service) streamToolTurnWithRecovery(ctx context.Context, messages []dom
 		fullContent      strings.Builder
 		toolCalls        []domain.ToolCall
 		lastResponseID   string
+		lastFinishReason string
 		toolCallDetected bool
 	)
 
@@ -33,6 +34,9 @@ func (s *Service) streamToolTurnWithRecovery(ctx context.Context, messages []dom
 	err := s.llmService.StreamWithTools(llmCtx, messages, tools, opts, func(delta *domain.GenerationResult) error {
 		if delta.ID != "" {
 			lastResponseID = delta.ID
+		}
+		if delta.FinishReason != "" {
+			lastFinishReason = delta.FinishReason
 		}
 		for _, tc := range delta.ToolCalls {
 			if callbacks.OnToolCall != nil {
@@ -80,8 +84,9 @@ func (s *Service) streamToolTurnWithRecovery(ctx context.Context, messages []dom
 		return nil, lastResponseID, recoveryMeta{}, err
 	}
 	return &domain.GenerationResult{
-		ID:        lastResponseID,
-		Content:   fullContent.String(),
-		ToolCalls: toolCalls,
+		ID:           lastResponseID,
+		Content:      fullContent.String(),
+		ToolCalls:    toolCalls,
+		FinishReason: lastFinishReason,
 	}, lastResponseID, recoveryMeta{}, nil
 }

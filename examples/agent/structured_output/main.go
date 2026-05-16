@@ -35,11 +35,11 @@ import (
 // surfaced to the model as a field description, `omitempty` marks the
 // field optional.
 type ArticleSummary struct {
-	Title    string   `json:"title" desc:"A short, capitalized title for the summary."`
-	Sentence string   `json:"sentence" desc:"A single sentence summary, no more than 200 characters."`
-	Keywords []string `json:"keywords" desc:"3 to 6 lowercase keyword strings."`
-	Sentiment string  `json:"sentiment" desc:"One of: positive, neutral, negative."`
-	Confidence float64 `json:"confidence,omitempty" desc:"Optional. Model's confidence between 0 and 1."`
+	Title      string   `json:"title" desc:"A short, capitalized title for the summary."`
+	Sentence   string   `json:"sentence" desc:"A single sentence summary, no more than 200 characters."`
+	Keywords   []string `json:"keywords" desc:"3 to 6 lowercase keyword strings."`
+	Sentiment  string   `json:"sentiment" desc:"One of: positive, neutral, negative."`
+	Confidence float64  `json:"confidence,omitempty" desc:"Optional. Model's confidence between 0 and 1."`
 }
 
 const article = `AgentGo is a Go framework for building agentic systems. It includes

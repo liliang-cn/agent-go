@@ -49,6 +49,17 @@ type Runtime struct {
 	// the budget is exhausted, the runtime blocks the task instead of
 	// looping forever.
 	lintRetryBudget int
+
+	// lastFinishReason caches the provider's stop signal from the most
+	// recent LLM call (e.g. "stop", "length", "content_filter",
+	// "refusal"). Used by classifyCompletionStopReason to surface
+	// refusals on the terminal event.
+	lastFinishReason string
+
+	// budgetSnapshot is a pointer to the per-run budget block, kept on
+	// the runtime so terminal-event emitters can read the running cost
+	// without threading state through every call site.
+	budgetSnapshot *queryLoopBudget
 }
 
 // NewRuntime creates a new runtime instance
@@ -218,6 +229,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		initialMessages = prefix
 	}
 	state := newQueryLoopState(goal, initialMessages, prepared.intent, maxRounds)
+	r.budgetSnapshot = &state.Budget
 	taskID := currentTaskID(r.session)
 	state.TaskID = taskID
 	state.setStage(TurnStagePreparingContext, "starting turn setup", 0)
@@ -237,6 +249,19 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			r.ensureToolResultConsistency()
 			r.emit(EventTypeError, "Execution cancelled")
 			return
+		}
+
+		// Auto-compaction: rewrite older history into a summary before
+		// the next LLM call when the context budget is tight or the
+		// loop is showing diminishing returns. Runs at the top of the
+		// iteration so every "continue" path (handoff, lint retry,
+		// auto-continue, tool round) gets a chance to compact.
+		if r.shouldAutoCompact(state, messages) {
+			if newMsgs, ok := r.runCompactionRound(ctx, state, messages, goal); ok {
+				messages = newMsgs
+				state.setMessages(newMsgs)
+				state.noteRecovery(recoveryMeta{Compacted: true})
+			}
 		}
 
 		state.beginRound()
@@ -291,18 +316,38 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		r.CheckpointEnd("llm_call")
 		state.noteRecovery(recovery)
 
-		// Estimate tokens for this turn and emit LLM latency analytics.
+		// Estimate tokens for this turn, accrue cost, and emit LLM
+		// latency analytics. Split input vs output tokens so cost
+		// estimation matches provider pricing tables.
 		llmDur := time.Since(llmStart)
 		{
 			tc := usage.NewTokenCounter()
 			model := r.svc.Info().Model
-			turnTokens := tc.EstimateConversationTokens(toUsageMessages(genMessages), model)
+			inputTokens := tc.EstimateConversationTokens(toUsageMessages(genMessages), model)
+			outputTokens := 0
 			if result != nil {
-				turnTokens += tc.EstimateTokens(result.Content, model)
+				outputTokens = tc.EstimateTokens(result.Content, model)
 			}
-			state.noteTokens(turnTokens)
+			state.noteTokens(inputTokens + outputTokens)
+			state.noteCost(inputTokens, outputTokens, usage.CalculateCost(model, inputTokens, outputTokens))
 		}
 		r.emitLLMLatency(round+1, state.Budget.EstimatedTokens, llmDur)
+
+		// Cache provider finish_reason for refusal classification on
+		// terminal events.
+		if result != nil && result.FinishReason != "" {
+			r.lastFinishReason = result.FinishReason
+		}
+
+		// Budget cap: stop the run before the next round if the
+		// estimated cost crossed MaxBudgetUSD. Zero = unlimited.
+		if r.cfg != nil && r.cfg.MaxBudgetUSD > 0 && state.Budget.EstimatedCostUSD >= r.cfg.MaxBudgetUSD {
+			r.blockRunWithStop(goal,
+				fmt.Sprintf("MaxBudgetUSD cap reached: spent $%.4f of $%.4f after %d round(s)",
+					state.Budget.EstimatedCostUSD, r.cfg.MaxBudgetUSD, state.Budget.CompletedRounds+1),
+				messages, true, StopReasonMaxBudgetUSD)
+			return
+		}
 
 		// Terminal task signal detected in stream — terminate immediately.
 		if taskTerminalName != "" {
@@ -474,7 +519,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 				}
 				if stopResult.PreventContinuation {
 					r.emit(EventTypeStop, fmt.Sprintf("Stopped by hook: %s", stopResult.StopReason))
-					r.completeRun(goal, stopResult.StopReason, messages, false)
+					r.completeRunWithStop(goal, stopResult.StopReason, messages, false, StopReasonStopHook)
 					return
 				}
 			}
@@ -520,7 +565,9 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 					state.noteRoundCompleted()
 					continue
 				}
-				r.blockRun(goal, fmt.Sprintf("output lint %s repeatedly rejected the response: %s", violation.LintName, violation.Reason), messages, true)
+				r.blockRunWithStop(goal,
+					fmt.Sprintf("output lint %s repeatedly rejected the response: %s", violation.LintName, violation.Reason),
+					messages, true, StopReasonLintExhausted)
 				return
 			}
 
@@ -547,6 +594,103 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			})
 		}
 	}
+
+	// Loop fell off the end without any explicit terminal — we exhausted
+	// the round budget. Surface that as a distinct stop reason so callers
+	// can resume vs. give up intelligently.
+	r.blockRunWithStop(goal,
+		fmt.Sprintf("max turns (%d) reached without completion", maxRounds),
+		messages, true, StopReasonMaxTurns)
+}
+
+// shouldAutoCompact returns true when the runtime should try to summarize
+// older history before continuing. Two triggers:
+//   - estimated context tokens exceed RunConfig.CompactionThresholdTokens
+//   - the budget signals diminishing returns (queryLoopState.shouldContinue)
+//
+// Disabled when RunConfig.DisableAutoCompaction is set or no LLM is
+// available. The compactor itself is a no-op when the middle slice is
+// too small to summarize, so callers can ask freely.
+func (r *Runtime) shouldAutoCompact(state *queryLoopState, messages []domain.Message) bool {
+	if r == nil || r.svc == nil || r.svc.llmService == nil {
+		return false
+	}
+	if r.cfg != nil && r.cfg.DisableAutoCompaction {
+		return false
+	}
+	if state == nil || len(messages) == 0 {
+		return false
+	}
+	threshold := 0
+	if r.cfg != nil {
+		threshold = r.cfg.CompactionThresholdTokens
+	}
+	model := ""
+	if r.svc != nil {
+		model = r.svc.Info().Model
+	}
+	if r.svc.shouldCompactByTokens(messages, model, threshold) {
+		return true
+	}
+	if state.shouldContinue() == budgetCompact {
+		return true
+	}
+	return false
+}
+
+// runCompactionRound performs one summarize-and-replace step. Returns the
+// new message slice and ok=true on success; the original messages and
+// ok=false when the summarizer fails (callers keep the unmodified history
+// rather than dropping context).
+func (r *Runtime) runCompactionRound(ctx context.Context, state *queryLoopState, messages []domain.Message, goal string) ([]domain.Message, bool) {
+	keepRecent := 0
+	if r.cfg != nil {
+		keepRecent = r.cfg.CompactionKeepRecent
+	}
+
+	reason := compactionTriggerTokenThreshold
+	if state.shouldContinue() == budgetCompact {
+		reason = compactionTriggerDiminishingReturns
+	}
+
+	hookData := HookData{
+		SessionID:      r.session.GetID(),
+		AgentID:        currentAgentID(r.currentAgent, r.svc.agent),
+		Goal:           goal,
+		MessagesBefore: append([]domain.Message(nil), messages...),
+		TriggerReason:  string(reason),
+		Metadata: map[string]interface{}{
+			"round":            state.CurrentRound,
+			"message_count":    len(messages),
+			"estimated_tokens": state.Budget.EstimatedTokens,
+		},
+	}
+	if r.svc != nil && r.svc.hooks != nil {
+		r.svc.hooks.Emit(HookEventPreCompact, hookData)
+	}
+
+	newMsgs, err := r.svc.compactMessages(ctx, messages, keepRecent)
+	if err != nil {
+		r.emit(EventTypeError, fmt.Sprintf("auto-compaction failed: %v", err))
+		return messages, false
+	}
+	if len(newMsgs) >= len(messages) {
+		// Compactor declined (history too short, or no middle to fold).
+		return messages, false
+	}
+
+	r.eventChan <- NewAnalyticsEvent(AnalyticsAutocompactTriggered, map[string]interface{}{
+		"round":            state.CurrentRound,
+		"trigger":          string(reason),
+		"messages_before":  len(messages),
+		"messages_after":   len(newMsgs),
+		"estimated_tokens": state.Budget.EstimatedTokens,
+	})
+	r.emit(EventTypeCompactBoundary, fmt.Sprintf(
+		"Compacted %d → %d messages (%s)",
+		len(messages), len(newMsgs), reason,
+	))
+	return newMsgs, true
 }
 
 // persistTerminalCheckpoint writes a snapshot at the moment the runtime
@@ -680,21 +824,35 @@ func (r *Runtime) persistMessages(messages []domain.Message) {
 }
 
 func (r *Runtime) completeRun(goal, content string, messages []domain.Message, persistHistory bool) {
+	r.completeRunWithStop(goal, content, messages, persistHistory, r.classifyCompletionStopReason(content))
+}
+
+// completeRunWithStop is the explicit form of completeRun. Callers that
+// know why the run is ending (e.g. structured-output success vs ambient
+// refusal text) can pass the reason directly; everything else flows
+// through completeRun's classifier.
+func (r *Runtime) completeRunWithStop(goal, content string, messages []domain.Message, persistHistory bool, reason StopReason) {
 	// Final-state checkpoint: capture the message history immediately before
 	// the terminal Complete event is emitted. This means a 1-round task
 	// still produces a snapshot, and `task replay` can re-run from "the
 	// state right before the agent decided it was done".
 	r.persistTerminalCheckpoint(currentTaskID(r.session), CheckpointReasonTaskComplete, content, messages)
 
+	if reason == "" {
+		reason = StopReasonEndTurn
+	}
+
 	r.emitTurnState(TurnStageCompleted, "run completed", 0, 0, nil)
 	r.eventChan <- &Event{
-		ID:        uuid.New().String(),
-		Type:      EventTypeComplete,
-		AgentName: r.currentAgent.Name(),
-		AgentID:   r.currentAgent.ID(),
-		Content:   content,
-		Sources:   r.collectAllSources(),
-		Timestamp: time.Now(),
+		ID:               uuid.New().String(),
+		Type:             EventTypeComplete,
+		AgentName:        r.currentAgent.Name(),
+		AgentID:          r.currentAgent.ID(),
+		Content:          content,
+		Sources:          r.collectAllSources(),
+		StopReason:       reason,
+		EstimatedCostUSD: r.currentCostUSD(),
+		Timestamp:        time.Now(),
 	}
 	if persistHistory {
 		r.persistMessages(messages)
@@ -715,22 +873,60 @@ func (r *Runtime) completeRun(goal, content string, messages []domain.Message, p
 }
 
 func (r *Runtime) blockRun(goal, blocker string, messages []domain.Message, persistHistory bool) {
+	r.blockRunWithStop(goal, blocker, messages, persistHistory, StopReasonErrorDuringExecution)
+}
+
+// blockRunWithStop is the explicit form of blockRun. Use it when the
+// reason is something other than a generic error — e.g. a budget cap or
+// a lint exhaustion.
+func (r *Runtime) blockRunWithStop(goal, blocker string, messages []domain.Message, persistHistory bool, reason StopReason) {
+	_ = goal
 	r.persistTerminalCheckpoint(currentTaskID(r.session), CheckpointReasonTaskBlocked, blocker, messages)
+
+	if reason == "" {
+		reason = StopReasonErrorDuringExecution
+	}
 
 	r.emitTurnState(TurnStageCompleted, "run blocked", 0, 0, nil)
 	r.eventChan <- &Event{
-		ID:        uuid.New().String(),
-		Type:      EventTypeBlocked,
-		AgentName: r.currentAgent.Name(),
-		AgentID:   r.currentAgent.ID(),
-		Content:   strings.TrimSpace(blocker),
-		Sources:   r.collectAllSources(),
-		Timestamp: time.Now(),
+		ID:               uuid.New().String(),
+		Type:             EventTypeBlocked,
+		AgentName:        r.currentAgent.Name(),
+		AgentID:          r.currentAgent.ID(),
+		Content:          strings.TrimSpace(blocker),
+		Sources:          r.collectAllSources(),
+		StopReason:       reason,
+		EstimatedCostUSD: r.currentCostUSD(),
+		Timestamp:        time.Now(),
 	}
 	if persistHistory {
 		r.persistMessages(messages)
 	}
 	r.clearCollectedSources()
+}
+
+// classifyCompletionStopReason chooses a StopReason for a normal
+// completion path. Currently distinguishes refusals (provider finish
+// reason or content heuristic) from plain end_turn outcomes.
+func (r *Runtime) classifyCompletionStopReason(content string) StopReason {
+	if r != nil && r.lastFinishReason != "" {
+		if mapped := classifyFinishReason(r.lastFinishReason); mapped != "" {
+			return mapped
+		}
+	}
+	if looksLikeRefusalText(content) {
+		return StopReasonRefusal
+	}
+	return StopReasonEndTurn
+}
+
+// currentCostUSD returns the running estimated cost for this run.
+// Returns 0 when no cost has been accrued or the runtime is mid-init.
+func (r *Runtime) currentCostUSD() float64 {
+	if r == nil || r.budgetSnapshot == nil {
+		return 0
+	}
+	return r.budgetSnapshot.EstimatedCostUSD
 }
 
 func (r *Runtime) emitLoopState(state *queryLoopState) {

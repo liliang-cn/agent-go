@@ -444,6 +444,7 @@ func (c *Client) GenerateWithTools(ctx context.Context, messages []domain.Messag
 				ToolCalls        []json.RawMessage `json:"tool_calls,omitempty"`
 				ReasoningContent string            `json:"reasoning_content"`
 			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
 	}
 
@@ -460,6 +461,7 @@ func (c *Client) GenerateWithTools(ctx context.Context, messages []domain.Messag
 	response := &domain.GenerationResult{
 		Content:          cleanContent,
 		ReasoningContent: reasoning,
+		FinishReason:     choice.FinishReason,
 	}
 
 	// 解析tool calls

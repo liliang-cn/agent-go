@@ -43,6 +43,9 @@ const (
 	EventTypeStop         EventType = "stop"          // Stop hook prevented continuation
 	EventTypeStopComplete EventType = "stop_complete" // Stop hook executed successfully
 
+	// Compaction
+	EventTypeCompactBoundary EventType = "compact_boundary" // Runtime collapsed older history into a summary
+
 	// Debug (prompts/responses, emitted when debug=true)
 	EventTypeDebug EventType = "debug"
 
@@ -103,6 +106,18 @@ type Event struct {
 
 	// Analytics data (EventTypeAnalytics only)
 	AnalyticsEvent *AnalyticsEvent `json:"analytics_event,omitempty"`
+
+	// StopReason explains why the run stopped on terminal events
+	// (workflow_complete / workflow_blocked / workflow_error). Empty on
+	// non-terminal events. Mirrors the SDK's stop_reason convention so
+	// consumers can route on machine-readable codes instead of parsing
+	// content. See pkg/agent/stop_reason.go for the constant set.
+	StopReason StopReason `json:"stop_reason,omitempty"`
+
+	// EstimatedCostUSD carries the run's running cost estimate at the
+	// moment the event was emitted (input + output tokens × model
+	// pricing). Populated on terminal events; zero elsewhere.
+	EstimatedCostUSD float64 `json:"estimated_cost_usd,omitempty"`
 
 	Timestamp time.Time `json:"timestamp"`
 }

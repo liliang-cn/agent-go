@@ -726,8 +726,9 @@ func (p *OpenAILLMProvider) GenerateWithTools(ctx context.Context, messages []do
 
 	choice := completion.Choices[0]
 	result := &domain.GenerationResult{
-		Content:  choice.Message.Content,
-		Finished: true,
+		Content:      choice.Message.Content,
+		Finished:     true,
+		FinishReason: string(choice.FinishReason),
 	}
 
 	if len(choice.Message.ToolCalls) > 0 {
