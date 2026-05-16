@@ -594,13 +594,6 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			})
 		}
 	}
-
-	// Loop fell off the end without any explicit terminal — we exhausted
-	// the round budget. Surface that as a distinct stop reason so callers
-	// can resume vs. give up intelligently.
-	r.blockRunWithStop(goal,
-		fmt.Sprintf("max turns (%d) reached without completion", maxRounds),
-		messages, true, StopReasonMaxTurns)
 }
 
 // shouldAutoCompact returns true when the runtime should try to summarize
