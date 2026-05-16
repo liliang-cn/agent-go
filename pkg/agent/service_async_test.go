@@ -162,11 +162,13 @@ func TestPersistedAsyncContinuationSupportsCrossServiceSendMessage(t *testing.T)
 }
 
 // asyncTaskWaitTimeout is generous enough to absorb slow CI runners.
-// Hosted Linux with cold module cache + SQLite contention can take many
-// seconds for a task to flush its result row; the 30s bump still flaked
-// (hit the deadline almost exactly), so we double it. Locally these
-// waits resolve in well under a second.
-const asyncTaskWaitTimeout = 90 * time.Second
+// Hosted Linux with cold module cache + SQLite contention sometimes
+// takes many tens of seconds for a task to flush its result row; the
+// 30s and 90s bumps both flaked at the exact deadline. Locally these
+// waits resolve in well under a second. A real fix would replace the
+// polling with a notification channel from the store; until then we
+// give it a budget so generous CI churn can absorb it.
+const asyncTaskWaitTimeout = 180 * time.Second
 
 func waitForTaskOutput(t *testing.T, store *Store, taskID, wantOutput string) *taskpkg.Task {
 	t.Helper()
