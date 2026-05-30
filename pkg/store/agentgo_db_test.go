@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/liliang-cn/agent-go/v2/pkg/resource"
 	_ "modernc.org/sqlite"
@@ -159,5 +160,76 @@ func TestNewAgentGoDBMigratesLegacySharedTasksColumns(t *testing.T) {
 	}
 	if columns["squad_name"] {
 		t.Fatalf("expected squad_name to be migrated away, got %#v", columns)
+	}
+}
+
+// TestNewAgentGoDBMigratesCaptainNameColumn covers the older schema where
+// the orchestrator column was named captain_name. Without the migration,
+// inserts fail with "table shared_tasks has no column named
+// orchestrator_name".
+func TestNewAgentGoDBMigratesCaptainNameColumn(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "agentgo.db")
+
+	rawDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open raw sqlite db: %v", err)
+	}
+	_, err = rawDB.Exec(`
+		CREATE TABLE shared_tasks (
+			id TEXT PRIMARY KEY,
+			session_id TEXT,
+			team_id TEXT NOT NULL,
+			team_name TEXT,
+			captain_name TEXT NOT NULL,
+			agent_names TEXT NOT NULL,
+			prompt TEXT NOT NULL,
+			ack_message TEXT,
+			status TEXT NOT NULL,
+			queued_ahead INTEGER DEFAULT 0,
+			result_text TEXT,
+			results TEXT,
+			created_at DATETIME NOT NULL,
+			started_at DATETIME,
+			finished_at DATETIME
+		)
+	`)
+	if err != nil {
+		t.Fatalf("create legacy shared_tasks table: %v", err)
+	}
+	if err := rawDB.Close(); err != nil {
+		t.Fatalf("close raw sqlite db: %v", err)
+	}
+
+	db, err := NewAgentGoDB(dbPath)
+	if err != nil {
+		t.Fatalf("NewAgentGoDB() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = db.Close()
+	})
+
+	columns, err := db.tableColumnSetLocked("shared_tasks")
+	if err != nil {
+		t.Fatalf("tableColumnSetLocked() error = %v", err)
+	}
+	if !columns["orchestrator_name"] {
+		t.Fatalf("expected migrated shared_tasks to include orchestrator_name, got %#v", columns)
+	}
+	if columns["captain_name"] {
+		t.Fatalf("expected captain_name to be migrated away, got %#v", columns)
+	}
+
+	// An insert using orchestrator_name must now succeed.
+	task := &SharedTask{
+		ID:               "t1",
+		TeamID:           "team-1",
+		OrchestratorName: "Captain",
+		AgentNames:       []string{"a"},
+		Prompt:           "hi",
+		Status:           "queued",
+		CreatedAt:        time.Now(),
+	}
+	if err := db.SaveSharedTask(task); err != nil {
+		t.Fatalf("SaveSharedTask after migration: %v", err)
 	}
 }

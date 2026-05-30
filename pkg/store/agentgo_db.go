@@ -510,6 +510,17 @@ func (s *AgentGoDB) migrateSharedTasksSchemaLocked() error {
 	if err := s.migrateSharedTasksColumnLocked(columns, "squad_name", "team_name"); err != nil {
 		return err
 	}
+	columns, err = s.tableColumnSetLocked("shared_tasks")
+	if err != nil {
+		return err
+	}
+	// Older DBs named the orchestrator column captain_name. The current
+	// schema (and all reads/writes) use orchestrator_name, so rename it
+	// in place — without this, INSERTs fail with "table shared_tasks has
+	// no column named orchestrator_name".
+	if err := s.migrateSharedTasksColumnLocked(columns, "captain_name", "orchestrator_name"); err != nil {
+		return err
+	}
 	return nil
 }
 
