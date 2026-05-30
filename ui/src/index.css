@@ -2,168 +2,71 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
-  color: #16324f;
-  background:
-    radial-gradient(circle at top left, rgba(96, 165, 250, 0.1), transparent 24%),
-    radial-gradient(circle at top right, rgba(191, 219, 254, 0.42), transparent 20%),
-    linear-gradient(180deg, #ffffff 0%, #f7fbff 52%, #eff6ff 100%);
+/*
+ * shadcn/ui — default theme (neutral). The standard, familiar shadcn
+ * look: HSL CSS variables, light + dark. Typography keeps Mona Sans
+ * (UI) + Spline Sans Mono (data) loaded from index.html.
+ */
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 0 0% 3.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 3.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 3.9%;
+    --primary: 0 0% 9%;
+    --primary-foreground: 0 0% 98%;
+    --secondary: 0 0% 96.1%;
+    --secondary-foreground: 0 0% 9%;
+    --muted: 0 0% 96.1%;
+    --muted-foreground: 0 0% 45.1%;
+    --accent: 0 0% 96.1%;
+    --accent-foreground: 0 0% 9%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 89.8%;
+    --input: 0 0% 89.8%;
+    --ring: 0 0% 3.9%;
+    --radius: 0.5rem;
+  }
 
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-body {
-  margin: 0;
-  min-width: 320px;
-  min-height: 100vh;
-  background: transparent;
-}
-
-* {
-  box-sizing: border-box;
-}
-
-a {
-  color: inherit;
-  text-decoration: none;
-}
-
-#root {
-  min-height: 100vh;
-}
-
-.app-shell {
-  position: relative;
-  overflow: hidden;
-}
-
-.app-backdrop {
-  position: fixed;
-  inset: 0;
-  background:
-    radial-gradient(circle at 14% 10%, rgba(147, 197, 253, 0.16), transparent 0 24%),
-    radial-gradient(circle at 84% 2%, rgba(219, 234, 254, 0.75), transparent 0 22%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.55), transparent 38%);
-  pointer-events: none;
-}
-
-.glass-panel {
-  border: 1px solid rgba(147, 197, 253, 0.22);
-  background: rgba(255, 255, 255, 0.96);
-  box-shadow:
-    0 16px 38px rgba(37, 99, 235, 0.06),
-    0 2px 8px rgba(15, 23, 42, 0.03);
-  backdrop-filter: blur(10px);
-}
-
-.dashboard-hero {
-  display: grid;
-  gap: 1.5rem;
-}
-
-@media (min-width: 1280px) {
-  .dashboard-hero {
-    grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
-    align-items: stretch;
+  .dark {
+    --background: 0 0% 3.9%;
+    --foreground: 0 0% 98%;
+    --card: 0 0% 3.9%;
+    --card-foreground: 0 0% 98%;
+    --popover: 0 0% 3.9%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 0 0% 98%;
+    --primary-foreground: 0 0% 9%;
+    --secondary: 0 0% 14.9%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 0 0% 14.9%;
+    --muted-foreground: 0 0% 63.9%;
+    --accent: 0 0% 14.9%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 14.9%;
+    --input: 0 0% 14.9%;
+    --ring: 0 0% 83.1%;
   }
 }
 
-.nav-pill {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 0.65rem;
-  padding: 0.62rem 0.95rem;
-  font-size: 0.92rem;
-  font-weight: 500;
-  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
-}
-
-.nav-pill-idle {
-  border: 1px solid #dbeafe;
-  background: #ffffff;
-  color: #31506e;
-}
-
-.nav-pill-idle:hover {
-  background: #eff6ff;
-  border-color: #bfdbfe;
-  color: #1d4ed8;
-}
-
-.nav-pill-active {
-  border: 1px solid #2563eb;
-  background: #2563eb;
-  color: #ffffff;
-}
-
-.dashboard-input {
-  width: 100%;
-  border-radius: 1.1rem;
-  border: 1px solid rgba(191, 219, 254, 0.9);
-  background: #f8fbff;
-  padding: 0.9rem 1rem;
-  color: #16324f;
-  outline: none;
-  transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
-}
-
-.dashboard-input::placeholder {
-  color: #7b91ab;
-}
-
-.dashboard-input:focus {
-  border-color: rgba(59, 130, 246, 0.55);
-  background: #ffffff;
-  box-shadow: 0 0 0 4px rgba(96, 165, 250, 0.12);
-}
-
-.dashboard-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  border-radius: 0.7rem;
-  border: 1px solid #2563eb;
-  background: #2563eb;
-  padding: 0.72rem 1.05rem;
-  color: #ffffff;
-  font-size: 0.94rem;
-  font-weight: 600;
-  transition: background 140ms ease, border-color 140ms ease, opacity 140ms ease;
-}
-
-.dashboard-button:hover:not(:disabled) {
-  background: #1d4ed8;
-  border-color: #1d4ed8;
-}
-
-.dashboard-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-.dashboard-secondary-button {
-  border-radius: 0.7rem;
-  border: 1px solid #dbeafe;
-  background: #ffffff;
-  padding: 0.72rem 1.05rem;
-  color: #31506e;
-  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
-}
-
-.dashboard-secondary-button:hover:not(:disabled) {
-  border-color: rgba(96, 165, 250, 0.5);
-  background: #eff6ff;
-  color: #1447e6;
-}
-
-.dashboard-muted-card {
-  border: 1px solid rgba(191, 219, 254, 0.82);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 1), rgba(248, 251, 255, 0.96));
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "ss01", "cv01";
+  }
+  /* tabular figures for data-bearing mono text */
+  .font-mono,
+  code,
+  pre,
+  kbd {
+    font-feature-settings: "tnum" 1, "zero" 1;
+  }
 }

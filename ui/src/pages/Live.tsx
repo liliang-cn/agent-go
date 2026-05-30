@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { streamAgent, type StopReason, type StreamEvent } from "../lib/api";
+import { streamAgent, type StopReason, type StreamEvent } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Textarea } from "@/components/ui/textarea";
 
 // Timeline entry — a normalized view of one streamed event.
 type TimelineEntry = {
@@ -33,9 +36,9 @@ const stopReasonStyle: Record<StopReason | "default", string> = {
   refusal:                "bg-violet-50 text-violet-700 border-violet-200",
   max_tokens:             "bg-amber-50  text-amber-700  border-amber-200",
   lint_exhausted:         "bg-orange-50 text-orange-700 border-orange-200",
-  stop_hook:              "bg-sky-50    text-sky-700    border-sky-200",
+  stop_hook:              "bg-blue-50    text-blue-700    border-blue-200",
   error_during_execution: "bg-rose-50   text-rose-700   border-rose-200",
-  default:                "bg-slate-50  text-slate-600  border-slate-200",
+  default:                "bg-muted  text-muted-foreground  border-border",
 };
 
 function StopReasonBadge({ reason }: { reason?: StopReason }) {
@@ -56,14 +59,14 @@ function eventTypeStyle(type: string): string {
   if (type === "workflow_complete") return "border-emerald-200 bg-emerald-50/60";
   if (type === "workflow_blocked")  return "border-rose-200    bg-rose-50/60";
   if (type === "workflow_error")    return "border-rose-200    bg-rose-50/60";
-  if (type === "tool_call")         return "border-sky-200     bg-sky-50/60";
+  if (type === "tool_call")         return "border-blue-200     bg-blue-50/60";
   if (type === "tool_result")       return "border-emerald-100 bg-emerald-50/30";
-  if (type === "thinking")          return "border-slate-100   bg-slate-50/50";
+  if (type === "thinking")          return "border-border   bg-muted/50";
   if (type === "partial")           return "border-indigo-100  bg-indigo-50/40";
   if (type === "analytics")         return "border-amber-100   bg-amber-50/40";
   if (type === "compact_boundary")  return "border-purple-200  bg-purple-50/60";
   if (type === "handoff")           return "border-violet-200  bg-violet-50/60";
-  return "border-slate-100 bg-white";
+  return "border-border bg-card";
 }
 
 function safeStringify(value: unknown, max = 240): string {
@@ -90,20 +93,36 @@ function detectJSON(s: string): unknown | undefined {
   }
 }
 
+// A finished run kept in session-local history so the user can flip back
+// to it without re-running.
+type HistoryRun = {
+  id: number;
+  goal: string;
+  timeline: TimelineEntry[];
+  summary: RunSummary;
+  at: string;
+};
+
+const emptySummary = (): RunSummary => ({
+  estimatedCostUSD: 0,
+  totalTokens: 0,
+  toolCalls: 0,
+  toolsUsed: [],
+});
+
 export function Live() {
   const [input, setInput] = useState("");
   const [debug, setDebug] = useState(false);
   const [running, setRunning] = useState(false);
   const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
-  const [summary, setSummary] = useState<RunSummary>({
-    estimatedCostUSD: 0,
-    totalTokens: 0,
-    toolCalls: 0,
-    toolsUsed: [],
-  });
+  const [summary, setSummary] = useState<RunSummary>(emptySummary);
   const [error, setError] = useState<string | null>(null);
+  const [history, setHistory] = useState<HistoryRun[]>([]);
+  const [viewingId, setViewingId] = useState<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const idCounterRef = useRef(0);
+  const runSeqRef = useRef(0);
+  const currentGoalRef = useRef("");
   const partialBufferRef = useRef<string>("");
   const partialEntryIdRef = useRef<number | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -133,13 +152,10 @@ export function Live() {
     if (!goal) return;
     setError(null);
     setRunning(true);
+    setViewingId(null);
     setTimeline([]);
-    setSummary({
-      estimatedCostUSD: 0,
-      totalTokens: 0,
-      toolCalls: 0,
-      toolsUsed: [],
-    });
+    setSummary(emptySummary());
+    currentGoalRef.current = goal;
     partialBufferRef.current = "";
     partialEntryIdRef.current = null;
     idCounterRef.current = 0;
@@ -158,7 +174,44 @@ export function Live() {
     } finally {
       setRunning(false);
       abortRef.current = null;
+      // Snapshot the completed run into history. Read the latest state
+      // via the setter callbacks so we capture the final values.
+      runSeqRef.current += 1;
+      const runId = runSeqRef.current;
+      setTimeline((tl) => {
+        setSummary((sm) => {
+          setHistory((h) =>
+            [
+              {
+                id: runId,
+                goal,
+                timeline: tl,
+                summary: sm,
+                at: new Date().toISOString(),
+              },
+              ...h,
+            ].slice(0, 20),
+          );
+          return sm;
+        });
+        return tl;
+      });
     }
+  };
+
+  const viewHistory = (run: HistoryRun) => {
+    if (running) return;
+    setViewingId(run.id);
+    setTimeline(run.timeline);
+    setSummary(run.summary);
+  };
+
+  const startNew = () => {
+    if (running) return;
+    setViewingId(null);
+    setTimeline([]);
+    setSummary(emptySummary());
+    setError(null);
   };
 
   const handleCancel = () => {
@@ -271,27 +324,27 @@ export function Live() {
   return (
     <div className="flex flex-col gap-4">
       <header className="flex flex-col gap-1">
-        <h2 className="text-2xl font-semibold tracking-tight text-slate-900">
+        <h2 className="text-2xl font-semibold tracking-tight text-foreground">
           Live Run
         </h2>
-        <p className="text-sm text-slate-600">
+        <p className="text-sm text-muted-foreground">
           Stream a task through the agent runtime and watch events,
           tool calls, cost, and stop reason in real time.
         </p>
       </header>
 
-      <section className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+      <Card className="p-4">
         <div className="flex flex-col gap-3">
-          <textarea
+          <Textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="Goal — e.g. List the AgentGo workspace and pick three files."
             disabled={running}
-            className="min-h-[80px] w-full resize-y rounded-xl border border-sky-100 bg-white px-4 py-2.5 text-sm text-slate-700 shadow-sm focus:border-sky-300 focus:outline-none focus:ring-2 focus:ring-sky-100 disabled:bg-slate-50"
+            className="min-h-[80px] resize-y"
             data-testid="live-input"
           />
           <div className="flex items-center justify-between gap-3">
-            <label className="flex items-center gap-2 text-sm text-slate-600">
+            <label className="flex items-center gap-2 text-sm text-muted-foreground">
               <input
                 type="checkbox"
                 checked={debug}
@@ -302,29 +355,23 @@ export function Live() {
             </label>
             <div className="flex gap-2">
               {running ? (
-                <button
-                  type="button"
-                  onClick={handleCancel}
-                  className="dashboard-secondary-button text-sm"
-                  data-testid="live-cancel"
-                >
+                <Button variant="outline" onClick={handleCancel} data-testid="live-cancel">
                   Cancel
-                </button>
+                </Button>
               ) : (
-                <button
-                  type="button"
+                <Button
                   onClick={handleStart}
                   disabled={!input.trim()}
-                  className="dashboard-button px-6"
+                  className="px-6"
                   data-testid="live-start"
                 >
                   Start
-                </button>
+                </Button>
               )}
             </div>
           </div>
         </div>
-      </section>
+      </Card>
 
       {error && (
         <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
@@ -332,20 +379,67 @@ export function Live() {
         </div>
       )}
 
-      <section className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_320px]">
+      {viewingId !== null && (
+        <div className="flex items-center justify-between rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-2 text-sm text-amber-800">
+          <span>Viewing a past run (read-only).</span>
+          <button
+            type="button"
+            onClick={startNew}
+            className="rounded-lg border border-amber-300 bg-card px-3 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50"
+          >
+            New run
+          </button>
+        </div>
+      )}
+
+      <section className="grid grid-cols-1 gap-4 lg:grid-cols-[200px_1fr_320px]">
+        {/* History rail */}
+        <aside
+          className="flex max-h-[70vh] flex-col gap-1.5 overflow-auto rounded-[10px] border border-border bg-card p-3"
+          data-testid="live-history"
+        >
+          <div className="px-1 pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            History
+          </div>
+          {history.length === 0 && (
+            <p className="px-1 text-xs text-muted-foreground">
+              Finished runs show up here.
+            </p>
+          )}
+          {history.map((run) => (
+            <button
+              key={run.id}
+              type="button"
+              onClick={() => viewHistory(run)}
+              disabled={running}
+              className={`flex flex-col gap-1 rounded-lg border px-2.5 py-2 text-left text-xs transition disabled:opacity-50 ${
+                viewingId === run.id
+                  ? "border-primary bg-accent"
+                  : "border-border hover:bg-muted"
+              }`}
+            >
+              <span className="line-clamp-2 text-foreground">{run.goal}</span>
+              <span className="flex items-center justify-between font-mono text-[10px] text-muted-foreground">
+                <span>{run.summary.stopReason ?? "—"}</span>
+                <span>${run.summary.estimatedCostUSD.toFixed(4)}</span>
+              </span>
+            </button>
+          ))}
+        </aside>
+
         {/* Event timeline */}
         <div
           ref={scrollRef}
-          className="flex max-h-[70vh] flex-col gap-2 overflow-auto rounded-2xl border border-slate-100 bg-slate-50/40 p-4"
+          className="flex max-h-[70vh] flex-col gap-2 overflow-auto rounded-[10px] border border-border bg-muted/40 p-4"
           data-testid="live-timeline"
         >
           {timeline.length === 0 && !running && (
-            <div className="rounded-xl border border-dashed border-slate-200 bg-white p-6 text-center text-sm text-slate-400">
+            <div className="rounded-xl border border-dashed border-border bg-card p-6 text-center text-sm text-muted-foreground">
               No events yet — enter a goal and press Start.
             </div>
           )}
           {timeline.length === 0 && running && (
-            <div className="rounded-xl border border-sky-100 bg-sky-50/60 p-4 text-sm text-sky-700">
+            <div className="rounded-xl border border-border bg-muted p-4 text-sm text-muted-foreground">
               Waiting for the runtime…
             </div>
           )}
@@ -354,18 +448,18 @@ export function Live() {
               key={e.id}
               className={`rounded-xl border px-3 py-2 text-sm ${eventTypeStyle(e.type)}`}
             >
-              <div className="flex items-baseline justify-between gap-3 text-xs text-slate-500">
+              <div className="flex items-baseline justify-between gap-3 text-xs text-muted-foreground">
                 <div className="flex items-center gap-2">
-                  <span className="font-mono font-semibold text-slate-700">
+                  <span className="font-mono font-semibold text-foreground">
                     {e.type}
                   </span>
                   {e.round ? (
-                    <span className="rounded-full bg-white px-1.5 py-0.5 font-medium text-slate-500">
+                    <span className="rounded-full bg-card px-1.5 py-0.5 font-medium text-muted-foreground">
                       r{e.round}
                     </span>
                   ) : null}
                   {e.toolName ? (
-                    <span className="font-mono text-sky-700">
+                    <span className="font-mono text-foreground">
                       {e.toolName}
                     </span>
                   ) : null}
@@ -376,28 +470,28 @@ export function Live() {
                   ) : null}
                 </div>
                 {e.timestamp ? (
-                  <time className="font-mono text-[10px] text-slate-400">
+                  <time className="font-mono text-[10px] text-muted-foreground">
                     {e.timestamp.slice(11, 23)}
                   </time>
                 ) : null}
               </div>
               {e.text && (
-                <pre className="mt-1 whitespace-pre-wrap break-words font-sans text-slate-700">
+                <pre className="mt-1 whitespace-pre-wrap break-words font-sans text-foreground">
                   {e.text}
                 </pre>
               )}
               {e.toolArgs && Object.keys(e.toolArgs).length > 0 && (
-                <pre className="mt-1 overflow-x-auto rounded-md bg-white/70 p-2 font-mono text-xs text-slate-600">
+                <pre className="mt-1 overflow-x-auto rounded-md bg-background/70 p-2 font-mono text-xs text-muted-foreground">
                   {safeStringify(e.toolArgs, 400)}
                 </pre>
               )}
               {e.toolResult !== undefined && e.toolResult !== null && (
-                <pre className="mt-1 overflow-x-auto rounded-md bg-white/70 p-2 font-mono text-xs text-slate-600">
+                <pre className="mt-1 overflow-x-auto rounded-md bg-background/70 p-2 font-mono text-xs text-muted-foreground">
                   {safeStringify(e.toolResult, 400)}
                 </pre>
               )}
               {e.analyticsData && (
-                <pre className="mt-1 overflow-x-auto rounded-md bg-white/70 p-2 font-mono text-xs text-slate-600">
+                <pre className="mt-1 overflow-x-auto rounded-md bg-background/70 p-2 font-mono text-xs text-muted-foreground">
                   {safeStringify(e.analyticsData, 400)}
                 </pre>
               )}
@@ -407,43 +501,43 @@ export function Live() {
 
         {/* Side panel */}
         <aside className="flex flex-col gap-3">
-          <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+          <div className="rounded-[10px] border border-border bg-card p-4 shadow-sm">
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
               Run Summary
             </h3>
             <dl className="mt-3 space-y-3 text-sm">
               <div className="flex items-center justify-between">
-                <dt className="text-slate-500">stop_reason</dt>
+                <dt className="text-muted-foreground">stop_reason</dt>
                 <dd>
                   <StopReasonBadge reason={summary.stopReason} />
                 </dd>
               </div>
               <div className="flex items-center justify-between">
-                <dt className="text-slate-500">est. cost</dt>
-                <dd className="font-mono text-slate-800">
+                <dt className="text-muted-foreground">est. cost</dt>
+                <dd className="font-mono text-foreground">
                   ${summary.estimatedCostUSD.toFixed(6)}
                 </dd>
               </div>
               <div className="flex items-center justify-between">
-                <dt className="text-slate-500">tokens (turn)</dt>
-                <dd className="font-mono text-slate-800">
+                <dt className="text-muted-foreground">tokens (turn)</dt>
+                <dd className="font-mono text-foreground">
                   {summary.totalTokens.toLocaleString()}
                 </dd>
               </div>
               <div className="flex items-center justify-between">
-                <dt className="text-slate-500">tool calls</dt>
-                <dd className="font-mono text-slate-800">
+                <dt className="text-muted-foreground">tool calls</dt>
+                <dd className="font-mono text-foreground">
                   {summary.toolCalls}
                 </dd>
               </div>
               {summary.toolsUsed.length > 0 && (
                 <div>
-                  <dt className="text-slate-500">tools used</dt>
+                  <dt className="text-muted-foreground">tools used</dt>
                   <dd className="mt-1 flex flex-wrap gap-1">
                     {summary.toolsUsed.map((t) => (
                       <span
                         key={t}
-                        className="rounded-full bg-sky-50 px-2 py-0.5 font-mono text-[11px] text-sky-700"
+                        className="rounded-full bg-secondary px-2 py-0.5 font-mono text-[11px] text-secondary-foreground"
                       >
                         {t}
                       </span>
@@ -455,30 +549,30 @@ export function Live() {
           </div>
 
           {summary.finalContent && (
-            <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-              <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+            <div className="rounded-[10px] border border-border bg-card p-4 shadow-sm">
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
                 Final answer
               </h3>
               {parsedFinalJson ? (
-                <pre className="mt-2 max-h-72 overflow-auto rounded-lg bg-slate-50 p-3 font-mono text-xs text-slate-800">
+                <pre className="mt-2 max-h-72 overflow-auto rounded-lg bg-muted p-3 font-mono text-xs text-foreground">
                   {JSON.stringify(parsedFinalJson, null, 2)}
                 </pre>
               ) : (
-                <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">
+                <p className="mt-2 whitespace-pre-wrap text-sm text-foreground">
                   {summary.finalContent}
                 </p>
               )}
             </div>
           )}
 
-          <div className="rounded-2xl border border-slate-100 bg-white p-4 text-xs text-slate-500 shadow-sm">
+          <div className="rounded-[10px] border border-border bg-card p-4 text-xs text-muted-foreground shadow-sm">
             <p>
               Tip: this view streams from{" "}
-              <code className="rounded bg-slate-100 px-1 py-0.5">
+              <code className="rounded bg-muted px-1 py-0.5">
                 /api/agent/stream
               </code>
               . Inspect saved runs at{" "}
-              <Link to="/tasks" className="text-sky-600 underline">
+              <Link to="/tasks" className="text-foreground underline">
                 /tasks
               </Link>
               .

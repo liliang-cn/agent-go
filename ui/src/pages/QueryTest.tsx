@@ -17,15 +17,15 @@ export function QueryTest() {
 
   return (
     <div className="space-y-6" data-testid="page-query">
-      <div className="glass-panel rounded-[32px] p-6">
-        <h2 className="text-xl font-semibold text-slate-900 mb-4">
+      <div className="rounded-lg border bg-card text-card-foreground shadow-sm rounded-lg p-6">
+        <h2 className="text-xl font-semibold text-foreground mb-4">
           {t('ragQuery')}
         </h2>
         <form onSubmit={handleSubmit} className="space-y-4" data-testid="query-form">
           <div>
             <label
               htmlFor="query"
-              className="block text-sm font-medium text-slate-700 mb-2"
+              className="block text-sm font-medium text-foreground mb-2"
             >
               {t('query')}
             </label>
@@ -34,7 +34,7 @@ export function QueryTest() {
               rows={3}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              className="dashboard-input resize-none"
+              className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 resize-none"
               placeholder={t('queryPlaceholder')}
               data-testid="query-input"
             />
@@ -42,7 +42,7 @@ export function QueryTest() {
           <div>
             <label
               htmlFor="topK"
-              className="block text-sm font-medium text-slate-700 mb-2"
+              className="block text-sm font-medium text-foreground mb-2"
             >
               {t('topKResults', { count: topK })}
             </label>
@@ -59,7 +59,7 @@ export function QueryTest() {
           <button
             type="submit"
             disabled={mutation.isPending || !query.trim()}
-            className="dashboard-button px-6 py-2 disabled:cursor-not-allowed"
+            className="inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors bg-primary text-primary-foreground shadow hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50 px-6 py-2 disabled:cursor-not-allowed"
             data-testid="query-submit"
           >
             {mutation.isPending ? t('querying') : t('query')}
@@ -68,7 +68,7 @@ export function QueryTest() {
       </div>
 
       {mutation.isError && (
-        <div className="rounded-[24px] border border-rose-200 bg-rose-50 p-4">
+        <div className="rounded-lg border border-rose-200 bg-rose-50 p-4">
           <p className="text-rose-700">
             {t('error')}: {mutation.error?.message}
           </p>
@@ -77,32 +77,32 @@ export function QueryTest() {
 
       {mutation.isSuccess && (
         <div className="space-y-4">
-          <div className="glass-panel rounded-[28px] p-6">
-            <h3 className="font-medium text-slate-900 mb-3">
+          <div className="rounded-lg border bg-card text-card-foreground shadow-sm rounded-lg p-6">
+            <h3 className="font-medium text-foreground mb-3">
               {t('answer')}
             </h3>
-            <p className="text-slate-700 whitespace-pre-wrap">
+            <p className="text-foreground whitespace-pre-wrap">
               {mutation.data.answer}
             </p>
           </div>
 
           {mutation.data.sources && mutation.data.sources.length > 0 && (
             <div>
-              <h3 className="font-medium text-slate-900 mb-3">
+              <h3 className="font-medium text-foreground mb-3">
                 {t('sources')}
               </h3>
               <div className="space-y-3">
                 {mutation.data.sources.map((source, index) => (
                   <div
                     key={index}
-                    className="dashboard-muted-card rounded-[24px] p-4"
+                    className="rounded-lg border bg-muted/40 text-card-foreground shadow-sm rounded-lg p-4"
                   >
                     <div className="flex justify-between items-center mb-2">
-                      <span className="text-sm font-medium text-blue-700">
+                      <span className="text-sm font-medium text-foreground">
                         {t('score')}: {source.score.toFixed(4)}
                       </span>
                     </div>
-                    <p className="text-sm text-slate-600 line-clamp-3">
+                    <p className="text-sm text-muted-foreground line-clamp-3">
                       {source.content}
                     </p>
                   </div>

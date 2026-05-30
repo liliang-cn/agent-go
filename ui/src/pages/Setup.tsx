@@ -111,21 +111,21 @@ export function Setup() {
   }
 
   if (isLoading) {
-    return <div className="glass-panel rounded-[28px] p-6 text-slate-600">{t('loading')}</div>
+    return <div className="rounded-lg border bg-card text-card-foreground shadow-sm rounded-lg p-6 text-muted-foreground">{t('loading')}</div>
   }
 
   if (error) {
-    return <div className="rounded-[28px] border border-rose-200 bg-rose-50 p-6 text-rose-700">{t('error')}: {error.message}</div>
+    return <div className="rounded-lg border border-rose-200 bg-rose-50 p-6 text-rose-700">{t('error')}: {error.message}</div>
   }
 
   return (
     <div className="space-y-6" data-testid="page-setup">
-      <div className="glass-panel rounded-[32px] p-6">
+      <div className="rounded-lg border bg-card text-card-foreground shadow-sm rounded-lg p-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
-            <p className="text-xs uppercase tracking-[0.28em] text-slate-500">{t('setupStep', { current: step + 1, total: STEP_COUNT })}</p>
-            <h2 className="mt-2 text-3xl font-semibold text-slate-900">{t('setupTitle')}</h2>
-            <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">{t('setupIntro')}</p>
+            <p className="text-xs uppercase tracking-[0.28em] text-muted-foreground">{t('setupStep', { current: step + 1, total: STEP_COUNT })}</p>
+            <h2 className="mt-2 text-3xl font-semibold text-foreground">{t('setupTitle')}</h2>
+            <p className="mt-3 max-w-3xl text-sm leading-7 text-muted-foreground">{t('setupIntro')}</p>
           </div>
           <div className={`rounded-full px-4 py-2 text-sm ${data?.initialized ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
             {data?.initialized ? t('setupStatusReady') : t('setupStatusPending')}
@@ -134,7 +134,7 @@ export function Setup() {
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[240px_minmax(0,1fr)]">
-        <aside className="glass-panel rounded-[32px] p-4">
+        <aside className="rounded-lg border bg-card text-card-foreground shadow-sm rounded-lg p-4">
           {[
             t('setupWorkspace'),
             t('setupProvider'),
@@ -145,7 +145,7 @@ export function Setup() {
               key={label}
               type="button"
               onClick={() => setStep(index)}
-              className={`mb-2 flex w-full items-center justify-between rounded-[20px] px-4 py-3 text-left text-sm ${step === index ? 'bg-blue-600 text-white' : 'bg-sky-50 text-slate-700'}`}
+              className={`mb-2 flex w-full items-center justify-between rounded-lg px-4 py-3 text-left text-sm ${step === index ? 'bg-primary text-white' : 'bg-muted text-foreground'}`}
               data-testid={`setup-step-${index}`}
             >
               <span>{label}</span>
@@ -154,32 +154,32 @@ export function Setup() {
           ))}
         </aside>
 
-        <section className="glass-panel rounded-[32px] p-6">
+        <section className="rounded-lg border bg-card text-card-foreground shadow-sm rounded-lg p-6">
           {step === 0 && (
             <div className="space-y-4" data-testid="setup-workspace">
               <label className="space-y-2">
-                <span className="text-sm font-medium text-slate-700">{t('home')}</span>
-                <input value={home} onChange={(e) => setHome(e.target.value)} className="dashboard-input" />
+                <span className="text-sm font-medium text-foreground">{t('home')}</span>
+                <input value={home} onChange={(e) => setHome(e.target.value)} className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50" />
               </label>
               <div className="grid gap-4 md:grid-cols-2">
-                <div className="dashboard-muted-card rounded-[20px] px-4 py-3 text-slate-700">
-                  <p className="text-xs uppercase tracking-[0.2em] text-slate-500">{t('workingDirectory')}</p>
+                <div className="rounded-lg border bg-muted/40 text-card-foreground shadow-sm rounded-lg px-4 py-3 text-foreground">
+                  <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">{t('workingDirectory')}</p>
                   <p className="mt-2 break-all text-sm">{derivedWorkspace || '-'}</p>
                 </div>
-                <div className="dashboard-muted-card rounded-[20px] px-4 py-3 text-slate-700">
-                  <p className="text-xs uppercase tracking-[0.2em] text-slate-500">{t('memoryPath')}</p>
+                <div className="rounded-lg border bg-muted/40 text-card-foreground shadow-sm rounded-lg px-4 py-3 text-foreground">
+                  <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">{t('memoryPath')}</p>
                   <p className="mt-2 break-all text-sm">{derivedMemoryPath || '-'}</p>
                 </div>
               </div>
-              <p className="text-xs text-slate-500">{t('pathsDerivedFromHome')}</p>
+              <p className="text-xs text-muted-foreground">{t('pathsDerivedFromHome')}</p>
               <div className="grid gap-4 md:grid-cols-2">
                 <label className="space-y-2">
-                  <span className="text-sm font-medium text-slate-700">{t('serverHost')}</span>
-                  <input value={serverHost} onChange={(e) => setServerHost(e.target.value)} className="dashboard-input" />
+                  <span className="text-sm font-medium text-foreground">{t('serverHost')}</span>
+                  <input value={serverHost} onChange={(e) => setServerHost(e.target.value)} className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50" />
                 </label>
                 <label className="space-y-2">
-                  <span className="text-sm font-medium text-slate-700">{t('serverPort')}</span>
-                  <input value={serverPort} onChange={(e) => setServerPort(e.target.value)} className="dashboard-input" />
+                  <span className="text-sm font-medium text-foreground">{t('serverPort')}</span>
+                  <input value={serverPort} onChange={(e) => setServerPort(e.target.value)} className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50" />
                 </label>
               </div>
             </div>
@@ -188,45 +188,45 @@ export function Setup() {
           {step === 1 && (
             <div className="space-y-4" data-testid="setup-provider">
               <label className="space-y-2">
-                <span className="text-sm font-medium text-slate-700">{t('providerName')}</span>
-                <input value={providerName} onChange={(e) => setProviderName(e.target.value)} className="dashboard-input" />
+                <span className="text-sm font-medium text-foreground">{t('providerName')}</span>
+                <input value={providerName} onChange={(e) => setProviderName(e.target.value)} className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50" />
               </label>
               <label className="space-y-2">
-                <span className="text-sm font-medium text-slate-700">{t('providerBaseUrl')}</span>
-                <input value={providerBaseUrl} onChange={(e) => setProviderBaseUrl(e.target.value)} className="dashboard-input" />
-                <p className="text-xs text-slate-500">{t('setupProviderHint')}</p>
+                <span className="text-sm font-medium text-foreground">{t('providerBaseUrl')}</span>
+                <input value={providerBaseUrl} onChange={(e) => setProviderBaseUrl(e.target.value)} className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50" />
+                <p className="text-xs text-muted-foreground">{t('setupProviderHint')}</p>
               </label>
               <label className="space-y-2">
-                <span className="text-sm font-medium text-slate-700">{t('apiKey')}</span>
-                <input value={apiKey} onChange={(e) => setApiKey(e.target.value)} className="dashboard-input" type="password" />
+                <span className="text-sm font-medium text-foreground">{t('apiKey')}</span>
+                <input value={apiKey} onChange={(e) => setApiKey(e.target.value)} className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50" type="password" />
               </label>
               <div className="grid gap-4 md:grid-cols-2">
                 <label className="space-y-2">
-                  <span className="text-sm font-medium text-slate-700">{t('modelName')}</span>
-                  <input value={modelName} onChange={(e) => setModelName(e.target.value)} className="dashboard-input" />
+                  <span className="text-sm font-medium text-foreground">{t('modelName')}</span>
+                  <input value={modelName} onChange={(e) => setModelName(e.target.value)} className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50" />
                 </label>
-                <div className="rounded-[20px] border border-sky-100 bg-sky-50 px-4 py-3 text-sm text-slate-600">
+                <div className="rounded-lg border border-border bg-muted px-4 py-3 text-sm text-muted-foreground">
                   {t('setupEmbeddingOptionalHint')}
                 </div>
               </div>
-              <div className="rounded-[20px] border border-sky-100 bg-white px-4 py-3">
+              <div className="rounded-lg border border-border bg-white px-4 py-3">
                 <button
                   type="button"
                   onClick={() => setShowOptionalKnowledge((current) => !current)}
                   className="flex w-full items-center justify-between text-left"
                   data-testid="setup-toggle-optional-knowledge"
                 >
-                  <span className="text-sm font-medium text-slate-700">{t('setupEmbeddingsOptionalTitle')}</span>
-                  <span className="text-sm text-slate-400">{showOptionalKnowledge ? '−' : '+'}</span>
+                  <span className="text-sm font-medium text-foreground">{t('setupEmbeddingsOptionalTitle')}</span>
+                  <span className="text-sm text-muted-foreground">{showOptionalKnowledge ? '−' : '+'}</span>
                 </button>
                 {showOptionalKnowledge && (
                   <div className="mt-4 space-y-4">
                     <label className="space-y-2">
-                      <span className="text-sm font-medium text-slate-700">{t('embeddingModel')}</span>
-                      <input value={embeddingModel} onChange={(e) => setEmbeddingModel(e.target.value)} className="dashboard-input" />
+                      <span className="text-sm font-medium text-foreground">{t('embeddingModel')}</span>
+                      <input value={embeddingModel} onChange={(e) => setEmbeddingModel(e.target.value)} className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50" />
                     </label>
-                    <div className="dashboard-muted-card rounded-[20px] px-4 py-3 text-slate-700">
-                      <p className="text-xs uppercase tracking-[0.2em] text-slate-500">{t('ragDatabasePath')}</p>
+                    <div className="rounded-lg border bg-muted/40 text-card-foreground shadow-sm rounded-lg px-4 py-3 text-foreground">
+                      <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">{t('ragDatabasePath')}</p>
                       <p className="mt-2 break-all text-sm">{derivedRagDb || '-'}</p>
                     </div>
                   </div>
@@ -234,12 +234,12 @@ export function Setup() {
               </div>
               <div className="grid gap-4 md:grid-cols-2">
                 <label className="space-y-2">
-                  <span className="text-sm font-medium text-slate-700">{t('maxConcurrency')}</span>
-                  <input value={maxConcurrency} onChange={(e) => setMaxConcurrency(e.target.value)} className="dashboard-input" />
+                  <span className="text-sm font-medium text-foreground">{t('maxConcurrency')}</span>
+                  <input value={maxConcurrency} onChange={(e) => setMaxConcurrency(e.target.value)} className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50" />
                 </label>
                 <label className="space-y-2">
-                  <span className="text-sm font-medium text-slate-700">{t('capabilityLevel')}</span>
-                  <input value={capability} onChange={(e) => setCapability(e.target.value)} className="dashboard-input" />
+                  <span className="text-sm font-medium text-foreground">{t('capabilityLevel')}</span>
+                  <input value={capability} onChange={(e) => setCapability(e.target.value)} className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50" />
                 </label>
               </div>
             </div>
@@ -247,16 +247,16 @@ export function Setup() {
 
           {step === 2 && (
             <div className="space-y-4" data-testid="setup-features">
-              <div className="rounded-[20px] border border-sky-100 bg-sky-50 px-4 py-3 text-sm text-slate-600">
+              <div className="rounded-lg border border-border bg-muted px-4 py-3 text-sm text-muted-foreground">
                 {t('pathsDerivedFromHome')}
               </div>
               <div className="grid gap-4 md:grid-cols-2">
                 <label className="space-y-2">
-                  <span className="text-sm font-medium text-slate-700">{t('memoryStoreType')}</span>
-                  <input value={memoryStoreType} onChange={(e) => setMemoryStoreType(e.target.value)} className="dashboard-input" />
+                  <span className="text-sm font-medium text-foreground">{t('memoryStoreType')}</span>
+                  <input value={memoryStoreType} onChange={(e) => setMemoryStoreType(e.target.value)} className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50" />
                 </label>
-                <div className="dashboard-muted-card rounded-[20px] px-4 py-3 text-slate-700">
-                  <p className="text-xs uppercase tracking-[0.2em] text-slate-500">{t('memoryPath')}</p>
+                <div className="rounded-lg border bg-muted/40 text-card-foreground shadow-sm rounded-lg px-4 py-3 text-foreground">
+                  <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">{t('memoryPath')}</p>
                   <p className="mt-2 break-all text-sm">{derivedMemoryPath || '-'}</p>
                 </div>
               </div>
@@ -266,28 +266,28 @@ export function Setup() {
           {step === 3 && (
             <div className="space-y-6" data-testid="setup-review">
               <div>
-                <h3 className="text-lg font-semibold text-slate-900">{t('setupReviewConfig')}</h3>
+                <h3 className="text-lg font-semibold text-foreground">{t('setupReviewConfig')}</h3>
                 <dl className="mt-4 grid gap-3 md:grid-cols-2">
                   {reviewItems.map(([label, value]) => (
-                    <div key={label} className="dashboard-muted-card rounded-[20px] p-4">
-                      <dt className="text-xs uppercase tracking-[0.2em] text-slate-500">{label}</dt>
-                      <dd className="mt-2 break-all text-sm text-slate-900">{value}</dd>
+                    <div key={label} className="rounded-lg border bg-muted/40 text-card-foreground shadow-sm rounded-lg p-4">
+                      <dt className="text-xs uppercase tracking-[0.2em] text-muted-foreground">{label}</dt>
+                      <dd className="mt-2 break-all text-sm text-foreground">{value}</dd>
                     </div>
                   ))}
                 </dl>
               </div>
               <div>
-                <h3 className="text-lg font-semibold text-slate-900">{t('setupReviewProvider')}</h3>
+                <h3 className="text-lg font-semibold text-foreground">{t('setupReviewProvider')}</h3>
                 <dl className="mt-4 grid gap-3 md:grid-cols-2">
                   {providerItems.map(([label, value]) => (
-                    <div key={label} className="dashboard-muted-card rounded-[20px] p-4">
-                      <dt className="text-xs uppercase tracking-[0.2em] text-slate-500">{label}</dt>
-                      <dd className="mt-2 break-all text-sm text-slate-900">{value}</dd>
+                    <div key={label} className="rounded-lg border bg-muted/40 text-card-foreground shadow-sm rounded-lg p-4">
+                      <dt className="text-xs uppercase tracking-[0.2em] text-muted-foreground">{label}</dt>
+                      <dd className="mt-2 break-all text-sm text-foreground">{value}</dd>
                     </div>
                   ))}
                 </dl>
               </div>
-              <p className="rounded-[20px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                 {t('setupRestartNotice')}
               </p>
               {saved && <p className="text-sm text-emerald-700">{t('setupCompleted')}</p>}
@@ -298,7 +298,7 @@ export function Setup() {
             <button
               type="button"
               onClick={() => setStep((current) => Math.max(0, current - 1))}
-              className="dashboard-secondary-button px-4 py-2 text-sm"
+              className="inline-flex items-center justify-center rounded-md border border-input bg-background text-sm font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50 px-4 py-2 text-sm"
               disabled={step === 0}
             >
               {t('setupBack')}
@@ -307,7 +307,7 @@ export function Setup() {
               <button
                 type="button"
                 onClick={() => setStep((current) => Math.min(STEP_COUNT - 1, current + 1))}
-                className="dashboard-button px-5 py-2"
+                className="inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors bg-primary text-primary-foreground shadow hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50 px-5 py-2"
                 data-testid="setup-next"
               >
                 {t('setupNext')}
@@ -317,7 +317,7 @@ export function Setup() {
                 type="button"
                 onClick={handleApply}
                 disabled={applySetup.isPending}
-                className="dashboard-button px-5 py-2"
+                className="inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors bg-primary text-primary-foreground shadow hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50 px-5 py-2"
                 data-testid="setup-apply"
               >
                 {applySetup.isPending ? t('loading') : t('setupApply')}

@@ -41,35 +41,35 @@ export function Settings() {
   }
 
   if (isLoading) {
-    return <div className="glass-panel rounded-[28px] p-6 text-slate-600">{t('loading')}</div>
+    return <div className="rounded-lg border bg-card text-card-foreground shadow-sm rounded-lg p-6 text-muted-foreground">{t('loading')}</div>
   }
 
   if (error) {
-    return <div className="rounded-[28px] border border-rose-200 bg-rose-50 p-6 text-rose-700">{t('error')}: {error.message}</div>
+    return <div className="rounded-lg border border-rose-200 bg-rose-50 p-6 text-rose-700">{t('error')}: {error.message}</div>
   }
 
   return (
     <div className="space-y-6" data-testid="page-settings">
-      <div className="glass-panel rounded-[32px] p-6">
-        <p className="text-xs uppercase tracking-[0.28em] text-slate-500">{t('projectConfiguration')}</p>
-        <h2 className="mt-2 text-3xl font-semibold text-slate-900">{t('settings')}</h2>
-        <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
+      <div className="rounded-lg border bg-card text-card-foreground shadow-sm rounded-lg p-6">
+        <p className="text-xs uppercase tracking-[0.28em] text-muted-foreground">{t('projectConfiguration')}</p>
+        <h2 className="mt-2 text-3xl font-semibold text-foreground">{t('settings')}</h2>
+        <p className="mt-3 max-w-3xl text-sm leading-7 text-muted-foreground">
           {t('settingsIntro')}
         </p>
       </div>
 
       <form onSubmit={handleSave} className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_380px]" data-testid="settings-form">
         <div className="space-y-6">
-          <section className="glass-panel rounded-[32px] p-6">
-            <p className="text-xs uppercase tracking-[0.28em] text-slate-500">{t('core')}</p>
+          <section className="rounded-lg border bg-card text-card-foreground shadow-sm rounded-lg p-6">
+            <p className="text-xs uppercase tracking-[0.28em] text-muted-foreground">{t('core')}</p>
             <div className="mt-5 grid gap-4 md:grid-cols-2">
               <label className="space-y-2">
-                <span className="text-sm font-medium text-slate-700">{t('home')}</span>
-                <input value={homeDir} onChange={(e) => setHomeDir(e.target.value)} className="dashboard-input" />
+                <span className="text-sm font-medium text-foreground">{t('home')}</span>
+                <input value={homeDir} onChange={(e) => setHomeDir(e.target.value)} className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50" />
               </label>
               <label className="space-y-2">
-                <span className="text-sm font-medium text-slate-700">{t('debugLabel')}</span>
-                <div className="dashboard-muted-card rounded-[18px] px-4 py-3 text-slate-700">
+                <span className="text-sm font-medium text-foreground">{t('debugLabel')}</span>
+                <div className="rounded-lg border bg-muted/40 text-card-foreground shadow-sm rounded-[18px] px-4 py-3 text-foreground">
                   <label className="flex items-center gap-3">
                     <input type="checkbox" checked={debug} onChange={(e) => setDebug(e.target.checked)} />
                     {t('enableVerboseRuntimeLogging')}
@@ -77,28 +77,28 @@ export function Settings() {
                 </div>
               </label>
               <label className="space-y-2">
-                <span className="text-sm font-medium text-slate-700">{t('serverHost')}</span>
-                <input value={serverHost} onChange={(e) => setServerHost(e.target.value)} className="dashboard-input" />
+                <span className="text-sm font-medium text-foreground">{t('serverHost')}</span>
+                <input value={serverHost} onChange={(e) => setServerHost(e.target.value)} className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50" />
               </label>
               <label className="space-y-2">
-                <span className="text-sm font-medium text-slate-700">{t('serverPort')}</span>
-                <input value={serverPort} onChange={(e) => setServerPort(e.target.value)} className="dashboard-input" />
+                <span className="text-sm font-medium text-foreground">{t('serverPort')}</span>
+                <input value={serverPort} onChange={(e) => setServerPort(e.target.value)} className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50" />
               </label>
             </div>
           </section>
 
-          <section className="glass-panel rounded-[32px] p-6">
-            <p className="text-xs uppercase tracking-[0.28em] text-slate-500">{t('knowledgeAndMemory')}</p>
+          <section className="rounded-lg border bg-card text-card-foreground shadow-sm rounded-lg p-6">
+            <p className="text-xs uppercase tracking-[0.28em] text-muted-foreground">{t('knowledgeAndMemory')}</p>
             <div className="mt-5 grid gap-4 md:grid-cols-2">
               <label className="space-y-2">
-                <span className="text-sm font-medium text-slate-700">{t('memoryStoreType')}</span>
-                <input value={memoryStoreType} onChange={(e) => setMemoryStoreType(e.target.value)} className="dashboard-input" />
+                <span className="text-sm font-medium text-foreground">{t('memoryStoreType')}</span>
+                <input value={memoryStoreType} onChange={(e) => setMemoryStoreType(e.target.value)} className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50" />
               </label>
             </div>
           </section>
 
           <div className="flex items-center gap-4">
-            <button type="submit" disabled={updateConfigMutation.isPending} className="dashboard-button">
+            <button type="submit" disabled={updateConfigMutation.isPending} className="inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors bg-primary text-primary-foreground shadow hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50">
               {updateConfigMutation.isPending ? t('loading') : t('saveSettings')}
             </button>
             {saved && <span className="text-emerald-600">{t('settingsSaved')}</span>}
@@ -106,58 +106,58 @@ export function Settings() {
         </div>
 
         <aside className="space-y-6">
-          <section className="glass-panel rounded-[32px] p-6">
-            <p className="text-xs uppercase tracking-[0.28em] text-slate-500">{t('sourceOfTruth')}</p>
+          <section className="rounded-lg border bg-card text-card-foreground shadow-sm rounded-lg p-6">
+            <p className="text-xs uppercase tracking-[0.28em] text-muted-foreground">{t('sourceOfTruth')}</p>
             <dl className="mt-5 space-y-4 text-sm">
               <div>
-                <dt className="text-slate-500">Agent DB</dt>
-                <dd className="mt-1 break-all text-slate-900">{config?.agentDbPath}</dd>
+                <dt className="text-muted-foreground">Agent DB</dt>
+                <dd className="mt-1 break-all text-foreground">{config?.agentDbPath}</dd>
               </div>
               <div>
-                <dt className="text-slate-500">{t('dataDir')}</dt>
-                <dd className="mt-1 break-all text-slate-900">{config?.dataDir}</dd>
+                <dt className="text-muted-foreground">{t('dataDir')}</dt>
+                <dd className="mt-1 break-all text-foreground">{config?.dataDir}</dd>
               </div>
               <div>
-                <dt className="text-slate-500">{t('workspaceDir')}</dt>
-                <dd className="mt-1 break-all text-slate-900">{config?.workspaceDir}</dd>
+                <dt className="text-muted-foreground">{t('workspaceDir')}</dt>
+                <dd className="mt-1 break-all text-foreground">{config?.workspaceDir}</dd>
               </div>
               <div>
-                <dt className="text-slate-500">{t('filesystemAllowlist')}</dt>
-                <dd className="mt-1 break-all text-slate-900">{config?.mcpAllowedDirs?.join(', ') || '-'}</dd>
+                <dt className="text-muted-foreground">{t('filesystemAllowlist')}</dt>
+                <dd className="mt-1 break-all text-foreground">{config?.mcpAllowedDirs?.join(', ') || '-'}</dd>
               </div>
               <div>
-                <dt className="text-slate-500">{t('ragDatabasePath')}</dt>
-                <dd className="mt-1 break-all text-slate-900">{config?.ragDbPath}</dd>
+                <dt className="text-muted-foreground">{t('ragDatabasePath')}</dt>
+                <dd className="mt-1 break-all text-foreground">{config?.ragDbPath}</dd>
               </div>
               <div>
-                <dt className="text-slate-500">{t('memoryPath')}</dt>
-                <dd className="mt-1 break-all text-slate-900">{config?.memoryPath}</dd>
+                <dt className="text-muted-foreground">{t('memoryPath')}</dt>
+                <dd className="mt-1 break-all text-foreground">{config?.memoryPath}</dd>
               </div>
               <div>
-                <dt className="text-slate-500">{t('skillsPaths')}</dt>
-                <dd className="mt-1 break-all text-slate-900 whitespace-pre-line">{config?.skillsPaths?.join('\n') || '-'}</dd>
+                <dt className="text-muted-foreground">{t('skillsPaths')}</dt>
+                <dd className="mt-1 break-all text-foreground whitespace-pre-line">{config?.skillsPaths?.join('\n') || '-'}</dd>
               </div>
               <div>
-                <dt className="text-slate-500">{t('mcpServersFile')}</dt>
-                <dd className="mt-1 break-all text-slate-900">{config?.mcpServersPath}</dd>
+                <dt className="text-muted-foreground">{t('mcpServersFile')}</dt>
+                <dd className="mt-1 break-all text-foreground">{config?.mcpServersPath}</dd>
               </div>
             </dl>
           </section>
 
-          <section className="glass-panel rounded-[32px] p-6">
-            <p className="text-xs uppercase tracking-[0.28em] text-slate-500">{t('language')}</p>
+          <section className="rounded-lg border bg-card text-card-foreground shadow-sm rounded-lg p-6">
+            <p className="text-xs uppercase tracking-[0.28em] text-muted-foreground">{t('language')}</p>
             <div className="mt-5 flex gap-3">
               <button
                 type="button"
                 onClick={() => i18n.changeLanguage('zh')}
-                className={i18n.language === 'zh' ? 'dashboard-button' : 'dashboard-secondary-button px-4 py-3 text-sm'}
+                className={i18n.language === 'zh' ? 'inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors bg-primary text-primary-foreground shadow hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50' : 'inline-flex items-center justify-center rounded-md border border-input bg-background text-sm font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50 px-4 py-3 text-sm'}
               >
                 中文
               </button>
               <button
                 type="button"
                 onClick={() => i18n.changeLanguage('en')}
-                className={i18n.language === 'en' ? 'dashboard-button' : 'dashboard-secondary-button px-4 py-3 text-sm'}
+                className={i18n.language === 'en' ? 'inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors bg-primary text-primary-foreground shadow hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50' : 'inline-flex items-center justify-center rounded-md border border-input bg-background text-sm font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50 px-4 py-3 text-sm'}
               >
                 English
               </button>

@@ -20,10 +20,10 @@ import { useSetup } from './hooks/useApi'
 function Nav() {
   const { t } = useTranslation()
   const linkClass = ({ isActive }: { isActive: boolean }) =>
-    `nav-pill ${
+    `inline-flex items-center justify-center rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
       isActive
-        ? 'nav-pill-active'
-        : 'nav-pill-idle'
+        ? 'bg-primary text-primary-foreground'
+        : 'text-muted-foreground hover:bg-accent hover:text-foreground'
     }`
 
   return (
@@ -69,7 +69,7 @@ function Nav() {
 }
 
 function App() {
-  const { t, i18n } = useTranslation()
+  const { i18n } = useTranslation()
   const { data: setup } = useSetup()
   const location = useLocation()
   const navigate = useNavigate()
@@ -81,20 +81,35 @@ function App() {
     }
   }, [setup, location.pathname, navigate])
 
+  const langButton = (active: boolean) =>
+    `rounded-[5px] px-2 py-1 text-xs font-medium transition ${
+      active
+        ? 'bg-primary text-primary-foreground'
+        : 'text-muted-foreground hover:text-foreground'
+    }`
+
   return (
-    <div className="min-h-screen app-shell" data-testid="app-shell">
-      <div className="app-backdrop" />
-      <header className="relative z-10 border-b border-sky-100 bg-white/70 backdrop-blur-sm" data-testid="app-header">
-        <div className="mx-auto flex max-w-[1440px] flex-col gap-5 px-5 py-6 lg:px-8">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <h1 className="text-3xl font-semibold tracking-tight text-slate-900 sm:text-4xl">
-              {t('agentGoUi')}
-            </h1>
-            <div className="flex gap-2">
+    <div className="min-h-screen" data-testid="app-shell">
+      <header
+        className="sticky top-0 z-20 border-b bg-background/85 backdrop-blur-sm"
+        data-testid="app-header"
+      >
+        <div className="mx-auto flex max-w-[1440px] flex-col gap-3 px-5 py-3 lg:px-8">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-2.5">
+              <span className="grid h-7 w-7 place-items-center rounded-md bg-primary font-mono text-sm font-bold text-primary-foreground">
+                a
+              </span>
+              <h1 className="text-[1.05rem] font-bold tracking-tight">AgentGo</h1>
+              <span className="rounded-full border px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+                console
+              </span>
+            </div>
+            <div className="flex items-center gap-0.5 rounded-md border bg-background p-0.5">
               <button
                 type="button"
                 onClick={() => i18n.changeLanguage('zh')}
-                className={i18n.language === 'zh' ? 'dashboard-button' : 'dashboard-secondary-button text-sm'}
+                className={langButton(i18n.language === 'zh')}
                 data-testid="lang-zh"
               >
                 中文
@@ -102,10 +117,10 @@ function App() {
               <button
                 type="button"
                 onClick={() => i18n.changeLanguage('en')}
-                className={i18n.language === 'en' ? 'dashboard-button' : 'dashboard-secondary-button text-sm'}
+                className={langButton(i18n.language === 'en')}
                 data-testid="lang-en"
               >
-                English
+                EN
               </button>
             </div>
           </div>

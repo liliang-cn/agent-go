@@ -7,13 +7,21 @@ import {
   useTeams,
   useDispatchAgentTask,
   useDispatchTeamTask,
-} from "../hooks/useApi";
+} from "@/hooks/useApi";
 import type {
   AgentModel,
   CreateAgentRequest,
   CreateTeamRequest,
   Team,
-} from "../lib/api";
+} from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+
+const selectClass =
+  "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 
 function formatDate(input: string | undefined, t: (key: string) => string) {
   if (!input) return t("unknown");
@@ -60,7 +68,7 @@ function AgentCard({
   };
 
   return (
-    <article className="rounded-[24px] border border-sky-100 bg-white">
+    <Card>
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
@@ -69,56 +77,45 @@ function AgentCard({
       >
         <div>
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-lg font-medium text-slate-900">
+            <span className="text-lg font-medium text-foreground">
               {agent.name}
             </span>
-            <span className="rounded-full bg-sky-100 px-2.5 py-1 text-xs text-sky-800">
-              {kindLabel(agent.kind, t)}
-            </span>
+            <Badge variant="secondary">{kindLabel(agent.kind, t)}</Badge>
           </div>
-          <p className="mt-1 text-sm text-slate-600">{agent.description}</p>
+          <p className="mt-1 text-sm text-muted-foreground">{agent.description}</p>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {capabilityBadges(agent, t).map((badge) => (
-              <span
-                key={badge.label}
-                className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600"
-              >
+              <Badge key={badge.label} variant="outline" className="text-muted-foreground">
                 {badge.label}
-              </span>
+              </Badge>
             ))}
           </div>
         </div>
-        <span className="text-sm text-slate-400">{expanded ? "−" : "+"}</span>
+        <span className="text-sm text-muted-foreground">{expanded ? "−" : "+"}</span>
       </button>
 
       {expanded && (
-        <div className="border-t border-sky-100 px-5 py-4">
-          <p className="text-sm leading-7 text-slate-600">
+        <div className="border-t px-5 py-4">
+          <p className="text-sm leading-7 text-muted-foreground">
             {agent.instructions}
           </p>
 
           <form onSubmit={handleExecute} className="mt-4 flex gap-2">
-            <input
-              type="text"
+            <Input
               value={instruction}
               onChange={(e) => setInstruction(e.target.value)}
               placeholder={
                 t("instructionPlaceholder") || "Enter instruction..."
               }
-              className="dashboard-input flex-1"
               disabled={isExecuting}
             />
-            <button
-              type="submit"
-              disabled={isExecuting || !instruction.trim()}
-              className="dashboard-button px-4 py-2"
-            >
+            <Button type="submit" disabled={isExecuting || !instruction.trim()}>
               {isExecuting ? t("running") : t("run")}
-            </button>
+            </Button>
           </form>
         </div>
       )}
-    </article>
+    </Card>
   );
 }
 
@@ -144,7 +141,7 @@ function TeamCard({
   };
 
   return (
-    <article className="rounded-[24px] border border-sky-100 bg-white">
+    <Card>
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
@@ -153,71 +150,62 @@ function TeamCard({
       >
         <div>
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-lg font-medium text-slate-900">
+            <span className="text-lg font-medium text-foreground">
               {team.name}
             </span>
-            <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs text-emerald-800">
+            <span className="rounded-md bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
               {t("teams")}
             </span>
           </div>
-          <p className="mt-1 text-sm text-slate-600">{team.description}</p>
+          <p className="mt-1 text-sm text-muted-foreground">{team.description}</p>
         </div>
-        <span className="text-sm text-slate-400">{expanded ? "−" : "+"}</span>
+        <span className="text-sm text-muted-foreground">{expanded ? "−" : "+"}</span>
       </button>
 
       {expanded && (
-        <div className="border-t border-sky-100 px-5 py-4">
+        <div className="border-t px-5 py-4">
           <div className="mb-3 flex flex-wrap gap-2">
-            <span className="text-xs text-slate-500">
+            <span className="text-xs text-muted-foreground">
               {t("captainLabel")}:{" "}
               {team.lead_agent?.name ?? team.captain?.name ?? t("unknown")}
             </span>
-            <span className="text-xs text-slate-500">
+            <span className="text-xs text-muted-foreground">
               {t("members")}: {team.members.length}
             </span>
-            <span className="text-xs text-slate-500">
+            <span className="text-xs text-muted-foreground">
               {t("created")}: {formatDate(team.created_at, t)}
             </span>
           </div>
 
           {team.members.length > 0 && (
             <div className="mb-4">
-              <p className="mb-2 text-xs uppercase tracking-[0.24em] text-slate-500">
+              <p className="mb-2 text-xs uppercase tracking-[0.24em] text-muted-foreground">
                 {t("members")}
               </p>
               <div className="flex flex-wrap gap-2">
                 {team.members.map((member) => (
-                  <span
-                    key={member.id}
-                    className="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-700"
-                  >
+                  <Badge key={member.id} variant="secondary">
                     {member.name}
-                  </span>
+                  </Badge>
                 ))}
               </div>
             </div>
           )}
 
           <form onSubmit={handleExecute} className="flex gap-2">
-            <input
-              type="text"
+            <Input
               value={message}
               onChange={(e) => setMessage(e.target.value)}
               placeholder={t("messagePlaceholder") || "Enter message..."}
-              className="dashboard-input flex-1"
               disabled={isExecuting}
             />
-            <button
-              type="submit"
-              disabled={isExecuting || !message.trim()}
-              className="dashboard-button px-4 py-2"
-            >
+            <Button type="submit" disabled={isExecuting || !message.trim()}>
               {isExecuting ? t("running") : t("run")}
-            </button>
+            </Button>
           </form>
         </div>
       )}
-    </article>
+    </Card>
   );
 }
 
@@ -351,32 +339,30 @@ export function Agent() {
     <div className="space-y-8" data-testid="page-agent">
       {/* Create Buttons */}
       <section className="flex flex-wrap gap-2">
-        <button
-          type="button"
+        <Button
+          variant="outline"
           onClick={() => setShowCreateTeamForm(!showCreateTeamForm)}
-          className="dashboard-secondary-button px-4 py-2 text-sm"
           data-testid="team-toggle-create"
         >
           {showCreateTeamForm ? t("close") : t("newTeam")}
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
+          variant="outline"
           onClick={() => setShowCreateForm(!showCreateForm)}
-          className="dashboard-secondary-button px-4 py-2 text-sm"
           data-testid="agent-toggle-create"
         >
           {showCreateForm ? t("close") : t("newAgent")}
-        </button>
+        </Button>
       </section>
 
       {/* Create Team Form */}
       {showCreateTeamForm && (
         <form
           onSubmit={handleCreateTeam}
-          className="glass-panel space-y-3 rounded-[28px] p-5"
+          className="space-y-3 rounded-lg border bg-card p-5 shadow-sm"
           data-testid="team-create-form"
         >
-          <input
+          <Input
             value={teamForm.name}
             onChange={(event) =>
               setTeamForm((current) => ({
@@ -385,10 +371,9 @@ export function Agent() {
               }))
             }
             placeholder={t("teamNamePlaceholder")}
-            className="dashboard-input"
             required
           />
-          <input
+          <Input
             value={teamForm.description}
             onChange={(event) =>
               setTeamForm((current) => ({
@@ -397,17 +382,16 @@ export function Agent() {
               }))
             }
             placeholder={t("teamDescriptionPlaceholder")}
-            className="dashboard-input"
             required
           />
-          <button
+          <Button
             type="submit"
             disabled={createTeam.isPending}
-            className="dashboard-button w-full justify-center"
+            className="w-full"
             data-testid="team-create-submit"
           >
             {createTeam.isPending ? t("creating") : t("createTeam")}
-          </button>
+          </Button>
         </form>
       )}
 
@@ -415,7 +399,7 @@ export function Agent() {
       {showCreateForm && (
         <form
           onSubmit={handleCreateAgent}
-          className="glass-panel space-y-3 rounded-[28px] p-5"
+          className="space-y-3 rounded-lg border bg-card p-5 shadow-sm"
           data-testid="agent-create-form"
         >
           <select
@@ -426,7 +410,7 @@ export function Agent() {
                 team_id: event.target.value,
               }))
             }
-            className="dashboard-input"
+            className={selectClass}
           >
             <option value="">{t("defaultTeamOption")}</option>
             {teams.map((team) => (
@@ -443,40 +427,38 @@ export function Agent() {
                 kind: event.target.value as CreateAgentRequest["kind"],
               }))
             }
-            className="dashboard-input"
+            className={selectClass}
           >
             <option value="agent">{t("kindAgent")}</option>
             <option value="specialist">{t("kindSpecialist")}</option>
             <option value="captain">{t("kindCaptain")}</option>
           </select>
-          <input
+          <Input
             value={createForm.name}
             onChange={handleCreateFormField("name")}
             placeholder={t("agentNamePlaceholder")}
-            className="dashboard-input"
             required
           />
-          <input
+          <Input
             value={createForm.description}
             onChange={handleCreateFormField("description")}
             placeholder={t("oneLineMission")}
-            className="dashboard-input"
             required
           />
-          <textarea
+          <Textarea
             value={createForm.instructions}
             onChange={handleCreateFormField("instructions")}
             placeholder={t("systemInstructions")}
             rows={4}
-            className="dashboard-input resize-none"
+            className="resize-none"
             required
           />
-          <fieldset className="rounded-[22px] border border-sky-100 bg-sky-50/50 p-4">
-            <legend className="px-1 text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
+          <fieldset className="rounded-lg border bg-muted/50 p-4">
+            <legend className="px-1 text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
               {t("agentCapabilities")}
             </legend>
             <div className="mt-3 grid gap-3 md:grid-cols-2">
-              <label className="flex items-start gap-3 rounded-2xl bg-white/80 p-3 text-sm text-slate-700">
+              <label className="flex items-start gap-3 rounded-md bg-card p-3 text-sm text-foreground">
                 <input
                   type="checkbox"
                   checked={createForm.enable_ptc ?? true}
@@ -489,15 +471,15 @@ export function Agent() {
                   className="mt-1"
                 />
                 <span>
-                  <span className="block font-medium text-slate-900">
+                  <span className="block font-medium text-foreground">
                     {t("capabilityPTC")}
                   </span>
-                  <span className="mt-1 block text-xs text-slate-500">
+                  <span className="mt-1 block text-xs text-muted-foreground">
                     {t("ptcDefaultOnHelp")}
                   </span>
                 </span>
               </label>
-              <label className="flex items-start gap-3 rounded-2xl bg-white/80 p-3 text-sm text-slate-700">
+              <label className="flex items-start gap-3 rounded-md bg-card p-3 text-sm text-foreground">
                 <input
                   type="checkbox"
                   checked={createForm.enable_memory ?? true}
@@ -510,15 +492,15 @@ export function Agent() {
                   className="mt-1"
                 />
                 <span>
-                  <span className="block font-medium text-slate-900">
+                  <span className="block font-medium text-foreground">
                     {t("capabilityMemory")}
                   </span>
-                  <span className="mt-1 block text-xs text-slate-500">
+                  <span className="mt-1 block text-xs text-muted-foreground">
                     {t("memoryNoEmbeddingHelp")}
                   </span>
                 </span>
               </label>
-              <label className="flex items-start gap-3 rounded-2xl bg-white/80 p-3 text-sm text-slate-700">
+              <label className="flex items-start gap-3 rounded-md bg-card p-3 text-sm text-foreground">
                 <input
                   type="checkbox"
                   checked={createForm.enable_mcp ?? true}
@@ -531,15 +513,15 @@ export function Agent() {
                   className="mt-1"
                 />
                 <span>
-                  <span className="block font-medium text-slate-900">
+                  <span className="block font-medium text-foreground">
                     {t("capabilityMCP")}
                   </span>
-                  <span className="mt-1 block text-xs text-slate-500">
+                  <span className="mt-1 block text-xs text-muted-foreground">
                     {t("mcpCapabilityHelp")}
                   </span>
                 </span>
               </label>
-              <label className="flex items-start gap-3 rounded-2xl bg-white/80 p-3 text-sm text-slate-700">
+              <label className="flex items-start gap-3 rounded-md bg-card p-3 text-sm text-foreground">
                 <input
                   type="checkbox"
                   checked={createForm.enable_rag ?? false}
@@ -552,42 +534,42 @@ export function Agent() {
                   className="mt-1"
                 />
                 <span>
-                  <span className="block font-medium text-slate-900">
+                  <span className="block font-medium text-foreground">
                     {t("capabilityRAG")}
                   </span>
-                  <span className="mt-1 block text-xs text-slate-500">
+                  <span className="mt-1 block text-xs text-muted-foreground">
                     {t("ragOptionalHelp")}
                   </span>
                 </span>
               </label>
             </div>
           </fieldset>
-          <button
+          <Button
             type="submit"
             disabled={createAgent.isPending}
-            className="dashboard-button w-full justify-center"
+            className="w-full"
             data-testid="agent-create-submit"
           >
             {createAgent.isPending ? t("creating") : t("createSpecialist")}
-          </button>
+          </Button>
         </form>
       )}
 
       {/* Error Display */}
       {dispatchError && (
-        <div className="glass-panel rounded-[28px] border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+        <div className="rounded-lg border border-rose-200 bg-rose-50 shadow-sm p-4 text-sm text-rose-700">
           {dispatchError}
         </div>
       )}
 
       {/* Loading/Error States */}
       {isLoading && (
-        <div className="glass-panel rounded-[28px] p-5 text-sm text-slate-500">
+        <div className="rounded-lg border bg-card shadow-sm p-5 text-sm text-muted-foreground">
           {t("loadingAgents")}
         </div>
       )}
       {error && (
-        <div className="glass-panel rounded-[28px] border border-rose-200 bg-rose-50 p-5 text-sm text-rose-700">
+        <div className="rounded-lg border border-rose-200 bg-rose-50 shadow-sm p-5 text-sm text-rose-700">
           {error.message}
         </div>
       )}
@@ -595,16 +577,16 @@ export function Agent() {
       {/* Teams Section */}
       <section>
         <div className="mb-4">
-          <p className="text-xs uppercase tracking-[0.28em] text-slate-500">
+          <p className="text-xs uppercase tracking-[0.28em] text-muted-foreground">
             {t("teams")}
           </p>
-          <h2 className="mt-2 text-2xl font-semibold text-slate-900">
+          <h2 className="mt-2 text-2xl font-semibold text-foreground">
             {t("teams")}
           </h2>
         </div>
 
         {!isLoading && teams.length === 0 && (
-          <div className="glass-panel rounded-[28px] border border-dashed border-sky-100 bg-sky-50/60 p-6 text-sm text-slate-500">
+          <div className="rounded-lg border border-dashed bg-muted/60 shadow-sm p-6 text-sm text-muted-foreground">
             {t("noTeamsRegistered") || t("noAgentsRegistered")}
           </div>
         )}
@@ -625,10 +607,10 @@ export function Agent() {
       {builtinAgents.length > 0 && (
         <section>
           <div className="mb-4">
-            <p className="text-xs uppercase tracking-[0.28em] text-slate-500">
+            <p className="text-xs uppercase tracking-[0.28em] text-muted-foreground">
               {t("builtinAgents") || "Built-in"}
             </p>
-            <h2 className="mt-2 text-2xl font-semibold text-slate-900">
+            <h2 className="mt-2 text-2xl font-semibold text-foreground">
               {t("builtinAgents") || "Built-in Agents"}
             </h2>
           </div>
@@ -651,16 +633,16 @@ export function Agent() {
       {/* Custom Agents Section */}
       <section>
         <div className="mb-4">
-          <p className="text-xs uppercase tracking-[0.28em] text-slate-500">
+          <p className="text-xs uppercase tracking-[0.28em] text-muted-foreground">
             {t("customAgents") || "Custom"}
           </p>
-          <h2 className="mt-2 text-2xl font-semibold text-slate-900">
+          <h2 className="mt-2 text-2xl font-semibold text-foreground">
             {t("agents")}
           </h2>
         </div>
 
         {!isLoading && customAgents.length === 0 && (
-          <div className="glass-panel rounded-[28px] border border-dashed border-sky-100 bg-sky-50/60 p-6 text-sm text-slate-500">
+          <div className="rounded-lg border border-dashed bg-muted/60 shadow-sm p-6 text-sm text-muted-foreground">
             {t("noAgentsRegistered")}
           </div>
         )}

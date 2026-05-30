@@ -82,12 +82,12 @@ function renderToolPart(
     <details
       key={`${part.toolCallId}-${part.type}`}
       open={!isFinished}
-      className="rounded-2xl border border-amber-100 bg-amber-50/70 p-3 text-sm text-slate-700"
+      className="rounded-lg border border-amber-200 bg-amber-50/70 p-3 text-sm text-slate-700"
     >
       <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
-        <span className="font-medium text-slate-900">{title}</span>
-        <span className="rounded-full bg-white px-2 py-1 text-[11px] text-slate-500">
-          {t('chatToolState')}: {part.state}
+        <span className="font-mono text-[13px] font-medium text-slate-900">{title}</span>
+        <span className="rounded-full border border-amber-200 bg-white px-2 py-0.5 font-mono text-[10px] text-slate-500">
+          {part.state}
         </span>
       </summary>
       <div className="mt-3 space-y-3">
@@ -140,9 +140,9 @@ function renderMessagePart(
       return null
     }
     return (
-      <details key={`reasoning-${index}`} className="rounded-2xl border border-sky-100 bg-sky-50/70 p-3 text-sm text-slate-700">
+      <details key={`reasoning-${index}`} className="rounded-lg border border-blue-100 bg-blue-50/60 p-3 text-sm text-slate-700">
         <summary className="cursor-pointer list-none font-medium text-slate-900">{t('chatReasoning')}</summary>
-        <pre className="mt-3 overflow-x-auto whitespace-pre-wrap rounded-xl bg-white/80 p-3 text-[11px] text-slate-700">
+        <pre className="mt-3 overflow-x-auto whitespace-pre-wrap rounded-md bg-white/80 p-3 font-mono text-[11px] text-slate-700">
           {part.text}
         </pre>
       </details>
@@ -158,7 +158,7 @@ function renderMessagePart(
   }
 
   return (
-    <pre key={`part-${index}`} className="overflow-x-auto whitespace-pre-wrap rounded-xl bg-slate-950/95 p-3 text-[11px] text-sky-100">
+    <pre key={`part-${index}`} className="overflow-x-auto whitespace-pre-wrap rounded-md bg-[#18181b] p-3 font-mono text-[11px] text-slate-100">
       {stringify(part)}
     </pre>
   )
@@ -175,6 +175,7 @@ export function Chat() {
   const [input, setInput] = useState('')
   const [selectedToolNames, setSelectedToolNames] = useState<string[]>([])
   const [viewMode, setViewMode] = useState<ChatViewMode>('normal')
+  const [toolsOpen, setToolsOpen] = useState(false)
 
   const { data: sessionDetail, isLoading: isSessionLoading } = useChatSession(selectedSessionId)
   const activeChatId = selectedSessionId ?? draftChatId
@@ -301,23 +302,17 @@ export function Chat() {
       : undefined
 
   return (
-    <div className="flex h-[calc(100vh-200px)] flex-col" data-testid="page-chat">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
+    <div className="flex h-[calc(100vh-160px)] flex-col" data-testid="page-chat">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-2xl font-semibold text-slate-900">{t('llmChat')}</h2>
-          <p className="mt-1 text-sm text-slate-500">{t('chatPageDesc')}</p>
+          <h2 className="text-2xl font-bold tracking-tight text-foreground">{t('llmChat')}</h2>
+          <p className="mt-0.5 text-sm text-muted-foreground">{t('chatPageDesc')}</p>
         </div>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={handleNewChat}
-            className="rounded-xl border border-sky-200 bg-gradient-to-r from-sky-500 to-blue-500 px-4 py-2 text-sm font-medium text-white shadow-md transition-all hover:shadow-lg hover:shadow-sky-500/25"
-          >
-            + {t('newSession')}
-          </button>
+        <div className="flex items-center gap-2">
           <select
             value={selectedProvider}
             onChange={(e) => setSelectedProvider(e.target.value)}
-            className="rounded-xl border border-sky-100 bg-white px-4 py-2 text-sm text-slate-700 shadow-sm focus:border-sky-300 focus:outline-none focus:ring-2 focus:ring-sky-100"
+            className="rounded-[7px] border border-input bg-white px-3 py-2 font-mono text-[13px] text-foreground focus:border-ring focus:outline-none"
           >
             {providers.map((provider) => (
               <option key={provider.name} value={provider.name}>
@@ -325,77 +320,78 @@ export function Chat() {
               </option>
             ))}
           </select>
-          <button
-            onClick={() => {
-              window.location.reload()
-            }}
-            className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-600 transition-colors hover:bg-slate-50"
-          >
+          <button onClick={handleNewChat} className="inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors bg-primary text-primary-foreground shadow hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50 px-4 py-2">
+            + {t('newSession')}
+          </button>
+          <button onClick={() => window.location.reload()} className="inline-flex items-center justify-center rounded-md border border-input bg-background text-sm font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50 px-4 py-2">
             {t('clear')}
           </button>
         </div>
       </div>
 
       <div className="flex flex-1 gap-4 overflow-hidden">
-        <div className="w-64 flex-shrink-0 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-3">
-          <div className="mb-2 px-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+        <aside className="hidden w-56 flex-shrink-0 flex-col overflow-y-auto rounded-[10px] border border-border bg-white p-2 sm:flex">
+          <div className="px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
             {t('sessions')}
           </div>
           {sessionsData?.sessions && sessionsData.sessions.length > 0 ? (
-            <div className="space-y-1">
-              {sessionsData.sessions.map((session) => (
-                <button
-                  key={session.id}
-                  onClick={() => handleSelectSession(session.id)}
-                  className={`w-full rounded-lg px-3 py-2 text-left text-sm transition-colors ${
-                    selectedSessionId === session.id
-                      ? 'bg-sky-100 text-sky-700'
-                      : 'text-slate-600 hover:bg-slate-50'
-                  }`}
-                >
-                  <div className="truncate font-medium">{session.title || `${session.id.slice(0, 8)}...`}</div>
-                  <div className="text-xs text-slate-400">
-                    {formatDate(session.created)} · {session.messages} {t('messages')}
-                  </div>
-                </button>
-              ))}
+            <div className="space-y-0.5">
+              {sessionsData.sessions.map((session) => {
+                const active = selectedSessionId === session.id
+                return (
+                  <button
+                    key={session.id}
+                    onClick={() => handleSelectSession(session.id)}
+                    className={`w-full rounded-md border-l-2 px-2.5 py-2 text-left text-sm transition-colors ${
+                      active
+                        ? 'border-primary bg-muted text-foreground'
+                        : 'border-transparent text-muted-foreground hover:bg-muted'
+                    }`}
+                  >
+                    <div className="truncate font-medium">{session.title || `${session.id.slice(0, 8)}…`}</div>
+                    <div className="mt-0.5 font-mono text-[10px] text-muted-foreground">
+                      {formatDate(session.created)} · {session.messages}
+                    </div>
+                  </button>
+                )
+              })}
             </div>
           ) : (
-            <div className="px-2 py-4 text-center text-xs text-slate-400">
+            <div className="px-2 py-4 text-center text-xs text-muted-foreground">
               {t('noSessions')}
             </div>
           )}
-        </div>
+        </aside>
 
         <div className={`grid min-w-0 flex-1 gap-4 ${viewMode === 'debug' ? 'xl:grid-cols-[minmax(0,1fr)_340px]' : ''}`}>
-          <div className="flex min-w-0 flex-col">
-            <div className="glass-panel mb-4 rounded-[28px] p-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
-                    <span className="rounded-full bg-sky-100 px-2 py-1 text-sky-800">{t('llmChat')}</span>
-                    <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-700">
-                      {viewMode === 'debug' ? t('chatViewDebug') : t('chatViewNormal')}
-                    </span>
-                    <span className="rounded-full bg-white px-2 py-1 text-slate-500">
-                      {t('chatToolsSelected', { count: selectedToolNames.length })}
-                    </span>
-                  </div>
-                  <p className="mt-2 text-sm text-slate-600">{t('chatToolSelectionHint')}</p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="inline-flex rounded-xl border border-sky-100 bg-white p-1">
+          <div className="flex min-w-0 flex-col gap-3">
+            {/* Compact tools bar — collapsed by default so messages get the space */}
+            <div className="rounded-[10px] border border-border bg-white">
+              <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+                <button
+                  type="button"
+                  onClick={() => setToolsOpen((v) => !v)}
+                  className="flex items-center gap-2 text-sm font-medium text-foreground"
+                >
+                  <span className={`inline-block transition-transform ${toolsOpen ? 'rotate-90' : ''}`}>›</span>
+                  {t('availableTools')}
+                  <span className="rounded-full bg-muted px-2 py-0.5 font-mono text-[11px] text-muted-foreground">
+                    {selectedToolNames.length}/{toolsData.length}
+                  </span>
+                </button>
+                <div className="flex items-center gap-2">
+                  <div className="inline-flex rounded-md border border-border bg-white p-0.5">
                     <button
                       type="button"
                       onClick={() => setViewMode('normal')}
-                      className={`rounded-lg px-3 py-1.5 text-sm ${viewMode === 'normal' ? 'bg-blue-600 text-white' : 'text-slate-600'}`}
+                      className={`rounded-[5px] px-2.5 py-1 text-xs font-medium transition ${viewMode === 'normal' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'}`}
                     >
                       {t('chatViewNormal')}
                     </button>
                     <button
                       type="button"
                       onClick={() => setViewMode('debug')}
-                      className={`rounded-lg px-3 py-1.5 text-sm ${viewMode === 'debug' ? 'bg-blue-600 text-white' : 'text-slate-600'}`}
+                      className={`rounded-[5px] px-2.5 py-1 text-xs font-medium transition ${viewMode === 'debug' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'}`}
                     >
                       {t('chatViewDebug')}
                     </button>
@@ -404,7 +400,7 @@ export function Chat() {
                     type="button"
                     onClick={armAllTools}
                     disabled={toolsData.length === 0}
-                    className="dashboard-secondary-button px-3 py-2 text-sm"
+                    className="inline-flex items-center justify-center rounded-md border border-input bg-background text-sm font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50 px-4 py-2 px-2.5 py-1.5 text-xs"
                   >
                     {t('chatArmAllTools')}
                   </button>
@@ -412,64 +408,56 @@ export function Chat() {
                     type="button"
                     onClick={clearToolSelection}
                     disabled={selectedToolNames.length === 0}
-                    className="dashboard-secondary-button px-3 py-2 text-sm"
+                    className="inline-flex items-center justify-center rounded-md border border-input bg-background text-sm font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50 px-4 py-2 px-2.5 py-1.5 text-xs"
                   >
                     {t('chatClearTools')}
                   </button>
                 </div>
               </div>
-
-              <div className="mt-4">
-                <div className="mb-2 flex items-center justify-between text-xs uppercase tracking-[0.2em] text-slate-400">
-                  <span>{t('availableTools')}</span>
-                  <span>{t('chatAvailableToolsCount', { count: toolsData.length })}</span>
+              {toolsOpen && (
+                <div className="border-t border-border p-3">
+                  {isToolsLoading ? (
+                    <div className="text-sm text-muted-foreground">{t('loading')}</div>
+                  ) : toolsData.length === 0 ? (
+                    <div className="rounded-md border border-dashed border-input bg-muted px-3 py-2 text-sm text-muted-foreground">
+                      {t('noToolsAvailable')}
+                    </div>
+                  ) : (
+                    <div className="flex max-h-44 flex-wrap gap-1.5 overflow-y-auto pr-1">
+                      {toolsData.map((tool) => {
+                        const active = selectedToolNames.includes(tool.name)
+                        return (
+                          <button
+                            key={tool.name}
+                            type="button"
+                            onClick={() => toggleTool(tool.name)}
+                            title={tool.server_name}
+                            className={`rounded-md border px-2.5 py-1.5 text-left font-mono text-[12px] transition-colors ${
+                              active
+                                ? 'border-primary bg-primary text-primary-foreground'
+                                : 'border-input bg-white text-muted-foreground hover:border-muted-foreground'
+                            }`}
+                          >
+                            {tool.name}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
                 </div>
-                {isToolsLoading ? (
-                  <div className="text-sm text-slate-500">{t('loading')}</div>
-                ) : toolsData.length === 0 ? (
-                  <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-3 text-sm text-slate-500">
-                    {t('noToolsAvailable')}
-                  </div>
-                ) : (
-                  <div className="flex max-h-36 flex-wrap gap-2 overflow-y-auto pr-1">
-                    {toolsData.map((tool) => {
-                      const active = selectedToolNames.includes(tool.name)
-                      return (
-                        <button
-                          key={tool.name}
-                          type="button"
-                          onClick={() => toggleTool(tool.name)}
-                          className={`rounded-2xl border px-3 py-2 text-left text-sm transition-colors ${
-                            active
-                              ? 'border-sky-300 bg-sky-50 text-sky-800'
-                              : 'border-slate-200 bg-white text-slate-600 hover:border-sky-200 hover:bg-sky-50/40'
-                          }`}
-                        >
-                          <div className="font-medium">{tool.name}</div>
-                          <div className="mt-1 text-xs text-slate-400">{tool.server_name}</div>
-                        </button>
-                      )
-                    })}
-                  </div>
-                )}
-                {selectedToolNames.length === 0 && toolsData.length > 0 && (
-                  <div className="mt-3 rounded-2xl border border-dashed border-amber-200 bg-amber-50/60 px-4 py-3 text-sm text-amber-800">
-                    {t('chatNoToolsSelected')}
-                  </div>
-                )}
-              </div>
+              )}
             </div>
 
-            <div className="glass-panel flex-1 overflow-hidden rounded-3xl">
-              <div className="max-h-[calc(100vh-470px)] space-y-4 overflow-y-auto p-6">
+            <div className="flex-1 overflow-hidden rounded-[10px] border border-border bg-white">
+              <div className="h-full space-y-4 overflow-y-auto p-5">
                 {isSessionLoading && (
                   <div className="flex h-32 items-center justify-center">
-                    <p className="text-sm text-slate-400">{t('loading')}</p>
+                    <p className="text-sm text-muted-foreground">{t('loading')}</p>
                   </div>
                 )}
                 {!isSessionLoading && messages.length === 0 && (
-                  <div className="flex h-32 items-center justify-center">
-                    <p className="text-sm text-slate-400">{t('startConversation')}</p>
+                  <div className="flex h-full min-h-32 flex-col items-center justify-center gap-1 text-center">
+                    <p className="text-sm text-muted-foreground">{t('startConversation')}</p>
                   </div>
                 )}
                 {!isSessionLoading &&
@@ -479,17 +467,17 @@ export function Chat() {
                       className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
                     >
                       <div
-                        className={`max-w-[85%] rounded-2xl px-5 py-3 ${
+                        className={`max-w-[85%] rounded-[10px] px-4 py-2.5 text-sm ${
                           message.role === 'user'
-                            ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-500/20'
-                            : 'border border-slate-100 bg-white text-slate-800 shadow-sm'
+                            ? 'bg-primary text-primary-foreground'
+                            : 'border border-border bg-muted text-foreground'
                         }`}
                       >
                         <div className="space-y-3">
                           {message.parts.map((part, index) => renderMessagePart(part, index, viewMode, t))}
                         </div>
                         {message.id === activeStreamingAssistantId && (
-                          <span className="ml-1 mt-3 inline-block h-3 w-2 animate-pulse rounded-full bg-slate-400" />
+                          <span className="ml-1 mt-3 inline-block h-3 w-1.5 animate-pulse rounded-full bg-muted-foreground" />
                         )}
                       </div>
                     </div>
@@ -498,19 +486,19 @@ export function Chat() {
               </div>
             </div>
 
-            <form onSubmit={handleSubmit} className="mt-4 flex gap-3">
+            <form onSubmit={handleSubmit} className="flex gap-2">
               <input
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder={t('typeMessage')}
-                className="dashboard-input flex-1"
+                className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 flex-1"
                 disabled={inputDisabled}
               />
               <button
                 type="submit"
                 disabled={inputDisabled || !input.trim()}
-                className="dashboard-button px-8"
+                className="inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors bg-primary text-primary-foreground shadow hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50 px-4 py-2 px-6"
               >
                 {chatStatus === 'streaming' ? t('sending') : t('sendMessage')}
               </button>
@@ -519,11 +507,11 @@ export function Chat() {
 
           {viewMode === 'debug' && (
             <aside className="space-y-3" data-testid="chat-debug-panel">
-              <div className="dashboard-muted-card rounded-[24px] p-4">
+              <div className="rounded-lg border bg-muted/40 text-card-foreground shadow-sm rounded-lg p-4">
                 <div className="mb-2 text-sm font-semibold text-slate-900">{t('chatViewDebug')}</div>
                 <p className="text-sm text-slate-600">{t('chatDebugHint')}</p>
               </div>
-              <div className="dashboard-muted-card rounded-[24px] p-4">
+              <div className="rounded-lg border bg-muted/40 text-card-foreground shadow-sm rounded-lg p-4">
                 <div className="mb-3 text-sm font-semibold text-slate-900">{t('chatProtocolSummary')}</div>
                 <div className="space-y-2 text-xs text-slate-600">
                   <div>{t('chatMessagesCount', { count: messages.length })}</div>
@@ -532,7 +520,7 @@ export function Chat() {
                   <div>{t('chatToolsSelected', { count: selectedToolNames.length })}</div>
                 </div>
               </div>
-              <div className="dashboard-muted-card rounded-[24px] p-4">
+              <div className="rounded-lg border bg-muted/40 text-card-foreground shadow-sm rounded-lg p-4">
                 <div className="mb-3 text-sm font-semibold text-slate-900">{t('chatToolsArmed')}</div>
                 {selectedToolNames.length > 0 ? (
                   <div className="space-y-2">
@@ -550,20 +538,20 @@ export function Chat() {
                   <div className="text-sm text-slate-500">{t('chatNoToolsSelected')}</div>
                 )}
               </div>
-              <div className="dashboard-muted-card rounded-[24px] p-4">
+              <div className="rounded-lg border bg-muted/40 text-card-foreground shadow-sm rounded-lg p-4">
                 <div className="mb-3 text-sm font-semibold text-slate-900">{t('chatToolDebugger')}</div>
                 {lastAssistantToolParts.length > 0 ? (
-                  <pre className="max-h-64 overflow-auto rounded-xl bg-slate-950/95 p-3 text-[11px] text-sky-100">
+                  <pre className="max-h-64 overflow-auto rounded-xl bg-[#18181b] p-3 text-[11px] text-slate-100">
                     {stringify(lastAssistantToolParts)}
                   </pre>
                 ) : (
                   <div className="text-sm text-slate-500">{t('chatNoStructuredData')}</div>
                 )}
               </div>
-              <div className="dashboard-muted-card rounded-[24px] p-4">
+              <div className="rounded-lg border bg-muted/40 text-card-foreground shadow-sm rounded-lg p-4">
                 <div className="mb-3 text-sm font-semibold text-slate-900">{t('chatLastAssistantMessage')}</div>
                 {lastAssistant ? (
-                  <pre className="max-h-64 overflow-auto rounded-xl bg-slate-950/95 p-3 text-[11px] text-sky-100">
+                  <pre className="max-h-64 overflow-auto rounded-xl bg-[#18181b] p-3 text-[11px] text-slate-100">
                     {stringify({
                       id: lastAssistant.id,
                       metadata: lastAssistant.metadata ?? null,

@@ -50,7 +50,7 @@ export function MCP() {
   if (serversLoading || toolsLoading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
       </div>
     )
   }
@@ -58,21 +58,21 @@ export function MCP() {
   return (
     <div className="space-y-6" data-testid="page-mcp">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold text-slate-900">{t('mcp')}</h2>
+        <h2 className="text-xl font-semibold text-foreground">{t('mcp')}</h2>
         <div className="flex gap-2">
           <button
             onClick={() => {
               refetchServers()
               refetchTools()
             }}
-            className="dashboard-secondary-button px-4 py-2 text-sm"
+            className="inline-flex items-center justify-center rounded-md border border-input bg-background text-sm font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50 px-4 py-2 text-sm"
             data-testid="mcp-refresh"
           >
             {t('refresh')}
           </button>
           <button
             onClick={() => setShowAddForm(true)}
-            className="dashboard-button px-4 py-2 text-sm"
+            className="inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors bg-primary text-primary-foreground shadow hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50 px-4 py-2 text-sm"
             data-testid="mcp-add-server"
           >
             {t('addServerButton')}
@@ -82,60 +82,60 @@ export function MCP() {
 
       {/* Add Server Form */}
       {showAddForm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-sky-950/10 backdrop-blur-sm">
-          <div className="glass-panel w-full max-w-md rounded-[28px] p-6 mx-4" data-testid="mcp-add-server-modal">
-            <h3 className="text-lg font-semibold text-slate-900 mb-4">{t('addMcpServerTitle')}</h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/10 backdrop-blur-sm">
+          <div className="rounded-lg border bg-card text-card-foreground shadow-sm w-full max-w-md rounded-lg p-6 mx-4" data-testid="mcp-add-server-modal">
+            <h3 className="text-lg font-semibold text-foreground mb-4">{t('addMcpServerTitle')}</h3>
             <form onSubmit={handleAddServer} className="space-y-4" data-testid="mcp-add-server-form">
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">
+                <label className="block text-sm font-medium text-foreground mb-1">
                   {t('skillNameRequired')}
                 </label>
                 <input
                   name="name"
                   required
-                  className="dashboard-input"
+                  className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                   placeholder={t('serverNameExample')}
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">
+                <label className="block text-sm font-medium text-foreground mb-1">
                   {t('serverTypeLabel')}
                 </label>
                 <select
                   name="type"
-                  className="dashboard-input"
+                  className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <option value="stdio">Stdio</option>
                   <option value="http">HTTP</option>
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">
+                <label className="block text-sm font-medium text-foreground mb-1">
                   {t('commandForStdio')}
                 </label>
                 <input
                   name="command"
-                  className="dashboard-input"
+                  className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                   placeholder={t('serverCommandExample')}
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">
+                <label className="block text-sm font-medium text-foreground mb-1">
                   {t('argsSpaceSeparated')}
                 </label>
                 <input
                   name="args"
-                  className="dashboard-input"
+                  className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                   placeholder={t('serverArgsExample')}
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">
+                <label className="block text-sm font-medium text-foreground mb-1">
                   {t('urlForHttp')}
                 </label>
                 <input
                   name="url"
-                  className="dashboard-input"
+                  className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                   placeholder={t('serverUrlExample')}
                 />
               </div>
@@ -143,13 +143,13 @@ export function MCP() {
                 <button
                   type="button"
                   onClick={() => setShowAddForm(false)}
-                  className="dashboard-secondary-button px-4 py-2"
+                  className="inline-flex items-center justify-center rounded-md border border-input bg-background text-sm font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50 px-4 py-2"
                 >
                   {t('cancel')}
                 </button>
                 <button
                   type="submit"
-                  className="dashboard-button px-4 py-2"
+                  className="inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors bg-primary text-primary-foreground shadow hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50 px-4 py-2"
                 >
                   {t('addServerButton')}
                 </button>
@@ -162,38 +162,38 @@ export function MCP() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Servers List */}
         <div>
-          <h3 className="text-lg font-medium text-slate-900 mb-4">{t('servers')}</h3>
+          <h3 className="text-lg font-medium text-foreground mb-4">{t('servers')}</h3>
           <div className="space-y-3" data-testid="mcp-server-list">
             {servers && servers.length > 0 ? (
               servers.map((server) => (
                 <div
                   key={server.name}
-                  className="dashboard-muted-card rounded-[24px] p-4"
+                  className="rounded-lg border bg-muted/40 text-card-foreground shadow-sm rounded-lg p-4"
                 >
                   <div className="flex items-center justify-between mb-2">
-                    <h4 className="font-medium text-slate-900">
+                    <h4 className="font-medium text-foreground">
                       {server.name}
                     </h4>
                     <span
                       className={`px-2 py-1 text-xs rounded ${
                         server.running
                           ? 'bg-emerald-100 text-emerald-700'
-                          : 'bg-slate-100 text-slate-700'
+                          : 'bg-muted text-foreground'
                       }`}
                     >
                       {server.running ? t('running') : t('stopped')}
                     </span>
                   </div>
-                  <p className="text-sm text-slate-600 mb-2">
+                  <p className="text-sm text-muted-foreground mb-2">
                     {server.description || server.command || t('noCommand')}
                   </p>
-                  <p className="text-sm text-slate-500">
+                  <p className="text-sm text-muted-foreground">
                     {t('toolsSummary', { count: server.tool_count })}
                   </p>
                 </div>
               ))
             ) : (
-              <div className="dashboard-muted-card rounded-[24px] p-4 text-center text-slate-500">
+              <div className="rounded-lg border bg-muted/40 text-card-foreground shadow-sm rounded-lg p-4 text-center text-muted-foreground">
                 {t('noServers')}
               </div>
             )}
@@ -202,31 +202,31 @@ export function MCP() {
 
         {/* Tools List */}
         <div>
-          <h3 className="text-lg font-medium text-slate-900 mb-4">{t('availableTools')}</h3>
+          <h3 className="text-lg font-medium text-foreground mb-4">{t('availableTools')}</h3>
           <div className="space-y-3 max-h-96 overflow-y-auto" data-testid="mcp-tool-list">
             {tools && tools.length > 0 ? (
               tools.map((tool) => (
                 <div
                   key={`${tool.server_name}-${tool.name}`}
-                  className="dashboard-muted-card cursor-pointer rounded-[24px] p-4 transition-colors hover:border-sky-300 hover:bg-sky-50/50"
+                  className="rounded-lg border bg-muted/40 text-card-foreground shadow-sm cursor-pointer rounded-lg p-4 transition-colors hover:border-border hover:bg-muted/50"
                   onClick={() => setSelectedTool(tool)}
                   data-testid={`mcp-tool-${tool.server_name}-${tool.name}`}
                 >
                   <div className="flex items-start justify-between mb-1">
-                    <h4 className="font-medium text-slate-900 text-sm">
+                    <h4 className="font-medium text-foreground text-sm">
                       {tool.name}
                     </h4>
-                    <span className="text-xs text-slate-500">
+                    <span className="text-xs text-muted-foreground">
                       {tool.server_name}
                     </span>
                   </div>
-                  <p className="text-xs text-slate-600 line-clamp-2">
+                  <p className="text-xs text-muted-foreground line-clamp-2">
                     {tool.description}
                   </p>
                 </div>
               ))
             ) : (
-              <div className="dashboard-muted-card rounded-[24px] p-4 text-center text-slate-500">
+              <div className="rounded-lg border bg-muted/40 text-card-foreground shadow-sm rounded-lg p-4 text-center text-muted-foreground">
                 {t('noToolsAvailable')}
               </div>
             )}
@@ -236,9 +236,9 @@ export function MCP() {
 
       {/* Tool Test Panel */}
       {selectedTool && (
-        <div className="glass-panel mt-6 rounded-[28px] p-4" data-testid="mcp-tool-panel">
+        <div className="rounded-lg border bg-card text-card-foreground shadow-sm mt-6 rounded-lg p-4" data-testid="mcp-tool-panel">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-medium text-slate-900">
+            <h3 className="text-lg font-medium text-foreground">
               {t('testToolTitle', { name: selectedTool.name })}
             </h3>
             <button
@@ -246,7 +246,7 @@ export function MCP() {
                 setSelectedTool(null)
                 setToolResult(null)
               }}
-              className="text-slate-500 hover:text-slate-700"
+              className="text-muted-foreground hover:text-foreground"
             >
               {t('closeButton')}
             </button>
@@ -254,29 +254,29 @@ export function MCP() {
           <form onSubmit={handleCallTool} className="space-y-4" data-testid="mcp-tool-form">
             <input type="hidden" name="tool_name" value={selectedTool.name} />
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">
+              <label className="block text-sm font-medium text-foreground mb-1">
                 {t('toolArgs')}
               </label>
               <textarea
                 name="arguments"
                 rows={4}
-                className="dashboard-input font-mono text-sm"
+                className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 font-mono text-sm"
                 placeholder={JSON.stringify(selectedTool.input_schema?.properties || {}, null, 2)}
               />
             </div>
             <button
               type="submit"
               disabled={callToolMutation.isPending}
-              className="dashboard-button px-4 py-2"
+              className="inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors bg-primary text-primary-foreground shadow hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50 px-4 py-2"
               data-testid="mcp-call-tool"
             >
               {callToolMutation.isPending ? t('calling') : t('callTool')}
             </button>
           </form>
           {toolResult && (
-            <div className="dashboard-muted-card mt-4 rounded-[20px] p-4">
-              <h4 className="text-sm font-medium text-slate-700 mb-2">{t('result')}</h4>
-              <pre className="text-xs text-slate-600 overflow-x-auto whitespace-pre-wrap">
+            <div className="rounded-lg border bg-muted/40 text-card-foreground shadow-sm mt-4 rounded-lg p-4">
+              <h4 className="text-sm font-medium text-foreground mb-2">{t('result')}</h4>
+              <pre className="text-xs text-muted-foreground overflow-x-auto whitespace-pre-wrap">
                 {toolResult}
               </pre>
             </div>

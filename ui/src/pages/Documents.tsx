@@ -34,9 +34,9 @@ function DocumentDetailModal({ docId, onClose }: { docId: string; onClose: () =>
 
   if (isLoading) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-sky-950/10 backdrop-blur-sm">
-        <div className="glass-panel rounded-[24px] p-6">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/10 backdrop-blur-sm">
+        <div className="rounded-lg border bg-card text-card-foreground shadow-sm rounded-lg p-6">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
         </div>
       </div>
     )
@@ -44,10 +44,10 @@ function DocumentDetailModal({ docId, onClose }: { docId: string; onClose: () =>
 
   if (error || !doc) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-sky-950/10 backdrop-blur-sm" onClick={onClose}>
-        <div className="glass-panel max-w-lg rounded-[28px] p-6">
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/10 backdrop-blur-sm" onClick={onClose}>
+        <div className="rounded-lg border bg-card text-card-foreground shadow-sm max-w-lg rounded-lg p-6">
           <p className="text-rose-700">{t('errorLoadingDocument')}</p>
-          <button onClick={onClose} className="dashboard-secondary-button mt-4 px-4 py-2">
+          <button onClick={onClose} className="inline-flex items-center justify-center rounded-md border border-input bg-background text-sm font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50 mt-4 px-4 py-2">
             {t('closeButton')}
           </button>
         </div>
@@ -62,11 +62,11 @@ function DocumentDetailModal({ docId, onClose }: { docId: string; onClose: () =>
   const metadataEntries = Object.entries(doc.metadata ?? {})
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-sky-950/10 backdrop-blur-sm" onClick={onClose}>
-      <div className="glass-panel max-h-[80vh] max-w-2xl overflow-auto rounded-[28px] p-6" onClick={e => e.stopPropagation()} data-testid="document-detail-modal">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/10 backdrop-blur-sm" onClick={onClose}>
+      <div className="rounded-lg border bg-card text-card-foreground shadow-sm max-h-[80vh] max-w-2xl overflow-auto rounded-lg p-6" onClick={e => e.stopPropagation()} data-testid="document-detail-modal">
         <div className="flex justify-between items-start mb-4">
-          <h3 className="text-lg font-semibold text-slate-900">{filename}</h3>
-          <button onClick={onClose} className="text-slate-500 hover:text-slate-700" data-testid="document-detail-close">
+          <h3 className="text-lg font-semibold text-foreground">{filename}</h3>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground" data-testid="document-detail-close">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
@@ -74,30 +74,30 @@ function DocumentDetailModal({ docId, onClose }: { docId: string; onClose: () =>
         </div>
         <div className="space-y-3 text-sm">
           <div>
-            <span className="text-slate-500">{t('id')}: </span>
-            <span className="font-mono text-slate-900">{doc.id}</span>
+            <span className="text-muted-foreground">{t('id')}: </span>
+            <span className="font-mono text-foreground">{doc.id}</span>
           </div>
           <div>
-            <span className="text-slate-500">{t('path')}: </span>
-            <span className="break-all text-slate-900">{path || '-'}</span>
+            <span className="text-muted-foreground">{t('path')}: </span>
+            <span className="break-all text-foreground">{path || '-'}</span>
           </div>
           <div>
-            <span className="text-slate-500">{t('created')}: </span>
-            <span className="text-slate-900">{formatDocumentDate(created)}</span>
+            <span className="text-muted-foreground">{t('created')}: </span>
+            <span className="text-foreground">{formatDocumentDate(created)}</span>
           </div>
           <div>
-            <span className="text-slate-500">{t('type')}: </span>
-            <span className="text-slate-900">{extension || '-'}</span>
+            <span className="text-muted-foreground">{t('type')}: </span>
+            <span className="text-foreground">{extension || '-'}</span>
           </div>
           {metadataEntries.length > 0 && (
             <div>
-              <span className="text-slate-500">{t('metadata')}: </span>
-              <div className="mt-2 rounded-xl border border-sky-100 bg-sky-50/60 p-3">
+              <span className="text-muted-foreground">{t('metadata')}: </span>
+              <div className="mt-2 rounded-xl border border-border bg-muted/60 p-3">
                 <dl className="space-y-2">
                   {metadataEntries.map(([key, value]) => (
                     <div key={key} className="grid grid-cols-[140px_1fr] gap-3">
-                      <dt className="font-medium text-slate-500">{key}</dt>
-                      <dd className="break-all text-slate-900">{String(value)}</dd>
+                      <dt className="font-medium text-muted-foreground">{key}</dt>
+                      <dd className="break-all text-foreground">{String(value)}</dd>
                     </div>
                   ))}
                 </dl>
@@ -106,8 +106,8 @@ function DocumentDetailModal({ docId, onClose }: { docId: string; onClose: () =>
           )}
           {doc.content && (
             <div>
-              <span className="text-slate-500">{t('content')}: </span>
-              <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-sky-100 bg-sky-50/60 p-3 text-xs text-slate-900">{doc.content}</pre>
+              <span className="text-muted-foreground">{t('content')}: </span>
+              <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-border bg-muted/60 p-3 text-xs text-foreground">{doc.content}</pre>
             </div>
           )}
         </div>
@@ -162,14 +162,14 @@ export function Documents() {
   if (docsLoading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
       </div>
     )
   }
 
   if (docsError) {
     return (
-      <div className="rounded-[24px] border border-rose-200 bg-rose-50 p-4">
+      <div className="rounded-lg border border-rose-200 bg-rose-50 p-4">
         <p className="text-rose-700">
           {t('error')}: {docsError.message}
         </p>
@@ -180,7 +180,7 @@ export function Documents() {
   return (
     <div className="space-y-6" data-testid="page-documents">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold text-slate-900">
+        <h2 className="text-xl font-semibold text-foreground">
           {t('documentsCollections')}
         </h2>
         <div>
@@ -195,7 +195,7 @@ export function Documents() {
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={uploading}
-            className="dashboard-button px-4 py-2"
+            className="inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors bg-primary text-primary-foreground shadow hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50 px-4 py-2"
             data-testid="documents-upload"
           >
             {uploading ? t('uploading') : t('uploadFile')}
@@ -205,19 +205,19 @@ export function Documents() {
 
       {collections && collections.length > 0 && (
         <div>
-          <h3 className="mb-3 text-lg font-medium text-slate-900">
+          <h3 className="mb-3 text-lg font-medium text-foreground">
             {t('collections')}
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {collections.map((collection) => (
               <div
                 key={collection.name}
-                className="glass-panel rounded-[24px] p-4"
+                className="rounded-lg border bg-card text-card-foreground shadow-sm rounded-lg p-4"
               >
-                <h4 className="font-medium text-slate-900">
+                <h4 className="font-medium text-foreground">
                   {collection.name}
                 </h4>
-                <p className="text-sm text-slate-500">
+                <p className="text-sm text-muted-foreground">
                   {t('documentsCount')}: {collection.count}
                 </p>
               </div>
@@ -228,54 +228,54 @@ export function Documents() {
 
       {documents && documents.length > 0 && (
         <div>
-          <h3 className="mb-3 text-lg font-medium text-slate-900">
+          <h3 className="mb-3 text-lg font-medium text-foreground">
             {t('documentsTotal', { count: documents.length })}
           </h3>
-          <div className="overflow-x-auto rounded-[28px] border border-sky-100 bg-white" data-testid="documents-table">
-            <table className="min-w-full divide-y divide-sky-100">
-              <thead className="bg-sky-50/70">
+          <div className="overflow-x-auto rounded-lg border border-border bg-white" data-testid="documents-table">
+            <table className="min-w-full divide-y divide-border">
+              <thead className="bg-muted/70">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500">
+                  <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
                     {t('filename')}
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500">
+                  <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
                     {t('path')}
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500">
+                  <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
                     {t('type')}
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500">
+                  <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
                     {t('created')}
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500">
+                  <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
                     {t('actions')}
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-sky-100 bg-white">
+              <tbody className="divide-y divide-border bg-white">
                 {documents.map((doc) => {
                   const filename = getDocumentFilename(doc)
                   const path = getDocumentPath(doc)
                   const extension = getDocumentExtension(doc)
                   const created = getDocumentCreated(doc)
                   return (
-                    <tr key={doc.id} className="hover:bg-sky-50/40" data-testid={`document-row-${doc.id}`}>
-                      <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-slate-900">
+                    <tr key={doc.id} className="hover:bg-muted/40" data-testid={`document-row-${doc.id}`}>
+                      <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-foreground">
                         {filename}
                       </td>
-                      <td className="max-w-md break-all px-6 py-4 text-sm text-slate-500">
+                      <td className="max-w-md break-all px-6 py-4 text-sm text-muted-foreground">
                         {path || '-'}
                       </td>
-                      <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-500">
+                      <td className="whitespace-nowrap px-6 py-4 text-sm text-muted-foreground">
                         {extension || '-'}
                       </td>
-                      <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-500">
+                      <td className="whitespace-nowrap px-6 py-4 text-sm text-muted-foreground">
                         {formatDocumentDate(created)}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm space-x-2">
                         <button
                           onClick={() => setSelectedDocId(doc.id)}
-                          className="text-blue-600 hover:text-blue-800"
+                          className="text-foreground hover:text-foreground"
                           data-testid={`document-view-${doc.id}`}
                         >
                           {t('viewDocument')}
@@ -298,8 +298,8 @@ export function Documents() {
       )}
 
       {(!documents || documents.length === 0) && (
-        <div className="rounded-[28px] border border-dashed border-sky-100 bg-sky-50/60 py-12 text-center">
-          <p className="text-slate-500">
+        <div className="rounded-lg border border-dashed border-border bg-muted/60 py-12 text-center">
+          <p className="text-muted-foreground">
             {t('noDocumentsFound')}
           </p>
         </div>

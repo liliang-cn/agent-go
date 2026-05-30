@@ -44,26 +44,26 @@ export function Memory() {
 
   const getTypeColor = (type: string) => {
     switch (type) {
-      case 'fact': return 'bg-blue-100 text-blue-700'
-      case 'skill': return 'bg-indigo-100 text-indigo-700'
+      case 'fact': return 'bg-muted text-foreground'
+      case 'skill': return 'bg-muted text-foreground'
       case 'pattern': return 'bg-emerald-100 text-emerald-700'
       case 'context': return 'bg-amber-100 text-amber-700'
       case 'preference': return 'bg-pink-100 text-pink-700'
-      default: return 'bg-slate-100 text-slate-700'
+      default: return 'bg-muted text-foreground'
     }
   }
 
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
       </div>
     )
   }
 
   if (error) {
     return (
-      <div className="rounded-[24px] border border-rose-200 bg-rose-50 p-4">
+      <div className="rounded-lg border border-rose-200 bg-rose-50 p-4">
         <p className="text-rose-700">{t('errorLoadingMemories')}: {error.message}</p>
         <button onClick={() => refetch()} className="mt-2 px-4 py-2 bg-red-600 text-white rounded-lg">
           {t('retry')}
@@ -75,18 +75,18 @@ export function Memory() {
   return (
     <div className="space-y-6" data-testid="page-memory">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold text-slate-900">{t('memoryNav')}</h2>
+        <h2 className="text-xl font-semibold text-foreground">{t('memoryNav')}</h2>
         <div className="flex gap-2">
           <button
             onClick={() => refetch()}
-            className="dashboard-secondary-button px-4 py-2 text-sm"
+            className="inline-flex items-center justify-center rounded-md border border-input bg-background text-sm font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50 px-4 py-2 text-sm"
             data-testid="memory-refresh"
           >
             {t('refresh')}
           </button>
           <button
             onClick={() => setShowAddForm(true)}
-            className="dashboard-button px-4 py-2 text-sm"
+            className="inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors bg-primary text-primary-foreground shadow hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50 px-4 py-2 text-sm"
             data-testid="memory-add"
           >
             {t('addMemory')}
@@ -95,30 +95,30 @@ export function Memory() {
       </div>
 
       {/* Search Bar */}
-      <div className="glass-panel rounded-[28px] p-4">
+      <div className="rounded-lg border bg-card text-card-foreground shadow-sm rounded-lg p-4">
         <input
           type="text"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           placeholder={t('searchMemories')}
-          className="dashboard-input"
+          className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
           data-testid="memory-search"
         />
       </div>
 
       {/* Add Memory Form */}
       {showAddForm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-sky-950/10 backdrop-blur-sm">
-          <div className="glass-panel mx-4 w-full max-w-lg rounded-[28px] p-6" data-testid="memory-add-modal">
-            <h3 className="mb-4 text-lg font-semibold text-slate-900">{t('addNewMemory')}</h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/10 backdrop-blur-sm">
+          <div className="rounded-lg border bg-card text-card-foreground shadow-sm mx-4 w-full max-w-lg rounded-lg p-6" data-testid="memory-add-modal">
+            <h3 className="mb-4 text-lg font-semibold text-foreground">{t('addNewMemory')}</h3>
             <form onSubmit={handleAddMemory} className="space-y-4" data-testid="memory-add-form">
               <div>
-                <label className="mb-2 block text-sm font-medium text-slate-700">
+                <label className="mb-2 block text-sm font-medium text-foreground">
                   {t('typeLabel')}
                 </label>
                 <select
                   name="type"
-                  className="dashboard-input"
+                  className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <option value="fact">{t('fact')}</option>
                   <option value="skill">{t('skill')}</option>
@@ -128,19 +128,19 @@ export function Memory() {
                 </select>
               </div>
               <div>
-                <label className="mb-2 block text-sm font-medium text-slate-700">
+                <label className="mb-2 block text-sm font-medium text-foreground">
                   {t('contentLabel')} *
                 </label>
                 <textarea
                   name="content"
                   required
                   rows={4}
-                  className="dashboard-input resize-none"
+                  className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 resize-none"
                   placeholder={t('enterMemoryContent')}
                 />
               </div>
               <div>
-                <label className="mb-2 block text-sm font-medium text-slate-700">
+                <label className="mb-2 block text-sm font-medium text-foreground">
                   {t('importanceLabel')} (0-1)
                 </label>
                 <input
@@ -150,14 +150,14 @@ export function Memory() {
                   min="0"
                   max="1"
                   defaultValue={0.5}
-                  className="dashboard-input"
+                  className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                 />
               </div>
               <div className="flex gap-2">
                 <button
                   type="submit"
                   disabled={addMutation.isPending}
-                  className="dashboard-button px-6 py-2 disabled:opacity-50"
+                  className="inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors bg-primary text-primary-foreground shadow hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50 px-6 py-2 disabled:opacity-50"
                   data-testid="memory-add-submit"
                 >
                   {addMutation.isPending ? t('adding') : t('addButton')}
@@ -165,7 +165,7 @@ export function Memory() {
                 <button
                   type="button"
                   onClick={() => setShowAddForm(false)}
-                  className="dashboard-secondary-button px-6 py-2"
+                  className="inline-flex items-center justify-center rounded-md border border-input bg-background text-sm font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50 px-6 py-2"
                 >
                   {t('cancel')}
                 </button>
@@ -177,32 +177,32 @@ export function Memory() {
 
       {/* Memory Detail Panel */}
       {selectedMemory && (
-        <div className="glass-panel rounded-[28px] p-6" data-testid="memory-detail-panel">
+        <div className="rounded-lg border bg-card text-card-foreground shadow-sm rounded-lg p-6" data-testid="memory-detail-panel">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-medium text-slate-900">{t('memoryDetails')}</h3>
+            <h3 className="text-lg font-medium text-foreground">{t('memoryDetails')}</h3>
             <button
               onClick={() => setSelectedMemory(null)}
-              className="text-slate-500 hover:text-slate-700"
+              className="text-muted-foreground hover:text-foreground"
             >
               {t('closeButton')}
             </button>
           </div>
           <div className="space-y-4">
             <div>
-              <span className="text-sm text-slate-500">{t('id')}:</span>
-              <p className="font-mono text-sm text-slate-700">{selectedMemory.id}</p>
+              <span className="text-sm text-muted-foreground">{t('id')}:</span>
+              <p className="font-mono text-sm text-foreground">{selectedMemory.id}</p>
             </div>
             <div>
-              <span className="text-sm text-slate-500">{t('typeLabel')}:</span>
+              <span className="text-sm text-muted-foreground">{t('typeLabel')}:</span>
               <p className={`inline-block px-2 py-1 text-xs rounded ${getTypeColor(selectedMemory.type)}`}>
                 {selectedMemory.type}
               </p>
             </div>
             <div>
-              <span className="text-sm text-slate-500">{t('contentLabel')}:</span>
-              <p className="text-slate-700">{selectedMemory.content}</p>
+              <span className="text-sm text-muted-foreground">{t('contentLabel')}:</span>
+              <p className="text-foreground">{selectedMemory.content}</p>
             </div>
-            <div className="flex gap-4 text-sm text-slate-500">
+            <div className="flex gap-4 text-sm text-muted-foreground">
               <span>{t('importanceLabel')}: {selectedMemory.importance.toFixed(2)}</span>
               <span>{t('created')}: {new Date(selectedMemory.created_at).toLocaleString()}</span>
             </div>
@@ -223,7 +223,7 @@ export function Memory() {
           filteredMemories.map((memory) => (
             <div
               key={memory.id}
-              className="rounded-[24px] border border-sky-100 bg-white p-4 transition-colors hover:border-sky-300 hover:bg-sky-50/40 cursor-pointer"
+              className="rounded-lg border border-border bg-white p-4 transition-colors hover:border-border hover:bg-muted/40 cursor-pointer"
               onClick={() => setSelectedMemory(memory)}
               data-testid={`memory-card-${memory.id}`}
             >
@@ -231,20 +231,20 @@ export function Memory() {
                 <span className={`px-2 py-1 text-xs rounded ${getTypeColor(memory.type)}`}>
                   {memory.type}
                 </span>
-                <span className="text-xs text-slate-500">
+                <span className="text-xs text-muted-foreground">
                   {memory.importance.toFixed(2)}
                 </span>
               </div>
-              <p className="line-clamp-3 text-sm text-slate-700">
+              <p className="line-clamp-3 text-sm text-foreground">
                 {memory.content}
               </p>
-              <p className="mt-2 text-xs text-slate-400">
+              <p className="mt-2 text-xs text-muted-foreground">
                 {new Date(memory.created_at).toLocaleDateString()}
               </p>
             </div>
           ))
         ) : (
-          <div className="col-span-full rounded-[24px] border border-dashed border-sky-100 bg-sky-50/60 py-12 text-center text-slate-500">
+          <div className="col-span-full rounded-lg border border-dashed border-border bg-muted/60 py-12 text-center text-muted-foreground">
             {searchQuery ? t('noMemoriesMatch') : t('noMemoriesFoundCta')}
           </div>
         )}

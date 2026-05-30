@@ -1,23 +1,26 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams, useNavigate } from "react-router-dom";
+import { ArrowLeft } from "lucide-react";
 import {
   api,
   type Checkpoint,
   type TaskDetail as TaskDetailType,
-} from "../lib/api";
+} from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 
 const statusStyle: Record<string, string> = {
   completed: "bg-emerald-50 text-emerald-700 border-emerald-200",
   blocked:   "bg-orange-50  text-orange-700  border-orange-200",
   failed:    "bg-rose-50    text-rose-700    border-rose-200",
-  running:   "bg-sky-50     text-sky-700     border-sky-200",
+  running:   "bg-blue-50     text-blue-700     border-blue-200",
   yielded:   "bg-amber-50   text-amber-700   border-amber-200",
-  cancelled: "bg-slate-50   text-slate-500   border-slate-200",
+  cancelled: "bg-muted   text-muted-foreground   border-border",
 };
 
 function StatusBadge({ status }: { status?: string }) {
   const key = (status ?? "pending").toLowerCase();
-  const cls = statusStyle[key] ?? "bg-slate-50 text-slate-600 border-slate-200";
+  const cls = statusStyle[key] ?? "bg-muted text-muted-foreground border-border";
   return (
     <span
       className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium ${cls}`}
@@ -36,12 +39,12 @@ function eventStyle(type: string): string {
   if (type === "workflow_complete")  return "border-emerald-200 bg-emerald-50/50";
   if (type === "workflow_blocked")   return "border-orange-200  bg-orange-50/50";
   if (type === "workflow_error")     return "border-rose-200    bg-rose-50/50";
-  if (type === "tool_call")          return "border-sky-200     bg-sky-50/50";
+  if (type === "tool_call")          return "border-blue-200     bg-blue-50/50";
   if (type === "tool_result")        return "border-emerald-100 bg-emerald-50/30";
   if (type === "compact_boundary")   return "border-purple-200  bg-purple-50/60";
   if (type === "handoff")            return "border-violet-200  bg-violet-50/60";
   if (type === "analytics")          return "border-amber-100   bg-amber-50/30";
-  return "border-slate-100 bg-white";
+  return "border-border bg-card";
 }
 
 export function TaskDetail() {
@@ -55,9 +58,11 @@ export function TaskDetail() {
   const [followUp, setFollowUp] = useState("");
   const [selectedCheckpoint, setSelectedCheckpoint] = useState<string>("");
 
-  const load = async () => {
+  // load fetches the trace + checkpoints. Pass silent=true for poll
+  // refreshes so the page doesn't flash the "Loading…" placeholder.
+  const load = async (silent = false) => {
     if (!id) return;
-    setLoading(true);
+    if (!silent) setLoading(true);
     setError(null);
     try {
       const [taskResp, cpResp] = await Promise.all([
@@ -69,13 +74,24 @@ export function TaskDetail() {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
   useEffect(() => {
     void load();
   }, [id]);
+
+  // Auto-poll while the task is still in flight so stats / events /
+  // checkpoints fill in live. Stops as soon as the task reaches a
+  // terminal status.
+  const isLive =
+    task?.status === "running" || task?.status === "pending";
+  useEffect(() => {
+    if (!isLive || !id) return;
+    const handle = window.setInterval(() => void load(true), 2000);
+    return () => window.clearInterval(handle);
+  }, [isLive, id]);
 
   const handleReplay = async () => {
     if (!id) return;
@@ -115,27 +131,39 @@ export function TaskDetail() {
       <header className="flex items-center justify-between">
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-3">
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() => navigate("/tasks")}
-              className="text-sm text-sky-600 hover:underline"
+              className="h-7 px-2 text-muted-foreground"
             >
-              ← Tasks
-            </button>
-            <h2 className="text-xl font-semibold tracking-tight text-slate-900">
+              <ArrowLeft className="h-3.5 w-3.5" />
+              Tasks
+            </Button>
+            <h2 className="text-xl font-semibold tracking-tight text-foreground">
               Task
             </h2>
-            <code className="rounded bg-slate-100 px-2 py-0.5 font-mono text-xs text-slate-600">
+            <code className="rounded bg-muted px-2 py-0.5 font-mono text-xs text-muted-foreground">
               {id}
             </code>
           </div>
           {task && (
-            <p className="max-w-2xl truncate text-sm text-slate-600">
+            <p className="max-w-2xl truncate text-sm text-muted-foreground">
               {task.input || "(no input)"}
             </p>
           )}
         </div>
-        {task && <StatusBadge status={task.status} />}
+        {task && (
+          <div className="flex items-center gap-2">
+            {isLive && (
+              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <span className="h-2 w-2 animate-pulse rounded-full bg-foreground" />
+                live
+              </span>
+            )}
+            <StatusBadge status={task.status} />
+          </div>
+        )}
       </header>
 
       {error && (
@@ -145,7 +173,7 @@ export function TaskDetail() {
       )}
 
       {loading && (
-        <div className="rounded-xl border border-slate-100 bg-white px-4 py-6 text-center text-sm text-slate-500">
+        <div className="rounded-xl border border-border bg-card px-4 py-6 text-center text-sm text-muted-foreground">
           Loading…
         </div>
       )}
@@ -154,35 +182,35 @@ export function TaskDetail() {
         <>
           {/* Summary cards */}
           <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-              <div className="text-xs uppercase tracking-wide text-slate-500">
+            <div className="rounded-[10px] border border-border bg-card p-4 shadow-sm">
+              <div className="text-xs uppercase tracking-wide text-muted-foreground">
                 Rounds
               </div>
-              <div className="mt-1 font-mono text-2xl font-semibold text-slate-800">
+              <div className="mt-1 font-mono text-2xl font-semibold text-foreground">
                 {task.stats?.rounds ?? "—"}
               </div>
             </div>
-            <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-              <div className="text-xs uppercase tracking-wide text-slate-500">
+            <div className="rounded-[10px] border border-border bg-card p-4 shadow-sm">
+              <div className="text-xs uppercase tracking-wide text-muted-foreground">
                 Tool calls
               </div>
-              <div className="mt-1 font-mono text-2xl font-semibold text-slate-800">
+              <div className="mt-1 font-mono text-2xl font-semibold text-foreground">
                 {task.stats?.tool_calls ?? "—"}
               </div>
             </div>
-            <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-              <div className="text-xs uppercase tracking-wide text-slate-500">
+            <div className="rounded-[10px] border border-border bg-card p-4 shadow-sm">
+              <div className="text-xs uppercase tracking-wide text-muted-foreground">
                 Tokens
               </div>
-              <div className="mt-1 font-mono text-2xl font-semibold text-slate-800">
+              <div className="mt-1 font-mono text-2xl font-semibold text-foreground">
                 {(task.stats?.total_tokens ?? 0).toLocaleString()}
               </div>
             </div>
-            <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-              <div className="text-xs uppercase tracking-wide text-slate-500">
+            <div className="rounded-[10px] border border-border bg-card p-4 shadow-sm">
+              <div className="text-xs uppercase tracking-wide text-muted-foreground">
                 Cost
               </div>
-              <div className="mt-1 font-mono text-2xl font-semibold text-slate-800">
+              <div className="mt-1 font-mono text-2xl font-semibold text-foreground">
                 {formatCost(task.stats?.estimated_cost_usd)}
               </div>
             </div>
@@ -192,37 +220,37 @@ export function TaskDetail() {
             {/* Output + Events */}
             <div className="flex flex-col gap-3">
               {task.output && (
-                <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-                  <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+                <div className="rounded-[10px] border border-border bg-card p-4 shadow-sm">
+                  <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
                     Output
                   </h3>
-                  <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-slate-50 p-3 text-sm text-slate-800">
+                  <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted p-3 text-sm text-foreground">
                     {task.output}
                   </pre>
                 </div>
               )}
               {stopReason && (
-                <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-                  <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+                <div className="rounded-[10px] border border-border bg-card p-4 shadow-sm">
+                  <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
                     Terminal event
                   </h3>
                   <div className="mt-2 flex flex-col gap-1 text-sm">
                     <div>
-                      <span className="text-slate-500">type: </span>
-                      <span className="font-mono text-slate-800">
+                      <span className="text-muted-foreground">type: </span>
+                      <span className="font-mono text-foreground">
                         {stopReason.type}
                       </span>
                     </div>
                     {stopReason.message && (
-                      <pre className="whitespace-pre-wrap break-words text-slate-700">
+                      <pre className="whitespace-pre-wrap break-words text-foreground">
                         {stopReason.message}
                       </pre>
                     )}
                   </div>
                 </div>
               )}
-              <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-                <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+              <div className="rounded-[10px] border border-border bg-card p-4 shadow-sm">
+                <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
                   Event trace ({task.events?.length ?? 0})
                 </h3>
                 <div
@@ -235,15 +263,15 @@ export function TaskDetail() {
                       className={`rounded-lg border px-3 py-1.5 text-xs ${eventStyle(e.type)}`}
                     >
                       <div className="flex items-baseline justify-between gap-2">
-                        <span className="font-mono font-semibold text-slate-700">
+                        <span className="font-mono font-semibold text-foreground">
                           {e.type}
                         </span>
-                        <span className="font-mono text-[10px] text-slate-400">
+                        <span className="font-mono text-[10px] text-muted-foreground">
                           {e.timestamp?.slice(11, 19)}
                         </span>
                       </div>
                       {e.message && (
-                        <pre className="mt-0.5 whitespace-pre-wrap break-words font-sans text-slate-700">
+                        <pre className="mt-0.5 whitespace-pre-wrap break-words font-sans text-foreground">
                           {e.message.length > 240
                             ? e.message.slice(0, 240) + "…"
                             : e.message}
@@ -252,7 +280,7 @@ export function TaskDetail() {
                     </div>
                   ))}
                   {(task.events?.length ?? 0) === 0 && (
-                    <div className="rounded-md border border-dashed border-slate-200 p-3 text-center text-xs text-slate-400">
+                    <div className="rounded-md border border-dashed border-border p-3 text-center text-xs text-muted-foreground">
                       No events recorded.
                     </div>
                   )}
@@ -262,18 +290,18 @@ export function TaskDetail() {
 
             {/* Right: checkpoints + replay */}
             <aside className="flex flex-col gap-3">
-              <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+              <div className="rounded-[10px] border border-border bg-card p-4 shadow-sm">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+                  <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
                     Checkpoints
                   </h3>
-                  <span className="font-mono text-xs text-slate-400">
+                  <span className="font-mono text-xs text-muted-foreground">
                     {checkpoints.length}
                   </span>
                 </div>
                 <div className="mt-2 flex max-h-72 flex-col gap-1.5 overflow-auto">
                   {checkpoints.length === 0 && (
-                    <div className="rounded-md border border-dashed border-slate-200 p-3 text-center text-xs text-slate-400">
+                    <div className="rounded-md border border-dashed border-border p-3 text-center text-xs text-muted-foreground">
                       No checkpoints yet.
                     </div>
                   )}
@@ -288,24 +316,24 @@ export function TaskDetail() {
                       }
                       className={`flex flex-col gap-0.5 rounded-lg border px-3 py-2 text-left text-xs ${
                         cp.id === selectedCheckpoint
-                          ? "border-sky-300 bg-sky-50"
-                          : "border-slate-100 hover:bg-slate-50"
+                          ? "border-primary bg-accent"
+                          : "border-border hover:bg-muted"
                       }`}
                       data-testid={`checkpoint-${cp.seq}`}
                     >
                       <div className="flex items-center justify-between">
-                        <span className="font-mono font-semibold text-slate-700">
+                        <span className="font-mono font-semibold text-foreground">
                           #{cp.seq}
                         </span>
-                        <span className="font-mono text-[10px] text-slate-400">
+                        <span className="font-mono text-[10px] text-muted-foreground">
                           r{cp.round} · {cp.message_count}msg
                         </span>
                       </div>
-                      <div className="font-mono text-[10px] text-slate-400">
+                      <div className="font-mono text-[10px] text-muted-foreground">
                         {cp.created_at?.slice(0, 19).replace("T", " ")}
                       </div>
                       {cp.final_text && (
-                        <div className="truncate text-slate-600">
+                        <div className="truncate text-muted-foreground">
                           {cp.final_text}
                         </div>
                       )}
@@ -314,33 +342,32 @@ export function TaskDetail() {
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-                <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+              <div className="rounded-[10px] border border-border bg-card p-4 shadow-sm">
+                <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
                   Replay
                 </h3>
-                <p className="mt-1 text-xs text-slate-500">
+                <p className="mt-1 text-xs text-muted-foreground">
                   Re-runs the task starting from{" "}
                   {selectedCheckpoint
                     ? "the selected checkpoint"
                     : "the latest checkpoint"}
                   . Add an optional follow-up to steer the resumed run.
                 </p>
-                <textarea
+                <Textarea
                   value={followUp}
                   onChange={(e) => setFollowUp(e.target.value)}
                   placeholder="Follow-up (optional)"
-                  className="mt-2 min-h-[64px] w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-sky-300 focus:outline-none focus:ring-2 focus:ring-sky-100"
+                  className="mt-2 min-h-[64px] resize-y"
                   data-testid="replay-follow-up"
                 />
-                <button
-                  type="button"
+                <Button
                   onClick={() => void handleReplay()}
                   disabled={replaying || checkpoints.length === 0}
-                  className="dashboard-button mt-2 w-full text-sm"
+                  className="mt-2 w-full"
                   data-testid="replay-button"
                 >
                   {replaying ? "Replaying…" : "Replay"}
-                </button>
+                </Button>
               </div>
             </aside>
           </section>

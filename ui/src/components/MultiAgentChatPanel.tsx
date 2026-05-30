@@ -338,34 +338,34 @@ export function MultiAgentChatPanel({
 
   return (
     <section
-      className="glass-panel rounded-[32px] p-6"
+      className="rounded-lg border bg-card text-card-foreground shadow-sm rounded-lg p-6"
       data-testid={`agent-multi-chat-${team.id}`}
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="text-xs uppercase tracking-[0.28em] text-slate-500">
+          <p className="text-xs uppercase tracking-[0.28em] text-muted-foreground">
             {t("captains")}
           </p>
           <div className="mt-2 flex flex-wrap items-center gap-2">
-            <h3 className="text-2xl font-semibold text-slate-900">
+            <h3 className="text-2xl font-semibold text-foreground">
               {leadAgent.name}
             </h3>
-            <span className="rounded-full bg-blue-100 px-3 py-1 text-xs text-blue-800">
+            <span className="rounded-full bg-muted px-3 py-1 text-xs text-foreground">
               {t("kindCaptain")}
             </span>
           </div>
-          <p className="mt-2 text-sm font-medium text-slate-700">{team.name}</p>
-          <p className="mt-2 text-sm text-slate-600">{leadAgent.description}</p>
-          <p className="mt-2 text-sm text-slate-500">
+          <p className="mt-2 text-sm font-medium text-foreground">{team.name}</p>
+          <p className="mt-2 text-sm text-muted-foreground">{leadAgent.description}</p>
+          <p className="mt-2 text-sm text-muted-foreground">
             {t("chatMultiAgentHint")}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <div className="inline-flex rounded-xl border border-sky-100 bg-white p-1">
+          <div className="inline-flex rounded-xl border border-border bg-white p-1">
             <button
               type="button"
               onClick={() => setViewMode("normal")}
-              className={`rounded-lg px-3 py-1.5 text-sm ${viewMode === "normal" ? "bg-blue-600 text-white" : "text-slate-600"}`}
+              className={`rounded-lg px-3 py-1.5 text-sm ${viewMode === "normal" ? "bg-blue-600 text-white" : "text-muted-foreground"}`}
               data-testid="agent-chat-view-normal"
             >
               {t("chatViewNormal")}
@@ -373,7 +373,7 @@ export function MultiAgentChatPanel({
             <button
               type="button"
               onClick={() => setViewMode("debug")}
-              className={`rounded-lg px-3 py-1.5 text-sm ${viewMode === "debug" ? "bg-blue-600 text-white" : "text-slate-600"}`}
+              className={`rounded-lg px-3 py-1.5 text-sm ${viewMode === "debug" ? "bg-blue-600 text-white" : "text-muted-foreground"}`}
               data-testid="agent-chat-view-debug"
             >
               {t("chatViewDebug")}
@@ -390,7 +390,7 @@ export function MultiAgentChatPanel({
               seenFinishedTaskIds.current = new Set();
               lastPollAtRef.current = 0;
             }}
-            className="dashboard-secondary-button px-3 py-2 text-sm"
+            className="inline-flex items-center justify-center rounded-md border border-input bg-background text-sm font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50 px-3 py-2 text-sm"
             data-testid="agent-chat-clear"
           >
             {t("clear")}
@@ -400,17 +400,17 @@ export function MultiAgentChatPanel({
 
       <div className="mt-5 grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
         <div
-          className="dashboard-muted-card rounded-[28px] p-4"
+          className="rounded-lg border bg-muted/40 text-card-foreground shadow-sm rounded-lg p-4"
           data-testid="agent-chat-console"
         >
-          <div className="mb-4 flex flex-wrap items-center gap-2 text-xs text-slate-600">
-            <span className="rounded-full bg-sky-100 px-2 py-1 text-sky-800">
+          <div className="mb-4 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span className="rounded-full bg-muted px-2 py-1 text-foreground">
               {t("chatModeMultiAgent")}
             </span>
-            <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-700">
+            <span className="rounded-full bg-muted px-2 py-1 text-foreground">
               {viewMode === "debug" ? t("chatViewDebug") : t("chatViewNormal")}
             </span>
-            <span className="rounded-full bg-white px-2 py-1 text-slate-500">
+            <span className="rounded-full bg-white px-2 py-1 text-muted-foreground">
               {t("chatStatusLine", {
                 id: lastAssistant?.id ?? "-",
                 status,
@@ -418,7 +418,7 @@ export function MultiAgentChatPanel({
                 parts: totalParts,
               })}
             </span>
-            <span className="rounded-full bg-white px-2 py-1 text-slate-500">
+            <span className="rounded-full bg-white px-2 py-1 text-muted-foreground">
               {t("chatQueueDepth", { count: pendingTasks.length })}
             </span>
           </div>
@@ -428,7 +428,7 @@ export function MultiAgentChatPanel({
             data-testid="agent-chat-messages"
           >
             {messages.length === 0 && (
-              <div className="py-10 text-center text-slate-500">
+              <div className="py-10 text-center text-muted-foreground">
                 {t("chatMultiAgentHint")}
               </div>
             )}
@@ -446,7 +446,7 @@ export function MultiAgentChatPanel({
                     className={`inline-block max-w-[88%] rounded-2xl px-4 py-3 ${
                       isUser
                         ? "bg-blue-600 text-white"
-                        : "border border-sky-100 bg-white text-slate-900"
+                        : "border border-border bg-white text-foreground"
                     }`}
                   >
                     <div className="space-y-3">
@@ -465,7 +465,7 @@ export function MultiAgentChatPanel({
             })}
 
             {error && (
-              <div className="rounded-[20px] border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
+              <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
                 {t("error")}: {error}
               </div>
             )}
@@ -538,15 +538,15 @@ export function MultiAgentChatPanel({
                   }
                 }}
                 placeholder={t("chatPromptMultiAgent")}
-                className="dashboard-input flex-1"
+                className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 flex-1"
                 data-testid="agent-chat-input"
               />
               {mentionSuggestions.length > 0 && mentionRange != null && (
                 <div
-                  className="absolute bottom-[calc(100%+8px)] left-0 z-20 w-full rounded-2xl border border-sky-100 bg-white p-2 shadow-sm"
+                  className="absolute bottom-[calc(100%+8px)] left-0 z-20 w-full rounded-2xl border border-border bg-white p-2 shadow-sm"
                   data-testid="agent-chat-mention-menu"
                 >
-                  <div className="mb-1 px-2 text-[11px] font-medium uppercase tracking-[0.12em] text-slate-400">
+                  <div className="mb-1 px-2 text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
                     Agents
                   </div>
                   <div className="space-y-1">
@@ -561,13 +561,13 @@ export function MultiAgentChatPanel({
                         className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm ${
                           index === activeMentionIndex
                             ? "bg-blue-600 text-white"
-                            : "bg-slate-50 text-slate-700 hover:bg-sky-50"
+                            : "bg-muted text-foreground hover:bg-muted"
                         }`}
                         data-testid={`agent-chat-mention-option-${agent.name}`}
                       >
                         <span className="font-medium">@{agent.name}</span>
                         <span
-                          className={`text-xs ${index === activeMentionIndex ? "text-blue-100" : "text-slate-400"}`}
+                          className={`text-xs ${index === activeMentionIndex ? "text-blue-100" : "text-muted-foreground"}`}
                         >
                           {t("kindSpecialist")}
                         </span>
@@ -580,7 +580,7 @@ export function MultiAgentChatPanel({
             <button
               type="submit"
               disabled={status === "sending" || !input.trim()}
-              className="dashboard-button px-6 py-2 disabled:cursor-not-allowed"
+              className="inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors bg-primary text-primary-foreground shadow hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50 px-6 py-2 disabled:cursor-not-allowed"
               data-testid="agent-chat-send"
             >
               {status === "sending" ? t("sending") : t("sendMessage")}
@@ -589,29 +589,29 @@ export function MultiAgentChatPanel({
         </div>
 
         <aside className="space-y-3" data-testid="agent-chat-debug-panel">
-          <div className="dashboard-muted-card rounded-[24px] p-4">
-            <div className="mb-2 text-sm font-semibold text-slate-900">
+          <div className="rounded-lg border bg-muted/40 text-card-foreground shadow-sm rounded-lg p-4">
+            <div className="mb-2 text-sm font-semibold text-foreground">
               {t("chatViewDebug")}
             </div>
-            <p className="text-sm text-slate-600">{t("chatDebugHint")}</p>
+            <p className="text-sm text-muted-foreground">{t("chatDebugHint")}</p>
           </div>
-          <div className="dashboard-muted-card rounded-[24px] p-4">
-            <div className="mb-3 text-sm font-semibold text-slate-900">
+          <div className="rounded-lg border bg-muted/40 text-card-foreground shadow-sm rounded-lg p-4">
+            <div className="mb-3 text-sm font-semibold text-foreground">
               {t("chatProtocolSummary")}
             </div>
-            <div className="space-y-2 text-xs text-slate-600">
+            <div className="space-y-2 text-xs text-muted-foreground">
               <div>{t("chatMessagesCount", { count: messages.length })}</div>
               <div>{t("chatPartsCount", { count: totalParts })}</div>
               <div>{t("chatCurrentStatus", { status })}</div>
               <div>{t("chatQueueDepth", { count: pendingTasks.length })}</div>
             </div>
           </div>
-          <div className="dashboard-muted-card rounded-[24px] p-4">
-            <div className="mb-3 text-sm font-semibold text-slate-900">
+          <div className="rounded-lg border bg-muted/40 text-card-foreground shadow-sm rounded-lg p-4">
+            <div className="mb-3 text-sm font-semibold text-foreground">
               {t("chatLastAssistantMessage")}
             </div>
             {lastAssistant ? (
-              <pre className="max-h-64 overflow-auto rounded-xl bg-slate-950/95 p-3 text-[11px] text-sky-100">
+              <pre className="max-h-64 overflow-auto rounded-xl bg-[#18181b] p-3 text-[11px] text-slate-100">
                 {stringify({
                   id: lastAssistant.id,
                   metadata: lastAssistant.metadata ?? null,
@@ -619,7 +619,7 @@ export function MultiAgentChatPanel({
                 })}
               </pre>
             ) : (
-              <div className="text-sm text-slate-500">
+              <div className="text-sm text-muted-foreground">
                 {t("chatNoStructuredData")}
               </div>
             )}

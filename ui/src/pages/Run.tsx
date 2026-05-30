@@ -169,7 +169,7 @@ function AgentChat({
             setSelectedAgent(agent || null);
             setResponse("");
           }}
-          className="flex-1 rounded-xl border border-sky-100 bg-white px-4 py-2.5 text-sm text-slate-700 shadow-sm focus:border-sky-300 focus:outline-none focus:ring-2 focus:ring-sky-100"
+          className="flex-1 rounded-xl border border-border bg-white px-4 py-2.5 text-sm text-foreground shadow-sm focus:border-border focus:outline-none focus:ring-2 focus:ring-ring"
         >
           {agents.map((agent) => (
             <option key={agent.id} value={agent.id}>
@@ -180,7 +180,7 @@ function AgentChat({
       </div>
 
       {selectedAgent && (
-        <div className="rounded-xl border border-slate-100 bg-slate-50/50 px-4 py-3 text-sm text-slate-600">
+        <div className="rounded-xl border border-border bg-muted/50 px-4 py-3 text-sm text-muted-foreground">
           {selectedAgent.description}
         </div>
       )}
@@ -191,27 +191,27 @@ function AgentChat({
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder={t("instructionPlaceholder")}
-          className="dashboard-input flex-1"
+          className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 flex-1"
           disabled={status === "streaming"}
         />
         <button
           type="button"
           onClick={handleRun}
           disabled={status === "streaming" || !input.trim() || !selectedAgent}
-          className="dashboard-button px-6"
+          className="inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors bg-primary text-primary-foreground shadow hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50 px-6"
         >
           {status === "streaming" ? t("running") : t("run")}
         </button>
       </div>
 
       {status === "streaming" && !response && (
-        <div className="rounded-xl border border-sky-100 bg-sky-50/50 px-4 py-3 text-sm text-sky-700">
+        <div className="rounded-xl border border-border bg-muted/50 px-4 py-3 text-sm text-foreground">
           {t("runAgentStreaming")}
         </div>
       )}
 
       {response && (
-        <div className="glass-panel rounded-xl border border-slate-100 p-4 text-sm text-slate-700 whitespace-pre-wrap">
+        <div className="rounded-lg border bg-card text-card-foreground shadow-sm rounded-xl border border-border p-4 text-sm text-foreground whitespace-pre-wrap">
           {response}
         </div>
       )}
@@ -291,7 +291,7 @@ function TeamChat({
             setSelectedTeam(team || null);
             setOutput("");
           }}
-          className="flex-1 rounded-xl border border-sky-100 bg-white px-4 py-2.5 text-sm text-slate-700 shadow-sm focus:border-sky-300 focus:outline-none focus:ring-2 focus:ring-sky-100"
+          className="flex-1 rounded-xl border border-border bg-white px-4 py-2.5 text-sm text-foreground shadow-sm focus:border-border focus:outline-none focus:ring-2 focus:ring-ring"
         >
           {teams.map((team) => (
             <option key={team.id} value={team.id}>
@@ -302,7 +302,7 @@ function TeamChat({
       </div>
 
       {selectedTeam && (
-        <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-500">
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
           <span>
             <span className="font-medium">{t("captainLabel")}:</span>{" "}
             {selectedTeam.lead_agent?.name ?? selectedTeam.captain?.name ?? "-"}
@@ -320,14 +320,14 @@ function TeamChat({
           value={message}
           onChange={(e) => setMessage(e.target.value)}
           placeholder={t("messagePlaceholder")}
-          className="dashboard-input flex-1"
+          className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 flex-1"
           disabled={isLoading}
         />
         <button
           type="button"
           onClick={handleRun}
           disabled={isLoading || !message.trim() || !selectedTeam}
-          className="dashboard-button px-6"
+          className="inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors bg-primary text-primary-foreground shadow hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50 px-6"
         >
           {isLoading ? t("running") : t("run")}
         </button>
@@ -340,7 +340,7 @@ function TeamChat({
       )}
 
       {output && (
-        <div className="glass-panel rounded-xl border border-slate-100 p-4 text-sm text-slate-700 whitespace-pre-wrap">
+        <div className="rounded-lg border bg-card text-card-foreground shadow-sm rounded-xl border border-border p-4 text-sm text-foreground whitespace-pre-wrap">
           {output}
         </div>
       )}
@@ -392,19 +392,19 @@ export function Run() {
     <div className="space-y-8" data-testid="page-run">
       <div className="flex items-start justify-between">
         <div>
-          <h2 className="text-2xl font-semibold text-slate-900">{t("run")}</h2>
-          <p className="mt-1 text-sm text-slate-500">
+          <h2 className="text-2xl font-semibold text-foreground">{t("run")}</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
             {t("runPageDescription")}
           </p>
         </div>
-        <label className="inline-flex cursor-pointer items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-50">
+        <label className="inline-flex cursor-pointer items-center gap-3 rounded-2xl border border-border bg-white px-4 py-2.5 text-sm font-medium text-foreground shadow-sm transition-colors hover:bg-muted">
           <span>{t("debug")}</span>
           <button
             type="button"
             role="switch"
             aria-checked={debugEnabled}
             onClick={() => setDebugEnabled(!debugEnabled)}
-            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${debugEnabled ? "bg-blue-600" : "bg-slate-200"}`}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${debugEnabled ? "bg-primary" : "bg-muted"}`}
           >
             <span
               className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-sm transition-transform ${debugEnabled ? "translate-x-5" : "translate-x-1"}`}
@@ -414,40 +414,40 @@ export function Run() {
       </div>
 
       {debugEnabled && (
-        <div className="glass-panel rounded-[24px] border border-slate-200 p-5">
-          <div className="text-sm font-semibold text-slate-900">
+        <div className="rounded-lg border bg-card text-card-foreground shadow-sm rounded-lg border border-border p-5">
+          <div className="text-sm font-semibold text-foreground">
             {t("debugInfo")}
           </div>
-          <div className="mt-3 grid grid-cols-2 gap-4 text-sm text-slate-600">
-            <div className="rounded-xl bg-slate-50 px-4 py-3">
-              <div className="text-xs font-medium uppercase tracking-wide text-slate-400">
+          <div className="mt-3 grid grid-cols-2 gap-4 text-sm text-muted-foreground">
+            <div className="rounded-xl bg-muted px-4 py-3">
+              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                 {t("teamsCount")}
               </div>
-              <div className="mt-1 text-xl font-semibold text-slate-900">
+              <div className="mt-1 text-xl font-semibold text-foreground">
                 {teams.length}
               </div>
             </div>
-            <div className="rounded-xl bg-slate-50 px-4 py-3">
-              <div className="text-xs font-medium uppercase tracking-wide text-slate-400">
+            <div className="rounded-xl bg-muted px-4 py-3">
+              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                 {t("agentsCount")}
               </div>
-              <div className="mt-1 text-xl font-semibold text-slate-900">
+              <div className="mt-1 text-xl font-semibold text-foreground">
                 {agents.length}
               </div>
             </div>
-            <div className="rounded-xl bg-slate-50 px-4 py-3">
-              <div className="text-xs font-medium uppercase tracking-wide text-slate-400">
+            <div className="rounded-xl bg-muted px-4 py-3">
+              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                 {t("builtinAgentsCount")}
               </div>
               <div className="mt-1 text-xl font-semibold text-emerald-600">
                 {builtinAgents.length}
               </div>
             </div>
-            <div className="rounded-xl bg-slate-50 px-4 py-3">
-              <div className="text-xs font-medium uppercase tracking-wide text-slate-400">
+            <div className="rounded-xl bg-muted px-4 py-3">
+              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                 {t("customAgentsCount")}
               </div>
-              <div className="mt-1 text-xl font-semibold text-sky-600">
+              <div className="mt-1 text-xl font-semibold text-foreground">
                 {customAgents.length}
               </div>
             </div>
@@ -455,17 +455,17 @@ export function Run() {
         </div>
       )}
 
-      <section className="glass-panel rounded-[24px] border border-emerald-100/50 p-6">
+      <section className="rounded-lg border bg-card text-card-foreground shadow-sm rounded-lg border border-emerald-100/50 p-6">
         <div className="mb-4 flex items-center gap-3">
           <span className="rounded-xl bg-gradient-to-br from-emerald-400 to-emerald-500 px-3 py-1.5 text-xs font-semibold text-white shadow-md shadow-emerald-500/20">
             {t("teams")}
           </span>
-          <h3 className="text-lg font-semibold text-slate-900">
+          <h3 className="text-lg font-semibold text-foreground">
             {t("runTeam")}
           </h3>
         </div>
         {teams.length === 0 ? (
-          <p className="rounded-xl bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+          <p className="rounded-xl bg-muted px-4 py-8 text-center text-sm text-muted-foreground">
             {t("noTeamsRegistered")}
           </p>
         ) : (
@@ -473,17 +473,17 @@ export function Run() {
         )}
       </section>
 
-      <section className="glass-panel rounded-[24px] border border-sky-100/50 p-6">
+      <section className="rounded-lg border bg-card text-card-foreground shadow-sm rounded-lg border border-border/50 p-6">
         <div className="mb-4 flex items-center gap-3">
-          <span className="rounded-xl bg-gradient-to-br from-sky-400 to-sky-500 px-3 py-1.5 text-xs font-semibold text-white shadow-md shadow-sky-500/20">
+          <span className="rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground shadow">
             {t("agent")}
           </span>
-          <h3 className="text-lg font-semibold text-slate-900">
+          <h3 className="text-lg font-semibold text-foreground">
             {t("runAgent")}
           </h3>
         </div>
         {allAgents.length === 0 ? (
-          <p className="rounded-xl bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+          <p className="rounded-xl bg-muted px-4 py-8 text-center text-sm text-muted-foreground">
             {t("noAgentsRegistered")}
           </p>
         ) : (
