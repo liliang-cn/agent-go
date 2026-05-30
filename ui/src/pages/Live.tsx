@@ -4,6 +4,7 @@ import { streamAgent, type StopReason, type StreamEvent } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
+import { Markdown } from "@/components/Markdown";
 
 // Timeline entry — a normalized view of one streamed event.
 type TimelineEntry = {
@@ -50,7 +51,7 @@ function StopReasonBadge({ reason }: { reason?: StopReason }) {
       className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${cls}`}
       data-testid="stop-reason-badge"
     >
-      {reason ? reason.replace(/_/g, " ") : "pending"}
+      {reason ? reason.replace(/_/g, " ") : "等待中"}
     </span>
   );
 }
@@ -325,11 +326,10 @@ export function Live() {
     <div className="flex flex-col gap-4">
       <header className="flex flex-col gap-1">
         <h2 className="text-2xl font-semibold tracking-tight text-foreground">
-          Live Run
+          实时运行
         </h2>
         <p className="text-sm text-muted-foreground">
-          Stream a task through the agent runtime and watch events,
-          tool calls, cost, and stop reason in real time.
+          把任务交给智能体运行时流式执行,实时观察事件、工具调用、花费和停止原因。
         </p>
       </header>
 
@@ -338,7 +338,7 @@ export function Live() {
           <Textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Goal — e.g. List the AgentGo workspace and pick three files."
+            placeholder="目标 —— 例如:列出 AgentGo 工作区并挑三个文件。"
             disabled={running}
             className="min-h-[80px] resize-y"
             data-testid="live-input"
@@ -351,12 +351,12 @@ export function Live() {
                 onChange={(e) => setDebug(e.target.checked)}
                 disabled={running}
               />
-              Debug
+              调试
             </label>
             <div className="flex gap-2">
               {running ? (
                 <Button variant="outline" onClick={handleCancel} data-testid="live-cancel">
-                  Cancel
+                  取消
                 </Button>
               ) : (
                 <Button
@@ -365,7 +365,7 @@ export function Live() {
                   className="px-6"
                   data-testid="live-start"
                 >
-                  Start
+                  开始
                 </Button>
               )}
             </div>
@@ -381,13 +381,13 @@ export function Live() {
 
       {viewingId !== null && (
         <div className="flex items-center justify-between rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-2 text-sm text-amber-800">
-          <span>Viewing a past run (read-only).</span>
+          <span>正在查看历史运行(只读)。</span>
           <button
             type="button"
             onClick={startNew}
             className="rounded-lg border border-amber-300 bg-card px-3 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50"
           >
-            New run
+            新运行
           </button>
         </div>
       )}
@@ -399,11 +399,11 @@ export function Live() {
           data-testid="live-history"
         >
           <div className="px-1 pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            History
+            历史
           </div>
           {history.length === 0 && (
             <p className="px-1 text-xs text-muted-foreground">
-              Finished runs show up here.
+              已完成的运行会显示在这里。
             </p>
           )}
           {history.map((run) => (
@@ -435,12 +435,12 @@ export function Live() {
         >
           {timeline.length === 0 && !running && (
             <div className="rounded-xl border border-dashed border-border bg-card p-6 text-center text-sm text-muted-foreground">
-              No events yet — enter a goal and press Start.
+              暂无事件 —— 输入目标后点「开始」。
             </div>
           )}
           {timeline.length === 0 && running && (
             <div className="rounded-xl border border-border bg-muted p-4 text-sm text-muted-foreground">
-              Waiting for the runtime…
+              等待运行时…
             </div>
           )}
           {timeline.map((e) => (
@@ -476,9 +476,9 @@ export function Live() {
                 ) : null}
               </div>
               {e.text && (
-                <pre className="mt-1 whitespace-pre-wrap break-words font-sans text-foreground">
-                  {e.text}
-                </pre>
+                <div className="mt-1">
+                  <Markdown>{e.text}</Markdown>
+                </div>
               )}
               {e.toolArgs && Object.keys(e.toolArgs).length > 0 && (
                 <pre className="mt-1 overflow-x-auto rounded-md bg-background/70 p-2 font-mono text-xs text-muted-foreground">
@@ -503,36 +503,36 @@ export function Live() {
         <aside className="flex flex-col gap-3">
           <div className="rounded-[10px] border border-border bg-card p-4 shadow-sm">
             <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-              Run Summary
+              运行摘要
             </h3>
             <dl className="mt-3 space-y-3 text-sm">
               <div className="flex items-center justify-between">
-                <dt className="text-muted-foreground">stop_reason</dt>
+                <dt className="text-muted-foreground">停止原因</dt>
                 <dd>
                   <StopReasonBadge reason={summary.stopReason} />
                 </dd>
               </div>
               <div className="flex items-center justify-between">
-                <dt className="text-muted-foreground">est. cost</dt>
+                <dt className="text-muted-foreground">预估花费</dt>
                 <dd className="font-mono text-foreground">
                   ${summary.estimatedCostUSD.toFixed(6)}
                 </dd>
               </div>
               <div className="flex items-center justify-between">
-                <dt className="text-muted-foreground">tokens (turn)</dt>
+                <dt className="text-muted-foreground">tokens(本轮)</dt>
                 <dd className="font-mono text-foreground">
                   {summary.totalTokens.toLocaleString()}
                 </dd>
               </div>
               <div className="flex items-center justify-between">
-                <dt className="text-muted-foreground">tool calls</dt>
+                <dt className="text-muted-foreground">工具调用</dt>
                 <dd className="font-mono text-foreground">
                   {summary.toolCalls}
                 </dd>
               </div>
               {summary.toolsUsed.length > 0 && (
                 <div>
-                  <dt className="text-muted-foreground">tools used</dt>
+                  <dt className="text-muted-foreground">用到的工具</dt>
                   <dd className="mt-1 flex flex-wrap gap-1">
                     {summary.toolsUsed.map((t) => (
                       <span
@@ -551,31 +551,31 @@ export function Live() {
           {summary.finalContent && (
             <div className="rounded-[10px] border border-border bg-card p-4 shadow-sm">
               <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-                Final answer
+                最终答案
               </h3>
               {parsedFinalJson ? (
                 <pre className="mt-2 max-h-72 overflow-auto rounded-lg bg-muted p-3 font-mono text-xs text-foreground">
                   {JSON.stringify(parsedFinalJson, null, 2)}
                 </pre>
               ) : (
-                <p className="mt-2 whitespace-pre-wrap text-sm text-foreground">
-                  {summary.finalContent}
-                </p>
+                <div className="mt-2">
+                  <Markdown>{summary.finalContent}</Markdown>
+                </div>
               )}
             </div>
           )}
 
           <div className="rounded-[10px] border border-border bg-card p-4 text-xs text-muted-foreground shadow-sm">
             <p>
-              Tip: this view streams from{" "}
+              提示:本视图流式来自{" "}
               <code className="rounded bg-muted px-1 py-0.5">
                 /api/agent/stream
               </code>
-              . Inspect saved runs at{" "}
+              。已保存的运行可在{" "}
               <Link to="/tasks" className="text-foreground underline">
                 /tasks
               </Link>
-              .
+              {" "}查看。
             </p>
           </div>
         </aside>

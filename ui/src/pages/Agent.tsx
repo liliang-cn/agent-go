@@ -1,4 +1,5 @@
 import { ChangeEvent, FormEvent, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
   useCreateAgent,
@@ -19,6 +20,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { Markdown } from "@/components/Markdown";
 
 const selectClass =
   "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
@@ -52,19 +54,20 @@ function AgentCard({
   isExecuting,
 }: {
   agent: AgentModel;
-  onExecute: (instruction: string) => void;
+  onExecute: (instruction: string) => Promise<{ response: string; durationMs: number } | undefined>;
   isExecuting: boolean;
 }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const [instruction, setInstruction] = useState("");
+  const [result, setResult] = useState<{ response: string; durationMs: number } | null>(null);
 
-  const handleExecute = (e: FormEvent) => {
+  const handleExecute = async (e: FormEvent) => {
     e.preventDefault();
-    if (instruction.trim()) {
-      onExecute(instruction.trim());
-      setInstruction("");
-    }
+    if (!instruction.trim()) return;
+    const res = await onExecute(instruction.trim());
+    setInstruction("");
+    if (res) setResult(res);
   };
 
   return (
@@ -113,6 +116,23 @@ function AgentCard({
               {isExecuting ? t("running") : t("run")}
             </Button>
           </form>
+
+          {result && (
+            <div
+              className="mt-4 rounded-lg border border-border bg-muted/40 p-3"
+              data-testid={`agent-result-${agent.name}`}
+            >
+              <div className="mb-1 flex items-center justify-between">
+                <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  回答
+                </span>
+                <span className="font-mono text-[11px] text-muted-foreground">
+                  {(result.durationMs / 1000).toFixed(1)}s
+                </span>
+              </div>
+              <Markdown>{result.response}</Markdown>
+            </div>
+          )}
         </div>
       )}
     </Card>
@@ -125,19 +145,20 @@ function TeamCard({
   isExecuting,
 }: {
   team: Team;
-  onExecute: (message: string) => void;
+  onExecute: (message: string) => Promise<{ taskId: string; ack: string } | undefined>;
   isExecuting: boolean;
 }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const [message, setMessage] = useState("");
+  const [result, setResult] = useState<{ taskId: string; ack: string } | null>(null);
 
-  const handleExecute = (e: FormEvent) => {
+  const handleExecute = async (e: FormEvent) => {
     e.preventDefault();
-    if (message.trim()) {
-      onExecute(message.trim());
-      setMessage("");
-    }
+    if (!message.trim()) return;
+    const res = await onExecute(message.trim());
+    setMessage("");
+    if (res) setResult(res);
   };
 
   return (
@@ -203,6 +224,27 @@ function TeamCard({
               {isExecuting ? t("running") : t("run")}
             </Button>
           </form>
+
+          {result && (
+            <div
+              className="mt-4 rounded-lg border border-border bg-muted/40 p-3 text-sm"
+              data-testid={`team-result-${team.id}`}
+            >
+              <p className="text-foreground">{result.ack || "任务已派发。"}</p>
+              {result.taskId && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  团队任务为异步执行,结果请到{" "}
+                  <Link
+                    to={`/tasks/${result.taskId}`}
+                    className="text-foreground underline"
+                  >
+                    任务 {result.taskId.slice(0, 8)}
+                  </Link>{" "}
+                  查看。
+                </p>
+              )}
+            </div>
+          )}
         </div>
       )}
     </Card>
@@ -317,9 +359,11 @@ export function Agent() {
   const handleAgentExecute = async (agentName: string, instruction: string) => {
     setDispatchError(null);
     try {
-      await dispatchAgent.mutateAsync({ name: agentName, instruction });
+      const res = await dispatchAgent.mutateAsync({ name: agentName, instruction });
+      return { response: res.response, durationMs: res.duration_ms };
     } catch (err) {
       setDispatchError(err instanceof Error ? err.message : "Execution failed");
+      return undefined;
     }
   };
 
@@ -327,9 +371,11 @@ export function Agent() {
     setExecutingTeam(teamId);
     setDispatchError(null);
     try {
-      await dispatchTeam.mutateAsync({ teamId, message });
+      const res = await dispatchTeam.mutateAsync({ teamId, message });
+      return { taskId: res.task_id, ack: res.ack_message };
     } catch (err) {
       setDispatchError(err instanceof Error ? err.message : "Execution failed");
+      return undefined;
     } finally {
       setExecutingTeam(null);
     }

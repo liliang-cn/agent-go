@@ -98,7 +98,7 @@ export function Settings() {
           </section>
 
           <div className="flex items-center gap-4">
-            <button type="submit" disabled={updateConfigMutation.isPending} className="inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors bg-primary text-primary-foreground shadow hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50">
+            <button type="submit" disabled={updateConfigMutation.isPending} className="inline-flex h-9 items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors bg-primary text-primary-foreground shadow hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50">
               {updateConfigMutation.isPending ? t('loading') : t('saveSettings')}
             </button>
             {saved && <span className="text-emerald-600">{t('settingsSaved')}</span>}
@@ -150,14 +150,14 @@ export function Settings() {
               <button
                 type="button"
                 onClick={() => i18n.changeLanguage('zh')}
-                className={i18n.language === 'zh' ? 'inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors bg-primary text-primary-foreground shadow hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50' : 'inline-flex items-center justify-center rounded-md border border-input bg-background text-sm font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50 px-4 py-3 text-sm'}
+                className={i18n.language === 'zh' ? 'inline-flex items-center justify-center gap-2 rounded-md px-4 py-3 text-sm font-medium transition-colors bg-primary text-primary-foreground shadow hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50' : 'inline-flex items-center justify-center rounded-md border border-input bg-background text-sm font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50 px-4 py-3 text-sm'}
               >
                 中文
               </button>
               <button
                 type="button"
                 onClick={() => i18n.changeLanguage('en')}
-                className={i18n.language === 'en' ? 'inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors bg-primary text-primary-foreground shadow hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50' : 'inline-flex items-center justify-center rounded-md border border-input bg-background text-sm font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50 px-4 py-3 text-sm'}
+                className={i18n.language === 'en' ? 'inline-flex items-center justify-center gap-2 rounded-md px-4 py-3 text-sm font-medium transition-colors bg-primary text-primary-foreground shadow hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50' : 'inline-flex items-center justify-center rounded-md border border-input bg-background text-sm font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50 px-4 py-3 text-sm'}
               >
                 English
               </button>
