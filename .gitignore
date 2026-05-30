@@ -31,3 +31,6 @@ tmp/air-agentgo-ui/build-errors.log
 
 # Eval harness output (keep eval/results/.gitkeep, ignore actual runs)
 eval/results/*.json
+
+# TS incremental build cache (regenerated every build)
+*.tsbuildinfo
