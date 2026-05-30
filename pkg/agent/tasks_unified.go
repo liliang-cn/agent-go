@@ -34,11 +34,13 @@ func (m *TeamManager) GetUnifiedTask(taskID string) (*UnifiedTask, error) {
 }
 
 func (m *TeamManager) ListUnifiedTasks(limit int) []*UnifiedTask {
+	// NOTE: the list view (TaskSummary) does not include per-task message
+	// frames — only the detail endpoint (GetUnifiedTask) hydrates them.
+	// So we deliberately skip hydrateUnifiedTask here; hydrating frames for
+	// every task is an N+1 query that made this endpoint hang with a few
+	// hundred tasks (one ListMessagesForTask per task).
 	if m != nil && m.store != nil {
 		if tasks, err := m.store.ListTasks(max(limit, 1000)); err == nil && len(tasks) > 0 {
-			for _, task := range tasks {
-				m.hydrateUnifiedTask(task)
-			}
 			slices.SortFunc(tasks, func(a, b *UnifiedTask) int {
 				return a.CreatedAt.Compare(b.CreatedAt)
 			})
@@ -53,7 +55,6 @@ func (m *TeamManager) ListUnifiedTasks(limit int) []*UnifiedTask {
 	out := make([]*UnifiedTask, 0, len(asyncTasks))
 	for _, task := range asyncTasks {
 		if unified := unifiedTaskFromAsync(task); unified != nil {
-			m.hydrateUnifiedTask(unified)
 			out = append(out, unified)
 		}
 	}
