@@ -27,8 +27,6 @@ var defaultFilesystemIgnoreNames = []string{
 	"build",
 	"bin",
 	"coverage",
-	"tmp",
-	"temp",
 	"out",
 }
 
@@ -40,9 +38,13 @@ func (e FilesystemPathBlockedError) Error() string {
 	return fmt.Sprintf("filesystem path is blocked by blacklist: %s", e.Path)
 }
 
-func (e FilesystemPathBlockedError) BlockedReason() string {
-	return e.Error()
-}
+// NOTE: FilesystemPathBlockedError deliberately does NOT implement
+// BlockedReason(). A blacklisted-path hit is a *recoverable* tool error — the
+// model should get it back as a normal tool result and retry with an allowed
+// path, not have the whole task terminated. (Run-terminating blocks like
+// PermissionDeniedError do implement BlockedReason.) This matters because a
+// workspace under ~/.agentgo would otherwise let any stray access to the
+// blacklisted ".agentgo" parent kill the run.
 
 func DefaultFilesystemIgnoreNames() []string {
 	return append([]string(nil), defaultFilesystemIgnoreNames...)
