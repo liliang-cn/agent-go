@@ -8,10 +8,10 @@ register_lints:
   - dispatcher_no_bounce_back
 input: "do the thing"
 llm_replies:
-  - "I will route it to Operator."
-  - "I will route it to Operator again."
-  - "I will route it to Operator one more time."
-  - "I will route it to Operator forever."
+  - "Routing the task to Operator."
+  - "Routing the task to Operator again."
+  - "Routing the task to Operator one more time."
+  - "Routing the task to Operator forever."
 expect:
   status: blocked
   final_text_match: "dispatcher_no_bounce_back"
