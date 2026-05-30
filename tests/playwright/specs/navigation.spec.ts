@@ -11,7 +11,7 @@ test.describe('Navigation', () => {
   })
 
   test('nav links are present', async ({ page }) => {
-    const navLinks = ['nav-agent', 'nav-run', 'nav-chat', 'nav-skills', 'nav-mcp', 'nav-memory', 'nav-status', 'nav-query', 'nav-documents', 'nav-settings']
+    const navLinks = ['nav-agent', 'nav-live', 'nav-chat', 'nav-skills', 'nav-mcp', 'nav-memory', 'nav-status', 'nav-query', 'nav-documents', 'nav-settings']
     for (const id of navLinks) {
       await expect(page.getByTestId(id)).toBeVisible()
     }

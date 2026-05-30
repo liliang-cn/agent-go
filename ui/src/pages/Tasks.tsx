@@ -193,8 +193,7 @@ export function Tasks() {
               <TableRow>
                 <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">
                   No tasks yet. Kick one off in{" "}
-                  <Link to="/live" className="underline">Live</Link> or{" "}
-                  <Link to="/run" className="underline">Run</Link>.
+                  <Link to="/live" className="underline">Live</Link>.
                 </TableCell>
               </TableRow>
             )}

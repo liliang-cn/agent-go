@@ -3,7 +3,6 @@ import { Routes, Route, NavLink, useLocation, useNavigate } from 'react-router-d
 import { useTranslation } from 'react-i18next'
 import { QueryTest } from './pages/QueryTest'
 import { Documents } from './pages/Documents'
-import { Run } from './pages/Run'
 import { Live } from './pages/Live'
 import { Tasks } from './pages/Tasks'
 import { TaskDetail } from './pages/TaskDetail'
@@ -30,9 +29,6 @@ function Nav() {
     <nav className="flex flex-wrap gap-2" data-testid="app-nav">
       <NavLink to="/" className={linkClass} end data-testid="nav-agent">
         {t('agent')}
-      </NavLink>
-      <NavLink to="/run" className={linkClass} data-testid="nav-run">
-        {t('run')}
       </NavLink>
       <NavLink to="/live" className={linkClass} data-testid="nav-live">
         Live
@@ -130,7 +126,6 @@ function App() {
       <main className="relative z-10 mx-auto max-w-[1440px] px-5 py-8 lg:px-8" data-testid="app-main">
         <Routes>
           <Route path="/" element={<Agent />} />
-          <Route path="/run" element={<Run />} />
           <Route path="/live" element={<Live />} />
           <Route path="/tasks" element={<Tasks />} />
           <Route path="/tasks/:id" element={<TaskDetail />} />
