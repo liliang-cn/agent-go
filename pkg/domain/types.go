@@ -388,7 +388,6 @@ type KeywordStore interface {
 	Reset(ctx context.Context) error
 }
 
-
 type DocumentStore interface {
 	Store(ctx context.Context, doc Document) error
 	Get(ctx context.Context, id string) (Document, error)

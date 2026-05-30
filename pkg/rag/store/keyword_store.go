@@ -31,9 +31,9 @@ func NewBleveStore(path string) (*BleveStore, error) {
 	// If index path doesn't exist, create it with a custom mapping
 	if _, err = os.Stat(path); os.IsNotExist(err) {
 		mapping := bleve.NewIndexMapping()
-		
+
 		docMapping := bleve.NewDocumentMapping()
-		
+
 		// ID mapping: exact match (keyword analyzer)
 		idMapping := bleve.NewTextFieldMapping()
 		idMapping.Store = true
@@ -196,9 +196,9 @@ func (s *BleveStore) Reset(ctx context.Context) error {
 
 	// Recreate mapping
 	mapping := bleve.NewIndexMapping()
-	
+
 	docMapping := bleve.NewDocumentMapping()
-	
+
 	idMapping := bleve.NewTextFieldMapping()
 	idMapping.Store = true
 	idMapping.Index = true

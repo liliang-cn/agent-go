@@ -117,13 +117,13 @@ type WebSearchConfig struct {
 
 // --- 路径推导 (Single Source of Truth) ---
 
-func (c *Config) DataDir() string      { return filepath.Join(c.Home, "data") }
-func (c *Config) ConfigDir() string    { return filepath.Join(c.Home, "config") }
-func (c *Config) SkillsDir() string    { return filepath.Join(c.Home, "skills") }
-func (c *Config) IntentsDir() string   { return filepath.Join(c.Home, "intents") }
-func (c *Config) WorkspaceDir() string { return filepath.Join(c.Home, "workspace") }
-func (c *Config) AgentDBPath() string  { return filepath.Join(c.DataDir(), "agentgo.db") }
-func (c *Config) CortexDBPath() string { return filepath.Join(c.DataDir(), "cortex.db") }
+func (c *Config) DataDir() string        { return filepath.Join(c.Home, "data") }
+func (c *Config) ConfigDir() string      { return filepath.Join(c.Home, "config") }
+func (c *Config) SkillsDir() string      { return filepath.Join(c.Home, "skills") }
+func (c *Config) IntentsDir() string     { return filepath.Join(c.Home, "intents") }
+func (c *Config) WorkspaceDir() string   { return filepath.Join(c.Home, "workspace") }
+func (c *Config) AgentDBPath() string    { return filepath.Join(c.DataDir(), "agentgo.db") }
+func (c *Config) CortexDBPath() string   { return filepath.Join(c.DataDir(), "cortex.db") }
 func (c *Config) BleveIndexPath() string { return filepath.Join(c.DataDir(), "bleve.idx") }
 
 const defaultAgentLLMTurnTimeoutSeconds = 180

@@ -19,9 +19,9 @@ import (
 // The Handler receives a derived context that cancels when the runner
 // stops. Long-running handlers should respect ctx.Done.
 type Job struct {
-	Name    string                            // human-readable, surfaced in logs
-	Spec    string                            // standard cron expression (5 fields: "min hr dom mon dow"); use DailyAt / WeeklyAt etc. for ergonomic helpers
-	Handler func(ctx context.Context) error   // function to invoke when the schedule fires
+	Name    string                          // human-readable, surfaced in logs
+	Spec    string                          // standard cron expression (5 fields: "min hr dom mon dow"); use DailyAt / WeeklyAt etc. for ergonomic helpers
+	Handler func(ctx context.Context) error // function to invoke when the schedule fires
 	// OnError, if non-nil, receives the error returned by Handler.
 	// Default behavior (nil) logs the error via the standard logger.
 	OnError func(name string, err error)
@@ -174,11 +174,11 @@ func (r *JobRunner) Entries() []JobEntry {
 	for _, reg := range r.jobs {
 		e := r.cron.Entry(reg.id)
 		out = append(out, JobEntry{
-			Name:    reg.job.Name,
-			Spec:    reg.job.Spec,
-			Next:    e.Next,
-			Prev:    e.Prev,
-			Valid:   e.Valid(),
+			Name:  reg.job.Name,
+			Spec:  reg.job.Spec,
+			Next:  e.Next,
+			Prev:  e.Prev,
+			Valid: e.Valid(),
 		})
 	}
 	return out

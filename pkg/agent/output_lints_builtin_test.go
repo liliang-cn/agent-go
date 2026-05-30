@@ -229,8 +229,8 @@ func TestFileTaskMustWrite(t *testing.T) {
 	}{
 		// Artifact verification: explicit path in the goal → the file must exist.
 		{"path_missing_even_with_write", "生成 HTML 保存到 " + missing, write, true},   // write "called" but truncated → no file → reject
-		{"path_empty_file", "Save the deck to " + emptyFile, write, true},          // exists but empty → reject
-		{"path_exists_nonempty", "Save the deck to " + existing, readonly, false},  // file is really there → pass
+		{"path_empty_file", "Save the deck to " + emptyFile, write, true},         // exists but empty → reject
+		{"path_exists_nonempty", "Save the deck to " + existing, readonly, false}, // file is really there → pass
 		// No explicit path → fall back to "was a write tool used?".
 		{"zh_ppt_no_write", "dell的股价，写一个ppt", readonly, true},
 		{"en_create_html_no_write", "Create an HTML slide deck about Dell stock.", readonly, true},

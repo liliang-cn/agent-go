@@ -24,10 +24,10 @@ type OutputLint interface {
 // best-effort: a lint should treat zero values as "unknown" rather than
 // asserting on them.
 type LintContext struct {
-	AgentName  string
-	TaskID     string
-	SessionID  string
-	TurnIndex  int
+	AgentName string
+	TaskID    string
+	SessionID string
+	TurnIndex int
 	// Goal is the task input for the run, so goal-aware lints can check the
 	// final answer against what was actually asked.
 	Goal string
