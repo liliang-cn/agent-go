@@ -124,6 +124,7 @@ func (c *Config) IntentsDir() string   { return filepath.Join(c.Home, "intents")
 func (c *Config) WorkspaceDir() string { return filepath.Join(c.Home, "workspace") }
 func (c *Config) AgentDBPath() string  { return filepath.Join(c.DataDir(), "agentgo.db") }
 func (c *Config) CortexDBPath() string { return filepath.Join(c.DataDir(), "cortex.db") }
+func (c *Config) BleveIndexPath() string { return filepath.Join(c.DataDir(), "bleve.idx") }
 
 const defaultAgentLLMTurnTimeoutSeconds = 180
 

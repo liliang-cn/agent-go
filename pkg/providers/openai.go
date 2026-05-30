@@ -768,6 +768,17 @@ func (p *OpenAILLMProvider) StreamWithTools(ctx context.Context, messages []doma
 	return err
 }
 
+// streamingToolCall accumulates tool-call fragments across streaming chunks.
+// OpenAI (and DeepSeek) split a single function call into multiple deltas:
+// the first carries id+name, subsequent ones append arguments-string
+// fragments. Without per-call accumulation by Index, downstream sees only
+// the last chunk and dispatches an empty tool name.
+type streamingToolCall struct {
+	ID      string
+	Name    string
+	ArgsRaw strings.Builder
+}
+
 func (p *OpenAILLMProvider) streamWithToolsOnce(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions, callback domain.ToolCallCallback) error {
 	params, err := buildOpenAIChatCompletionParams(messages, tools, opts, p.config.LLMModel)
 	if err != nil {
@@ -775,6 +786,11 @@ func (p *OpenAILLMProvider) streamWithToolsOnce(ctx context.Context, messages []
 	}
 
 	stream := p.client.Chat.Completions.NewStreaming(ctx, params, extraRequestOptions(opts)...)
+
+	// Per-call accumulator indexed by the OpenAI delta's Index field. Survives
+	// across chunks so we can stitch fragmented function names + argument
+	// strings into one complete ToolCall before parsing.
+	accum := []*streamingToolCall{}
 
 	for stream.Next() {
 		chunk := stream.Current()
@@ -794,20 +810,45 @@ func (p *OpenAILLMProvider) streamWithToolsOnce(ctx context.Context, messages []
 		}
 
 		if len(choice.Delta.ToolCalls) > 0 {
-			delta.ToolCalls = make([]domain.ToolCall, len(choice.Delta.ToolCalls))
-			for i, tc := range choice.Delta.ToolCalls {
+			// Merge this chunk's fragments into the per-index accumulator.
+			for _, tc := range choice.Delta.ToolCalls {
+				idx := int(tc.Index)
+				for len(accum) <= idx {
+					accum = append(accum, &streamingToolCall{})
+				}
+				a := accum[idx]
+				if tc.ID != "" {
+					a.ID = tc.ID
+				}
+				if tc.Function.Name != "" {
+					a.Name = tc.Function.Name
+				}
+				if tc.Function.Arguments != "" {
+					a.ArgsRaw.WriteString(tc.Function.Arguments)
+				}
+			}
+			// Emit the FULL current snapshot so downstream consumers that
+			// overwrite (rather than merge) still end up with the right
+			// final state on the last chunk.
+			delta.ToolCalls = make([]domain.ToolCall, 0, len(accum))
+			for _, a := range accum {
+				if a.Name == "" && a.ID == "" {
+					continue
+				}
 				var args map[string]interface{}
-				// In streaming, arguments arrive in fragments
-				_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
-
-				delta.ToolCalls[i] = domain.ToolCall{
-					ID:   tc.ID,
+				if raw := a.ArgsRaw.String(); raw != "" {
+					// Best-effort parse; partial JSON during early chunks will
+					// just leave args nil for now and parse cleanly later.
+					_ = json.Unmarshal([]byte(raw), &args)
+				}
+				delta.ToolCalls = append(delta.ToolCalls, domain.ToolCall{
+					ID:   a.ID,
 					Type: "function",
 					Function: domain.FunctionCall{
-						Name:      tc.Function.Name,
+						Name:      a.Name,
 						Arguments: args,
 					},
-				}
+				})
 			}
 		}
 

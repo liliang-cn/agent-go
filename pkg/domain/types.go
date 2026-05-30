@@ -381,6 +381,14 @@ type VectorStore interface {
 	GetChatStore() ChatStore
 }
 
+type KeywordStore interface {
+	Store(ctx context.Context, chunks []Chunk) error
+	Search(ctx context.Context, query string, topK int) ([]Chunk, error)
+	Delete(ctx context.Context, documentID string) error
+	Reset(ctx context.Context) error
+}
+
+
 type DocumentStore interface {
 	Store(ctx context.Context, doc Document) error
 	Get(ctx context.Context, id string) (Document, error)

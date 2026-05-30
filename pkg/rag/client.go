@@ -71,6 +71,13 @@ func NewClient(cfg *config.Config, embedder domain.Embedder, llm domain.Generato
 		memoryService,
 	)
 
+	// Initialize Bleve keyword store
+	if cfg != nil {
+		if bleveStore, err := store.NewBleveStore(cfg.BleveIndexPath()); err == nil {
+			proc.SetKeywordStore(bleveStore)
+		}
+	}
+
 	// Initialize MCP service
 	// MCP service configuration
 	mcpConfig := &mcp.Config{

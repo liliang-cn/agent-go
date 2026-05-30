@@ -24,6 +24,7 @@ type Service struct {
 	generator     domain.Generator
 	chunker       domain.Chunker
 	vectorStore   domain.VectorStore
+	keywordStore  domain.KeywordStore
 	documentStore domain.DocumentStore
 	config        *config.Config
 	llmService    domain.MetadataExtractor
@@ -85,6 +86,10 @@ func (s *Service) SetPromptManager(m *prompt.Manager) {
 	if s.extractor != nil {
 		s.extractor.SetPromptManager(m)
 	}
+}
+
+func (s *Service) SetKeywordStore(k domain.KeywordStore) {
+	s.keywordStore = k
 }
 
 // initializeTools sets up the tool system
@@ -183,6 +188,12 @@ func (s *Service) Ingest(ctx context.Context, req domain.IngestRequest) (domain.
 
 	if err := s.vectorStore.Store(ctx, chunks); err != nil {
 		return domain.IngestResponse{}, fmt.Errorf("failed to store vectors: %w", err)
+	}
+
+	if s.keywordStore != nil {
+		if err := s.keywordStore.Store(ctx, chunks); err != nil {
+			return domain.IngestResponse{}, fmt.Errorf("failed to store keywords: %w", err)
+		}
 	}
 
 	// GraphRAG Extraction using new graphRAG service
@@ -509,29 +520,57 @@ func (s *Service) hybridSearch(ctx context.Context, req domain.QueryRequest) ([]
 		req.TopK = 5
 	}
 
-	// Simple vector search only
 	queryVector, err := s.embedder.Embed(ctx, req.Query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate query embedding: %w", err)
 	}
 
-	// 1. Standard or Advanced Vector Search (Chunks)
+	var vectorChunks []domain.Chunk
+	var keywordChunks []domain.Chunk
+	var vecErr, kwErr error
+	var wg sync.WaitGroup
+
+	// 1. Run Vector Search and Keyword Search in parallel
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if req.RerankStrategy != "" {
+			vectorChunks, vecErr = s.vectorStore.SearchWithReranker(ctx, queryVector, req.Query, req.TopK, req.RerankStrategy, req.RerankBoost)
+		} else if req.DiversityLambda > 0 {
+			vectorChunks, vecErr = s.vectorStore.SearchWithDiversity(ctx, queryVector, req.TopK, req.DiversityLambda)
+		} else if len(req.Filters) > 0 {
+			vectorChunks, vecErr = s.vectorStore.SearchWithFilters(ctx, queryVector, req.TopK, req.Filters)
+		} else {
+			vectorChunks, vecErr = s.vectorStore.Search(ctx, queryVector, req.TopK)
+		}
+	}()
+
+	if s.keywordStore != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			keywordChunks, kwErr = s.keywordStore.Search(ctx, req.Query, req.TopK)
+		}()
+	}
+
+	wg.Wait()
+
+	if vecErr != nil {
+		return nil, fmt.Errorf("failed to search vectors: %w", vecErr)
+	}
+	if kwErr != nil {
+		log.Printf("Keyword store search failed: %v", kwErr)
+	}
+
+	// 2. Combine results using Reciprocal Rank Fusion (RRF)
 	var chunks []domain.Chunk
-	if req.RerankStrategy != "" {
-		chunks, err = s.vectorStore.SearchWithReranker(ctx, queryVector, req.Query, req.TopK, req.RerankStrategy, req.RerankBoost)
-	} else if req.DiversityLambda > 0 {
-		chunks, err = s.vectorStore.SearchWithDiversity(ctx, queryVector, req.TopK, req.DiversityLambda)
-	} else if len(req.Filters) > 0 {
-		chunks, err = s.vectorStore.SearchWithFilters(ctx, queryVector, req.TopK, req.Filters)
+	if s.keywordStore != nil {
+		chunks = ReciprocalRankFusion(vectorChunks, keywordChunks, req.TopK)
 	} else {
-		chunks, err = s.vectorStore.Search(ctx, queryVector, req.TopK)
+		chunks = vectorChunks
 	}
 
-	if err != nil {
-		return nil, fmt.Errorf("failed to search vectors: %w", err)
-	}
-
-	// 2. Graph Search (Entities) - Enrich with Knowledge Graph
+	// 3. Graph Search (Entities) - Enrich with Knowledge Graph
 	// Only run if GRAPHRAG_ENABLED is set (disabled by default - too slow)
 	if s.graphStore != nil && os.Getenv("GRAPHRAG_ENABLED") == "true" {
 		var startNodeID string
@@ -593,6 +632,12 @@ func (s *Service) DeleteDocument(ctx context.Context, documentID string) error {
 		return fmt.Errorf("failed to delete from vector store: %w", err)
 	}
 
+	if s.keywordStore != nil {
+		if err := s.keywordStore.Delete(ctx, documentID); err != nil {
+			return fmt.Errorf("failed to delete from keyword store: %w", err)
+		}
+	}
+
 	if err := s.documentStore.Delete(ctx, documentID); err != nil {
 		return fmt.Errorf("failed to delete from document store: %w", err)
 	}
@@ -604,6 +649,13 @@ func (s *Service) Reset(ctx context.Context) error {
 	// Reset vector store (Qdrant)
 	if err := s.vectorStore.Reset(ctx); err != nil {
 		return fmt.Errorf("failed to reset vector store: %w", err)
+	}
+
+	// Reset keyword store
+	if s.keywordStore != nil {
+		if err := s.keywordStore.Reset(ctx); err != nil {
+			return fmt.Errorf("failed to reset keyword store: %w", err)
+		}
 	}
 
 	// Reset document store (SQLite) if it has a Reset method
