@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -173,22 +175,65 @@ func TestRegisterDefaultOutputLintsWiresAllThree(t *testing.T) {
 	}
 }
 
+func TestExtractGoalFilePaths(t *testing.T) {
+	cases := []struct {
+		name string
+		goal string
+		want []string
+	}{
+		{"absolute", "保存到 /Users/me/.agentgo/workspace/dell.html 完成", []string{"/Users/me/.agentgo/workspace/dell.html"}},
+		{"home", "save it to ~/out/report.pdf please", []string{"~/out/report.pdf"}},
+		{"cjk_no_space", "保存到/tmp/a.html", []string{"/tmp/a.html"}},
+		{"url_excluded", "summarize https://example.com/report.html and write a doc", nil},
+		{"source_path_excluded", "explain pkg/agent/runtime.go for me", nil},
+		{"relative_excluded", "write to ./out/x.html", nil},
+		{"none", "just write a ppt about dell", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := extractGoalFilePaths(tc.goal)
+			if len(got) != len(tc.want) {
+				t.Fatalf("goal %q → %v, want %v", tc.goal, got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("goal %q → %v, want %v", tc.goal, got, tc.want)
+				}
+			}
+		})
+	}
+}
+
 func TestFileTaskMustWrite(t *testing.T) {
 	lint := FileTaskMustWrite()
 	write := []string{"mcp_websearch_search", "mcp_filesystem_write_file"}
 	readonly := []string{"mcp_filesystem_list_directory", "mcp_filesystem_read_file"}
+
+	// Real files on disk for the artifact-verification (result, not attempt) cases.
+	dir := t.TempDir()
+	existing := filepath.Join(dir, "deck.html")
+	if err := os.WriteFile(existing, []byte("<html>ok</html>"), 0o644); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
+	emptyFile := filepath.Join(dir, "empty.html")
+	if err := os.WriteFile(emptyFile, nil, 0o644); err != nil {
+		t.Fatalf("seed empty: %v", err)
+	}
+	missing := filepath.Join(dir, "missing.html")
+
 	cases := []struct {
 		name    string
 		goal    string
 		tools   []string
 		wantErr bool
 	}{
-		// Failures: goal wants a file, but no write tool was called.
+		// Artifact verification: explicit path in the goal → the file must exist.
+		{"path_missing_even_with_write", "生成 HTML 保存到 " + missing, write, true},   // write "called" but truncated → no file → reject
+		{"path_empty_file", "Save the deck to " + emptyFile, write, true},          // exists but empty → reject
+		{"path_exists_nonempty", "Save the deck to " + existing, readonly, false},  // file is really there → pass
+		// No explicit path → fall back to "was a write tool used?".
 		{"zh_ppt_no_write", "dell的股价，写一个ppt", readonly, true},
-		{"zh_save_path_no_write", "把幻灯片保存到 ~/.agentgo/workspace/dell.html", nil, true},
 		{"en_create_html_no_write", "Create an HTML slide deck about Dell stock.", readonly, true},
-		{"en_save_to_path_no_write", "Save the report to ~/out/report.pdf", nil, true},
-		// Passes: a write tool was actually called.
 		{"zh_ppt_with_write", "dell的股价，写一个ppt", write, false},
 		{"en_create_with_write", "Create an HTML slide deck about Dell stock.", write, false},
 		// Passes: not a file-output task.

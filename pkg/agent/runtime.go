@@ -159,6 +159,41 @@ func (r *Runtime) lintGate(goal, content string, messages *[]domain.Message, sta
 	return true
 }
 
+// forceFinalSynthesis runs one model call with tools DISABLED to force a text
+// conclusion when the round budget is exhausted. Without it, a model that
+// keeps requesting tools right up to the ceiling leaves the loop with no final
+// answer at all (the stream just ends). Mirrors harness's force_final_synthesis.
+// Returns "" if the model is unavailable or errors.
+func (r *Runtime) forceFinalSynthesis(ctx context.Context, state *queryLoopState, messages []domain.Message) string {
+	if r == nil || r.svc == nil || r.svc.llmService == nil {
+		return ""
+	}
+	synth := make([]domain.Message, 0, len(messages)+1)
+	synth = append(synth, messages...)
+	synth = append(synth, domain.Message{
+		Role: "user",
+		Content: "[system: iteration budget exhausted] Stop calling tools. Based on the work " +
+			"above, give your best final answer to the original task now. If the goal was not " +
+			"fully achieved, state clearly what was completed and what still remains.",
+	})
+	// tools=nil + no tool_choice → the provider must return plain text.
+	res, err := r.svc.llmService.GenerateWithTools(ctx, synth, nil, r.svc.toolGenerationOptions(0.3, 2000, ""))
+	if err != nil || res == nil {
+		return ""
+	}
+	// Accrue this out-of-loop call's tokens/cost so budget reporting isn't
+	// undercounted by the synthesis pass.
+	if state != nil {
+		tc := usage.NewTokenCounter()
+		model := r.svc.Info().Model
+		inputTokens := tc.EstimateConversationTokens(toUsageMessages(synth), model)
+		outputTokens := tc.EstimateTokens(res.Content, model)
+		state.noteTokens(inputTokens + outputTokens)
+		state.noteCost(inputTokens, outputTokens, usage.CalculateCost(model, inputTokens, outputTokens))
+	}
+	return strings.TrimSpace(res.Content)
+}
+
 // RunStream starts the event loop and returns a read-only channel of events
 func (r *Runtime) RunStream(ctx context.Context, goal string) <-chan *Event {
 	go r.loop(ctx, goal)
@@ -632,6 +667,29 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			})
 		}
 	}
+
+	// Round budget exhausted without reaching a terminal. If the run was
+	// cancelled, don't fabricate a completion — just stop.
+	if ctx.Err() != nil {
+		r.emit(EventTypeError, "Execution cancelled")
+		return
+	}
+	// Force a final synthesis pass with tools DISABLED so the caller gets a
+	// real answer instead of a silent, empty stream (a model that spins on
+	// tool calls up to the ceiling otherwise concludes nothing). Mirrors
+	// harness's force_final_synthesis.
+	final := r.forceFinalSynthesis(ctx, state, messages)
+	if final == "" {
+		final = "I reached the iteration limit before fully completing the task."
+	}
+	// Goal-check the forced answer. The budget is spent so we can't re-prompt;
+	// if the goal still isn't met (e.g. a file task with no artifact on disk)
+	// block honestly rather than report a fake success.
+	if v := r.runFinalLints(final, maxRounds); v != nil {
+		r.blockRunWithStop(goal, "iteration budget exhausted; "+v.Reason, messages, true, StopReasonMaxTurns)
+		return
+	}
+	r.completeRunWithStop(goal, final, messages, true, StopReasonMaxTurns)
 }
 
 // shouldAutoCompact returns true when the runtime should try to summarize

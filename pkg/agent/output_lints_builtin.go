@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -239,9 +241,67 @@ func usedFilesystemWriteTool(toolCalls []string) bool {
 	return false
 }
 
+// goalFilePathPattern matches an absolute (/...) or home (~/...) filesystem
+// path with an extension. Relative paths are intentionally excluded — we can't
+// stat them reliably without the agent's cwd/workspace, and a wrong stat would
+// falsely block a legitimate completion. A preceding-byte check in
+// extractGoalFilePaths then drops URL paths (".../a.html") and source-file
+// references embedded in prose ("pkg/agent/x.go").
+var goalFilePathPattern = regexp.MustCompile(`[~/][\w./~-]*\.[A-Za-z0-9]{1,8}`)
+
+// extractGoalFilePaths pulls explicit absolute/home target file paths out of
+// the goal text, skipping matches that are really URL paths or substrings of a
+// larger token (RE2 has no lookbehind, so we filter on the preceding byte).
+func extractGoalFilePaths(goal string) []string {
+	locs := goalFilePathPattern.FindAllStringIndex(goal, -1)
+	seen := make(map[string]struct{}, len(locs))
+	out := make([]string, 0, len(locs))
+	for _, loc := range locs {
+		if loc[0] > 0 {
+			switch prev := goal[loc[0]-1]; {
+			// URL ("://x/a.html"), or a continuation of a longer token
+			// ("pkg/agent/x.go", "v1.2/x.json") — not a standalone path.
+			case prev == ':' || prev == '.' || prev == '/' || prev == '~' || prev == '-',
+				prev >= 'a' && prev <= 'z', prev >= 'A' && prev <= 'Z', prev >= '0' && prev <= '9':
+				continue
+			}
+		}
+		p := strings.TrimRight(strings.TrimSpace(goal[loc[0]:loc[1]]), ".,;:)")
+		if p == "" {
+			continue
+		}
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		seen[p] = struct{}{}
+		out = append(out, p)
+	}
+	return out
+}
+
+// fileArtifactExists reports whether the path resolves to a regular,
+// non-empty file on disk (expanding a leading ~ via the package helper).
+func fileArtifactExists(path string) bool {
+	p := strings.TrimSpace(path)
+	if p == "" {
+		return false
+	}
+	if p == "~" || strings.HasPrefix(p, "~/") {
+		p = filepath.Join(getHomeDir(), strings.TrimPrefix(p, "~"))
+	}
+	info, err := os.Stat(p)
+	if err != nil {
+		return false
+	}
+	return info.Mode().IsRegular() && info.Size() > 0
+}
+
 // FileTaskMustWrite rejects a free-form completion when the goal asked for a
-// file/artifact but no filesystem write tool was used during the run. Register
-// globally; it is agent-agnostic.
+// file/artifact that wasn't actually produced. When the goal names a concrete
+// path it verifies the RESULT — the file must exist and be non-empty on disk
+// (a write tool call that got truncated by max_tokens does NOT count). When no
+// explicit path is given it falls back to checking a write tool was used.
+// Register globally; agent-agnostic.
 func FileTaskMustWrite() OutputLint {
 	return LintFunc{
 		NameValue: "file_task_must_write",
@@ -249,6 +309,19 @@ func FileTaskMustWrite() OutputLint {
 			if !goalWantsFileOutput(ctx.Goal) {
 				return true, ""
 			}
+			// Prefer verifying the actual artifact (result, not attempt).
+			if paths := extractGoalFilePaths(ctx.Goal); len(paths) > 0 {
+				for _, p := range paths {
+					if fileArtifactExists(p) {
+						return true, ""
+					}
+				}
+				return false, "the task asked you to produce " + strings.Join(paths, ", ") +
+					", but no such file exists on disk yet (or it is empty — a write may have been " +
+					"truncated). Actually write the file, verify it exists and is complete, then finish; " +
+					"or call task_blocked with the concrete blocker."
+			}
+			// No explicit path named: fall back to "was a write tool used?".
 			if usedFilesystemWriteTool(ctx.ToolCalls) {
 				return true, ""
 			}
