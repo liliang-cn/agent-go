@@ -92,8 +92,18 @@ func TestNoPlanningOnlyFinish(t *testing.T) {
 		{"english_let_me", "Let me check the file structure first.", true},
 		{"chinese_will_do", "我会去读一下 README 然后总结。", true},
 		{"chinese_next_step", "接下来我会读取文件并总结要点。", true},
+		// Failures: planning verb mid-sentence (the real-world stall seen with
+		// the PPT agent — "let me" / "now let me" not at the line start).
+		{"english_let_me_midsentence", "Great data! Let me check the pptx skill and discover available agents for PPT creation.", true},
+		{"english_now_let_me", "Good, I have Dell stock data. Now let me use the skill_html-ppt skill to create the presentation.", true},
+		{"english_im_going_to", "Got the numbers. I'm going to assemble the slides now.", true},
 		// Passes: substantive answers
 		{"english_done", "Read the README. It documents three CLI subcommands: build, test, deploy.", false},
+		// Passes: the polite "let me know" closing is not a stall.
+		{"english_let_me_know", "The three subcommands are build, test, deploy. Let me know if you want details.", false},
+		// Passes: acknowledgment confirmations are not stalls.
+		{"chinese_remember_ack", "我会记住这件事。", false},
+		{"english_remember_ack", "Got it. I'll remember that for next time.", false},
 		{"chinese_done", "已读取 README。它包含三个 CLI 子命令：build、test、deploy。", false},
 		{"empty", "", false},
 		// Passes: long answers that legitimately contain future-tense in the middle
@@ -160,6 +170,76 @@ func TestRegisterDefaultOutputLintsWiresAllThree(t *testing.T) {
 	}
 	if !containsString(otherNames, "no_planning_only_finish") {
 		t.Fatalf("Operator should see global no_planning_only_finish, got %v", otherNames)
+	}
+}
+
+func TestFileTaskMustWrite(t *testing.T) {
+	lint := FileTaskMustWrite()
+	write := []string{"mcp_websearch_search", "mcp_filesystem_write_file"}
+	readonly := []string{"mcp_filesystem_list_directory", "mcp_filesystem_read_file"}
+	cases := []struct {
+		name    string
+		goal    string
+		tools   []string
+		wantErr bool
+	}{
+		// Failures: goal wants a file, but no write tool was called.
+		{"zh_ppt_no_write", "dell的股价，写一个ppt", readonly, true},
+		{"zh_save_path_no_write", "把幻灯片保存到 ~/.agentgo/workspace/dell.html", nil, true},
+		{"en_create_html_no_write", "Create an HTML slide deck about Dell stock.", readonly, true},
+		{"en_save_to_path_no_write", "Save the report to ~/out/report.pdf", nil, true},
+		// Passes: a write tool was actually called.
+		{"zh_ppt_with_write", "dell的股价，写一个ppt", write, false},
+		{"en_create_with_write", "Create an HTML slide deck about Dell stock.", write, false},
+		// Passes: not a file-output task.
+		{"zh_read_summarize", "读取 README 并总结要点", readonly, false},
+		{"en_summarize_pdf", "Summarize the findings in report.pdf for me.", readonly, false},
+		{"zh_write_function", "帮我写个排序函数", nil, false},
+		{"empty_goal", "", nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ok, reason := lint.Check("All done.", LintContext{Goal: tc.goal, ToolCalls: tc.tools})
+			if tc.wantErr && ok {
+				t.Fatalf("expected lint to fail for goal %q tools %v, but it passed", tc.goal, tc.tools)
+			}
+			if !tc.wantErr && !ok {
+				t.Fatalf("expected lint to pass for goal %q tools %v, but failed: %s", tc.goal, tc.tools, reason)
+			}
+		})
+	}
+}
+
+// TestBuildAutoRegistersNoPlanningOnlyFinish pins the lib-level guarantee:
+// every service built through the framework's Builder (the UI's agentService,
+// every TeamManager agent — both go through builder.build()) gets the global
+// no_planning_only_finish lint, so no agent can finish on a planning narration
+// without the runtime rejecting + re-prompting.
+func TestBuildAutoRegistersNoPlanningOnlyFinish(t *testing.T) {
+	svc, err := New("plain-agent").
+		WithPTC(false).
+		WithConfig(testAgentConfig(t.TempDir())).
+		WithLLM(&streamMemorySaveTestLLM{}).
+		Build()
+	if err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+	defer svc.Close()
+
+	names := svc.OutputLints().Names("AnyAgent")
+	if !containsString(names, "no_planning_only_finish") {
+		t.Fatalf("Build() should auto-register no_planning_only_finish, got %v", names)
+	}
+	// Idempotent: an explicit RegisterDefaultOutputLints must not duplicate it.
+	RegisterDefaultOutputLints(svc)
+	count := 0
+	for _, n := range svc.OutputLints().Names("AnyAgent") {
+		if n == "no_planning_only_finish" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("no_planning_only_finish should be registered exactly once, got %d", count)
 	}
 }
 

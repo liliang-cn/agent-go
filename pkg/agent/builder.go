@@ -701,6 +701,16 @@ func (b *Builder) build() (*Service, error) {
 	}
 	svc.SetMemoryScope(b.name, "", "")
 
+	// Baseline enforcement: every framework-built service gets the
+	// agent-agnostic completion lints so the runtime rejects + re-prompts when
+	// a model finishes on a plan ("now let me use the X skill...") or finishes
+	// a file-producing task without ever writing the file. Both the UI's
+	// agentService and every TeamManager agent route through here; agent-specific
+	// lints are layered on top by applyBuiltInOutputLints. Registration is
+	// idempotent.
+	svc.RegisterOutputLint(NoPlanningOnlyFinish())
+	svc.RegisterOutputLint(FileTaskMustWrite())
+
 	return svc, nil
 }
 

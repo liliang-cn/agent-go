@@ -130,12 +130,29 @@ var planningEndingPatterns = []*regexp.Regexp{
 	// English
 	regexp.MustCompile(`(?i)\bnext steps?:\s*$`),
 	regexp.MustCompile(`(?i)\bnext steps?:\s*[\s\S]{0,200}$`),
-	regexp.MustCompile(`(?i)(?:^|\n)\s*(?:i (?:will|'ll|am going to)|let me)\s+\w[\s\S]{0,200}\.?\s*$`),
+	// "let me <verb> ..." as the closing clause — the most common stall.
+	// Anchored to a clause boundary (line start, sentence punctuation, or a
+	// "now/so" lead-in) so it catches mid-sentence stalls ("Great data! Let
+	// me check ...", ". Now let me use ...") without matching relative
+	// clauses. The benign "let me know ..." closing is stripped beforehand.
+	regexp.MustCompile(`(?i)(?:^|[.!?;]\s+|\n|\bnow\s+|\bso\s+)let me\s+\w[\s\S]{0,200}$`),
+	// "I will / I'll / I am going to / I'm going to <verb> ..." closing clause,
+	// same boundary anchor so "...what I'll do." (a relative clause inside a
+	// refusal/answer) is NOT flagged as a stall.
+	regexp.MustCompile(`(?i)(?:^|[.!?;]\s+|\n|\bnow\s+|\bso\s+)i(?:'ll| will| am going to|'m going to)\s+\w[\s\S]{0,200}$`),
 	regexp.MustCompile(`(?i)\b(?:i can|i could|i would)\s+(?:do this|handle this|take care of this) (?:next|now)\.?\s*$`),
 	// Chinese — common stalling endings
 	regexp.MustCompile(`(?:接下来|下一步)(?:我)?(?:会|将|要|准备)?[^。\n]{0,40}[。.\s]*$`),
 	regexp.MustCompile(`我(?:会|将|准备|打算|马上|这就|去|要)[^。\n]{0,40}[。.\s]*$`),
 }
+
+// benignClosing matches trailing acknowledgments that read like planning but
+// are not stalls: the polite "let me know ..." sign-off, and confirmations that
+// the agent has noted/remembered something ("I'll remember ...", "我会记住...").
+// These are stripped before the planning patterns run, since RE2 has no
+// negative lookahead to exclude them inline. Without this, a memory-save
+// confirmation like "我会记住这件事。" would be wrongly rejected as a stall.
+var benignClosing = regexp.MustCompile(`(?i)(?:\blet me know\b|\bi(?:'ll| will) (?:remember|note|keep in mind)\b|\bnoted\b|我(?:会|将)?(?:记住|记得|记下|记录|留意|注意))[\s\S]*$`)
 
 // NoPlanningOnlyFinish rejects free-form final answers that read like a
 // plan ("I'll do X next", "接下来我会..."). Register globally; it applies to
@@ -156,8 +173,11 @@ func NoPlanningOnlyFinish() OutputLint {
 			if len(trimmed) > 600 {
 				return true, ""
 			}
+			// Strip benign trailing acknowledgments ("let me know ...",
+			// "我会记住...") before scanning so they aren't flagged as stalls.
+			scan := strings.TrimSpace(benignClosing.ReplaceAllString(trimmed, ""))
 			for _, pat := range planningEndingPatterns {
-				if pat.MatchString(trimmed) {
+				if pat.MatchString(scan) {
 					return false, "response reads like a plan (\"我会... / next steps: ... / I will...\") " +
 						"instead of delivering a completed result. Either complete the work and call task_complete " +
 						"with the verified result, or call task_blocked with the concrete blocker."
@@ -168,14 +188,86 @@ func NoPlanningOnlyFinish() OutputLint {
 	}
 }
 
-// RegisterDefaultOutputLints wires the three built-in lints into the given
-// service. Callers can pick and choose by registering individually if they
-// only want a subset.
+// --- 4. file_task_must_write ---------------------------------------------------
+//
+// Goal-aware completion check (Hashimoto: check the goal at completion). If the
+// task asked to create / write / save a file or a concrete artifact (PPT, HTML,
+// PDF, ...) but the run never called a filesystem write tool, the agent is
+// finishing without doing the work — reject so the runtime re-prompts it to
+// actually write the file. This relies on LintContext.Goal + LintContext.ToolCalls,
+// which the runtime populates in runFinalLints.
+
+var fileOutputIntentPatterns = []*regexp.Regexp{
+	// English: a write verb followed (closely) by a file/artifact noun.
+	regexp.MustCompile(`(?i)\b(?:write|save|create|generate|export|produce|build|make)\b[\s\S]{0,40}\b(?:file|files|ppt|pptx|powerpoint|slides?|deck|presentation|html|webpage|pdf|docx?|xlsx?|csv|markdown|report|document|spreadsheet)\b`),
+	// English: "save/write/export ... to <path>".
+	regexp.MustCompile(`(?i)\b(?:save|write|export)\b[\s\S]{0,24}\bto\b\s+[~/.][\w./~-]+`),
+	// Chinese: 写/保存/生成/创建/导出/做/输出/存 + 文件/ppt/幻灯片/...
+	regexp.MustCompile(`(写|保存|生成|创建|导出|做|输出|存)[^。\n]{0,20}(文件|ppt|pptx|幻灯片|演示文稿|文档|报告|表格|网页|页面|html|pdf|word|excel)`),
+	// Chinese: 保存/写/导出 ... 到/为/至 <path>.
+	regexp.MustCompile(`(保存|写|导出|存|输出)[^。\n]{0,12}(到|为|至)\s*[~/.][\w./~-]+`),
+}
+
+// filesystemWriteTools is the set of tool names that actually mutate a file on
+// disk. create_directory alone doesn't count (no content written).
+var filesystemWriteTools = map[string]bool{
+	"mcp_filesystem_write_file":  true,
+	"mcp_filesystem_modify_file": true,
+	"mcp_filesystem_move_file":   true,
+	"mcp_filesystem_copy_file":   true,
+}
+
+func goalWantsFileOutput(goal string) bool {
+	g := strings.TrimSpace(goal)
+	if g == "" {
+		return false
+	}
+	for _, p := range fileOutputIntentPatterns {
+		if p.MatchString(g) {
+			return true
+		}
+	}
+	return false
+}
+
+func usedFilesystemWriteTool(toolCalls []string) bool {
+	for _, name := range toolCalls {
+		if filesystemWriteTools[strings.TrimSpace(name)] {
+			return true
+		}
+	}
+	return false
+}
+
+// FileTaskMustWrite rejects a free-form completion when the goal asked for a
+// file/artifact but no filesystem write tool was used during the run. Register
+// globally; it is agent-agnostic.
+func FileTaskMustWrite() OutputLint {
+	return LintFunc{
+		NameValue: "file_task_must_write",
+		Fn: func(text string, ctx LintContext) (bool, string) {
+			if !goalWantsFileOutput(ctx.Goal) {
+				return true, ""
+			}
+			if usedFilesystemWriteTool(ctx.ToolCalls) {
+				return true, ""
+			}
+			return false, "the task asked you to create/write/save a file, but no filesystem write tool " +
+				"(e.g. mcp_filesystem_write_file) was called this run. Actually write the file to disk and " +
+				"verify it exists, then finish; or call task_blocked with the concrete blocker."
+		},
+	}
+}
+
+// RegisterDefaultOutputLints wires the built-in lints into the given service.
+// Callers can pick and choose by registering individually if they only want a
+// subset.
 func RegisterDefaultOutputLints(svc *Service) {
 	if svc == nil {
 		return
 	}
 	svc.RegisterOutputLint(NoPlanningOnlyFinish())
+	svc.RegisterOutputLint(FileTaskMustWrite())
 	svc.RegisterOutputLint(DispatcherNoBounceBack(), BuiltInDispatcherAgentName)
 	svc.RegisterOutputLint(ArchivistNoRelativeTime(), defaultArchivistAgentName)
 }
@@ -187,9 +279,10 @@ func RegisterDefaultOutputLints(svc *Service) {
 // rules can then be cut from the agent's system prompt because the runtime
 // is doing the enforcement.
 //
-// Custom services built directly via agent.New(...).Build() are NOT
-// touched here; they keep the previous behavior unless the caller invokes
-// RegisterDefaultOutputLints or RegisterOutputLint themselves.
+// The agent-agnostic no_planning_only_finish lint is registered for ALL
+// services in builder.build() (including custom agent.New(...).Build()
+// ones). This helper only layers on the agent-specific lints for the
+// framework's own built-in agents.
 func applyBuiltInOutputLints(svc *Service, model *AgentModel) {
 	if svc == nil || model == nil {
 		return

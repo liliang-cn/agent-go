@@ -102,8 +102,8 @@ func TestRuntimeRetriesOnLintViolationAndCompletes(t *testing.T) {
 
 	llm := &scriptedLintLLM{
 		replies: []string{
-			"I will route this to Operator.", // first try — trips the lint
-			"Routing complete.",              // retry — passes
+			"Routing this to Operator now.", // first try — trips the custom lint only
+			"Routing complete.",             // retry — passes
 		},
 	}
 	svc, err := New("lint-runtime-agent").
@@ -118,7 +118,7 @@ func TestRuntimeRetriesOnLintViolationAndCompletes(t *testing.T) {
 
 	lint := &rejectIfContains{
 		name:    "no_route_phrase",
-		needle:  "I will route",
+		needle:  "Routing this",
 		reason:  "response narrates routing instead of completing the task",
 		maxFail: 1,
 	}
@@ -154,10 +154,10 @@ func TestRuntimeBlocksWhenLintBudgetIsExhausted(t *testing.T) {
 		// Always returns a violating answer, even on retries. Provide enough
 		// replies for budget+1 attempts.
 		replies: []string{
-			"I will route it.",
-			"I will route it again.",
-			"I will route it once more.",
-			"I will route it forever.",
+			"Routing it to Operator.",
+			"Routing it to Operator again.",
+			"Routing it to Operator once more.",
+			"Routing it to Operator forever.",
 		},
 	}
 	svc, err := New("lint-runtime-block").
@@ -172,7 +172,7 @@ func TestRuntimeBlocksWhenLintBudgetIsExhausted(t *testing.T) {
 
 	lint := &rejectIfContains{
 		name:    "no_route_phrase",
-		needle:  "I will route",
+		needle:  "Routing it",
 		reason:  "still routing instead of completing",
 		maxFail: -1, // always fail
 	}

@@ -40,6 +40,11 @@ type Runtime struct {
 	pendingToolsMu sync.Mutex
 	pendingTools   map[string]domain.ToolCall // tool_call_id -> call
 	completedTools map[string]bool            // tool_call_id -> true
+	toolNamesUsed  map[string]bool            // tool name -> true (for goal-aware lints)
+
+	// goal is the task input for this run, kept so completion-time lints can
+	// check whether the agent actually satisfied what was asked.
+	goal string
 
 	// Observability: current round (1-indexed, set at loop start)
 	currentRound int
@@ -72,6 +77,7 @@ func NewRuntime(svc *Service, session *Session, cfg *RunConfig) *Runtime {
 		cfg:             cfg,
 		pendingTools:    make(map[string]domain.ToolCall),
 		completedTools:  make(map[string]bool),
+		toolNamesUsed:   make(map[string]bool),
 		lintRetryBudget: defaultLintRetryBudget,
 	}
 }
@@ -100,6 +106,8 @@ func (r *Runtime) runFinalLints(content string, turn int) *LintViolation {
 		TaskID:     taskID,
 		SessionID:  sessionID,
 		TurnIndex:  turn,
+		Goal:       r.goal,
+		ToolCalls:  r.toolNamesUsedSnapshot(),
 		IsRetry:    r.lintRetryBudget < defaultLintRetryBudget,
 		RetryCount: defaultLintRetryBudget - r.lintRetryBudget,
 	}
@@ -118,6 +126,39 @@ func (r *Runtime) runFinalLints(content string, turn int) *LintViolation {
 	return nil
 }
 
+// lintGate runs the output lints on a free-form terminal answer and decides
+// what the loop should do next. Every free-form completion path routes through
+// here so lints can't be bypassed (previously only the text-only round was
+// linted, while decision.Terminal / PTC short-circuit completions slipped past).
+//
+// Returns done=true when the run was completed or blocked (caller must return),
+// or done=false when the answer was rejected and the model re-prompted within
+// budget (caller must `continue` the loop). messages is updated in place when a
+// retry appends structured lint feedback.
+func (r *Runtime) lintGate(goal, content string, messages *[]domain.Message, state *queryLoopState, round int) (done bool) {
+	violation := r.runFinalLints(content, round)
+	if violation == nil {
+		r.completeRun(goal, content, *messages, true)
+		return true
+	}
+	r.emit(EventTypeError, fmt.Sprintf("output lint %s rejected response: %s", violation.LintName, violation.Reason))
+	if r.lintRetryBudget > 0 {
+		r.lintRetryBudget--
+		*messages = append(*messages, domain.Message{
+			Role:    "user",
+			Content: FormatLintFeedback(violation),
+		})
+		state.Messages = *messages
+		state.setLoopTransition(queryLoopTransitionLintRetry, fmt.Sprintf("lint:%s", violation.LintName))
+		state.noteRoundCompleted()
+		return false
+	}
+	r.blockRunWithStop(goal,
+		fmt.Sprintf("output lint %s repeatedly rejected the response: %s", violation.LintName, violation.Reason),
+		*messages, true, StopReasonLintExhausted)
+	return true
+}
+
 // RunStream starts the event loop and returns a read-only channel of events
 func (r *Runtime) RunStream(ctx context.Context, goal string) <-chan *Event {
 	go r.loop(ctx, goal)
@@ -130,6 +171,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		close(r.eventChan)
 	}()
 	ctx = withCurrentSession(ctx, r.session)
+	r.goal = goal
 
 	r.emit(EventTypeStart, fmt.Sprintf("Starting task: %s", goal))
 
@@ -376,8 +418,13 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 				r.blockRun(goal, final, messages, true)
 				return
 			}
-			r.completeRun(goal, final, messages, true)
-			return
+			// Even an explicit task_complete is goal-checked: a model that
+			// signals "done" with a planning result, or finishes a file task
+			// without ever writing the file, is rejected + re-prompted.
+			if r.lintGate(goal, final, &messages, state, round) {
+				return
+			}
+			continue
 		}
 
 		if err != nil {
@@ -431,13 +478,18 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 						r.blockRun(goal, final, nil, false)
 						return
 					}
+					// task_complete is normally intercepted during streaming
+					// (and goal-checked there); this fallback path is rare, so
+					// keep it simple and complete directly.
 					r.completeRun(goal, final, nil, false)
 					return
 				}
 			}
 			if final, ok := r.shouldShortCircuitPTCToolRound(result.Content, result.ToolCalls); ok {
-				r.completeRun(goal, final, messages, true)
-				return
+				if r.lintGate(goal, final, &messages, state, round) {
+					return
+				}
+				continue
 			}
 
 			// Note: task_complete is intercepted at stream level above and never
@@ -504,8 +556,10 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			state.recordToolResults(decision.ToolResults)
 
 			if final := decision.Terminal; final != "" {
-				r.completeRun(goal, final, messages, true)
-				return
+				if r.lintGate(goal, final, &messages, state, round) {
+					return
+				}
+				continue
 			}
 			if decision.AwaitAnswer {
 				state.setStage(TurnStageAwaitingAnswer, "waiting for final answer after tool results", len(filteredToolCalls))
@@ -551,28 +605,12 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			// Output lints: deterministic checks on the model's free-form
 			// final answer. Failure consumes one slot of the per-task retry
 			// budget and re-prompts the model with structured feedback;
-			// exhausting the budget blocks the task.
-			if violation := r.runFinalLints(result.Content, round); violation != nil {
-				r.emit(EventTypeError, fmt.Sprintf("output lint %s rejected response: %s", violation.LintName, violation.Reason))
-				if r.lintRetryBudget > 0 {
-					r.lintRetryBudget--
-					messages = append(messages, domain.Message{
-						Role:    "user",
-						Content: FormatLintFeedback(violation),
-					})
-					state.Messages = messages
-					state.setLoopTransition(queryLoopTransitionLintRetry, fmt.Sprintf("lint:%s", violation.LintName))
-					state.noteRoundCompleted()
-					continue
-				}
-				r.blockRunWithStop(goal,
-					fmt.Sprintf("output lint %s repeatedly rejected the response: %s", violation.LintName, violation.Reason),
-					messages, true, StopReasonLintExhausted)
+			// exhausting the budget blocks the task. Shared with the other
+			// free-form completion paths via lintGate.
+			if r.lintGate(goal, result.Content, &messages, state, round) {
 				return
 			}
-
-			r.completeRun(goal, result.Content, messages, true)
-			return
+			continue
 		}
 
 		state.noteRoundCompleted()
@@ -1124,6 +1162,23 @@ func (r *Runtime) trackToolCall(tc domain.ToolCall) {
 	r.pendingToolsMu.Lock()
 	defer r.pendingToolsMu.Unlock()
 	r.pendingTools[tc.ID] = tc
+	if name := strings.TrimSpace(tc.Function.Name); name != "" {
+		if r.toolNamesUsed == nil {
+			r.toolNamesUsed = make(map[string]bool)
+		}
+		r.toolNamesUsed[name] = true
+	}
+}
+
+// toolNamesUsedSnapshot returns the set of tool names invoked so far this run.
+func (r *Runtime) toolNamesUsedSnapshot() []string {
+	r.pendingToolsMu.Lock()
+	defer r.pendingToolsMu.Unlock()
+	out := make([]string, 0, len(r.toolNamesUsed))
+	for name := range r.toolNamesUsed {
+		out = append(out, name)
+	}
+	return out
 }
 
 // trackToolResult records that a tool result has been received and emitted

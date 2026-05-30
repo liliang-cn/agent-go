@@ -28,6 +28,10 @@ type LintContext struct {
 	TaskID     string
 	SessionID  string
 	TurnIndex  int
+	// Goal is the task input for the run, so goal-aware lints can check the
+	// final answer against what was actually asked.
+	Goal string
+	// ToolCalls is the set of tool names invoked during the run.
 	ToolCalls  []string
 	IsRetry    bool
 	RetryCount int
@@ -77,6 +81,13 @@ func (r *OutputLintRegistry) RegisterGlobal(lint OutputLint) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	// Idempotent by name: build() registers the global baseline lints and a
+	// caller may also invoke RegisterDefaultOutputLints — don't double-run.
+	for _, existing := range r.global {
+		if existing.Name() == lint.Name() {
+			return
+		}
+	}
 	r.global = append(r.global, lint)
 }
 
@@ -93,6 +104,11 @@ func (r *OutputLintRegistry) RegisterForAgent(agentName string, lint OutputLint)
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	for _, existing := range r.byAgent[key] {
+		if existing.Name() == lint.Name() {
+			return
+		}
+	}
 	r.byAgent[key] = append(r.byAgent[key], lint)
 }
 
