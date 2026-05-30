@@ -8,7 +8,7 @@ import (
 type Config struct {
 	// Enabled enables or disables PTC functionality
 	Enabled bool `mapstructure:"enabled" json:"enabled"`
-	// DefaultRuntime is the default sandbox runtime (wazero, goja)
+	// DefaultRuntime is the default sandbox runtime (goja)
 	DefaultRuntime RuntimeType `mapstructure:"default_runtime" json:"default_runtime"`
 	// DefaultTimeout is the default execution timeout
 	DefaultTimeout time.Duration `mapstructure:"default_timeout" json:"default_timeout"`

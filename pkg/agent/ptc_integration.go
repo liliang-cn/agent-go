@@ -12,7 +12,6 @@ import (
 	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 	"github.com/liliang-cn/agent-go/v2/pkg/ptc"
 	"github.com/liliang-cn/agent-go/v2/pkg/ptc/runtime/goja"
-	"github.com/liliang-cn/agent-go/v2/pkg/ptc/runtime/wazero"
 )
 
 // PTCIntegration handles Programmatic Tool Calling integration
@@ -44,9 +43,6 @@ type PTCConfig struct {
 
 	// BlockedTools is a blacklist of tools that cannot be called
 	BlockedTools []string `json:"blocked_tools" mapstructure:"blocked_tools"`
-
-	// Runtime to use: "goja" or "wazero"
-	Runtime string `json:"runtime" mapstructure:"runtime"`
 }
 
 // DefaultPTCConfig returns default PTC configuration
@@ -55,7 +51,6 @@ func DefaultPTCConfig() PTCConfig {
 		Enabled:      false,
 		MaxToolCalls: 20,
 		Timeout:      600 * time.Second,
-		Runtime:      "goja",
 		AllowedTools: []string{}, // Empty means all tools allowed
 	}
 }
@@ -80,15 +75,8 @@ func NewPTCIntegration(config PTCConfig, router *ptc.AgentGoRouter) (*PTCIntegra
 		return nil, fmt.Errorf("failed to create PTC service: %w", err)
 	}
 
-	// Set runtime
-	var runtime ptc.SandboxRuntime
-	switch config.Runtime {
-	case "wazero":
-		runtime = wazero.NewRuntimeWithConfig(&ptcConfig)
-	default:
-		runtime = goja.NewRuntimeWithConfig(&ptcConfig)
-	}
-	service.SetRuntime(runtime)
+	// Set runtime — Goja (pure-Go JavaScript interpreter).
+	service.SetRuntime(goja.NewRuntimeWithConfig(&ptcConfig))
 
 	return &PTCIntegration{
 		service: service,

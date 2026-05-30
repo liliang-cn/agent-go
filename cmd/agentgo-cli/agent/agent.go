@@ -427,7 +427,6 @@ compatibility shortcut that always forces PTC mode.`,
 		ptcConfig.Enabled = true
 		ptcConfig.MaxToolCalls = 20
 		ptcConfig.Timeout = 30 * 1000000000 // 30 seconds in nanoseconds
-		ptcConfig.Runtime = "goja"
 
 		// Create PTC router with agent services
 		router := ptc.NewAgentGoRouter(

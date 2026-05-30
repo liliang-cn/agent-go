@@ -18,7 +18,6 @@ import (
 	"github.com/liliang-cn/agent-go/v2/pkg/ptc"
 	ptcgrpc "github.com/liliang-cn/agent-go/v2/pkg/ptc/grpc"
 	"github.com/liliang-cn/agent-go/v2/pkg/ptc/runtime/goja"
-	"github.com/liliang-cn/agent-go/v2/pkg/ptc/runtime/wazero"
 	ptcstore "github.com/liliang-cn/agent-go/v2/pkg/ptc/store"
 	"github.com/liliang-cn/agent-go/v2/pkg/search"
 	"github.com/liliang-cn/agent-go/v2/pkg/skills"
@@ -430,7 +429,6 @@ var (
 	execContext   string
 	execTools     []string
 	execMaxMemory int
-	execRuntime   string
 	outputJSON    bool
 )
 
@@ -448,7 +446,6 @@ func init() {
 	executeCmd.Flags().StringVarP(&execContext, "context", "x", "", "JSON context variables to inject")
 	executeCmd.Flags().StringSliceVarP(&execTools, "tools", "T", []string{}, "Allowed tools (comma-separated)")
 	executeCmd.Flags().IntVarP(&execMaxMemory, "memory", "m", 64, "Maximum memory in MB")
-	executeCmd.Flags().StringVarP(&execRuntime, "runtime", "r", "goja", "Runtime to use (goja or wazero)")
 	executeCmd.Flags().BoolVarP(&outputJSON, "json", "j", false, "Output result as JSON")
 
 	// Tools command flags
@@ -456,7 +453,6 @@ func init() {
 
 	// Serve command flags
 	serveCmd.Flags().String("address", "unix:///tmp/ptc.sock", "Server address (unix://path or host:port)")
-	serveCmd.Flags().String("runtime", "goja", "Runtime to use (goja or wazero)")
 }
 
 func runExecute(cmd *cobra.Command, args []string) error {
@@ -516,17 +512,8 @@ func runExecute(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create PTC service: %w", err)
 	}
 
-	// Create and set runtime based on selection
-	var runtime ptc.SandboxRuntime
-	switch execRuntime {
-	case "wazero", "wasm":
-		runtime = wazero.NewRuntimeWithConfig(&ptcConfig)
-	case "goja", "js":
-		runtime = goja.NewRuntimeWithConfig(&ptcConfig)
-	default:
-		runtime = goja.NewRuntimeWithConfig(&ptcConfig)
-	}
-	service.SetRuntime(runtime)
+	// Goja (pure-Go JavaScript interpreter).
+	service.SetRuntime(goja.NewRuntimeWithConfig(&ptcConfig))
 
 	// Build execution request
 	req := &ptc.ExecutionRequest{
@@ -643,7 +630,6 @@ func runTools(cmd *cobra.Command, args []string) error {
 
 func runServe(cmd *cobra.Command, args []string) error {
 	address, _ := cmd.Flags().GetString("address")
-	runtimeType, _ := cmd.Flags().GetString("runtime")
 
 	// Create PTC service
 	ptcConfig := ptc.DefaultConfig()
@@ -659,20 +645,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create PTC service: %w", err)
 	}
 
-	// Create and set runtime based on selection
-	var runtime ptc.SandboxRuntime
-	switch runtimeType {
-	case "wazero", "wasm":
-		runtime = wazero.NewRuntimeWithConfig(&ptcConfig)
-	default:
-		runtime = goja.NewRuntimeWithConfig(&ptcConfig)
-	}
-	service.SetRuntime(runtime)
+	// Goja (pure-Go JavaScript interpreter).
+	service.SetRuntime(goja.NewRuntimeWithConfig(&ptcConfig))
 
 	// Create and start gRPC server
 	grpcServer := ptcgrpc.NewGRPCServer(service, &ptcConfig.GRPC)
 
-	fmt.Printf("Starting PTC gRPC server on %s (runtime: %s)\n", address, runtimeType)
+	fmt.Printf("Starting PTC gRPC server on %s (runtime: goja)\n", address)
 	if err := grpcServer.Start(); err != nil {
 		return fmt.Errorf("failed to start server: %w", err)
 	}

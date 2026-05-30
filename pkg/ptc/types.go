@@ -1,6 +1,6 @@
 // Package ptc provides Programmatic Tool Calling functionality,
 // allowing LLMs to generate code instead of JSON parameters for tool calls.
-// The code is executed safely in WASM/JS sandboxes.
+// The code is executed safely in a JavaScript sandbox.
 package ptc
 
 import (
@@ -12,9 +12,7 @@ import (
 type RuntimeType string
 
 const (
-	// RuntimeWazero uses Wazero WASM runtime (recommended)
-	RuntimeWazero RuntimeType = "wazero"
-	// RuntimeGoja uses Goja JavaScript interpreter (simple scenarios)
+	// RuntimeGoja uses the Goja JavaScript interpreter (pure Go).
 	RuntimeGoja RuntimeType = "goja"
 )
 
@@ -23,7 +21,6 @@ type LanguageType string
 
 const (
 	LanguageJavaScript LanguageType = "javascript"
-	LanguageWasm       LanguageType = "wasm"
 )
 
 // ExecutionRequest represents a PTC execution request
@@ -32,7 +29,7 @@ type ExecutionRequest struct {
 	ID string `json:"id"`
 	// Code is the LLM-generated code to execute
 	Code string `json:"code"`
-	// Language specifies the code language (javascript, wasm)
+	// Language specifies the code language (javascript)
 	Language LanguageType `json:"language"`
 	// Context contains variables to inject into the sandbox
 	Context map[string]interface{} `json:"context"`
