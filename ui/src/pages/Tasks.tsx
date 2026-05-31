@@ -58,18 +58,28 @@ function formatDuration(ms?: number): string {
 
 export function Tasks() {
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [page, setPage] = useState(0);
 
+  // Server-side pagination: each fetch pulls a single page (newest-first),
+  // with status + search applied in SQL. `total` drives the page count.
   const load = async () => {
     setLoading(true);
     setError(null);
     try {
-      const { tasks } = await api.listTasks(500);
-      setTasks((tasks ?? []).slice().reverse());
+      const { tasks, total } = await api.listTasks({
+        limit: PAGE_SIZE,
+        offset: page * PAGE_SIZE,
+        status: statusFilter === "all" ? "" : statusFilter,
+        search: debouncedSearch.trim(),
+      });
+      setTasks(tasks ?? []);
+      setTotal(total ?? 0);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -77,47 +87,25 @@ export function Tasks() {
     }
   };
 
+  // Debounce the search box so we don't fetch on every keystroke.
   useEffect(() => {
-    void load();
-  }, []);
+    const t = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(t);
+  }, [search]);
 
+  // Reset to the first page whenever the filter/search changes.
   useEffect(() => {
     setPage(0);
-  }, [statusFilter, search]);
+  }, [statusFilter, debouncedSearch]);
 
-  const statusCounts = useMemo(() => {
-    const counts: Record<string, number> = { all: tasks.length };
-    for (const t of tasks) {
-      const k = (t.status ?? "pending").toLowerCase();
-      counts[k] = (counts[k] ?? 0) + 1;
-    }
-    return counts;
-  }, [tasks]);
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, statusFilter, debouncedSearch]);
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return tasks.filter((t) => {
-      if (
-        statusFilter !== "all" &&
-        (t.status ?? "").toLowerCase() !== statusFilter
-      ) {
-        return false;
-      }
-      if (q) {
-        const hay =
-          `${t.input ?? ""} ${t.agent_name ?? ""} ${t.team_name ?? ""} ${t.id}`.toLowerCase();
-        if (!hay.includes(q)) return false;
-      }
-      return true;
-    });
-  }, [tasks, statusFilter, search]);
-
-  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const clampedPage = Math.min(page, pageCount - 1);
-  const pageRows = filtered.slice(
-    clampedPage * PAGE_SIZE,
-    clampedPage * PAGE_SIZE + PAGE_SIZE,
-  );
+  const pageRows = tasks;
 
   return (
     <div className="flex flex-col gap-4">
@@ -152,9 +140,6 @@ export function Tasks() {
               className="h-7 capitalize"
             >
               {s}
-              <span className="ml-1 font-mono text-[11px] opacity-70">
-                {statusCounts[s] ?? 0}
-              </span>
             </Button>
           ))}
         </div>
@@ -189,18 +174,17 @@ export function Tasks() {
                 </TableCell>
               </TableRow>
             )}
-            {!loading && tasks.length === 0 && (
+            {!loading && total === 0 && (
               <TableRow>
                 <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">
-                  No tasks yet. Kick one off in{" "}
-                  <Link to="/live" className="underline">Live</Link>.
-                </TableCell>
-              </TableRow>
-            )}
-            {!loading && tasks.length > 0 && filtered.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">
-                  No tasks match the current filter.
+                  {statusFilter === "all" && debouncedSearch.trim() === "" ? (
+                    <>
+                      No tasks yet. Kick one off in{" "}
+                      <Link to="/live" className="underline">Live</Link>.
+                    </>
+                  ) : (
+                    "No tasks match the current filter."
+                  )}
                 </TableCell>
               </TableRow>
             )}
@@ -244,12 +228,11 @@ export function Tasks() {
         </Table>
       </Card>
 
-      {filtered.length > PAGE_SIZE && (
+      {total > PAGE_SIZE && (
         <div className="flex items-center justify-between text-sm text-muted-foreground">
           <span>
             Showing {clampedPage * PAGE_SIZE + 1}–
-            {Math.min((clampedPage + 1) * PAGE_SIZE, filtered.length)} of{" "}
-            {filtered.length}
+            {Math.min((clampedPage + 1) * PAGE_SIZE, total)} of {total}
           </span>
           <div className="flex items-center gap-2">
             <Button

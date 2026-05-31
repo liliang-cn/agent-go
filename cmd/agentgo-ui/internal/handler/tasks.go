@@ -7,27 +7,49 @@ import (
 	"strings"
 
 	"github.com/liliang-cn/agent-go/v2/pkg/agent"
+	"github.com/liliang-cn/agent-go/v2/pkg/store"
 )
 
+// HandleTasks serves a paginated, filterable task list:
+//
+//	GET /api/tasks?limit=&offset=&status=&search=
+//
+// Pagination, status filtering, and search all happen in SQL (newest-first),
+// and the response carries the total match count so the UI can page without
+// fetching the whole table.
 func (h *Handler) HandleTasks(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	if h.teamManager == nil {
-		JSONResponse(w, map[string]any{"tasks": []any{}})
+		JSONResponse(w, map[string]any{"tasks": []any{}, "total": 0})
 		return
 	}
 
+	q := r.URL.Query()
 	limit := 50
-	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+	if raw := strings.TrimSpace(q.Get("limit")); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 && parsed <= 500 {
 			limit = parsed
 		}
 	}
+	offset := 0
+	if raw := strings.TrimSpace(q.Get("offset")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			offset = parsed
+		}
+	}
 
+	tasks, total := h.teamManager.ListUnifiedTasksPaged(store.TaskListFilter{
+		Limit:  limit,
+		Offset: offset,
+		Status: strings.TrimSpace(q.Get("status")),
+		Search: strings.TrimSpace(q.Get("search")),
+	})
 	JSONResponse(w, map[string]any{
-		"tasks": h.teamManager.ListUnifiedTasks(limit),
+		"tasks": tasks,
+		"total": total,
 	})
 }
 

@@ -371,6 +371,15 @@ func (s *Store) ListTasks(limit int) ([]*UnifiedTask, error) {
 	return s.agentGoDB.ListTasks(limit)
 }
 
+// ListTasksPaged returns one newest-first page of tasks plus the total count
+// matching the filter, for SQL-level pagination.
+func (s *Store) ListTasksPaged(f store.TaskListFilter) ([]*UnifiedTask, int, error) {
+	if s == nil || s.agentGoDB == nil {
+		return nil, 0, nil
+	}
+	return s.agentGoDB.ListTasksPaged(f)
+}
+
 // DeleteSession deletes a session
 func (s *Store) DeleteSession(id string) error {
 	return s.agentGoDB.DeleteSession(id)

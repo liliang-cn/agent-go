@@ -658,8 +658,18 @@ export const api = {
 
   // ---- Tasks (v2.69+) ------------------------------------------------
 
-  listTasks: (limit = 50) =>
-    fetchAPI<{ tasks: TaskSummary[] }>(`/tasks?limit=${limit}`),
+  // Server-side pagination + filtering. `total` is the count matching the
+  // filter (ignoring limit/offset) so the UI can render page navigation.
+  listTasks: (
+    opts: { limit?: number; offset?: number; status?: string; search?: string } = {},
+  ) => {
+    const p = new URLSearchParams();
+    p.set("limit", String(opts.limit ?? 50));
+    if (opts.offset) p.set("offset", String(opts.offset));
+    if (opts.status) p.set("status", opts.status);
+    if (opts.search) p.set("search", opts.search);
+    return fetchAPI<{ tasks: TaskSummary[]; total: number }>(`/tasks?${p.toString()}`);
+  },
 
   getTask: (id: string) =>
     fetchAPI<{ task: TaskDetail }>(`/tasks/${encodeURIComponent(id)}`),

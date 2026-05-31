@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/liliang-cn/agent-go/v2/pkg/store"
 	taskpkg "github.com/liliang-cn/agent-go/v2/pkg/task"
 )
 
@@ -33,38 +34,81 @@ func (m *TeamManager) GetUnifiedTask(taskID string) (*UnifiedTask, error) {
 	return unified, nil
 }
 
+// ListUnifiedTasks returns the newest `limit` tasks in OLDEST-first order
+// (the order existing CLI / task-service callers expect). Backed by SQL-level
+// pagination, so it no longer over-fetches the whole table.
+//
+// NOTE: the list view (TaskSummary) does not include per-task message frames —
+// only the detail endpoint (GetUnifiedTask) hydrates them. We deliberately skip
+// hydrateUnifiedTask here; hydrating frames for every task is an N+1 query that
+// made this endpoint hang with a few hundred tasks.
 func (m *TeamManager) ListUnifiedTasks(limit int) []*UnifiedTask {
-	// NOTE: the list view (TaskSummary) does not include per-task message
-	// frames — only the detail endpoint (GetUnifiedTask) hydrates them.
-	// So we deliberately skip hydrateUnifiedTask here; hydrating frames for
-	// every task is an N+1 query that made this endpoint hang with a few
-	// hundred tasks (one ListMessagesForTask per task).
+	tasks, _ := m.ListUnifiedTasksPaged(store.TaskListFilter{Limit: limit})
+	// Paged results are newest-first; reverse to the historical oldest-first.
+	for i, j := 0, len(tasks)-1; i < j; i, j = i+1, j-1 {
+		tasks[i], tasks[j] = tasks[j], tasks[i]
+	}
+	return tasks
+}
+
+// ListUnifiedTasksPaged returns one newest-first page of tasks plus the total
+// count matching the filter (ignoring limit/offset), for SQL-level pagination.
+func (m *TeamManager) ListUnifiedTasksPaged(f store.TaskListFilter) ([]*UnifiedTask, int) {
 	if m != nil && m.store != nil {
-		if tasks, err := m.store.ListTasks(max(limit, 1000)); err == nil && len(tasks) > 0 {
-			slices.SortFunc(tasks, func(a, b *UnifiedTask) int {
-				return a.CreatedAt.Compare(b.CreatedAt)
-			})
-			if limit > 0 && len(tasks) > limit {
-				tasks = tasks[len(tasks)-limit:]
-			}
-			return tasks
+		if tasks, total, err := m.store.ListTasksPaged(f); err == nil && total > 0 {
+			return tasks, total
 		}
 	}
 
+	// Fallback: in-memory async tasks (no SQL store). Filter, sort newest-first,
+	// then apply offset/limit in Go.
 	asyncTasks := m.ListTasks(0)
 	out := make([]*UnifiedTask, 0, len(asyncTasks))
 	for _, task := range asyncTasks {
-		if unified := unifiedTaskFromAsync(task); unified != nil {
-			out = append(out, unified)
+		unified := unifiedTaskFromAsync(task)
+		if unified == nil || !matchesTaskFilter(unified, f) {
+			continue
 		}
+		out = append(out, unified)
 	}
 	slices.SortFunc(out, func(a, b *UnifiedTask) int {
-		return a.CreatedAt.Compare(b.CreatedAt)
+		return b.CreatedAt.Compare(a.CreatedAt) // newest first
 	})
-	if limit > 0 && len(out) > limit {
-		out = out[len(out)-limit:]
+	total := len(out)
+
+	start := f.Offset
+	if start < 0 {
+		start = 0
 	}
-	return out
+	if start > total {
+		start = total
+	}
+	end := total
+	if f.Limit > 0 && start+f.Limit < end {
+		end = start + f.Limit
+	}
+	return out[start:end], total
+}
+
+// matchesTaskFilter applies the same status/search constraints as the SQL
+// WHERE clause, for the in-memory fallback path.
+func matchesTaskFilter(t *UnifiedTask, f store.TaskListFilter) bool {
+	if t == nil {
+		return false
+	}
+	if status := strings.TrimSpace(f.Status); status != "" && !strings.EqualFold(status, "all") {
+		if !strings.EqualFold(string(t.Status), status) {
+			return false
+		}
+	}
+	if search := strings.TrimSpace(f.Search); search != "" {
+		needle := strings.ToLower(search)
+		hay := strings.ToLower(t.Input + " " + t.AgentName + " " + t.ID)
+		if !strings.Contains(hay, needle) {
+			return false
+		}
+	}
+	return true
 }
 
 func (m *TeamManager) persistUnifiedTask(taskID string) {

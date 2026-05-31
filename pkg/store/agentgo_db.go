@@ -1719,21 +1719,77 @@ func (s *AgentGoDB) GetTask(id string) (*taskpkg.Task, error) {
 }
 
 func (s *AgentGoDB) ListTasks(limit int) ([]*taskpkg.Task, error) {
+	tasks, _, err := s.ListTasksPaged(TaskListFilter{Limit: limit})
+	return tasks, err
+}
+
+// TaskListFilter parameterizes a paginated, filtered task listing. Zero values
+// mean "no constraint": Limit<=0 → 100, Offset<0 → 0, empty Status/Search → no
+// filter. Search matches a substring of input, agent_name, or id.
+type TaskListFilter struct {
+	Limit  int
+	Offset int
+	Status string
+	Search string
+}
+
+// whereClause builds the shared WHERE fragment (and its args) used by both the
+// page query and the COUNT query so they always agree.
+func (f TaskListFilter) whereClause() (string, []interface{}) {
+	var conds []string
+	var args []interface{}
+	if status := strings.TrimSpace(f.Status); status != "" && !strings.EqualFold(status, "all") {
+		conds = append(conds, "status = ?")
+		args = append(args, status)
+	}
+	if search := strings.TrimSpace(f.Search); search != "" {
+		like := "%" + search + "%"
+		conds = append(conds, "(input LIKE ? OR agent_name LIKE ? OR id LIKE ?)")
+		args = append(args, like, like, like)
+	}
+	if len(conds) == 0 {
+		return "", nil
+	}
+	return " WHERE " + strings.Join(conds, " AND "), args
+}
+
+// ListTasksPaged returns one page of tasks newest-first, plus the total number
+// of tasks matching the filter (ignoring limit/offset) so callers can render
+// pagination. SQL-level pagination — only Limit rows are scanned.
+func (s *AgentGoDB) ListTasksPaged(f TaskListFilter) ([]*taskpkg.Task, int, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
+	limit := f.Limit
 	if limit <= 0 {
 		limit = 100
 	}
+	offset := f.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	where, args := f.whereClause()
+
+	var total int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM tasks`+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	pageArgs := append(append([]interface{}{}, args...), limit, offset)
+	// frames/events are large per-task JSON blobs the list view never uses
+	// (only the detail endpoint hydrates them). Select NULL for them so the
+	// page query doesn't read megabytes off disk — scanTask leaves the fields
+	// nil. This is the difference between a ~1s and a ~10ms /tasks page.
 	rows, err := s.db.Query(`
 		SELECT id, kind, status, session_id, runtime_session_id, parent_task_id,
 		       continuation_id, queue_class, awaiting, team_id, team_name, agent_name, agent_names, input, output, error,
-		       frames, events, stats, source, source_id, created_at, started_at, finished_at
-		FROM tasks
-		ORDER BY created_at ASC
-		LIMIT ?
-	`, limit)
+		       NULL AS frames, NULL AS events, stats, source, source_id, created_at, started_at, finished_at
+		FROM tasks`+where+`
+		ORDER BY created_at DESC
+		LIMIT ? OFFSET ?
+	`, pageArgs...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
@@ -1744,7 +1800,7 @@ func (s *AgentGoDB) ListTasks(limit int) ([]*taskpkg.Task, error) {
 			tasks = append(tasks, task)
 		}
 	}
-	return tasks, rows.Err()
+	return tasks, total, rows.Err()
 }
 
 type taskScanner interface {
