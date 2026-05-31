@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { RefreshCw } from "lucide-react";
 import { api, type TaskSummary } from "@/lib/api";
@@ -25,6 +26,12 @@ const STATUS_FILTERS = [
   "failed",
 ] as const;
 type StatusFilter = (typeof STATUS_FILTERS)[number];
+
+// Maps a task status to its i18n key, e.g. "completed" -> "taskStatusCompleted".
+function statusKey(status: string): string {
+  const s = (status || "pending").toLowerCase();
+  return "taskStatus" + s.charAt(0).toUpperCase() + s.slice(1);
+}
 
 type BadgeVariant = "default" | "secondary" | "destructive" | "outline";
 
@@ -57,6 +64,7 @@ function formatDuration(ms?: number): string {
 }
 
 export function Tasks() {
+  const { t } = useTranslation();
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -111,15 +119,12 @@ export function Tasks() {
     <div className="flex flex-col gap-4">
       <header className="flex items-end justify-between">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight">Tasks</h2>
-          <p className="text-sm text-muted-foreground">
-            Every agent run is a task. Click into one to see checkpoints,
-            replay, trace, and cost.
-          </p>
+          <h2 className="text-2xl font-bold tracking-tight">{t("tasksTitle")}</h2>
+          <p className="text-sm text-muted-foreground">{t("tasksDescription")}</p>
         </div>
         <Button variant="outline" size="sm" onClick={() => void load()}>
           <RefreshCw className="h-3.5 w-3.5" />
-          Refresh
+          {t("refresh")}
         </Button>
       </header>
 
@@ -139,14 +144,14 @@ export function Tasks() {
               onClick={() => setStatusFilter(s)}
               className="h-7 capitalize"
             >
-              {s}
+              {t(statusKey(s))}
             </Button>
           ))}
         </div>
         <Input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search input / agent / id…"
+          placeholder={t("tasksSearchPlaceholder")}
           className="ml-auto w-64"
           data-testid="tasks-search"
         />
@@ -156,21 +161,21 @@ export function Tasks() {
         <Table data-testid="tasks-table">
           <TableHeader>
             <TableRow>
-              <TableHead>Status</TableHead>
-              <TableHead>Input</TableHead>
-              <TableHead>Agent</TableHead>
-              <TableHead>Rounds</TableHead>
-              <TableHead>Tools</TableHead>
-              <TableHead>Cost</TableHead>
-              <TableHead>Duration</TableHead>
-              <TableHead>Created</TableHead>
+              <TableHead>{t("status")}</TableHead>
+              <TableHead>{t("input")}</TableHead>
+              <TableHead>{t("agent")}</TableHead>
+              <TableHead>{t("rounds")}</TableHead>
+              <TableHead>{t("tools")}</TableHead>
+              <TableHead>{t("cost")}</TableHead>
+              <TableHead>{t("duration")}</TableHead>
+              <TableHead>{t("created")}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading && (
               <TableRow>
                 <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">
-                  Loading…
+                  {t("loading")}
                 </TableCell>
               </TableRow>
             )}
@@ -179,48 +184,48 @@ export function Tasks() {
                 <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">
                   {statusFilter === "all" && debouncedSearch.trim() === "" ? (
                     <>
-                      No tasks yet. Kick one off in{" "}
-                      <Link to="/live" className="underline">Live</Link>.
+                      {t("tasksEmptyPrefix")}
+                      <Link to="/live" className="underline">{t("live")}</Link>.
                     </>
                   ) : (
-                    "No tasks match the current filter."
+                    t("tasksNoMatch")
                   )}
                 </TableCell>
               </TableRow>
             )}
-            {pageRows.map((t) => (
-              <TableRow key={t.id} data-testid={`task-row-${t.id}`}>
+            {pageRows.map((task) => (
+              <TableRow key={task.id} data-testid={`task-row-${task.id}`}>
                 <TableCell>
-                  <Badge variant={statusVariant(t.status)} className="capitalize">
-                    {(t.status ?? "pending").toLowerCase()}
+                  <Badge variant={statusVariant(task.status)} className="capitalize">
+                    {t(statusKey(task.status ?? "pending"))}
                   </Badge>
                 </TableCell>
                 <TableCell className="max-w-md truncate">
                   <Link
-                    to={`/tasks/${encodeURIComponent(t.id)}`}
+                    to={`/tasks/${encodeURIComponent(task.id)}`}
                     className="hover:underline"
-                    title={t.input}
+                    title={task.input}
                   >
-                    {t.input || t.id}
+                    {task.input || task.id}
                   </Link>
                 </TableCell>
                 <TableCell className="text-muted-foreground">
-                  {t.agent_name || t.team_name || "—"}
+                  {task.agent_name || task.team_name || "—"}
                 </TableCell>
                 <TableCell className="font-mono text-muted-foreground">
-                  {t.stats?.rounds ?? "—"}
+                  {task.stats?.rounds ?? "—"}
                 </TableCell>
                 <TableCell className="font-mono text-muted-foreground">
-                  {t.stats?.tool_calls ?? "—"}
+                  {task.stats?.tool_calls ?? "—"}
                 </TableCell>
                 <TableCell className="font-mono text-muted-foreground">
-                  {formatCost(t.stats?.estimated_cost_usd)}
+                  {formatCost(task.stats?.estimated_cost_usd)}
                 </TableCell>
                 <TableCell className="font-mono text-muted-foreground">
-                  {formatDuration(t.stats?.duration_ms)}
+                  {formatDuration(task.stats?.duration_ms)}
                 </TableCell>
                 <TableCell className="font-mono text-xs text-muted-foreground">
-                  {t.created_at?.slice(0, 19).replace("T", " ") || "—"}
+                  {task.created_at?.slice(0, 19).replace("T", " ") || "—"}
                 </TableCell>
               </TableRow>
             ))}
@@ -231,8 +236,11 @@ export function Tasks() {
       {total > PAGE_SIZE && (
         <div className="flex items-center justify-between text-sm text-muted-foreground">
           <span>
-            Showing {clampedPage * PAGE_SIZE + 1}–
-            {Math.min((clampedPage + 1) * PAGE_SIZE, total)} of {total}
+            {t("tasksShowing", {
+              from: clampedPage * PAGE_SIZE + 1,
+              to: Math.min((clampedPage + 1) * PAGE_SIZE, total),
+              total,
+            })}
           </span>
           <div className="flex items-center gap-2">
             <Button
@@ -241,7 +249,7 @@ export function Tasks() {
               onClick={() => setPage((p) => Math.max(0, p - 1))}
               disabled={clampedPage === 0}
             >
-              Prev
+              {t("prev")}
             </Button>
             <span className="font-mono text-xs">
               {clampedPage + 1} / {pageCount}
@@ -252,7 +260,7 @@ export function Tasks() {
               onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
               disabled={clampedPage >= pageCount - 1}
             >
-              Next
+              {t("next")}
             </Button>
           </div>
         </div>

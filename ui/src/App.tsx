@@ -31,10 +31,10 @@ function Nav() {
         {t('agent')}
       </NavLink>
       <NavLink to="/live" className={linkClass} data-testid="nav-live">
-        Live
+        {t('live')}
       </NavLink>
       <NavLink to="/tasks" className={linkClass} data-testid="nav-tasks">
-        Tasks
+        {t('tasksNav')}
       </NavLink>
       <NavLink to="/chat" className={linkClass} data-testid="nav-chat">
         {t('chat')}

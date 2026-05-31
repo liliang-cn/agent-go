@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { streamAgent, type StopReason, type StreamEvent } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -43,6 +44,7 @@ const stopReasonStyle: Record<StopReason | "default", string> = {
 };
 
 function StopReasonBadge({ reason }: { reason?: StopReason }) {
+  const { t } = useTranslation();
   const cls = reason
     ? stopReasonStyle[reason] ?? stopReasonStyle.default
     : stopReasonStyle.default;
@@ -51,7 +53,7 @@ function StopReasonBadge({ reason }: { reason?: StopReason }) {
       className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${cls}`}
       data-testid="stop-reason-badge"
     >
-      {reason ? reason.replace(/_/g, " ") : "等待中"}
+      {reason ? reason.replace(/_/g, " ") : t("livePending")}
     </span>
   );
 }
@@ -112,6 +114,7 @@ const emptySummary = (): RunSummary => ({
 });
 
 export function Live() {
+  const { t } = useTranslation();
   const [input, setInput] = useState("");
   const [debug, setDebug] = useState(false);
   const [running, setRunning] = useState(false);
@@ -326,10 +329,10 @@ export function Live() {
     <div className="flex flex-col gap-4">
       <header className="flex flex-col gap-1">
         <h2 className="text-2xl font-semibold tracking-tight text-foreground">
-          实时运行
+          {t("liveTitle")}
         </h2>
         <p className="text-sm text-muted-foreground">
-          把任务交给智能体运行时流式执行,实时观察事件、工具调用、花费和停止原因。
+          {t("liveDescription")}
         </p>
       </header>
 
@@ -338,7 +341,7 @@ export function Live() {
           <Textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="目标 —— 例如:列出 AgentGo 工作区并挑三个文件。"
+            placeholder={t("liveGoalPlaceholder")}
             disabled={running}
             className="min-h-[80px] resize-y"
             data-testid="live-input"
@@ -351,12 +354,12 @@ export function Live() {
                 onChange={(e) => setDebug(e.target.checked)}
                 disabled={running}
               />
-              调试
+              {t("debug")}
             </label>
             <div className="flex gap-2">
               {running ? (
                 <Button variant="outline" onClick={handleCancel} data-testid="live-cancel">
-                  取消
+                  {t("cancel")}
                 </Button>
               ) : (
                 <Button
@@ -365,7 +368,7 @@ export function Live() {
                   className="px-6"
                   data-testid="live-start"
                 >
-                  开始
+                  {t("liveStart")}
                 </Button>
               )}
             </div>
@@ -381,13 +384,13 @@ export function Live() {
 
       {viewingId !== null && (
         <div className="flex items-center justify-between rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-2 text-sm text-amber-800">
-          <span>正在查看历史运行(只读)。</span>
+          <span>{t("liveViewingHistory")}</span>
           <button
             type="button"
             onClick={startNew}
             className="rounded-lg border border-amber-300 bg-card px-3 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50"
           >
-            新运行
+            {t("liveNewRun")}
           </button>
         </div>
       )}
@@ -399,11 +402,11 @@ export function Live() {
           data-testid="live-history"
         >
           <div className="px-1 pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            历史
+            {t("liveHistory")}
           </div>
           {history.length === 0 && (
             <p className="px-1 text-xs text-muted-foreground">
-              已完成的运行会显示在这里。
+              {t("liveHistoryEmpty")}
             </p>
           )}
           {history.map((run) => (
@@ -435,12 +438,12 @@ export function Live() {
         >
           {timeline.length === 0 && !running && (
             <div className="rounded-xl border border-dashed border-border bg-card p-6 text-center text-sm text-muted-foreground">
-              暂无事件 —— 输入目标后点「开始」。
+{t("liveNoEvents")}
             </div>
           )}
           {timeline.length === 0 && running && (
             <div className="rounded-xl border border-border bg-muted p-4 text-sm text-muted-foreground">
-              等待运行时…
+{t("liveWaiting")}
             </div>
           )}
           {timeline.map((e) => (
@@ -503,36 +506,36 @@ export function Live() {
         <aside className="flex flex-col gap-3">
           <div className="rounded-[10px] border border-border bg-card p-4 shadow-sm">
             <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-              运行摘要
+              {t("liveRunSummary")}
             </h3>
             <dl className="mt-3 space-y-3 text-sm">
               <div className="flex items-center justify-between">
-                <dt className="text-muted-foreground">停止原因</dt>
+                <dt className="text-muted-foreground">{t("liveStopReason")}</dt>
                 <dd>
                   <StopReasonBadge reason={summary.stopReason} />
                 </dd>
               </div>
               <div className="flex items-center justify-between">
-                <dt className="text-muted-foreground">预估花费</dt>
+                <dt className="text-muted-foreground">{t("liveEstCost")}</dt>
                 <dd className="font-mono text-foreground">
                   ${summary.estimatedCostUSD.toFixed(6)}
                 </dd>
               </div>
               <div className="flex items-center justify-between">
-                <dt className="text-muted-foreground">tokens(本轮)</dt>
+                <dt className="text-muted-foreground">{t("liveTokens")}</dt>
                 <dd className="font-mono text-foreground">
                   {summary.totalTokens.toLocaleString()}
                 </dd>
               </div>
               <div className="flex items-center justify-between">
-                <dt className="text-muted-foreground">工具调用</dt>
+                <dt className="text-muted-foreground">{t("liveToolCalls")}</dt>
                 <dd className="font-mono text-foreground">
                   {summary.toolCalls}
                 </dd>
               </div>
               {summary.toolsUsed.length > 0 && (
                 <div>
-                  <dt className="text-muted-foreground">用到的工具</dt>
+                  <dt className="text-muted-foreground">{t("liveToolsUsed")}</dt>
                   <dd className="mt-1 flex flex-wrap gap-1">
                     {summary.toolsUsed.map((t) => (
                       <span
@@ -551,7 +554,7 @@ export function Live() {
           {summary.finalContent && (
             <div className="rounded-[10px] border border-border bg-card p-4 shadow-sm">
               <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-                最终答案
+                {t("liveFinalAnswer")}
               </h3>
               {parsedFinalJson ? (
                 <pre className="mt-2 max-h-72 overflow-auto rounded-lg bg-muted p-3 font-mono text-xs text-foreground">
@@ -567,15 +570,14 @@ export function Live() {
 
           <div className="rounded-[10px] border border-border bg-card p-4 text-xs text-muted-foreground shadow-sm">
             <p>
-              提示:本视图流式来自{" "}
+              {t("liveTipPrefix")}
               <code className="rounded bg-muted px-1 py-0.5">
                 /api/agent/stream
               </code>
-              。已保存的运行可在{" "}
+              {t("liveTipMid")}
               <Link to="/tasks" className="text-foreground underline">
                 /tasks
               </Link>
-              {" "}查看。
             </p>
           </div>
         </aside>
