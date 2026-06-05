@@ -575,6 +575,7 @@ func shouldRetryOpenAIWithoutResponseFormat(opts *domain.GenerationOptions, err 
 		strings.Contains(msg, "not supported") ||
 		strings.Contains(msg, "does not support") ||
 		strings.Contains(msg, "invalid") ||
+		strings.Contains(msg, "unavailable") || // DeepSeek: "response_format type is unavailable now"
 		strings.Contains(msg, "unknown")
 }
 

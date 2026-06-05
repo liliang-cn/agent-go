@@ -356,6 +356,7 @@ func shouldRetryPoolWithoutResponseFormat(opts *domain.GenerationOptions, err er
 		strings.Contains(msg, "not supported") ||
 		strings.Contains(msg, "does not support") ||
 		strings.Contains(msg, "invalid") ||
+		strings.Contains(msg, "unavailable") || // DeepSeek: "response_format type is unavailable now"
 		strings.Contains(msg, "unknown")
 }
 
@@ -427,10 +428,19 @@ func (c *Client) GenerateWithTools(ctx context.Context, messages []domain.Messag
 	reqBody := buildPoolGenerateWithToolsRequest(c.modelName, messages, tools, opts)
 
 	resp, err := c.doRequest(ctx, "/chat/completions", reqBody)
-	if err != nil {
-		if retryOpts := applyPoolRetryFallbacks(opts, err); retryOpts != nil {
-			resp, err = c.doRequest(ctx, "/chat/completions", buildPoolGenerateWithToolsRequest(c.modelName, messages, tools, retryOpts))
+	// Iterate the compatibility fallbacks: a provider can reject several
+	// params in sequence (e.g. DeepSeek thinking mode rejects tool_choice on
+	// the first call, then response_format on the next). Each pass strips
+	// whatever the current error complains about and retries, until the call
+	// succeeds or nothing more can be dropped.
+	curOpts := opts
+	for attempts := 0; err != nil && attempts < 3; attempts++ {
+		retryOpts := applyPoolRetryFallbacks(curOpts, err)
+		if retryOpts == nil {
+			break
 		}
+		curOpts = retryOpts
+		resp, err = c.doRequest(ctx, "/chat/completions", buildPoolGenerateWithToolsRequest(c.modelName, messages, tools, curOpts))
 	}
 	if err != nil {
 		return nil, fmt.Errorf("request failed (model=%s): %w", c.modelName, err)
