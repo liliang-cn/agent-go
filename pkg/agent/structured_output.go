@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"reflect"
@@ -9,6 +10,79 @@ import (
 
 	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 )
+
+// RunTyped runs the agent on goal with a structured-output constraint derived
+// from T (via WithStructuredOutputType[T]) and unmarshals the final JSON answer
+// into a value of T. It is the typed counterpart to Service.Run: the runtime
+// forces the model to return JSON matching T's shape — provider-native where
+// supported (Tier B), post-validated and re-prompted everywhere (Tier A) — and
+// this returns the parsed value so callers skip the manual json.Unmarshal.
+//
+//	type Weather struct {
+//	    City  string  `json:"city"`
+//	    TempC float64 `json:"temp_c"`
+//	}
+//	w, err := agent.RunTyped[Weather](ctx, svc, "weather in Tokyo")
+//
+// Extra RunOptions are applied after the derived structured-output option, so a
+// caller may override it (e.g. with a hand-written WithStructuredOutput schema,
+// Strict mode, or a Description). Returns the zero value of T on any error.
+func RunTyped[T any](ctx context.Context, svc *Service, goal string, opts ...RunOption) (T, error) {
+	var zero T
+	if svc == nil {
+		return zero, fmt.Errorf("RunTyped: nil service")
+	}
+	allOpts := make([]RunOption, 0, len(opts)+1)
+	allOpts = append(allOpts, WithStructuredOutputType[T]())
+	allOpts = append(allOpts, opts...)
+
+	// Route through the streaming runtime: that's where structured-output
+	// enforcement is wired (Tier B response_format on each LLM call + the
+	// Tier A re-prompting lint). The non-streaming Service.Run path does not
+	// apply RunConfig.StructuredOutput, so RunTyped must not use it.
+	events, err := svc.RunStreamWithOptions(ctx, goal, allOpts...)
+	if err != nil {
+		return zero, err
+	}
+	var final, blocked, errText string
+	for evt := range events {
+		switch evt.Type {
+		case EventTypeComplete:
+			final = evt.Content
+		case EventTypeBlocked:
+			blocked = evt.Content
+		case EventTypeError:
+			errText = evt.Content
+		}
+	}
+	if strings.TrimSpace(blocked) != "" {
+		return zero, fmt.Errorf("RunTyped: task blocked: %s", blocked)
+	}
+	if strings.TrimSpace(final) == "" && strings.TrimSpace(errText) != "" {
+		return zero, fmt.Errorf("RunTyped: %s", errText)
+	}
+
+	payload := extractJSONPayload(final)
+	if payload == "" {
+		return zero, fmt.Errorf("RunTyped: final answer was not JSON: %q", truncateForError(final, 200))
+	}
+
+	var out T
+	dec := json.NewDecoder(strings.NewReader(payload))
+	dec.UseNumber()
+	if err := dec.Decode(&out); err != nil {
+		return zero, fmt.Errorf("RunTyped: decode final JSON into %T: %w", out, err)
+	}
+	return out, nil
+}
+
+func truncateForError(s string, max int) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
+}
 
 // StructuredOutputSpec declares a JSON-shape constraint on the agent's
 // final answer. The runtime threads the spec two ways:
