@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +27,13 @@ type AgentGoDB struct {
 
 // NewAgentGoDB creates a new unified database for AgentGo
 func NewAgentGoDB(dbPath string) (*AgentGoDB, error) {
+	// Create the parent directory so callers can pass e.g. "./data/agentgo.db"
+	// without pre-creating ./data (avoids a silent CANTOPEN at open time).
+	if dir := filepath.Dir(dbPath); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, fmt.Errorf("failed to create database directory %q: %w", dir, err)
+		}
+	}
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)

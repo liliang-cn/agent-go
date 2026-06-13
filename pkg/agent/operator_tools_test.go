@@ -92,7 +92,7 @@ func TestResolveCodingAgentCommand(t *testing.T) {
 		wantErr  bool
 	}{
 		{provider: "claude", wantCmd: "claude"},
-		{provider: "gemini", wantCmd: "gemini"},
+		{provider: "agy", wantCmd: "agy"},
 		{provider: "codex", wantCmd: "codex"},
 		{provider: "opencode", wantCmd: "opencode"},
 		{provider: "custom", wantErr: true},

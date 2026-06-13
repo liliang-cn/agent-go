@@ -16,6 +16,13 @@ type TaskSubmitOptions struct {
 	TeamID     string
 	AgentNames []string
 	Input      string
+
+	// OutputSchema, when set, forces the agent to produce a schema-validated
+	// structured result instead of free-text (StructuredOutput tool + validate
+	// + retry). The resulting task's Output is then guaranteed valid JSON for
+	// that schema. Build one with agent.SchemaSpecFromType[T]() or by hand.
+	// Currently applies to single-agent tasks (AgentName), not team tasks.
+	OutputSchema *StructuredOutputSpec
 }
 
 type TaskYieldOptions struct {
@@ -43,7 +50,7 @@ func (s *TaskService) Submit(ctx context.Context, opts TaskSubmitOptions) (*task
 		}
 		return s.manager.GetUnifiedTask(task.ID)
 	}
-	task, err := s.manager.SubmitAgentTask(ctx, opts.SessionID, opts.AgentName, opts.Input)
+	task, err := s.manager.submitAgentTaskWithSchema(ctx, opts.SessionID, opts.AgentName, opts.Input, opts.OutputSchema)
 	if err != nil {
 		return nil, err
 	}

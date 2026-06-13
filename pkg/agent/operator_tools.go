@@ -111,7 +111,7 @@ func registerOperatorTools(operator *Service) {
 		return sessions, nil
 	})
 
-	register("interrupt_pty_session", "Send SIGINT to a PTY session, useful for interrupting Claude/Codex/Gemini/OpenCode or any interactive CLI.", map[string]interface{}{
+	register("interrupt_pty_session", "Send SIGINT to a PTY session, useful for interrupting Claude/Codex/Agy/OpenCode or any interactive CLI.", map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
 			"session_id": map[string]interface{}{"type": "string", "description": "PTY session id."},
@@ -156,12 +156,12 @@ func registerOperatorTools(operator *Service) {
 		return trimSessionOutput(snapshot, getIntArg(args, "tail_chars", operatorSessionTailDefault)), nil
 	})
 
-	register("start_coding_agent_session", "Start a provider-aware coding agent session for claude, gemini, codex, or opencode without making the model guess command names.", map[string]interface{}{
+	register("start_coding_agent_session", "Start a provider-aware coding agent session for claude, agy, codex, or opencode without making the model guess command names.", map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
 			"provider": map[string]interface{}{
 				"type":        "string",
-				"description": "Coding agent provider: claude, gemini, codex, or opencode.",
+				"description": "Coding agent provider: claude, agy, codex, or opencode.",
 			},
 			"args": map[string]interface{}{
 				"type":        "array",
@@ -296,16 +296,21 @@ func registerOperatorTools(operator *Service) {
 		return trimSessionOutput(snapshot, getIntArg(args, "tail_chars", operatorSessionTailDefault)), nil
 	})
 
-	register("run_coding_agent_once", "Run a provider-aware coding agent command once and return its captured output. This avoids making the model guess command names. For codex, it uses non-interactive `codex exec -`.", map[string]interface{}{
+	register("run_coding_agent_once", "Run a provider-aware coding agent command once, blocking until it exits, and return its captured output. Runs the provider non-interactively (codex `exec -`, claude/agy `-p`, opencode `run`) so the call waits for real completion instead of an interactive session.", map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
 			"provider": map[string]interface{}{
 				"type":        "string",
-				"description": "Coding agent provider: claude, gemini, codex, or opencode.",
+				"description": "Coding agent provider: claude, agy, codex, or opencode.",
 			},
-			"prompt":     map[string]interface{}{"type": "string", "description": "Prompt text to execute once."},
-			"workdir":    map[string]interface{}{"type": "string", "description": "Optional working directory."},
-			"env":        map[string]interface{}{"type": "object", "description": "Optional environment variables."},
+			"prompt":  map[string]interface{}{"type": "string", "description": "Prompt text to execute once."},
+			"workdir": map[string]interface{}{"type": "string", "description": "Optional working directory."},
+			"env":     map[string]interface{}{"type": "object", "description": "Optional environment variables."},
+			"extra_args": map[string]interface{}{
+				"type":        "array",
+				"items":       map[string]interface{}{"type": "string"},
+				"description": "Optional extra CLI flags prepended before the prompt, e.g. claude permission flags like --permission-mode acceptEdits or --dangerously-skip-permissions, or codex -s/--dangerously-bypass-approvals-and-sandbox.",
+			},
 			"tail_chars": map[string]interface{}{"type": "number", "description": "Optional output tail length in characters."},
 		},
 		"required": []string{"provider", "prompt"},
@@ -317,26 +322,13 @@ func registerOperatorTools(operator *Service) {
 		}
 		workdir := getStringArg(args, "workdir")
 		env := getStringMapArg(args, "env")
+		extraArgs := getStringSliceArg(args, "extra_args")
 
-		var (
-			result map[string]interface{}
-			err    error
-		)
-		switch provider {
-		case "codex":
-			result, err = runCommandOnce("codex", []string{"exec", "-"}, workdir, env, prompt+"\n")
-		default:
-			command, resolvedArgs, resolveErr := resolveCodingAgentCommand(provider, "", nil)
-			if resolveErr != nil {
-				return nil, resolveErr
-			}
-			started, startErr := globalOperatorSessions.start(provider, command, resolvedArgs, workdir, env, prompt, 1200*time.Millisecond)
-			if startErr != nil {
-				return nil, startErr
-			}
-			result = trimSessionOutput(started, getIntArg(args, "tail_chars", operatorSessionTailDefault))
-			return result, nil
+		command, cmdArgs, stdin, resolveErr := resolveCodingAgentRunOnce(provider, prompt, extraArgs)
+		if resolveErr != nil {
+			return nil, resolveErr
 		}
+		result, err := runCommandOnce(command, cmdArgs, workdir, env, stdin)
 		if result != nil {
 			if stdout, ok := result["stdout"].(string); ok {
 				stderr, _ := result["stderr"].(string)

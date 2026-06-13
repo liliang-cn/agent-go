@@ -211,12 +211,20 @@ var fileOutputIntentPatterns = []*regexp.Regexp{
 }
 
 // filesystemWriteTools is the set of tool names that actually mutate a file on
-// disk. create_directory alone doesn't count (no content written).
+// disk. create_directory alone doesn't count (no content written). Coding-agent
+// delegation tools are included because the delegated CLI (codex/claude/agy/...)
+// does the actual file writing on the agent's behalf.
 var filesystemWriteTools = map[string]bool{
 	"mcp_filesystem_write_file":  true,
 	"mcp_filesystem_modify_file": true,
 	"mcp_filesystem_move_file":   true,
 	"mcp_filesystem_copy_file":   true,
+	// Operator coding-agent delegation — the sub-CLI writes the files.
+	"run_coding_agent_once":      true,
+	"send_coding_agent_prompt":   true,
+	"start_coding_agent_session": true,
+	"start_pty_session":          true,
+	"send_pty_input":             true,
 }
 
 func goalWantsFileOutput(goal string) bool {

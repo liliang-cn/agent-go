@@ -69,6 +69,11 @@ type AsyncTask struct {
 	StartedAt        *time.Time      `json:"started_at,omitempty"`
 	FinishedAt       *time.Time      `json:"finished_at,omitempty"`
 	Events           []*TaskEvent    `json:"events,omitempty"`
+
+	// outputSchema, when set, forces the agent to produce a schema-validated
+	// structured result for this task (StructuredOutput tool + validate +
+	// retry). In-memory only; not serialized.
+	outputSchema *StructuredOutputSpec
 }
 
 // TaskEvent is a task-level event that can wrap lower-level runtime events.
@@ -93,6 +98,13 @@ type TaskEvent struct {
 // Deprecated: library users should prefer manager.Tasks().Submit(...), which
 // returns the canonical *task.Task.
 func (m *TeamManager) SubmitAgentTask(ctx context.Context, sessionID, agentName, prompt string) (*AsyncTask, error) {
+	return m.submitAgentTaskWithSchema(ctx, sessionID, agentName, prompt, nil)
+}
+
+// submitAgentTaskWithSchema is SubmitAgentTask plus an optional per-task output
+// schema. When schema != nil the agent is forced to emit a schema-validated
+// structured result (validate + retry), so ResultText is guaranteed valid JSON.
+func (m *TeamManager) submitAgentTaskWithSchema(ctx context.Context, sessionID, agentName, prompt string, schema *StructuredOutputSpec) (*AsyncTask, error) {
 	agentName = strings.TrimSpace(agentName)
 	prompt = strings.TrimSpace(prompt)
 	if agentName == "" {
@@ -107,13 +119,14 @@ func (m *TeamManager) SubmitAgentTask(ctx context.Context, sessionID, agentName,
 
 	taskID := uuid.NewString()
 	task := &AsyncTask{
-		ID:        taskID,
-		TaskID:    taskID,
-		SessionID: strings.TrimSpace(sessionID),
-		Kind:      AsyncTaskKindAgent,
-		Status:    AsyncTaskStatusQueued,
-		AgentName: agentName,
-		Prompt:    prompt,
+		ID:           taskID,
+		TaskID:       taskID,
+		SessionID:    strings.TrimSpace(sessionID),
+		Kind:         AsyncTaskKindAgent,
+		Status:       AsyncTaskStatusQueued,
+		AgentName:    agentName,
+		Prompt:       prompt,
+		outputSchema: schema,
 		AckMessage: fmt.Sprintf(
 			"%s received that. It is running in the background.",
 			agentName,
@@ -302,7 +315,11 @@ func (m *TeamManager) runAsyncAgentTask(ctx context.Context, taskID string) {
 		Timestamp: startedAt,
 	}, false)
 
-	events, err := m.ChatWithMemberStreamWithOptions(runCtx, task.SessionID, task.AgentName, task.Prompt, WithTaskID(firstNonEmptyTaskID(task)))
+	runOpts := []RunOption{WithTaskID(firstNonEmptyTaskID(task))}
+	if task.outputSchema != nil {
+		runOpts = append(runOpts, WithStructuredOutput(task.outputSchema))
+	}
+	events, err := m.ChatWithMemberStreamWithOptions(runCtx, task.SessionID, task.AgentName, task.Prompt, runOpts...)
 	if err != nil {
 		m.failAsyncTask(task.ID, task.AgentName, err)
 		return

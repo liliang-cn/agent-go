@@ -205,6 +205,15 @@ type RunConfig struct {
 	// service has PTC enabled.
 	DisablePTC bool
 
+	// DisableMemoryRecallShortcut, when true, prevents the runtime from
+	// answering a turn directly out of recalled long-term memory (the
+	// "explicit memory recall" short-circuit). With memory enabled, that
+	// shortcut otherwise fires whenever relevant memories exist — which
+	// hijacks action turns ("记下这件事") on an assistant that also has
+	// tools to call. Set true for action-taking agents that use memory only
+	// as context; recall still works through the normal tool/LLM path.
+	DisableMemoryRecallShortcut bool
+
 	// ResumeMessages, when non-empty, makes the runtime skip its normal
 	// initial-history assembly and instead use these messages as the
 	// task's starting point. Used by Tasks().Resume to rebuild a run
@@ -431,4 +440,14 @@ func WithStream() RunOption {
 
 func WithPTCEnabled(enabled bool) RunOption {
 	return func(c *RunConfig) { c.DisablePTC = !enabled }
+}
+
+// WithMemoryRecallShortcut toggles the "answer directly from recalled memory"
+// short-circuit for this run. It is enabled by default. Pass false on
+// action-taking agents (ones with tools that must fire even when relevant
+// memories exist) so statement/command turns aren't hijacked into a memory
+// answer; recall questions still work via the normal LLM path with memory
+// injected as context.
+func WithMemoryRecallShortcut(enabled bool) RunOption {
+	return func(c *RunConfig) { c.DisableMemoryRecallShortcut = !enabled }
 }

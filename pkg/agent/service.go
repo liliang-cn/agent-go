@@ -733,7 +733,10 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 	var ptcRes *PTCResult
 	var execMetrics *executionMetrics
 
-	if recalledAnswer, ok, err := s.answerExplicitMemoryRecall(runCtx, goal, intent, memoryContext, memoryMemories, cfg); err != nil {
+	if cfg.DisableMemoryRecallShortcut {
+		// Action-taking agent opted out: skip the recall short-circuit so
+		// tool turns aren't hijacked by an answer-from-memory response.
+	} else if recalledAnswer, ok, err := s.answerExplicitMemoryRecall(runCtx, goal, intent, memoryContext, memoryMemories, cfg); err != nil {
 		s.logger.Warn("Explicit memory recall shortcut failed", slog.Any("error", err))
 	} else if ok {
 		finalResult = recalledAnswer

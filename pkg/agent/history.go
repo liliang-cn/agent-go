@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/liliang-cn/agent-go/v2/pkg/domain"
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite" // pure-Go driver; no CGO required
 )
 
 // HistoryStore manages execution history persistence
@@ -61,8 +61,8 @@ func NewHistoryStore(dbPath string) (*HistoryStore, error) {
 		return nil, fmt.Errorf("failed to create history directory: %w", err)
 	}
 
-	// Open database
-	db, err := sql.Open("sqlite3", dbPath)
+	// Open database (modernc.org/sqlite registers as "sqlite")
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open history database: %w", err)
 	}

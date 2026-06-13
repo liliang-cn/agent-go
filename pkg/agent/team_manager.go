@@ -53,6 +53,7 @@ type TeamManager struct {
 	builtInStreamDispatchOverride builtInRuntimeStreamDispatchFunc
 	disableMemory                 bool
 	checkpointWriter              *checkpointWriter
+	agentTools                    map[string][]registeredAgentTool // per-agent Go closure tools (not persisted)
 }
 
 type SharedTaskStatus string
@@ -208,6 +209,7 @@ func NewTeamManager(s *Store) *TeamManager {
 		teamRequests:    make(map[string]*TeamRequest),
 		agentMailboxes:  make(map[string]*agentMailbox),
 		builtInRuntimes: make(map[string]*builtInAgentRuntime),
+		agentTools:      make(map[string][]registeredAgentTool),
 	}
 	manager.checkpointWriter = newCheckpointWriter(s)
 	manager.restoreTaskPlans()
@@ -914,6 +916,7 @@ func (m *TeamManager) buildServiceForModel(model *AgentModel) (*Service, error) 
 	if strings.EqualFold(strings.TrimSpace(model.Name), defaultOperatorAgentName) {
 		registerOperatorTools(newSvc)
 	}
+	m.applyRegisteredAgentTools(newSvc, model.Name)
 	applyBuiltInOutputLints(newSvc, model)
 	newSvc.SetCheckpointSink(m)
 

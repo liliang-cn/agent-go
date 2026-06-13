@@ -228,6 +228,13 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			r.svc.setCurrentResponseFormat(rf)
 			defer r.svc.setCurrentResponseFormat(nil)
 		}
+		// Progress signal so a UI can show "analyzing → structured result"
+		// for schema-constrained runs (e.g. typed Task verdicts).
+		name := strings.TrimSpace(r.cfg.StructuredOutput.Name)
+		if name == "" {
+			name = "schema"
+		}
+		r.emit(EventTypeThinking, fmt.Sprintf("Producing structured output (%s)…", name))
 	}
 
 	// --- DEBUG: LOG AGENT CONFIGURATION ---

@@ -376,13 +376,45 @@ func mergeCommandEnv(extra map[string]string) []string {
 	return env
 }
 
+// resolveCodingAgentRunOnce builds the non-interactive (headless) argv + stdin for
+// a one-shot coding-agent invocation. Unlike an interactive PTY session, these
+// forms run to completion and exit, so the caller can capture the full output:
+//   - codex:    codex exec [extra] -        (prompt on stdin)
+//   - claude:   claude [extra] -p <prompt>
+//   - agy:      agy [extra] -p <prompt>
+//   - opencode: opencode run [extra] <prompt>
+//
+// extraArgs are passed through verbatim (e.g. claude/agy --dangerously-skip-permissions,
+// or codex -s ... / --dangerously-bypass-approvals-and-sandbox).
+func resolveCodingAgentRunOnce(provider, prompt string, extraArgs []string) (string, []string, string, error) {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	extra := append([]string(nil), extraArgs...)
+	switch provider {
+	case "codex":
+		cmdArgs := append([]string{"exec"}, extra...)
+		cmdArgs = append(cmdArgs, "-")
+		return "codex", cmdArgs, prompt + "\n", nil
+	case "claude":
+		cmdArgs := append(extra, "-p", prompt)
+		return "claude", cmdArgs, "", nil
+	case "agy":
+		cmdArgs := append(extra, "-p", prompt)
+		return "agy", cmdArgs, "", nil
+	case "opencode":
+		cmdArgs := append(extra, "run", prompt)
+		return "opencode", cmdArgs, "", nil
+	default:
+		return "", nil, "", fmt.Errorf("unsupported coding agent provider %q for one-shot run", provider)
+	}
+}
+
 func resolveCodingAgentCommand(provider string, command string, args []string) (string, []string, error) {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	switch provider {
 	case "claude":
 		return "claude", append([]string(nil), args...), nil
-	case "gemini":
-		return "gemini", append([]string(nil), args...), nil
+	case "agy":
+		return "agy", append([]string(nil), args...), nil
 	case "codex":
 		return "codex", append([]string(nil), args...), nil
 	case "opencode":
