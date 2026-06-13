@@ -299,9 +299,15 @@ func buildPoolGenerateWithToolsRequest(modelName string, messages []domain.Messa
 			reqBody["response_format"] = rf
 		}
 		if domain.UsesNativeWebSearch(opts.WebSearchMode) {
+			// OpenAI-style native web search.
 			reqBody["web_search_options"] = map[string]interface{}{
 				"search_context_size": domain.NormalizeWebSearchContextSize(opts.WebSearchContextSize),
 			}
+			// DashScope ignores web_search_options and triggers retrieval via the
+			// non-standard enable_search flag instead. Send both; providers ignore
+			// the one they don't know, and applyPoolRetryFallbacks drops native
+			// web search entirely if an upstream rejects it.
+			reqBody["enable_search"] = true
 		}
 	}
 
@@ -315,6 +321,7 @@ func shouldRetryPoolWithoutNativeWebSearch(opts *domain.GenerationOptions, err e
 
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "web_search_options") ||
+		strings.Contains(msg, "enable_search") ||
 		strings.Contains(msg, "web search") ||
 		strings.Contains(msg, "unsupported parameter") ||
 		strings.Contains(msg, "unknown field")
