@@ -724,6 +724,7 @@ func (b *Builder) build() (*Service, error) {
 	// idempotent.
 	svc.RegisterOutputLint(NoPlanningOnlyFinish())
 	svc.RegisterOutputLint(FileTaskMustWrite())
+	svc.RegisterOutputLint(NoRawPTCCode()) // reject leaked PTC sandbox code in final answers
 
 	// Graph-aware mode: expose the graph_recall tool so the loop can query the
 	// knowledge graph. Registered when WithGraphMemory() opted in.

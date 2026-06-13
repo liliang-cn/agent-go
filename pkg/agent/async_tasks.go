@@ -156,6 +156,13 @@ func (m *TeamManager) submitAgentTaskWithSchema(ctx context.Context, sessionID, 
 // Deprecated: library users should prefer manager.Tasks().Submit(...), which
 // returns the canonical *task.Task.
 func (m *TeamManager) SubmitTeamTask(ctx context.Context, sessionID, teamID, prompt string, agentNames []string) (*AsyncTask, error) {
+	return m.submitTeamTaskWithSchema(ctx, sessionID, teamID, prompt, agentNames, nil)
+}
+
+// submitTeamTaskWithSchema is SubmitTeamTask plus an optional output schema
+// applied to each dispatched team member's run (force StructuredOutput tool +
+// validate + retry), so every member returns schema-valid JSON.
+func (m *TeamManager) submitTeamTaskWithSchema(ctx context.Context, sessionID, teamID, prompt string, agentNames []string, schema *StructuredOutputSpec) (*AsyncTask, error) {
 	team, err := m.resolveTeamRef(strings.TrimSpace(teamID), "")
 	if err != nil {
 		return nil, err
@@ -171,6 +178,13 @@ func (m *TeamManager) SubmitTeamTask(ctx context.Context, sessionID, teamID, pro
 	}
 
 	task := m.ensureAsyncTaskForSharedTask(sharedTask, strings.TrimSpace(sessionID), team.Name)
+	if schema != nil {
+		// Attach before members are dispatched; reads go through taskMu and the
+		// member loop reads it well into the async runner, so it is in place.
+		m.updateAsyncTask(task.ID, func(existing *AsyncTask) {
+			existing.outputSchema = schema
+		})
+	}
 	m.emitTaskEvent(task.ID, &TaskEvent{
 		TaskID:           task.ID,
 		SessionID:        task.SessionID,
@@ -386,10 +400,14 @@ func (m *TeamManager) executeSharedTaskStream(ctx context.Context, task *SharedT
 						task.Prompt,
 				)
 			}
-			events, err := m.ChatWithMemberStreamWithOptions(ctx, task.ID, agentName, instruction,
+			memberOpts := []RunOption{
 				WithTaskID(childTaskID),
 				WithParentTaskID(firstNonEmptyTaskID(asyncTask)),
-			)
+			}
+			if asyncTask.outputSchema != nil {
+				memberOpts = append(memberOpts, WithStructuredOutput(asyncTask.outputSchema))
+			}
+			events, err := m.ChatWithMemberStreamWithOptions(ctx, task.ID, agentName, instruction, memberOpts...)
 			if err != nil {
 				resultCh <- dispatchResult{AgentName: agentName, Err: err}
 				return

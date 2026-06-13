@@ -340,6 +340,37 @@ func FileTaskMustWrite() OutputLint {
 	}
 }
 
+// --- 5. no_raw_ptc_code --------------------------------------------------------
+//
+// PTC (Programmatic Tool Calling) lets the model write JS that runs in a sandbox
+// and calls tools. Weaker models sometimes emit that JS as their FINAL answer
+// instead of letting it execute — the user then sees raw `callTool(...)` code.
+// This lint rejects a final answer that still contains PTC sandbox source so the
+// runtime re-prompts for the executed result.
+
+// ptcSourcePattern matches the PTC sandbox API surface that should never appear
+// in a user-facing final answer. These identifiers are specific to the sandbox
+// (callTool / toolData / toolOk / toolError / callMCPTool), so matching them is
+// high-precision — ordinary prose and even most code samples don't use them.
+var ptcSourcePattern = regexp.MustCompile(`\b(?:callTool|callMCPTool|toolData|toolOk|toolError)\s*\(`)
+
+// NoRawPTCCode rejects a free-form completion that leaked PTC sandbox code
+// (e.g. "const r = callTool('list_schedules', {})") instead of the executed
+// result. Register globally; agent-agnostic.
+func NoRawPTCCode() OutputLint {
+	return LintFunc{
+		NameValue: "no_raw_ptc_code",
+		Fn: func(text string, ctx LintContext) (bool, string) {
+			if ptcSourcePattern.MatchString(text) {
+				return false, "your final answer contains raw PTC/JavaScript sandbox code " +
+					"(callTool / toolData / ...). Do not return the code: let it execute and " +
+					"return the actual result in plain language, or call the tools directly."
+			}
+			return true, ""
+		},
+	}
+}
+
 // RegisterDefaultOutputLints wires the built-in lints into the given service.
 // Callers can pick and choose by registering individually if they only want a
 // subset.
@@ -349,6 +380,7 @@ func RegisterDefaultOutputLints(svc *Service) {
 	}
 	svc.RegisterOutputLint(NoPlanningOnlyFinish())
 	svc.RegisterOutputLint(FileTaskMustWrite())
+	svc.RegisterOutputLint(NoRawPTCCode())
 	svc.RegisterOutputLint(DispatcherNoBounceBack(), BuiltInDispatcherAgentName)
 	svc.RegisterOutputLint(ArchivistNoRelativeTime(), defaultArchivistAgentName)
 }
