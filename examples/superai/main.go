@@ -197,6 +197,12 @@ func main() {
 		}
 	}
 	cfg := &config.Config{Home: home}
+	if embedder != nil {
+		// Make config's store type match the builder's graph memory, so the
+		// memory path resolves to cortex.db (a file) rather than the file-memory
+		// directory — otherwise cortexdb tries to open a dir and CANTOPENs.
+		cfg.Memory.StoreType = config.MemoryStoreTypeGraphFlow
+	}
 	cfg.ApplyHomeLayout()
 	_ = os.MkdirAll(cfg.DataDir(), 0o755)
 
