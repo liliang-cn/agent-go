@@ -132,10 +132,13 @@ func (db *store) dueReminders(now time.Time) []string {
 // ----------------------------------------------------------------------------
 
 func main() {
-	interactive := false
+	interactive, web := false, false
 	for _, a := range os.Args[1:] {
-		if a == "-i" || a == "--interactive" || a == "-chat" || a == "--chat" {
+		switch a {
+		case "-i", "--interactive", "-chat", "--chat":
 			interactive = true
+		case "-web", "--web":
+			web = true
 		}
 	}
 
@@ -186,6 +189,7 @@ func main() {
 		WithLLM(brain).
 		WithEmbedder(embedder).
 		WithGraphMemory(). // graphflow 图存储 + graph_recall 工具
+		WithPTC(false).    // simple one-tool-per-intent turns: direct tool-calling
 		Build()
 	if err != nil {
 		log.Fatalf("build SuperAI: %v", err)
@@ -198,12 +202,24 @@ func main() {
 		len(db.Schedules), len(db.Records), len(db.Persons), len(db.Reminders))
 
 	// Proactive reminder scheduler (PRD S2): fires due reminders out-of-band.
-	stopReminders := startReminderScheduler(db, interactive)
+	// In web mode it pushes to connected browsers (SSE); otherwise it prints.
+	events := newHub()
+	onDue := announceReminder
+	if web {
+		onDue = func(title string) {
+			log.Printf("proactive reminder due: %s", title)
+			events.publish(fmt.Sprintf(`{"type":"reminder","text":%q}`, title))
+		}
+	}
+	stopReminders := startReminderScheduler(db, !interactive && !web, onDue)
 	defer stopReminders()
 
-	if interactive {
+	switch {
+	case web:
+		runWeb(svc, db, events, envOr("SUPERAI_ADDR", "127.0.0.1:43517"))
+	case interactive:
 		runInteractive(svc, db)
-	} else {
+	default:
 		runScriptedDemo(svc, db)
 	}
 	db.save()
@@ -334,9 +350,9 @@ func turn(svc *agent.Service, sessionID, msg string) {
 // proactive reminder scheduler (PRD S2 / F-SCH-3)
 // ----------------------------------------------------------------------------
 
-func startReminderScheduler(db *store, interactive bool) func() {
+func startReminderScheduler(db *store, fastTick bool, onDue func(title string)) func() {
 	tick := 30 * time.Second
-	if !interactive {
+	if fastTick {
 		tick = 1 * time.Second // demo wants a quick, reliable fire
 	}
 	stop := make(chan struct{})
@@ -349,7 +365,7 @@ func startReminderScheduler(db *store, interactive bool) func() {
 				return
 			case now := <-t.C:
 				for _, title := range db.dueReminders(now) {
-					announceReminder(title)
+					onDue(title)
 					db.save()
 				}
 			}
