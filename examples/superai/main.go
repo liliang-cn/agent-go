@@ -599,19 +599,23 @@ func dumpState(db *store) {
 	}
 }
 
+// splitEmotion peels the trailing "情绪: X" tag off a reply. It is robust to the
+// tag sitting on a real newline, on a literal "\n" the model emitted as text, or
+// just appended — and returns the cleaned reply plus the emotion.
 func splitEmotion(text string) (reply, emotion string) {
-	lines := strings.Split(text, "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		l := strings.TrimSpace(lines[i])
-		if l == "" {
-			continue
-		}
-		if strings.HasPrefix(l, "情绪:") || strings.HasPrefix(l, "情绪：") {
-			emotion = strings.TrimSpace(strings.TrimLeft(l, "情绪:："))
-			reply = strings.Join(lines[:i], "\n")
+	text = strings.TrimRight(text, " \t\r\n")
+	for _, marker := range []string{"情绪:", "情绪："} {
+		if i := strings.LastIndex(text, marker); i >= 0 {
+			emotion = strings.TrimSpace(text[i+len(marker):])
+			if nl := strings.IndexAny(emotion, "\r\n"); nl >= 0 {
+				emotion = strings.TrimSpace(emotion[:nl])
+			}
+			reply = text[:i]
+			reply = strings.TrimRight(reply, " \t\r\n")
+			reply = strings.TrimSuffix(reply, "\\n") // literal backslash-n the model emitted
+			reply = strings.TrimRight(reply, " \t\r\n")
 			return reply, emotion
 		}
-		break
 	}
 	return text, ""
 }

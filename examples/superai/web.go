@@ -381,7 +381,7 @@ document.getElementById('theme').onclick=function(){applyTheme(document.document
 function hdr(){var h={'Content-Type':'application/json'};if(TOKEN)h['Authorization']='Bearer '+TOKEN;return h;}
 function esc(s){return (s||'').replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}
 function el(cls,html){var d=document.createElement('div');d.className=cls;d.innerHTML=html;log.appendChild(d);log.scrollTop=log.scrollHeight;return d;}
-function rowAI(html){return el('row ai','<div class="av ai">🦁</div><div><div class="bubble">'+html+'</div></div>');}
+function rowAI(html){return el('row ai','<div class="av ai">🦁</div><div class="aiwrap"><div class="bubble">'+html+'</div></div>');}
 function rowMe(t){return el('row me','<div class="av me">我</div><div class="bubble">'+esc(t)+'</div>');}
 
 function renderOverview(data){
@@ -411,7 +411,7 @@ function sendMsg(){
       var m=rowAI(esc(r.reply));var meta='';
       if(r.emotion)meta+='<span class="chip emo">'+(r.emoji||'')+' '+esc(r.emotion)+'</span>';
       if(r.tools&&r.tools.length)meta+='<span class="chip">🔧 '+r.tools.map(esc).join(', ')+'</span>';
-      if(meta)m.querySelector('div').insertAdjacentHTML('beforeend','<div class="meta">'+meta+'</div>');
+      if(meta)m.querySelector('.aiwrap').insertAdjacentHTML('beforeend','<div class="meta">'+meta+'</div>');
       loadOverview();
     })
     .catch(function(){t.remove();})
