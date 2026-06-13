@@ -1184,12 +1184,30 @@ func (s *Service) appendToolRoundToMessages(messages []domain.Message, taskID st
 		ResponseID:       result.ID,
 	}, taskID))
 	for _, tr := range toolResults {
-		resStr := toolResultToString(tr.Result)
+		res := tr.Result
+		var imageParts []domain.MessagePart
+		if s.visionEnabled {
+			imageParts, res = extractToolImageParts(res)
+		}
+		resStr := toolResultToString(res)
 		messages = append(messages, withTaskID(domain.Message{
 			Role:       "tool",
 			Content:    resStr,
 			ToolCallID: tr.ToolCallID,
 		}, taskID))
+		// Vision: surface any image the tool produced as a follow-up user
+		// message with an image part, since providers reject images in
+		// tool-role messages. Only runs when WithVision is enabled and the
+		// result actually carried an image.
+		if len(imageParts) > 0 {
+			parts := append([]domain.MessagePart{
+				domain.TextPart("Image output from tool " + tr.ToolName + ":"),
+			}, imageParts...)
+			messages = append(messages, withTaskID(domain.Message{
+				Role:  "user",
+				Parts: parts,
+			}, taskID))
+		}
 	}
 	return messages
 }
