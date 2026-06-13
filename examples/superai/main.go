@@ -247,7 +247,7 @@ func main() {
 
 	switch {
 	case web:
-		runWeb(svc, db, events, envOr("SUPERAI_ADDR", "127.0.0.1:43517"), os.Getenv("SUPERAI_TOKEN"))
+		runWeb(svc, db, brain, events, envOr("SUPERAI_ADDR", "127.0.0.1:43517"), os.Getenv("SUPERAI_TOKEN"))
 	case interactive:
 		runInteractive(svc, db)
 	default:
