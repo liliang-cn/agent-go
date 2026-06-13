@@ -11,6 +11,30 @@ import (
 // losing the thread. Lists are keyed by an arbitrary string (args.key, default
 // "default"). Mirrors the RegisterFetchURLTool registration pattern.
 
+// toolArgStringSlice extracts a string array tool argument, tolerating every
+// shape it can arrive in: []interface{} (JSON tool calls), []string (exported
+// from the PTC Goja sandbox), or a single string. Returns ok=false only when
+// the key is missing or an unusable type.
+func toolArgStringSlice(args map[string]interface{}, key string) ([]string, bool) {
+	switch v := args[key].(type) {
+	case []string:
+		return v, true
+	case []interface{}:
+		out := make([]string, 0, len(v))
+		for _, e := range v {
+			out = append(out, fmt.Sprintf("%v", e))
+		}
+		return out, true
+	case string:
+		if v == "" {
+			return nil, false
+		}
+		return []string{v}, true
+	default:
+		return nil, false
+	}
+}
+
 type scratchpadItem struct {
 	Text string `json:"text"`
 	Done bool   `json:"done"`
@@ -104,13 +128,9 @@ func RegisterScratchpadTools(svc *Service) {
 				"required": []string{"items"},
 			},
 			func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-				raw, ok := args["items"].([]interface{})
+				items, ok := toolArgStringSlice(args, "items")
 				if !ok {
 					return toolErr("items must be an array of strings"), nil
-				}
-				items := make([]string, 0, len(raw))
-				for _, v := range raw {
-					items = append(items, fmt.Sprintf("%v", v))
 				}
 				list := globalScratchpad.set(scratchpadKey(args), items)
 				return toolOK(map[string]interface{}{"items": scratchpadItemsPayload(list)}), nil
