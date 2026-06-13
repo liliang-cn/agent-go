@@ -37,3 +37,6 @@ eval/results/*.json
 
 # superai example local data
 .superai-data/
+
+# superai web (Vite/AI SDK) deps
+examples/superai/web/node_modules/
