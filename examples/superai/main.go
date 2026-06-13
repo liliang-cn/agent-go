@@ -4,7 +4,9 @@
 // isolation / SaaS plumbing — just the brain):
 //
 //   - intent understanding + tool calling  (建日程 / 记事 / 记人物 / 设提醒)
-//   - long-term memory with cross-session recall  (WithMemory cortex + embeddings)
+//   - built-in resolve_datetime so the model never miscomputes relative dates
+//   - knowledge-graph–aware memory (WithGraphMemory + graph_recall): the loop
+//     queries entities/relations, not just vector similarity
 //   - emotion tagging that would drive the 3D avatar  (情绪: 标签)
 //
 // The assistant is one agent.Service with custom Go tools backed by a tiny
@@ -111,6 +113,7 @@ func main() {
   需要按时提醒/周期提醒 → set_reminder。
 - 重要：只要用户在陈述一件发生过的事、或要求记录/提醒，你必须先调用对应的工具把它存下来，再回复确认。不要因为"记忆里好像有"就跳过记录，也不要回答"没找到记忆"之类的话。
 - 用户提问（如"我周五有没有约""老王在忙啥"）时，结合召回到的记忆和检索工具回答。
+- 当问题涉及"谁/和谁/什么关系/相关的人或事"时，优先调用 graph_recall（知识图谱召回，会顺着实体关系扩展），再结合结构化检索工具作答。
 - 回答用中文，简短、自然、有人情味，像朋友而不是工具。
 - 每条回复的最后，单独一行输出情绪标签，格式严格为：情绪: <中性|开心|思考|惊讶|关心|抱歉>。
   这个标签会驱动 3D 形象的表情，请根据语境选择。
@@ -123,7 +126,7 @@ func main() {
 		WithConfig(cfg).
 		WithLLM(brain).
 		WithEmbedder(embedder).
-		WithMemory(agent.WithMemoryStoreType("cortex")).
+		WithGraphMemory(). // graphflow 图存储 + graph_recall 工具（实体/关系扩展）
 		Build()
 	if err != nil {
 		log.Fatalf("build SuperAI: %v", err)
@@ -157,6 +160,7 @@ func main() {
 	phaseB := []string{
 		"我这周五是不是有约？跟谁、在哪？",    // 跨会话召回 + 日程检索
 		"老王最近在忙啥来着？",          // 长期记忆（人物档案）
+		"跟 AI 创业有关的人或事都有哪些？",  // 知识图谱：实体关系扩展（graph_recall）
 		"帮我看看最近的工作记录，有没有踩坑的。", // 记录检索
 		"我设过哪些提醒？",            // 提醒检索
 	}
