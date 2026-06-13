@@ -170,7 +170,8 @@ func runWeb(svc *agent.Service, db *store, gen domain.Generator, h *hub, addr, t
 		}
 		send(map[string]any{"type": "start"})
 
-		reply := ""
+		reply, emotion := "", ""
+		var tools []string
 		if userText == "" {
 			reply = "(空消息)"
 		} else {
@@ -181,8 +182,9 @@ func runWeb(svc *agent.Service, db *store, gen domain.Generator, h *hub, addr, t
 				log.Printf("chat error (session=%s): %v", sid, err)
 				reply = "⚠️ " + err.Error()
 			} else {
-				reply, _ = splitEmotion(res.Text())
+				reply, emotion = splitEmotion(res.Text())
 				reply = strings.TrimSpace(reply)
+				tools = res.ToolsUsed
 				db.save()
 			}
 		}
@@ -194,6 +196,12 @@ func runWeb(svc *agent.Service, db *store, gen domain.Generator, h *hub, addr, t
 			time.Sleep(10 * time.Millisecond) // typewriter feel
 		}
 		send(map[string]any{"type": "text-end", "id": id})
+		// AI SDK custom data part: tools used + emotion → rendered as chips.
+		if emotion != "" || len(tools) > 0 {
+			send(map[string]any{"type": "data-meta", "data": map[string]any{
+				"emotion": emotion, "emoji": emoji(emotion), "tools": tools,
+			}})
+		}
 		send(map[string]any{"type": "finish"})
 		fmt.Fprint(w, "data: [DONE]\n\n")
 		flusher.Flush()

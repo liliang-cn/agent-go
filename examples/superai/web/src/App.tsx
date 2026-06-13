@@ -181,11 +181,25 @@ export default function App() {
                   <div className="bubble">{text}</div>
                 </div>
               );
+            const meta: any = m.parts.find((p: any) => p.type === "data-meta")?.data;
+            const tools: string[] = meta?.tools || [];
             return (
               <div className="row ai" key={m.id}>
                 <div className="av ai">🦁</div>
                 <div className="aiwrap">
                   <div className="bubble">{text || "…"}</div>
+                  {meta && (meta.emotion || tools.length > 0) && (
+                    <div className="meta">
+                      {meta.emotion && (
+                        <span className="chip emo">
+                          {meta.emoji} {meta.emotion}
+                        </span>
+                      )}
+                      {tools.length > 0 && (
+                        <span className="chip">🔧 {tools.join(", ")}</span>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             );

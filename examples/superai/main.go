@@ -268,6 +268,7 @@ func buildPersona(now time.Time) string {
 - 只要用户在陈述发生的事或要求记录/提醒，必须先调用对应工具存下来再回复；不要回答"没找到记忆"之类的话。
 - 提问且涉及"谁/和谁/什么关系/相关的人或事"时，优先用 graph_recall（知识图谱关系扩展），再结合检索工具作答。
 - 需要最新/实时信息(新闻、股价、行情、不在记忆和记录里的事实)时，调用 web_search 联网查,再据结果回答并带上来源。
+- 需要阅读/审阅/引用某个具体网址的真实页面内容时，用 fetch_url 抓取该网页正文(web_search 只给搜索摘要,读具体页面要用 fetch_url)。
 - 回答用中文，简短、自然、有人情味。每条回复最后单独一行输出情绪标签，格式严格为：情绪: <中性|开心|思考|惊讶|关心|抱歉>。
 
 严禁输出英文、日文或韩文，一律用中文回复。`,
@@ -480,6 +481,9 @@ func registerTools(svc *agent.Service, db *store) {
 				return ok(map[string]any{"query": q, "answer": ans}), nil
 			}, read)
 	}
+
+	// fetch_url: framework built-in (read a specific page's text; SSRF-guarded).
+	agent.RegisterFetchURLTool(svc)
 
 	svc.AddToolWithMetadata("add_schedule", "新建一条日程/约会。时间请用 RFC3339 绝对时间（先用 resolve_datetime 换算）。",
 		obj(map[string]any{
