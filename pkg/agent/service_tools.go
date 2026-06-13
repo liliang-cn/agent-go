@@ -105,7 +105,7 @@ func (s *Service) SearchAndExecute(ctx context.Context, query string, instructio
 
 		opts := s.toolGenerationOptions(0.1, 0, "auto")
 
-		result, err := s.llmService.GenerateWithTools(ctx, messages, matches, opts)
+		result, err := s.llmService.GenerateWithTools(ctx, sanitizeToolPairing(messages), matches, opts)
 		if err != nil {
 			return nil, fmt.Errorf("failed to map instruction to tool: %w", err)
 		}

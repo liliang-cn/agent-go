@@ -960,7 +960,7 @@ func (s *Service) runOneLLMTurn(ctx context.Context, currentAgent *Agent, messag
 
 	llmCtx, cancel := withLLMTurnTimeout(ctx, s.cfg)
 	defer cancel()
-	result, err := s.llmService.GenerateWithTools(llmCtx, genMessages, tools, s.toolGenerationOptions(temperature, maxTokens, toolChoiceForIntent(intent, round)))
+	result, err := s.llmService.GenerateWithTools(llmCtx, sanitizeToolPairing(genMessages), tools, s.toolGenerationOptions(temperature, maxTokens, toolChoiceForIntent(intent, round)))
 	if err != nil {
 		// Check if error is withholdable - try compact and retry once
 		if IsWithholdable(err) {
@@ -969,7 +969,7 @@ func (s *Service) runOneLLMTurn(ctx context.Context, currentAgent *Agent, messag
 				// Retry with compacted messages
 				retryCtx, retryCancel := withLLMTurnTimeout(ctx, s.cfg)
 				defer retryCancel()
-				retryResult, retryErr := s.llmService.GenerateWithTools(retryCtx, compacted, tools, s.toolGenerationOptions(temperature, maxTokens, toolChoiceForIntent(intent, round)))
+				retryResult, retryErr := s.llmService.GenerateWithTools(retryCtx, sanitizeToolPairing(compacted), tools, s.toolGenerationOptions(temperature, maxTokens, toolChoiceForIntent(intent, round)))
 				if retryErr == nil && retryResult != nil {
 					return retryResult, s.estimateGenerationTokens(compacted, retryResult), recoveryMeta{Compacted: true, Recovered: true}, nil
 				}
@@ -1417,7 +1417,7 @@ func (s *Service) executeWithDynamicToolSelection(ctx context.Context, goal stri
 	}
 
 	// Use GenerateWithTools - let LLM natively decide which tools to call
-	result, err := s.llmService.GenerateWithTools(ctx, messages, availableTools, s.toolGenerationOptions(0.3, 1000, toolChoiceForIntent(intent, 0)))
+	result, err := s.llmService.GenerateWithTools(ctx, sanitizeToolPairing(messages), availableTools, s.toolGenerationOptions(0.3, 1000, toolChoiceForIntent(intent, 0)))
 
 	if err != nil {
 		return nil, fmt.Errorf("tool execution failed: %w", err)

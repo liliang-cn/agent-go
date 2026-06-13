@@ -58,7 +58,7 @@ Visible callable tools:
 
 	llmCtx, cancel := withLLMTurnTimeout(ctx, s.cfg)
 	defer cancel()
-	result, err := s.llmService.GenerateWithTools(llmCtx, messages, available, s.toolGenerationOptions(0.1, 800, "required"))
+	result, err := s.llmService.GenerateWithTools(llmCtx, sanitizeToolPairing(messages), available, s.toolGenerationOptions(0.1, 800, "required"))
 	if err != nil {
 		return "", false, err
 	}

@@ -177,7 +177,7 @@ func (r *Runtime) forceFinalSynthesis(ctx context.Context, state *queryLoopState
 			"fully achieved, state clearly what was completed and what still remains.",
 	})
 	// tools=nil + no tool_choice → the provider must return plain text.
-	res, err := r.svc.llmService.GenerateWithTools(ctx, synth, nil, r.svc.toolGenerationOptions(0.3, 2000, ""))
+	res, err := r.svc.llmService.GenerateWithTools(ctx, sanitizeToolPairing(synth), nil, r.svc.toolGenerationOptions(0.3, 2000, ""))
 	if err != nil || res == nil {
 		return ""
 	}

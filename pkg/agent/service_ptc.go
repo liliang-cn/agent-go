@@ -100,7 +100,7 @@ Example format:
 
 	llmCtx, cancel := withLLMTurnTimeout(ctx, s.cfg)
 	defer cancel()
-	err := s.llmService.StreamWithTools(llmCtx, messages, ptcTools, s.toolGenerationOptions(temperature, maxTokens, ""), func(delta *domain.GenerationResult) error {
+	err := s.llmService.StreamWithTools(llmCtx, sanitizeToolPairing(messages), ptcTools, s.toolGenerationOptions(temperature, maxTokens, ""), func(delta *domain.GenerationResult) error {
 		if delta.Content != "" {
 			fullContent.WriteString(delta.Content)
 			s.emitProgress("partial", delta.Content, 0, "")
