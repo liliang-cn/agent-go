@@ -219,6 +219,12 @@ var filesystemWriteTools = map[string]bool{
 	"mcp_filesystem_modify_file": true,
 	"mcp_filesystem_move_file":   true,
 	"mcp_filesystem_copy_file":   true,
+	// Built-in sandbox tools (pkg/sandbox via RegisterSandboxTools) — these
+	// write/mutate files in the agent's workspace.
+	"fs_write":      true,
+	"fs_edit":       true,
+	"fs_multi_edit": true,
+	"fs_move":       true,
 	// Operator coding-agent delegation — the sub-CLI writes the files.
 	"run_coding_agent_once":      true,
 	"send_coding_agent_prompt":   true,
