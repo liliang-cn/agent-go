@@ -31,12 +31,10 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -463,24 +461,14 @@ func registerTools(svc *agent.Service, db *store) {
 	// key, which is a DashScope key). The model calls it when the answer isn't in
 	// memory/records and needs to be fresh.
 	searchKey := envOr("SUPERAI_SEARCH_KEY", os.Getenv("SUPERAI_EMBED_KEY"))
-	searchBase := envOr("SUPERAI_SEARCH_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-	searchModel := envOr("SUPERAI_SEARCH_MODEL", "qwen-plus")
-	if searchKey != "" && searchKey != "none" {
-		svc.AddToolWithMetadata("web_search",
-			"联网搜索实时信息(新闻/财经/股价/事实等),返回简要答案与来源。当用户要查最新、实时、或不在记忆与记录里的信息时调用。",
-			obj(map[string]any{"query": s("搜索关键词或问题")}, "query"),
-			func(ctx context.Context, a map[string]any) (any, error) {
-				q := str(a, "query")
-				if q == "" {
-					return map[string]any{"ok": false, "error": "query required"}, nil
-				}
-				ans, err := dashscopeSearch(ctx, searchBase, searchKey, searchModel, q)
-				if err != nil {
-					return map[string]any{"ok": false, "error": err.Error()}, nil
-				}
-				return ok(map[string]any{"query": q, "answer": ans}), nil
-			}, read)
+	if searchKey == "none" {
+		searchKey = ""
 	}
+	agent.RegisterWebSearchTool(svc, agent.WebSearchConfig{
+		BaseURL: envOr("SUPERAI_SEARCH_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+		APIKey:  searchKey,
+		Model:   envOr("SUPERAI_SEARCH_MODEL", "qwen-plus"),
+	})
 
 	// fetch_url: framework built-in (read a specific page's text; SSRF-guarded).
 	agent.RegisterFetchURLTool(svc)
@@ -666,53 +654,6 @@ func emoji(emotion string) string {
 	default:
 		return "🙂"
 	}
-}
-
-// dashscopeSearch performs a grounded web search via DashScope's enable_search
-// extension (the OpenAI-style web_search_options is ignored by DashScope; the
-// non-standard enable_search:true is what actually triggers retrieval).
-func dashscopeSearch(ctx context.Context, base, key, model, query string) (string, error) {
-	body, _ := json.Marshal(map[string]any{
-		"model": model,
-		"messages": []map[string]string{{
-			"role":    "user",
-			"content": "联网搜索后用中文简要回答下面的问题,并在末尾附 1-3 个来源链接:\n" + query,
-		}},
-		"enable_search": true,
-		"max_tokens":    700,
-	})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		strings.TrimRight(base, "/")+"/chat/completions", bytes.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+key)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	var out struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-		Error *struct {
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return "", err
-	}
-	if out.Error != nil {
-		return "", fmt.Errorf("%s", out.Error.Message)
-	}
-	if len(out.Choices) == 0 {
-		return "", fmt.Errorf("no search result")
-	}
-	return strings.TrimSpace(out.Choices[0].Message.Content), nil
 }
 
 func weekdayCN(t time.Time) string {
