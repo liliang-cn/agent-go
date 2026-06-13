@@ -31,10 +31,12 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -265,6 +267,7 @@ func buildPersona(now time.Time) string {
 - 从用户的话里识别意图，主动调用工具记录：约定/会面→add_schedule；提到人→upsert_person；工作/踩坑→add_record(work,挂 project)；生活/心情→add_record(diary)；笔记→add_record(note)；打卡/习惯→add_record(habit)；要提醒→set_reminder。
 - 只要用户在陈述发生的事或要求记录/提醒，必须先调用对应工具存下来再回复；不要回答"没找到记忆"之类的话。
 - 提问且涉及"谁/和谁/什么关系/相关的人或事"时，优先用 graph_recall（知识图谱关系扩展），再结合检索工具作答。
+- 需要最新/实时信息(新闻、股价、行情、不在记忆和记录里的事实)时，调用 web_search 联网查,再据结果回答并带上来源。
 - 回答用中文，简短、自然、有人情味。每条回复最后单独一行输出情绪标签，格式严格为：情绪: <中性|开心|思考|惊讶|关心|抱歉>。
 
 严禁输出英文、日文或韩文，一律用中文回复。`,
@@ -454,6 +457,30 @@ func registerTools(svc *agent.Service, db *store) {
 	// resolve_datetime: framework built-in (model understands, Go computes).
 	agent.RegisterDateTimeTool(svc)
 
+	// web_search: real-time info via DashScope's enable_search (news/finance/facts).
+	// Registered only when a search key is configured (defaults to the embedding
+	// key, which is a DashScope key). The model calls it when the answer isn't in
+	// memory/records and needs to be fresh.
+	searchKey := envOr("SUPERAI_SEARCH_KEY", os.Getenv("SUPERAI_EMBED_KEY"))
+	searchBase := envOr("SUPERAI_SEARCH_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+	searchModel := envOr("SUPERAI_SEARCH_MODEL", "qwen-plus")
+	if searchKey != "" && searchKey != "none" {
+		svc.AddToolWithMetadata("web_search",
+			"联网搜索实时信息(新闻/财经/股价/事实等),返回简要答案与来源。当用户要查最新、实时、或不在记忆与记录里的信息时调用。",
+			obj(map[string]any{"query": s("搜索关键词或问题")}, "query"),
+			func(ctx context.Context, a map[string]any) (any, error) {
+				q := str(a, "query")
+				if q == "" {
+					return map[string]any{"ok": false, "error": "query required"}, nil
+				}
+				ans, err := dashscopeSearch(ctx, searchBase, searchKey, searchModel, q)
+				if err != nil {
+					return map[string]any{"ok": false, "error": err.Error()}, nil
+				}
+				return ok(map[string]any{"query": q, "answer": ans}), nil
+			}, read)
+	}
+
 	svc.AddToolWithMetadata("add_schedule", "新建一条日程/约会。时间请用 RFC3339 绝对时间（先用 resolve_datetime 换算）。",
 		obj(map[string]any{
 			"title": s("日程标题"), "start_at": s("开始时间 RFC3339"),
@@ -635,6 +662,53 @@ func emoji(emotion string) string {
 	default:
 		return "🙂"
 	}
+}
+
+// dashscopeSearch performs a grounded web search via DashScope's enable_search
+// extension (the OpenAI-style web_search_options is ignored by DashScope; the
+// non-standard enable_search:true is what actually triggers retrieval).
+func dashscopeSearch(ctx context.Context, base, key, model, query string) (string, error) {
+	body, _ := json.Marshal(map[string]any{
+		"model": model,
+		"messages": []map[string]string{{
+			"role":    "user",
+			"content": "联网搜索后用中文简要回答下面的问题,并在末尾附 1-3 个来源链接:\n" + query,
+		}},
+		"enable_search": true,
+		"max_tokens":    700,
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		strings.TrimRight(base, "/")+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", err
+	}
+	if out.Error != nil {
+		return "", fmt.Errorf("%s", out.Error.Message)
+	}
+	if len(out.Choices) == 0 {
+		return "", fmt.Errorf("no search result")
+	}
+	return strings.TrimSpace(out.Choices[0].Message.Content), nil
 }
 
 func weekdayCN(t time.Time) string {
