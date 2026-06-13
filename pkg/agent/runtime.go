@@ -69,6 +69,10 @@ type Runtime struct {
 
 // NewRuntime creates a new runtime instance
 func NewRuntime(svc *Service, session *Session, cfg *RunConfig) *Runtime {
+	lintBudget := defaultLintRetryBudget
+	if svc != nil && svc.lintRetryBudgetOverride > 0 {
+		lintBudget = svc.lintRetryBudgetOverride
+	}
 	return &Runtime{
 		svc:             svc,
 		eventChan:       make(chan *Event, 100), // Buffer events
@@ -78,7 +82,7 @@ func NewRuntime(svc *Service, session *Session, cfg *RunConfig) *Runtime {
 		pendingTools:    make(map[string]domain.ToolCall),
 		completedTools:  make(map[string]bool),
 		toolNamesUsed:   make(map[string]bool),
-		lintRetryBudget: defaultLintRetryBudget,
+		lintRetryBudget: lintBudget,
 	}
 }
 

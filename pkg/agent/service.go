@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/liliang-cn/agent-go/v2/pkg/browser"
 	"github.com/liliang-cn/agent-go/v2/pkg/config"
 	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 	agentgolog "github.com/liliang-cn/agent-go/v2/pkg/log"
@@ -19,6 +20,7 @@ import (
 	"github.com/liliang-cn/agent-go/v2/pkg/prompt"
 	"github.com/liliang-cn/agent-go/v2/pkg/ptc"
 	"github.com/liliang-cn/agent-go/v2/pkg/router"
+	"github.com/liliang-cn/agent-go/v2/pkg/sandbox"
 	"github.com/liliang-cn/agent-go/v2/pkg/skills"
 	taskpkg "github.com/liliang-cn/agent-go/v2/pkg/task"
 	"github.com/liliang-cn/agent-go/v2/pkg/usage"
@@ -146,6 +148,21 @@ type Service struct {
 
 	tokenCounter *usage.TokenCounter
 	cfg          *config.Config
+
+	// Optional execution sandbox + browser handles, wired by
+	// WithSandbox/WithBrowser. Caller owns their lifecycle (Close); the
+	// service keeps the handles for accessors (Sandbox/Browser) and for
+	// deliverable scanning. nil when not configured.
+	execSandbox   sandbox.Sandbox
+	execBrowser   browser.Browser
+	visionEnabled bool
+
+	// defaultMaxTurns, when > 0, is the fallback tool-round budget used when a
+	// run doesn't set RunConfig.MaxTurns. Set via WithAutonomy for long-horizon
+	// tasks. lintRetryBudgetOverride likewise overrides defaultLintRetryBudget
+	// on the per-run runtime when > 0.
+	defaultMaxTurns         int
+	lintRetryBudgetOverride int
 }
 
 // Ensure Service implements ptc.SearchProvider

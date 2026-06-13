@@ -1,11 +1,11 @@
-# AgentGo Manus Engine — Design Spec
+# AgentGo Execution Engine — Design Spec
 
 Date: 2026-06-13
 Status: approved, in implementation
 
 ## Goal
 
-Give AgentGo the "hands and body" of a Manus/Hermes-style autonomous general agent:
+Give AgentGo the "hands and body" of a autonomous autonomous general agent:
 an **isolated execution environment** (sandbox), a **full-featured browser**, **vision**,
 **long-horizon autonomy**, and **deliverable output**. All capabilities are **optional,
 pluggable, and zero-dependency-by-default** — a bare AgentGo install is unaffected; users
@@ -147,7 +147,7 @@ and, in `build()`, registers the matching tool set on the Service. Store `sb`/`b
 
 ### Example
 
-`examples/manus/main.go`: wire a Local sandbox (Docker if available) + chromedp browser + vision
+`examples/autonomous-agent/main.go`: wire a Local sandbox (Docker if available) + chromedp browser + vision
 into an agent; run an end-to-end task ("research a topic → browse pages → write a Markdown report +
 screenshot into the workspace"); print the deliverables. Full imports + cleanup (`defer sb.Close()`,
 `defer br.Close()`).
@@ -165,7 +165,7 @@ screenshot into the workspace"); print the deliverables. Full imports + cleanup 
 - `go build ./...` and `go vet ./...` clean.
 - `go test ./pkg/sandbox/... ./pkg/browser/... ./pkg/agent/...` pass (`-race` for sandbox/session code).
 - Docker + chromedp tests skip gracefully when the binary/Chrome is unavailable (CI-safe).
-- Example compiles (`go build ./examples/manus`).
+- Example compiles (`go build ./examples/autonomous-agent`).
 
 ## Non-goals (this spec)
 

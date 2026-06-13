@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/liliang-cn/agent-go/v2/pkg/browser"
 	"github.com/liliang-cn/agent-go/v2/pkg/config"
 	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 	agentgolog "github.com/liliang-cn/agent-go/v2/pkg/log"
@@ -17,6 +18,7 @@ import (
 	ragprocessor "github.com/liliang-cn/agent-go/v2/pkg/rag/processor"
 	ragstore "github.com/liliang-cn/agent-go/v2/pkg/rag/store"
 	"github.com/liliang-cn/agent-go/v2/pkg/router"
+	"github.com/liliang-cn/agent-go/v2/pkg/sandbox"
 	"github.com/liliang-cn/agent-go/v2/pkg/services"
 	"github.com/liliang-cn/agent-go/v2/pkg/skills"
 	"github.com/liliang-cn/agent-go/v2/pkg/store"
@@ -121,6 +123,13 @@ type Builder struct {
 
 	tools        []*Tool // pre-registered via WithTool/WithTools
 	extraModules []Module
+
+	// Execution capabilities (all optional, zero-value = disabled)
+	sandbox       sandbox.Sandbox
+	browser       browser.Browser
+	enableVision  bool
+	enableDeliver bool
+	autonomy      AutonomyProfile
 
 	// cached result
 	svc *Service
@@ -730,6 +739,39 @@ func (b *Builder) build() (*Service, error) {
 	// knowledge graph. Registered when WithGraphMemory() opted in.
 	if b.registerGraphTool {
 		RegisterGraphRecallTool(svc)
+	}
+
+	// Wire the optional sandbox / browser / autonomy / deliverable execution
+	// capabilities. Each is opt-in via WithSandbox/WithBrowser/etc.; tool sets
+	// are registered on the unified registry so they're reachable by both the
+	// LLM loop and PTC's callTool(). After registering, re-sync the PTC router
+	// so the new tools are callable from sandboxed JS too.
+	execToolsRegistered := false
+	if b.sandbox != nil {
+		svc.execSandbox = b.sandbox
+		RegisterSandboxTools(svc, b.sandbox)
+		execToolsRegistered = true
+	}
+	if b.browser != nil {
+		svc.execBrowser = b.browser
+		RegisterBrowserTools(svc, b.browser, b.sandbox) // sandbox may be nil
+		execToolsRegistered = true
+	}
+	svc.visionEnabled = b.enableVision
+	if b.enableDeliver && b.sandbox != nil {
+		RegisterDeliverableTools(svc, b.sandbox)
+		execToolsRegistered = true
+	}
+	if b.autonomy.MaxRounds > 0 || b.autonomy.LintRetryBudget > 0 || b.autonomy.Scratchpad {
+		svc.defaultMaxTurns = b.autonomy.MaxRounds
+		svc.lintRetryBudgetOverride = b.autonomy.LintRetryBudget
+		if b.autonomy.Scratchpad {
+			RegisterScratchpadTools(svc)
+			execToolsRegistered = true
+		}
+	}
+	if execToolsRegistered && svc.ptcIntegration != nil && svc.ptcIntegration.router != nil {
+		svc.toolRegistry.SyncToPTCRouter(svc.ptcIntegration.router)
 	}
 
 	return svc, nil

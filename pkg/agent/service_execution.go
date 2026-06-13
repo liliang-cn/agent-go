@@ -388,6 +388,9 @@ func (s *Service) executeWithLLM(ctx context.Context, goal string, intent *Inten
 	ctx = withCurrentSession(ctx, session)
 	maxRounds := cfg.MaxTurns
 	if maxRounds <= 0 {
+		maxRounds = s.defaultMaxTurns // 0 unless WithAutonomy set a long-horizon budget
+	}
+	if maxRounds <= 0 {
 		maxRounds = 20
 	}
 
