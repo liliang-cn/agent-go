@@ -104,19 +104,20 @@ type Builder struct {
 	// Custom Embedder service (optional - used with custom LLM for RAG/Memory)
 	embedService domain.Embedder
 
-	enableRAG       bool
-	ragCfg          RAGConfig
-	enableMCP       bool
-	mcpCfgPaths     []string
-	enableMemory    bool
-	memoryCfg       MemoryConfig
-	enableRouter    bool
-	routerThreshold float64
-	enableSkills    bool
-	skillsPaths     []string
-	enablePTC       bool
-	ptcCfg          *PTCConfig
-	toolPolicy      ToolExecutionPolicy
+	enableRAG         bool
+	ragCfg            RAGConfig
+	enableMCP         bool
+	mcpCfgPaths       []string
+	enableMemory      bool
+	memoryCfg         MemoryConfig
+	registerGraphTool bool
+	enableRouter      bool
+	routerThreshold   float64
+	enableSkills      bool
+	skillsPaths       []string
+	enablePTC         bool
+	ptcCfg            *PTCConfig
+	toolPolicy        ToolExecutionPolicy
 
 	tools        []*Tool // pre-registered via WithTool/WithTools
 	extraModules []Module
@@ -187,6 +188,19 @@ func (b *Builder) WithMemory(opts ...MemoryOption) *Builder {
 		opt(&cfg)
 	}
 	b.memoryCfg = cfg
+	return b
+}
+
+// WithGraphMemory enables graph-aware mode: it uses the CortexDB GraphFlow
+// memory store (entities + relations, not just vectors) AND registers the
+// `graph_recall` tool so the agent loop can query the knowledge graph during
+// reasoning. Extra MemoryOptions are applied on top of the graphflow default.
+//
+//	svc, _ := agent.New("assistant").WithGraphMemory().Build()
+func (b *Builder) WithGraphMemory(opts ...MemoryOption) *Builder {
+	merged := append([]MemoryOption{WithMemoryGraphFlow()}, opts...)
+	b.WithMemory(merged...)
+	b.registerGraphTool = true
 	return b
 }
 
@@ -710,6 +724,12 @@ func (b *Builder) build() (*Service, error) {
 	// idempotent.
 	svc.RegisterOutputLint(NoPlanningOnlyFinish())
 	svc.RegisterOutputLint(FileTaskMustWrite())
+
+	// Graph-aware mode: expose the graph_recall tool so the loop can query the
+	// knowledge graph. Registered when WithGraphMemory() opted in.
+	if b.registerGraphTool {
+		RegisterGraphRecallTool(svc)
+	}
 
 	return svc, nil
 }

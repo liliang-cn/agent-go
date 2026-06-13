@@ -527,6 +527,29 @@ func (s *Service) Update(ctx context.Context, id string, newInfo string) error {
 	return s.store.Update(ctx, oldMem)
 }
 
+// KnowledgeRecall does graph-aware recall when the backing store implements
+// domain.KnowledgeGraphRecaller (e.g. the GraphFlow store); otherwise it
+// gracefully degrades to a plain vector/text Search wrapped in a
+// GraphRecallResult (Entities/Knowledge empty). This is the single entry the
+// agent loop uses so it works regardless of configured store type.
+func (s *Service) KnowledgeRecall(ctx context.Context, query string, topK int) (*domain.GraphRecallResult, error) {
+	if topK <= 0 {
+		topK = 10
+	}
+	if recaller, ok := s.store.(domain.KnowledgeGraphRecaller); ok {
+		res, err := recaller.KnowledgeRecall(ctx, query, topK, nil)
+		if err == nil && res != nil {
+			return res, nil
+		}
+		// fall through to plain search on error/empty
+	}
+	mems, err := s.Search(ctx, query, topK)
+	if err != nil {
+		return nil, err
+	}
+	return &domain.GraphRecallResult{Query: query, Memories: mems}, nil
+}
+
 func (s *Service) Search(ctx context.Context, query string, topK int) ([]*domain.MemoryWithScore, error) {
 	if topK <= 0 {
 		topK = 10

@@ -21,6 +21,9 @@ type GraphFlowStore struct {
 	extractor graphflow.Extractor
 }
 
+// GraphFlowStore exposes graph-aware recall to the agent loop.
+var _ domain.KnowledgeGraphRecaller = (*GraphFlowStore)(nil)
+
 func NewGraphFlowStore(dbPath string) (*GraphFlowStore, error) {
 	base, err := NewMemoryStore(dbPath)
 	if err != nil {
@@ -160,6 +163,41 @@ func (s *GraphFlowStore) KnowledgeMemoryRecallScoped(ctx context.Context, query 
 		}
 	}
 	return km.Recall(ctx, req)
+}
+
+// KnowledgeRecall implements domain.KnowledgeGraphRecaller: fused
+// memory + knowledge-graph recall mapped to provider-agnostic domain types.
+func (s *GraphFlowStore) KnowledgeRecall(ctx context.Context, query string, topK int, scope *domain.MemoryScope) (*domain.GraphRecallResult, error) {
+	resp, err := s.KnowledgeMemoryRecallScoped(ctx, query, topK, scope)
+	if err != nil {
+		return nil, err
+	}
+	out := &domain.GraphRecallResult{Query: query}
+	if resp == nil {
+		return out, nil
+	}
+	out.Entities = resp.Entities
+	out.ContextText = resp.ContextPack.Text
+	for _, hit := range resp.Memories {
+		row, loadErr := s.loadStoredMemoryRow(ctx, hit.Memory.ID)
+		if loadErr != nil {
+			continue
+		}
+		out.Memories = append(out.Memories, &domain.MemoryWithScore{
+			Memory: row.toDomainMemory(),
+			Score:  hit.Score,
+		})
+	}
+	for _, k := range resp.Knowledge {
+		out.Knowledge = append(out.Knowledge, domain.GraphKnowledgeHit{
+			ID:       k.KnowledgeID,
+			Title:    k.Title,
+			Snippet:  k.Snippet,
+			Score:    k.Score,
+			Entities: k.Entities,
+		})
+	}
+	return out, nil
 }
 
 func (s *GraphFlowStore) knowledgeMemoryRecallResults(ctx context.Context, query string, topK int, scope *domain.MemoryScope) ([]*domain.MemoryWithScore, error) {
