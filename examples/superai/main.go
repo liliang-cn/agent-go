@@ -1,34 +1,40 @@
-// Package main is a single-user backend demo of "SuperAI" — the AI assistant
-// from the SuperLeo PRD — built entirely on the AgentGo framework. It exists to
-// exercise AgentGo's core capabilities end-to-end (NO multi-tenant / user
-// isolation / SaaS plumbing — just the brain):
+// Package main is a single-user backend for "SuperAI" — the AI assistant from
+// the SuperLeo PRD — built entirely on the AgentGo framework. It exercises
+// AgentGo end-to-end (NO multi-tenant / SaaS plumbing — just the brain):
 //
 //   - intent understanding + tool calling  (建日程 / 记事 / 记人物 / 设提醒)
 //   - built-in resolve_datetime so the model never miscomputes relative dates
-//   - knowledge-graph–aware memory (WithGraphMemory + graph_recall): the loop
-//     queries entities/relations, not just vector similarity
+//   - knowledge-graph–aware memory (WithGraphMemory + graph_recall)
 //   - emotion tagging that would drive the 3D avatar  (情绪: 标签)
-//
-// The assistant is one agent.Service with custom Go tools backed by a tiny
-// in-process store. A scripted run plays the PRD scenarios S1/S3/S4/S8, then a
-// FRESH session asks recall questions (S6) to prove memory + records persist
-// beyond the original conversation.
+//   - persistence across restarts (graph memory + a JSON-backed store)
+//   - proactive reminders: a scheduler that makes SuperAI "speak" when due (S2)
+//   - an interactive chat mode
 //
 // Requirements: DASHSCOPE_API_KEY (OpenAI-compatible Qwen endpoint).
 //
 // Usage:
 //
-//	DASHSCOPE_API_KEY=sk-... go run ./examples/superai
+//	DASHSCOPE_API_KEY=sk-...  go run ./examples/superai            # scripted demo
+//	DASHSCOPE_API_KEY=sk-...  go run ./examples/superai -i         # interactive chat
+//	SUPERAI_HOME=~/.superai   go run ./examples/superai -i         # custom data dir
+//
+// State persists under SUPERAI_HOME (default ./.superai-data), so a second run
+// remembers everything from the first.
 package main
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -40,26 +46,99 @@ import (
 )
 
 // ----------------------------------------------------------------------------
-// Tiny in-process store (stands in for the PRD's Record/Schedule/Person tables)
+// Persistent in-process store (stands in for the PRD's Record/Schedule/... tables)
 // ----------------------------------------------------------------------------
 
 type store struct {
 	mu        sync.Mutex
-	schedules []map[string]any
-	records   []map[string]any
-	persons   map[string]map[string]any
-	reminders []map[string]any
+	path      string
+	Schedules []map[string]any          `json:"schedules"`
+	Records   []map[string]any          `json:"records"`
+	Persons   map[string]map[string]any `json:"persons"`
+	Reminders []map[string]any          `json:"reminders"`
 }
 
-func newStore() *store { return &store{persons: map[string]map[string]any{}} }
+func newStore(path string) *store {
+	return &store{path: path, Persons: map[string]map[string]any{}}
+}
 
 func ok(data any) map[string]any { return map[string]any{"ok": true, "data": data} }
+
+// load reads the JSON snapshot if it exists (persistence across restarts).
+func (db *store) load() {
+	raw, err := os.ReadFile(db.path)
+	if err != nil {
+		return
+	}
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	_ = json.Unmarshal(raw, db)
+	if db.Persons == nil {
+		db.Persons = map[string]map[string]any{}
+	}
+}
+
+// save writes the JSON snapshot. Callers must NOT hold db.mu.
+func (db *store) save() {
+	db.mu.Lock()
+	raw, err := json.MarshalIndent(db, "", "  ")
+	db.mu.Unlock()
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(db.path, raw, 0o644)
+}
+
+// dueReminders returns the titles of reminders that should fire now, updating
+// their fired/last-fired state. One-time reminders use an RFC3339 remind_at;
+// daily ones use HH:MM and fire once per day.
+func (db *store) dueReminders(now time.Time) []string {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	today := now.Format("2006-01-02")
+	hm := now.Format("15:04")
+	var due []string
+	for _, r := range db.Reminders {
+		title, _ := r["title"].(string)
+		remindAt, _ := r["remind_at"].(string)
+		recur, _ := r["recurrence"].(string)
+		if recur == "daily" || (strings.Contains(remindAt, ":") && !strings.Contains(remindAt, "T")) {
+			target := remindAt
+			if strings.Contains(remindAt, "T") {
+				if t, err := time.Parse(time.RFC3339, remindAt); err == nil {
+					target = t.Format("15:04")
+				}
+			}
+			if target == hm && r["last_fired"] != today {
+				r["last_fired"] = today
+				due = append(due, title)
+			}
+			continue
+		}
+		// one-time
+		if fired, _ := r["fired"].(bool); fired {
+			continue
+		}
+		if t, err := time.Parse(time.RFC3339, remindAt); err == nil && !now.Before(t) {
+			r["fired"] = true
+			due = append(due, title)
+		}
+	}
+	return due
+}
 
 // ----------------------------------------------------------------------------
 // main
 // ----------------------------------------------------------------------------
 
 func main() {
+	interactive := false
+	for _, a := range os.Args[1:] {
+		if a == "-i" || a == "--interactive" || a == "-chat" || a == "--chat" {
+			interactive = true
+		}
+	}
+
 	apiKey := os.Getenv("DASHSCOPE_API_KEY")
 	if apiKey == "" {
 		log.Fatal("DASHSCOPE_API_KEY is required (OpenAI-compatible Qwen endpoint)")
@@ -68,10 +147,6 @@ func main() {
 	embModel := envOr("DASHSCOPE_EMBED_MODEL", "text-embedding-v4")
 	const base = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
-
-	// Brain (LLM) + embedder, both DashScope.
 	brain, err := pool.NewPool(pool.PoolConfig{
 		Enabled:  true,
 		Strategy: pool.StrategyRoundRobin,
@@ -90,110 +165,206 @@ func main() {
 		log.Fatalf("build embedder: %v", err)
 	}
 
-	// Isolated home so cortex memory db lives in a temp dir.
-	home, _ := os.MkdirTemp("", "superai-")
+	// Persistent home: graph memory (cortex.db) + the JSON store live here and
+	// survive restarts.
+	home := envOr("SUPERAI_HOME", "./.superai-data")
+	if strings.HasPrefix(home, "~/") {
+		if h, e := os.UserHomeDir(); e == nil {
+			home = filepath.Join(h, home[2:])
+		}
+	}
 	cfg := &config.Config{Home: home}
 	cfg.ApplyHomeLayout()
 	_ = os.MkdirAll(cfg.DataDir(), 0o755)
 
-	db := newStore()
-
-	now := time.Now()
-	persona := fmt.Sprintf(`你是 SuperAI，一个有温度的随身 AI 生活/工作助手。
-当前系统时间：%s %s（%s），时区 %s。
-凡涉及相对时间（今天/明天/后天/大后天/这周五/下周一/下下周一/下个月3号/N天后…），都【必须先调用 resolve_datetime 工具】把它换算成绝对时间，再用返回的 rfc3339 去建日程/设提醒。绝不要自己心算日期，你算星期会出错。
-
-职责：
-- 从用户的自然语言里识别意图，主动调用工具把事情记录下来：
-  约定/会面/活动 → add_schedule（把"周五下午三点"等相对时间换算成绝对时间 RFC3339）；
-  提到某个人 → upsert_person（记住关系与偏好）；
-  工作进展/踩的坑 → add_record(type=work，挂到 project)；
-  生活/心情/日记 → add_record(type=diary)；随手笔记 → add_record(type=note)；
-  打卡/习惯 → add_record(type=habit)；
-  需要按时提醒/周期提醒 → set_reminder。
-- 重要：只要用户在陈述一件发生过的事、或要求记录/提醒，你必须先调用对应的工具把它存下来，再回复确认。不要因为"记忆里好像有"就跳过记录，也不要回答"没找到记忆"之类的话。
-- 用户提问（如"我周五有没有约""老王在忙啥"）时，结合召回到的记忆和检索工具回答。
-- 当问题涉及"谁/和谁/什么关系/相关的人或事"时，优先调用 graph_recall（知识图谱召回，会顺着实体关系扩展），再结合结构化检索工具作答。
-- 回答用中文，简短、自然、有人情味，像朋友而不是工具。
-- 每条回复的最后，单独一行输出情绪标签，格式严格为：情绪: <中性|开心|思考|惊讶|关心|抱歉>。
-  这个标签会驱动 3D 形象的表情，请根据语境选择。
-
-严禁输出英文、日文或韩文，一律用中文回复。`,
-		now.Format("2006-01-02"), now.Format("15:04:05"), weekdayCN(now), now.Format("-07:00"))
+	db := newStore(filepath.Join(cfg.DataDir(), "superai-store.json"))
+	db.load()
 
 	svc, err := agent.New("SuperAI").
-		WithPrompt(persona).
+		WithPrompt(buildPersona(time.Now())).
 		WithConfig(cfg).
 		WithLLM(brain).
 		WithEmbedder(embedder).
-		WithGraphMemory(). // graphflow 图存储 + graph_recall 工具（实体/关系扩展）
+		WithGraphMemory(). // graphflow 图存储 + graph_recall 工具
 		Build()
 	if err != nil {
 		log.Fatalf("build SuperAI: %v", err)
 	}
 	defer svc.Close()
-
 	registerTools(svc, db)
 
-	fmt.Printf("=== SuperAI backend demo (AgentGo) ===\nbrain=%s  embed=%s  home=%s\n",
-		model, embModel, home)
+	fmt.Printf("=== SuperAI (AgentGo) ===\nbrain=%s  embed=%s  home=%s\n", model, embModel, home)
+	fmt.Printf("已加载: 日程 %d / 记录 %d / 人物 %d / 提醒 %d\n",
+		len(db.Schedules), len(db.Records), len(db.Persons), len(db.Reminders))
 
-	// ---- Phase A: 一段对话，喂入 PRD 场景 S1/S4/S3/S8 ----
+	// Proactive reminder scheduler (PRD S2): fires due reminders out-of-band.
+	stopReminders := startReminderScheduler(db, interactive)
+	defer stopReminders()
+
+	if interactive {
+		runInteractive(svc, db)
+	} else {
+		runScriptedDemo(svc, db)
+	}
+	db.save()
+}
+
+func buildPersona(now time.Time) string {
+	return fmt.Sprintf(`你是 SuperAI，一个有温度的随身 AI 生活/工作助手。
+当前系统时间：%s %s（%s），时区 %s。
+凡涉及相对时间（今天/明天/后天/大后天/这周五/下周一/下下周一/下个月3号/今晚N点…），都【必须先调用 resolve_datetime 工具】换算成绝对时间，再用返回的 rfc3339 去建日程/设提醒。绝不要自己心算日期。
+
+职责：
+- 从用户的话里识别意图，主动调用工具记录：约定/会面→add_schedule；提到人→upsert_person；工作/踩坑→add_record(work,挂 project)；生活/心情→add_record(diary)；笔记→add_record(note)；打卡/习惯→add_record(habit)；要提醒→set_reminder。
+- 只要用户在陈述发生的事或要求记录/提醒，必须先调用对应工具存下来再回复；不要回答"没找到记忆"之类的话。
+- 提问且涉及"谁/和谁/什么关系/相关的人或事"时，优先用 graph_recall（知识图谱关系扩展），再结合检索工具作答。
+- 回答用中文，简短、自然、有人情味。每条回复最后单独一行输出情绪标签，格式严格为：情绪: <中性|开心|思考|惊讶|关心|抱歉>。
+
+严禁输出英文、日文或韩文，一律用中文回复。`,
+		now.Format("2006-01-02"), now.Format("15:04:05"), weekdayCN(now), now.Format("-07:00"))
+}
+
+// ----------------------------------------------------------------------------
+// run modes
+// ----------------------------------------------------------------------------
+
+func runInteractive(svc *agent.Service, db *store) {
+	fmt.Println("\n进入交互模式。直接说话即可；命令: /state 看落库, /quit 退出。")
+	session := uuid.NewString()
+	sc := bufio.NewScanner(os.Stdin)
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	// Save on Ctrl-C.
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sig
+		fmt.Println("\n(已保存，再见)")
+		db.save()
+		os.Exit(0)
+	}()
+
+	fmt.Print("\n🧑 ")
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		switch {
+		case line == "":
+		case line == "/quit" || line == "/exit":
+			return
+		case line == "/state":
+			dumpState(db)
+		case line == "/help":
+			fmt.Println("命令: /state 看落库 · /quit 退出。其它输入都当作对话。")
+		default:
+			turn(svc, session, line)
+			db.save()
+		}
+		fmt.Print("\n🧑 ")
+	}
+}
+
+func runScriptedDemo(svc *agent.Service, db *store) {
+	if os.Getenv("SUPERAI_PROACTIVE_TEST") != "" {
+		proactiveDemo(db)
+		return
+	}
 	sessionA := uuid.NewString()
 	fmt.Printf("\n########## 会话 A（记录阶段）session=%s ##########\n", short(sessionA))
-	phaseA := []string{
-		"我刚跟老王约了这周五下午三点在楼下星巴克喝咖啡，他最近在看 AI 创业。",           // S1
-		"今天把登录模块做完了，遇到一个 token 过期没刷新的坑，记到「SuperLeo」项目里。", // S4
-		"今天有点累，不过晚上和大学室友吃了顿火锅，挺开心的。",                     // S3
-		"以后每天晚上 22:00 提醒我喝杯水。",                           // S8
-		"下下周一上午十点提醒我交季度报告。",                              // 远期相对时间 → resolve_datetime
-		"大后天下午三点陪我妈去体检。",                                 // 另一种说法
-		"下个月3号上午九点开 SuperLeo 项目评审会。",                     // 跨月 + 几号
+	for _, msg := range []string{
+		"我刚跟老王约了这周五下午三点在楼下星巴克喝咖啡，他最近在看 AI 创业。",
+		"今天把登录模块做完了，遇到一个 token 过期没刷新的坑，记到「SuperLeo」项目里。",
+		"今天有点累，不过晚上和大学室友吃了顿火锅，挺开心的。",
+		"以后每天晚上 22:00 提醒我喝杯水。",
+		"下下周一上午十点提醒我交季度报告。",
+	} {
+		turn(svc, sessionA, msg)
 	}
-	for _, msg := range phaseA {
-		turn(ctx, svc, sessionA, msg)
-	}
+	db.save()
 
-	// ---- Phase B: 全新会话，验证跨会话长期记忆 + 结构化检索（S6）----
 	sessionB := uuid.NewString()
-	fmt.Printf("\n########## 会话 B（全新 session，验证记忆与检索）session=%s ##########\n", short(sessionB))
-	phaseB := []string{
-		"我这周五是不是有约？跟谁、在哪？",    // 跨会话召回 + 日程检索
-		"老王最近在忙啥来着？",          // 长期记忆（人物档案）
-		"跟 AI 创业有关的人或事都有哪些？",  // 知识图谱：实体关系扩展（graph_recall）
-		"帮我看看最近的工作记录，有没有踩坑的。", // 记录检索
-		"我设过哪些提醒？",            // 提醒检索
-	}
-	for _, msg := range phaseB {
-		turn(ctx, svc, sessionB, msg)
+	fmt.Printf("\n########## 会话 B（全新 session，验证记忆与图谱）session=%s ##########\n", short(sessionB))
+	for _, msg := range []string{
+		"我这周五是不是有约？跟谁、在哪？",
+		"跟 AI 创业有关的人或事都有哪些？",
+		"我设过哪些提醒？",
+	} {
+		turn(svc, sessionB, msg)
 	}
 
-	// ---- 最终落库状态 ----
+	proactiveDemo(db)
 	dumpState(db)
 }
 
+// proactiveDemo seeds a one-time reminder a few seconds out and waits for the
+// scheduler to fire it (demonstrates PRD S2 without waiting for a real clock).
+func proactiveDemo(db *store) {
+	fmt.Println("\n########## 主动提醒演示（约 3 秒后触发）##########")
+	db.mu.Lock()
+	db.Reminders = append(db.Reminders, map[string]any{
+		"id": short(uuid.NewString()), "title": "起来活动一下，喝口水",
+		"remind_at": time.Now().Add(3 * time.Second).Format(time.RFC3339), "recurrence": "none",
+	})
+	db.mu.Unlock()
+	time.Sleep(8 * time.Second)
+}
+
 // turn runs one conversational turn and prints intent → tools → reply → emotion.
-func turn(ctx context.Context, svc *agent.Service, sessionID, msg string) {
-	fmt.Printf("\n🧑 用户：%s\n", msg)
+func turn(svc *agent.Service, sessionID, msg string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
 	res, err := svc.Run(ctx, msg,
 		agent.WithSessionID(sessionID),
-		agent.WithMemoryRecallShortcut(false), // action assistant: never let memory hijack a tool turn
+		agent.WithMemoryRecallShortcut(false), // action assistant: tools must fire
 	)
 	if err != nil {
 		fmt.Printf("   ⚠️  错误：%v\n", err)
 		return
 	}
 	if len(res.ToolsUsed) > 0 {
-		fmt.Printf("   🔧 调用工具：%s（共 %d 次）\n", strings.Join(res.ToolsUsed, ", "), res.ToolCalls)
-	}
-	if len(res.Memories) > 0 {
-		fmt.Printf("   🧠 召回记忆 %d 条：%s\n", len(res.Memories), firstMemory(res.Memories))
+		fmt.Printf("   🔧 %s（%d 次）\n", strings.Join(res.ToolsUsed, ", "), res.ToolCalls)
 	}
 	reply, emotion := splitEmotion(res.Text())
-	fmt.Printf("🦁 SuperAI：%s\n", strings.TrimSpace(reply))
+	fmt.Printf("🦁 %s\n", strings.TrimSpace(reply))
 	if emotion != "" {
 		fmt.Printf("   %s 情绪=%s\n", emoji(emotion), emotion)
 	}
+}
+
+// ----------------------------------------------------------------------------
+// proactive reminder scheduler (PRD S2 / F-SCH-3)
+// ----------------------------------------------------------------------------
+
+func startReminderScheduler(db *store, interactive bool) func() {
+	tick := 30 * time.Second
+	if !interactive {
+		tick = 1 * time.Second // demo wants a quick, reliable fire
+	}
+	stop := make(chan struct{})
+	go func() {
+		t := time.NewTicker(tick)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case now := <-t.C:
+				for _, title := range db.dueReminders(now) {
+					announceReminder(title)
+					db.save()
+				}
+			}
+		}
+	}()
+	return func() { close(stop) }
+}
+
+// announceReminder makes SuperAI proactively "speak" a due reminder (PRD S2 /
+// F-SCH-3). It prints immediately with a warm template so a reminder is never
+// dropped or delayed. (You could polish the wording via svc.Ask for a more
+// "语义化" message, but that blocks on an LLM round-trip — kept out of the hot
+// path here so the reminder always surfaces instantly.)
+func announceReminder(title string) {
+	fmt.Printf("\n🔔 SuperAI（主动）：到点啦～ %s\n🧑 ", title)
 }
 
 // ----------------------------------------------------------------------------
@@ -233,22 +404,23 @@ func registerTools(svc *agent.Service, db *store) {
 		return map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": desc}
 	}
 
-	// resolve_datetime: 框架内置的确定性日期工具（模型理解、Go 计算，永不差一天）。
+	// resolve_datetime: framework built-in (model understands, Go computes).
 	agent.RegisterDateTimeTool(svc)
 
 	svc.AddToolWithMetadata("add_schedule", "新建一条日程/约会。时间请用 RFC3339 绝对时间（先用 resolve_datetime 换算）。",
 		obj(map[string]any{
-			"title": s("日程标题"), "start_at": s("开始时间 RFC3339，如 2026-06-12T15:00:00+08:00"),
+			"title": s("日程标题"), "start_at": s("开始时间 RFC3339"),
 			"location": s("地点"), "participants": arr("参与人姓名"),
 		}, "title", "start_at"),
 		func(ctx context.Context, a map[string]any) (any, error) {
 			db.mu.Lock()
-			defer db.mu.Unlock()
 			rec := map[string]any{
 				"id": short(uuid.NewString()), "title": str(a, "title"), "start_at": str(a, "start_at"),
 				"location": str(a, "location"), "participants": strSlice(a, "participants"),
 			}
-			db.schedules = append(db.schedules, rec)
+			db.Schedules = append(db.Schedules, rec)
+			db.mu.Unlock()
+			db.save()
 			return ok(rec), nil
 		}, write)
 
@@ -256,7 +428,7 @@ func registerTools(svc *agent.Service, db *store) {
 		func(ctx context.Context, a map[string]any) (any, error) {
 			db.mu.Lock()
 			defer db.mu.Unlock()
-			return ok(db.schedules), nil
+			return ok(db.Schedules), nil
 		}, read)
 
 	svc.AddToolWithMetadata("add_record", "记录一条内容：日记/工作/笔记/习惯。",
@@ -266,13 +438,14 @@ func registerTools(svc *agent.Service, db *store) {
 		}, "type", "body"),
 		func(ctx context.Context, a map[string]any) (any, error) {
 			db.mu.Lock()
-			defer db.mu.Unlock()
 			rec := map[string]any{
 				"id": short(uuid.NewString()), "type": str(a, "type"), "title": str(a, "title"),
 				"body": str(a, "body"), "tags": strSlice(a, "tags"), "project": str(a, "project"),
 				"occurred_at": time.Now().Format(time.RFC3339),
 			}
-			db.records = append(db.records, rec)
+			db.Records = append(db.Records, rec)
+			db.mu.Unlock()
+			db.save()
 			return ok(rec), nil
 		}, write)
 
@@ -283,7 +456,7 @@ func registerTools(svc *agent.Service, db *store) {
 			defer db.mu.Unlock()
 			q, typ := strings.ToLower(str(a, "query")), str(a, "type")
 			hits := []map[string]any{}
-			for _, r := range db.records {
+			for _, r := range db.Records {
 				if typ != "" && r["type"] != typ {
 					continue
 				}
@@ -301,9 +474,8 @@ func registerTools(svc *agent.Service, db *store) {
 		}, "name"),
 		func(ctx context.Context, a map[string]any) (any, error) {
 			db.mu.Lock()
-			defer db.mu.Unlock()
 			name := str(a, "name")
-			p := db.persons[name]
+			p := db.Persons[name]
 			if p == nil {
 				p = map[string]any{"name": name}
 			}
@@ -313,23 +485,26 @@ func registerTools(svc *agent.Service, db *store) {
 			if v := str(a, "note"); v != "" {
 				p["note"] = v
 			}
-			db.persons[name] = p
+			db.Persons[name] = p
+			db.mu.Unlock()
+			db.save()
 			return ok(p), nil
 		}, write)
 
-	svc.AddToolWithMetadata("set_reminder", "设置提醒，可周期重复。",
+	svc.AddToolWithMetadata("set_reminder", "设置提醒，可周期重复（到点 SuperAI 会主动提醒）。",
 		obj(map[string]any{
-			"title": s("提醒内容"), "remind_at": s("首次提醒时间 RFC3339 或每日时间 HH:MM"),
-			"recurrence": s("重复规则，如 daily/weekly/none"),
+			"title": s("提醒内容"), "remind_at": s("一次性用 RFC3339；每日用 HH:MM"),
+			"recurrence": s("重复规则：daily 或 none"),
 		}, "title", "remind_at"),
 		func(ctx context.Context, a map[string]any) (any, error) {
 			db.mu.Lock()
-			defer db.mu.Unlock()
 			rec := map[string]any{
 				"id": short(uuid.NewString()), "title": str(a, "title"),
 				"remind_at": str(a, "remind_at"), "recurrence": orDefault(str(a, "recurrence"), "none"),
 			}
-			db.reminders = append(db.reminders, rec)
+			db.Reminders = append(db.Reminders, rec)
+			db.mu.Unlock()
+			db.save()
 			return ok(rec), nil
 		}, write)
 
@@ -337,7 +512,7 @@ func registerTools(svc *agent.Service, db *store) {
 		func(ctx context.Context, a map[string]any) (any, error) {
 			db.mu.Lock()
 			defer db.mu.Unlock()
-			return ok(db.reminders), nil
+			return ok(db.Reminders), nil
 		}, read)
 }
 
@@ -348,31 +523,31 @@ func registerTools(svc *agent.Service, db *store) {
 func dumpState(db *store) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
-	fmt.Printf("\n========== 落库状态（单用户，进程内）==========\n")
-	fmt.Printf("日程 %d 条:\n", len(db.schedules))
-	for _, r := range db.schedules {
+	fmt.Printf("\n========== 落库状态（持久化于 %s）==========\n", db.path)
+	fmt.Printf("日程 %d 条:\n", len(db.Schedules))
+	for _, r := range db.Schedules {
 		fmt.Printf("  • %s @ %s %v 参与:%v\n", r["title"], r["start_at"], r["location"], r["participants"])
 	}
-	fmt.Printf("记录 %d 条:\n", len(db.records))
-	for _, r := range db.records {
+	fmt.Printf("记录 %d 条:\n", len(db.Records))
+	for _, r := range db.Records {
 		proj := ""
 		if p, _ := r["project"].(string); p != "" {
 			proj = " [" + p + "]"
 		}
 		fmt.Printf("  • (%s)%s %s — %s\n", r["type"], proj, r["title"], r["body"])
 	}
-	names := make([]string, 0, len(db.persons))
-	for n := range db.persons {
+	names := make([]string, 0, len(db.Persons))
+	for n := range db.Persons {
 		names = append(names, n)
 	}
 	sort.Strings(names)
 	fmt.Printf("人物 %d 个:\n", len(names))
 	for _, n := range names {
-		p := db.persons[n]
+		p := db.Persons[n]
 		fmt.Printf("  • %s（%v）%v\n", p["name"], p["relation"], p["note"])
 	}
-	fmt.Printf("提醒 %d 条:\n", len(db.reminders))
-	for _, r := range db.reminders {
+	fmt.Printf("提醒 %d 条:\n", len(db.Reminders))
+	for _, r := range db.Reminders {
 		fmt.Printf("  • %s @ %s (%s)\n", r["title"], r["remind_at"], r["recurrence"])
 	}
 }
@@ -411,17 +586,6 @@ func emoji(emotion string) string {
 	}
 }
 
-func firstMemory(ms []*domain.MemoryWithScore) string {
-	if len(ms) == 0 || ms[0] == nil || ms[0].Memory == nil {
-		return ""
-	}
-	c := ms[0].Memory.Content
-	if len(c) > 60 {
-		c = c[:60] + "…"
-	}
-	return c
-}
-
 func weekdayCN(t time.Time) string {
 	return "周" + []string{"日", "一", "二", "三", "四", "五", "六"}[int(t.Weekday())]
 }
@@ -432,12 +596,14 @@ func short(id string) string {
 	}
 	return id
 }
+
 func envOr(k, def string) string {
 	if v := strings.TrimSpace(os.Getenv(k)); v != "" {
 		return v
 	}
 	return def
 }
+
 func orDefault(v, def string) string {
 	if v == "" {
 		return def

@@ -34,3 +34,6 @@ eval/results/*.json
 
 # TS incremental build cache (regenerated every build)
 *.tsbuildinfo
+
+# superai example local data
+.superai-data/
