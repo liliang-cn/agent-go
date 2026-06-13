@@ -26,6 +26,13 @@ type hub struct {
 
 func newHub() *hub { return &hub{subs: map[chan string]struct{}{}} }
 
+// overview is generated at most once per day and cached in-process.
+var (
+	overviewMu    sync.Mutex
+	overviewCache map[string]any
+	overviewDay   string
+)
+
 func (h *hub) subscribe() (chan string, func()) {
 	ch := make(chan string, 8)
 	h.mu.Lock()
@@ -101,18 +108,24 @@ func runWeb(svc *agent.Service, db *store, gen domain.Generator, h *hub, addr, t
 		}
 		var req struct {
 			Message string `json:"message"`
+			Session string `json:"session"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Message) == "" {
 			http.Error(w, "message required", http.StatusBadRequest)
 			return
 		}
+		sid := strings.TrimSpace(req.Session)
+		if sid == "" {
+			sid = webSession // back-compat: clients that don't send a session
+		}
 		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
 		defer cancel()
 		res, err := svc.Run(ctx, req.Message,
-			agent.WithSessionID(webSession),
+			agent.WithSessionID(sid),
 			agent.WithMemoryRecallShortcut(false),
 		)
 		if err != nil {
+			log.Printf("chat error (session=%s): %v", sid, err) // surface failures in journalctl
 			writeJSON(w, map[string]any{"error": err.Error()})
 			return
 		}
@@ -134,6 +147,18 @@ func runWeb(svc *agent.Service, db *store, gen domain.Generator, h *hub, addr, t
 			}}})
 			return
 		}
+		// Generate at most once per day (LLM call is costly). ?force=1 regenerates.
+		today := time.Now().Format("2006-01-02")
+		force := r.URL.Query().Get("force") != ""
+		if !force {
+			overviewMu.Lock()
+			cached, day := overviewCache, overviewDay
+			overviewMu.Unlock()
+			if day == today && cached != nil {
+				writeJSON(w, cached)
+				return
+			}
+		}
 		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 		defer cancel()
 		out, err := gen.Generate(ctx, overviewPrompt(summary), &domain.GenerationOptions{Temperature: 0.4, MaxTokens: 600})
@@ -145,6 +170,9 @@ func runWeb(svc *agent.Service, db *store, gen domain.Generator, h *hub, addr, t
 		}
 		var parsed map[string]any
 		if json.Unmarshal([]byte(extractJSONObject(out)), &parsed) == nil && parsed["sections"] != nil {
+			overviewMu.Lock()
+			overviewCache, overviewDay = parsed, today
+			overviewMu.Unlock()
 			writeJSON(w, parsed)
 			return
 		}
@@ -349,6 +377,7 @@ const indexHTML = `<!doctype html>
         <div><div class="ttl">SuperAI</div><div class="sub">有温度的 AI 生活 / 工作助手</div></div>
         <div class="spacer"></div>
         <div class="dot" title="在线"></div>
+        <button class="iconbtn" id="newchat" title="新开会话">＋</button>
         <button class="iconbtn" id="theme" title="切换主题">🌙</button>
       </div>
       <div class="log" id="log"></div>
@@ -384,6 +413,26 @@ function el(cls,html){var d=document.createElement('div');d.className=cls;d.inne
 function rowAI(html){return el('row ai','<div class="av ai">🦁</div><div class="aiwrap"><div class="bubble">'+html+'</div></div>');}
 function rowMe(t){return el('row me','<div class="av me">我</div><div class="bubble">'+esc(t)+'</div>');}
 
+/* session + persisted transcript (resume previous conversation on reload) */
+function newSid(){return (window.crypto&&crypto.randomUUID)?crypto.randomUUID():('s'+Date.now()+Math.random().toString(16).slice(2));}
+var SESSION=localStorage.getItem('superai_session');
+if(!SESSION){SESSION=newSid();localStorage.setItem('superai_session',SESSION);}
+function histKey(){return 'superai_hist_'+SESSION;}
+var HIST=[];try{HIST=JSON.parse(localStorage.getItem(histKey())||'[]');}catch(e){HIST=[];}
+function saveHist(){try{localStorage.setItem(histKey(),JSON.stringify(HIST.slice(-200)));}catch(e){}}
+function renderMsg(m){
+  if(m.role==='me'){rowMe(m.text);return;}
+  var node=rowAI(esc(m.text));var meta='';
+  if(m.emotion)meta+='<span class="chip emo">'+(m.emoji||'')+' '+esc(m.emotion)+'</span>';
+  if(m.tools&&m.tools.length)meta+='<span class="chip">🔧 '+m.tools.map(esc).join(', ')+'</span>';
+  if(meta)node.querySelector('.aiwrap').insertAdjacentHTML('beforeend','<div class="meta">'+meta+'</div>');
+}
+function newSession(){
+  SESSION=newSid();localStorage.setItem('superai_session',SESSION);
+  HIST=[];saveHist();log.innerHTML='';
+  rowAI('已开启新会话 🆕 我们从头聊起吧。');loadOverview();input.focus();
+}
+
 function renderOverview(data){
   var box=document.getElementById('overview');var secs=(data&&data.sections)||[];
   if(!secs.length){box.innerHTML='<div class="empty">暂无</div>';return;}
@@ -392,27 +441,26 @@ function renderOverview(data){
     return '<div class="osec"><div class="oh">'+esc(s.icon||'•')+' '+esc(s.title||'')+'</div>'+items+'</div>';
   }).join('');
 }
-function loadOverview(){
-  var box=document.getElementById('overview');box.innerHTML='<div class="empty"><span class="spin"></span>SuperAI 正在生成概览…</div>';
-  fetch('/api/overview',{headers:hdr()}).then(function(r){if(r.status===401){showGate();throw 0;}return r.json();})
+function loadOverview(force){
+  var box=document.getElementById('overview');box.innerHTML='<div class="empty"><span class="spin"></span>'+(force?'重新生成概览…':'加载概览…')+'</div>';
+  fetch('/api/overview'+(force?'?force=1':''),{headers:hdr()}).then(function(r){if(r.status===401){showGate();throw 0;}return r.json();})
     .then(renderOverview).catch(function(){box.innerHTML='<div class="empty">概览暂不可用</div>';});
 }
-document.getElementById('refresh').onclick=loadOverview;
+document.getElementById('refresh').onclick=function(){loadOverview(true);}; // 手动强制重生成
 
 function sendMsg(){
   var text=input.value.trim();if(!text)return;
-  rowMe(text);input.value='';autosize();input.disabled=send.disabled=true;
+  rowMe(text);HIST.push({role:'me',text:text});saveHist();
+  input.value='';autosize();input.disabled=send.disabled=true;
   var t=el('row ai','<div class="av ai">🦁</div><div class="bubble"><span class="typing"><i></i><i></i><i></i></span></div>');
-  fetch('/api/chat',{method:'POST',headers:hdr(),body:JSON.stringify({message:text})})
+  fetch('/api/chat',{method:'POST',headers:hdr(),body:JSON.stringify({message:text,session:SESSION})})
     .then(function(r){if(r.status===401){showGate();throw 0;}return r.json();})
     .then(function(r){
       t.remove();
       if(r.error){rowAI('⚠️ '+esc(r.error));return;}
-      var m=rowAI(esc(r.reply));var meta='';
-      if(r.emotion)meta+='<span class="chip emo">'+(r.emoji||'')+' '+esc(r.emotion)+'</span>';
-      if(r.tools&&r.tools.length)meta+='<span class="chip">🔧 '+r.tools.map(esc).join(', ')+'</span>';
-      if(meta)m.querySelector('.aiwrap').insertAdjacentHTML('beforeend','<div class="meta">'+meta+'</div>');
-      loadOverview();
+      var msg={role:'ai',text:r.reply,emotion:r.emotion,emoji:r.emoji,tools:r.tools};
+      renderMsg(msg);HIST.push(msg);saveHist();
+      // 概览每天生成一次,不在每条消息后重生成(点右上角 ↻ 可手动刷新)
     })
     .catch(function(){t.remove();})
     .finally(function(){input.disabled=send.disabled=false;input.focus();});
@@ -425,7 +473,13 @@ send.onclick=sendMsg;
 function toast(text){var t=document.createElement('div');t.className='toast';t.textContent='🔔 '+text;document.getElementById('toasts').appendChild(t);setTimeout(function(){t.remove();},8000);}
 function connectSSE(){var url='/api/events'+(TOKEN?('?token='+encodeURIComponent(TOKEN)):'');new EventSource(url).onmessage=function(ev){try{var d=JSON.parse(ev.data);if(d.type==='reminder'){toast(d.text);loadOverview();}}catch(e){}};}
 
-function start(){gate.classList.remove('show');rowAI('你好,我是 SuperAI 🦁 把日程、待办、灵感和要记住的事都交给我吧。');loadOverview();connectSSE();input.focus();}
+function start(){
+  gate.classList.remove('show');
+  if(HIST.length){HIST.forEach(renderMsg);}
+  else{rowAI('你好,我是 SuperAI 🦁 把日程、待办、灵感和要记住的事都交给我吧。');}
+  loadOverview();connectSSE();input.focus();
+}
+document.getElementById('newchat').onclick=newSession;
 function showGate(){gate.classList.add('show');tok.focus();}
 document.getElementById('enter').onclick=function(){
   var v=tok.value.trim();if(!v){gerr.textContent='请输入令牌';return;}
