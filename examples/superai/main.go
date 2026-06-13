@@ -10,13 +10,20 @@
 //   - proactive reminders: a scheduler that makes SuperAI "speak" when due (S2)
 //   - an interactive chat mode
 //
-// Requirements: DASHSCOPE_API_KEY (OpenAI-compatible Qwen endpoint).
+// Brain is any OpenAI-compatible endpoint (default DashScope Qwen). Embeddings
+// are optional: with one, SuperAI uses graph memory; without (SUPERAI_EMBED_KEY=none)
+// it falls back to file memory — so it runs against chat-only proxies too.
 //
 // Usage:
 //
 //	DASHSCOPE_API_KEY=sk-...  go run ./examples/superai            # scripted demo
 //	DASHSCOPE_API_KEY=sk-...  go run ./examples/superai -i         # interactive chat
+//	DASHSCOPE_API_KEY=sk-...  go run ./examples/superai -web       # web UI
 //	SUPERAI_HOME=~/.superai   go run ./examples/superai -i         # custom data dir
+//
+//	# any OpenAI-compatible brain (no embeddings → file memory):
+//	SUPERAI_LLM_BASE=https://host/v1 SUPERAI_LLM_KEY=sk-... SUPERAI_LLM_MODEL=gpt-5.4 \
+//	SUPERAI_EMBED_KEY=none  go run ./examples/superai -i
 //
 // State persists under SUPERAI_HOME (default ./.superai-data), so a second run
 // remembers everything from the first.
@@ -142,30 +149,43 @@ func main() {
 		}
 	}
 
-	apiKey := os.Getenv("DASHSCOPE_API_KEY")
-	if apiKey == "" {
-		log.Fatal("DASHSCOPE_API_KEY is required (OpenAI-compatible Qwen endpoint)")
+	// --- Brain (LLM): any OpenAI-compatible endpoint. Default DashScope Qwen. ---
+	// Override with SUPERAI_LLM_BASE / SUPERAI_LLM_KEY / SUPERAI_LLM_MODEL to use
+	// e.g. an OpenAI-compatible proxy. Falls back to DASHSCOPE_API_KEY.
+	const dashBase = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+	llmBase := envOr("SUPERAI_LLM_BASE", dashBase)
+	llmKey := envOr("SUPERAI_LLM_KEY", os.Getenv("DASHSCOPE_API_KEY"))
+	model := envOr("SUPERAI_LLM_MODEL", envOr("DASHSCOPE_MODEL", "qwen-plus"))
+	if llmKey == "" {
+		log.Fatal("need SUPERAI_LLM_KEY (or DASHSCOPE_API_KEY)")
 	}
-	model := envOr("DASHSCOPE_MODEL", "qwen-plus")
-	embModel := envOr("DASHSCOPE_EMBED_MODEL", "text-embedding-v4")
-	const base = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-
 	brain, err := pool.NewPool(pool.PoolConfig{
 		Enabled:  true,
 		Strategy: pool.StrategyRoundRobin,
 		Providers: []pool.Provider{{
-			Name: "dashscope", BaseURL: base, Key: apiKey,
+			Name: "brain", BaseURL: llmBase, Key: llmKey,
 			ModelName: model, MaxConcurrency: 5, Capability: 8,
 		}},
 	})
 	if err != nil {
 		log.Fatalf("build brain: %v", err)
 	}
-	embedder, err := providers.NewOpenAIEmbedderProvider(&domain.OpenAIProviderConfig{
-		BaseURL: base, APIKey: apiKey, EmbeddingModel: embModel,
-	})
-	if err != nil {
-		log.Fatalf("build embedder: %v", err)
+
+	// --- Embedder (optional): needed only for vector/graph memory. Default
+	// DashScope text-embedding-v4. Set SUPERAI_EMBED_KEY=none to disable, in
+	// which case SuperAI falls back to file memory (works with any brain,
+	// including chat-only proxies that have no /v1/embeddings). ---
+	embModel := envOr("SUPERAI_EMBED_MODEL", "text-embedding-v4")
+	embBase := envOr("SUPERAI_EMBED_BASE", dashBase)
+	embKey := envOr("SUPERAI_EMBED_KEY", os.Getenv("DASHSCOPE_API_KEY"))
+	var embedder domain.Embedder
+	if embKey != "" && embKey != "none" {
+		embedder, err = providers.NewOpenAIEmbedderProvider(&domain.OpenAIProviderConfig{
+			BaseURL: embBase, APIKey: embKey, EmbeddingModel: embModel,
+		})
+		if err != nil {
+			log.Fatalf("build embedder: %v", err)
+		}
 	}
 
 	// Persistent home: graph memory (cortex.db) + the JSON store live here and
@@ -183,21 +203,26 @@ func main() {
 	db := newStore(filepath.Join(cfg.DataDir(), "superai-store.json"))
 	db.load()
 
-	svc, err := agent.New("SuperAI").
+	b := agent.New("SuperAI").
 		WithPrompt(buildPersona(time.Now())).
 		WithConfig(cfg).
 		WithLLM(brain).
-		WithEmbedder(embedder).
-		WithGraphMemory(). // graphflow 图存储 + graph_recall 工具
-		WithPTC(false).    // simple one-tool-per-intent turns: direct tool-calling
-		Build()
+		WithPTC(false) // simple one-tool-per-intent turns: direct tool-calling
+	memMode := "graphflow"
+	if embedder != nil {
+		b = b.WithEmbedder(embedder).WithGraphMemory() // 图存储 + graph_recall
+	} else {
+		b = b.WithMemory(agent.WithMemoryStoreType("file")) // 无 embedding → 文件记忆
+		memMode = "file (no embeddings)"
+	}
+	svc, err := b.Build()
 	if err != nil {
 		log.Fatalf("build SuperAI: %v", err)
 	}
 	defer svc.Close()
 	registerTools(svc, db)
 
-	fmt.Printf("=== SuperAI (AgentGo) ===\nbrain=%s  embed=%s  home=%s\n", model, embModel, home)
+	fmt.Printf("=== SuperAI (AgentGo) ===\nbrain=%s @ %s  memory=%s  home=%s\n", model, llmBase, memMode, home)
 	fmt.Printf("已加载: 日程 %d / 记录 %d / 人物 %d / 提醒 %d\n",
 		len(db.Schedules), len(db.Records), len(db.Persons), len(db.Reminders))
 
