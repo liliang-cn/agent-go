@@ -36,7 +36,9 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/liliang-cn/agent-go/v2/pkg/agent"
@@ -63,6 +65,21 @@ func envOr(key, def string) string {
 	return def
 }
 
+// defaultWorkspace returns a persistent, per-session workspace dir under the
+// agentgo home (AGENTGO_HOME or ~/.agentgo), so files an autonomous run
+// produces survive after claw exits — unlike an ephemeral temp dir.
+func defaultWorkspace() string {
+	home := strings.TrimSpace(os.Getenv("AGENTGO_HOME"))
+	if home == "" {
+		if h, err := os.UserHomeDir(); err == nil {
+			home = filepath.Join(h, ".agentgo")
+		} else {
+			home = ".agentgo"
+		}
+	}
+	return filepath.Join(home, "workspace", "claw", time.Now().Format("20060102-150405"))
+}
+
 func main() {
 	oneShot := flag.String("p", "", "one-shot task: run it, print the result, then exit")
 	sandboxKind := flag.String("sandbox", envOr("AGENT_SANDBOX", "local"), "sandbox backend: local | docker")
@@ -70,7 +87,7 @@ func main() {
 	noBrowser := flag.Bool("no-browser", false, "disable the browser tools")
 	headless := flag.Bool("headless", true, "run the browser headless")
 	maxRounds := flag.Int("max-rounds", 60, "max tool rounds per task (autonomy budget)")
-	workspace := flag.String("workspace", "", "workspace dir (default: a temp dir cleaned on exit)")
+	workspace := flag.String("workspace", "", "workspace dir (default: a persistent ~/.agentgo/workspace/claw/<timestamp> dir)")
 	model := flag.String("model", "", "override the model name")
 	flag.Parse()
 
@@ -91,11 +108,13 @@ func main() {
 		defer stop()
 		runTurn(ctx, svc, sb, session, *maxRounds, *oneShot)
 		printDeliverables(context.Background(), svc)
+		fmt.Printf("\n%sfiles are in:%s %s\n", cBold, cReset, sb.Workspace())
 		return
 	}
 
 	repl(svc, sb, session, *maxRounds)
 	printDeliverables(context.Background(), svc)
+	fmt.Printf("\n%sfiles are in:%s %s\n", cBold, cReset, sb.Workspace())
 }
 
 // build assembles the agent + its execution capabilities.
@@ -109,11 +128,11 @@ func build(sandboxKind, workspace string, noBrowser, headless bool, maxRounds in
 		}
 	}
 	if sb == nil {
-		opts := []sandbox.LocalOption{}
-		if strings.TrimSpace(workspace) != "" {
-			opts = append(opts, sandbox.WithWorkspace(workspace))
+		ws := strings.TrimSpace(workspace)
+		if ws == "" {
+			ws = defaultWorkspace() // persistent so produced files survive exit
 		}
-		if sb, err = sandbox.NewLocal(opts...); err != nil {
+		if sb, err = sandbox.NewLocal(sandbox.WithWorkspace(ws)); err != nil {
 			log.Fatalf("build sandbox: %v", err)
 		}
 	}
