@@ -100,9 +100,9 @@ func main() {
 	// --- Build the agent with all execution capabilities. ---
 	b := agent.New("autonomous-agent").
 		WithLLM(brain).
-		WithPrompt("You are an autonomous agent with a sandboxed workspace and a browser. "+
-			"Plan your work with the scratchpad, use bash and fs_* tools to read/write files in your "+
-			"workspace, browse the web when you need information, and finish by writing your result to a "+
+		WithPrompt("You are an autonomous agent with a sandboxed workspace and a browser. " +
+			"Plan your work with the scratchpad, use bash and fs_* tools to read/write files in your " +
+			"workspace, browse the web when you need information, and finish by writing your result to a " +
 			"file in the workspace. Always do the work — never just describe what you would do.").
 		WithSandbox(sb).
 		WithVision(true).
