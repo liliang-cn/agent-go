@@ -292,8 +292,23 @@ func runTurn(ctx context.Context, svc *agent.Service, sb sandbox.Sandbox, sessio
 				fmt.Println()
 				lastPartial = false
 			}
-			fmt.Printf("%s▶ %-18s%s %s\n", cCyan, ev.ToolName, cReset, briefArgs(ev.ToolArgs))
+			if ev.DebugType == "ptc_inner" {
+				// A tool PTC ran inside execute_javascript — show it indented.
+				fmt.Printf("    %s↳ %-16s%s %s %s%s%s\n",
+					cCyan, ev.ToolName, cReset, ev.Content, cDim, briefArgs(ev.ToolArgs), cReset)
+				break
+			}
+			label := ev.ToolName
+			if label == "execute_javascript" {
+				label = "run code" // the real tools appear as ↳ lines beneath
+			}
+			fmt.Printf("%s▶ %-18s%s %s\n", cCyan, label, cReset, briefArgs(ev.ToolArgs))
 		case agent.EventTypeToolResult:
+			// execute_javascript's own result is just the PTC envelope; the ↳
+			// lines already showed what happened. Only print plain tool results.
+			if ev.ToolName == "execute_javascript" {
+				break
+			}
 			fmt.Printf("  %s%s%s\n", cDim, briefResult(ev.ToolResult), cReset)
 		case agent.EventTypeHandoff:
 			fmt.Printf("%s⇄ handoff → %s%s\n", cMag, ev.AgentName, cReset)

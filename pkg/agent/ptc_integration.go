@@ -225,11 +225,29 @@ func (p *PTCIntegration) ExecuteJavascriptTool(ctx context.Context, args map[str
 	}
 
 	// Report the tools PTC actually invoked inside the sandbox (fs_write,
-	// web_search, ...) to the run's tool-use sink, so goal-aware output lints
-	// see them instead of only "execute_javascript".
+	// web_search, ...) to (a) the run's tool-use sink, so goal-aware output
+	// lints see them instead of only "execute_javascript", and (b) the event
+	// sink as informational "ptc_inner" tool-call events, so a live trace
+	// (e.g. the claw CLI) can show what the sandbox code actually did.
 	if execResult != nil {
+		sink := eventSinkFromContext(ctx)
 		for _, rec := range execResult.ToolCalls {
 			recordToolUse(ctx, rec.ToolName)
+			if sink == nil {
+				continue
+			}
+			status := "✓"
+			if strings.TrimSpace(rec.Error) != "" {
+				status = "✗ " + rec.Error
+			}
+			sink(&Event{
+				Type:      EventTypeToolCall,
+				ToolName:  rec.ToolName,
+				ToolArgs:  rec.Arguments,
+				DebugType: "ptc_inner",
+				Content:   status,
+				Timestamp: time.Now(),
+			})
 		}
 	}
 
