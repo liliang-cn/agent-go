@@ -407,8 +407,20 @@ func (r *Runtime) registerBuiltins(vm *goja.Runtime, state *executionState) {
 
 	_ = vm.Set("toolOk", func(raw interface{}) bool {
 		if m, ok := raw.(map[string]interface{}); ok {
+			// Native agent-go tools return {ok: bool, ...}; MCP-style tools
+			// return {success: bool, ...}. Recognize both. Fall back to
+			// treating a non-empty "error" field as failure.
+			if okv, exists := m["ok"].(bool); exists {
+				return okv
+			}
 			if success, exists := m["success"].(bool); exists {
 				return success
+			}
+			if errVal, exists := m["error"]; exists {
+				if s, isStr := errVal.(string); isStr {
+					return strings.TrimSpace(s) == ""
+				}
+				return errVal == nil
 			}
 		}
 

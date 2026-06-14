@@ -221,6 +221,12 @@ var filesystemWriteTools = map[string]bool{
 	"fs_edit":       true,
 	"fs_multi_edit": true,
 	"fs_move":       true,
+	// Sandbox shell tools can write files too (e.g. a script that emits output
+	// to a path); count them so a bash/heredoc-written file isn't falsely
+	// flagged as "no file written".
+	"bash":        true,
+	"shell_send":  true,
+	"shell_start": true,
 	// Operator coding-agent delegation — the sub-CLI writes the files.
 	"run_coding_agent_once":      true,
 	"send_coding_agent_prompt":   true,

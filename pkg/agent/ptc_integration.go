@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
@@ -586,7 +587,7 @@ func (r *PTCResult) FormatForLLM() string {
 		if preferred := preferredPTCReturnValue(r.ExecutionResult.ReturnValue); preferred != "" {
 			sb.WriteString(fmt.Sprintf("**Return Value:** %s\n", preferred))
 		} else if r.ExecutionResult.ReturnValue != nil {
-			sb.WriteString(fmt.Sprintf("**Return Value:** %+v\n", r.ExecutionResult.ReturnValue))
+			sb.WriteString(fmt.Sprintf("**Return Value:** %s\n", formatPTCReturnValue(r.ExecutionResult.ReturnValue)))
 		} else {
 			sb.WriteString("**Return Value:** (none - did you forget to 'return' in JS?)\n")
 		}
@@ -619,6 +620,21 @@ func (r *PTCResult) FormatForLLM() string {
 	default:
 		return r.OriginalContent
 	}
+}
+
+// formatPTCReturnValue renders a PTC return value for the LLM / final answer.
+// Structured values (maps, slices) are JSON-encoded on a single line so they
+// read cleanly instead of leaking Go's `map[...]` syntax — and so the
+// single-line "**Return Value:**" extractor still captures the whole thing.
+// Scalars fall back to %v.
+func formatPTCReturnValue(value interface{}) string {
+	switch value.(type) {
+	case map[string]interface{}, []interface{}, []map[string]interface{}:
+		if b, err := json.Marshal(value); err == nil {
+			return string(b)
+		}
+	}
+	return fmt.Sprintf("%v", value)
 }
 
 func preferredPTCReturnValue(value interface{}) string {

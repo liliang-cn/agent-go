@@ -54,6 +54,36 @@ func TestRuntime_ExecuteSimple(t *testing.T) {
 	}
 }
 
+func TestRuntime_ToolOkRecognizesOkShape(t *testing.T) {
+	runtime := NewRuntime()
+	defer runtime.Close()
+	ctx := context.Background()
+
+	cases := map[string]bool{
+		"toolOk({ok:true})":            true,
+		"toolOk({ok:false})":           false,
+		"toolOk({success:true})":       true,
+		"toolOk({success:false})":      false,
+		"toolOk({error:'boom'})":       false,
+		"toolOk({error:''})":           true,
+		"toolOk({data:{stdout:'hi'}})": true, // no ok/success/error -> assume ok
+	}
+	for code, want := range cases {
+		req := &ptc.ExecutionRequest{Code: code, Language: ptc.LanguageJavaScript, Timeout: 10 * time.Second}
+		result, err := runtime.Execute(ctx, req)
+		if err != nil {
+			t.Fatalf("%s: execution failed: %v", code, err)
+		}
+		got, ok := result.ReturnValue.(bool)
+		if !ok {
+			t.Fatalf("%s: expected bool return, got %T", code, result.ReturnValue)
+		}
+		if got != want {
+			t.Errorf("%s: got %v, want %v", code, got, want)
+		}
+	}
+}
+
 func TestRuntime_ConsoleLog(t *testing.T) {
 	runtime := NewRuntime()
 	defer runtime.Close()
