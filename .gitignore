@@ -40,3 +40,10 @@ eval/results/*.json
 
 # superai web (Vite/AI SDK) deps
 examples/superai/web/node_modules/
+
+# Tool / build artifacts
+.playwright-mcp/
+.antigravitycli/
+# Stray example binaries (from `go build ./examples/X` in repo root — use bin/)
+/autonomous-agent
+/superai
