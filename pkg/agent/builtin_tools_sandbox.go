@@ -508,6 +508,17 @@ func RegisterSandboxTools(svc *Service, sb sandbox.Sandbox) {
 				if res.Err != "" {
 					data["err"] = res.Err
 				}
+				// A non-zero exit is a failure: report ok:false so the model's
+				// toolOk() guard fires. Without this a crashed script (empty
+				// stdout) silently flows into an empty file downstream. stdout/
+				// stderr stay in data so the model can still inspect them.
+				if res.ExitCode != 0 {
+					return map[string]interface{}{
+						"ok":    false,
+						"error": fmt.Sprintf("command exited %d: %s", res.ExitCode, strings.TrimSpace(res.Stderr)),
+						"data":  data,
+					}, nil
+				}
 				return toolOK(data), nil
 			},
 			destMeta,

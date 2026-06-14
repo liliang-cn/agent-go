@@ -166,6 +166,32 @@ func TestSandboxBash(t *testing.T) {
 	}
 }
 
+func TestSandboxBashNonZeroExitReportsFailure(t *testing.T) {
+	svc, _ := newSandboxTestService(t)
+	// A failing script must report ok:false (so the model's toolOk guard fires
+	// and it doesn't silently consume empty stdout), while still surfacing
+	// stdout/stderr/exit_code in data.
+	m := callTool(t, svc, "bash", map[string]interface{}{
+		"command": "echo oops >&2; exit 7",
+	})
+	if ok, _ := m["ok"].(bool); ok {
+		t.Fatalf("expected ok:false for non-zero exit, got %+v", m)
+	}
+	if errMsg, _ := m["error"].(string); !strings.Contains(errMsg, "exited 7") {
+		t.Fatalf("expected error mentioning exit code, got %q", errMsg)
+	}
+	data, _ := m["data"].(map[string]interface{})
+	if data == nil {
+		t.Fatalf("expected data with stdout/stderr/exit_code, got %+v", m)
+	}
+	if code, _ := data["exit_code"].(int); code != 7 {
+		t.Fatalf("expected exit_code 7 in data, got %v", data["exit_code"])
+	}
+	if se, _ := data["stderr"].(string); !strings.Contains(se, "oops") {
+		t.Fatalf("expected stderr preserved, got %+v", data)
+	}
+}
+
 func TestSandboxFsListGlobGrep(t *testing.T) {
 	svc, _ := newSandboxTestService(t)
 	mustOK(t, "fs_write", callTool(t, svc, "fs_write", map[string]interface{}{"path": "a.txt", "content": "needle here\nother"}))

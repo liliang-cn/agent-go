@@ -145,9 +145,15 @@ func (r *Runtime) lintGate(goal, content string, messages *[]domain.Message, sta
 		r.completeRun(goal, content, *messages, true)
 		return true
 	}
-	r.emit(EventTypeError, fmt.Sprintf("output lint %s rejected response: %s", violation.LintName, violation.Reason))
 	if r.lintRetryBudget > 0 {
 		r.lintRetryBudget--
+		// Recoverable: the draft answer was rejected and the model is being
+		// re-prompted. Emit a MARKED event (DebugType "lint_retry") rather than
+		// a bare error so live consumers can show it as a soft nudge, not a
+		// fatal error. The run continues.
+		r.emitMarked(EventTypeError, "lint_retry",
+			fmt.Sprintf("output lint %s rejected the draft answer; nudging the model to fix it: %s",
+				violation.LintName, violation.Reason))
 		*messages = append(*messages, domain.Message{
 			Role:    "user",
 			Content: FormatLintFeedback(violation),
@@ -1107,6 +1113,20 @@ func (r *Runtime) emit(t EventType, content string) {
 		AgentName: r.currentAgent.Name(),
 		AgentID:   r.currentAgent.ID(),
 		Content:   content,
+		Timestamp: time.Now(),
+	}
+}
+
+// emitMarked is emit() with a DebugType marker, letting consumers distinguish
+// sub-kinds of an event (e.g. a recoverable "lint_retry" vs a fatal error).
+func (r *Runtime) emitMarked(t EventType, marker, content string) {
+	r.eventChan <- &Event{
+		ID:        uuid.New().String(),
+		Type:      t,
+		AgentName: r.currentAgent.Name(),
+		AgentID:   r.currentAgent.ID(),
+		Content:   content,
+		DebugType: marker,
 		Timestamp: time.Now(),
 	}
 }
