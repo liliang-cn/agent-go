@@ -299,11 +299,13 @@ func registerLints(svc *agent.Service, names []string) error {
 	return nil
 }
 
-// lintRejectMessage parses the EventTypeError content emitted by
-// runtime.runFinalLints to extract the lint name. The format is fixed:
+// lintRejectMessage parses the EventTypeError content emitted by the runtime's
+// lint gate to extract the lint name. Covers both the retry-nudge wording and
+// the budget-exhausted block wording:
 //
-//	"output lint <name> rejected response: <reason>"
-var lintRejectMessage = regexp.MustCompile(`^output lint ([a-zA-Z0-9_]+) (?:rejected response|repeatedly rejected the response):`)
+//	"output lint <name> rejected the draft answer; nudging the model ..."
+//	"output lint <name> repeatedly rejected the response: <reason>"
+var lintRejectMessage = regexp.MustCompile(`^output lint ([a-zA-Z0-9_]+) (?:rejected|repeatedly rejected)\b`)
 
 func collectEvents(events <-chan *agent.Event, lintCounts map[string]int) (final string, blocked string, sawError bool) {
 	for evt := range events {

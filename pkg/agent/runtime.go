@@ -163,6 +163,9 @@ func (r *Runtime) lintGate(goal, content string, messages *[]domain.Message, sta
 		state.noteRoundCompleted()
 		return false
 	}
+	// Budget exhausted: this final attempt is itself a violation. Emit it as a
+	// (hard) error so observers/eval count every violation, then block.
+	r.emit(EventTypeError, fmt.Sprintf("output lint %s rejected response: %s", violation.LintName, violation.Reason))
 	r.blockRunWithStop(goal,
 		fmt.Sprintf("output lint %s repeatedly rejected the response: %s", violation.LintName, violation.Reason),
 		*messages, true, StopReasonLintExhausted)
