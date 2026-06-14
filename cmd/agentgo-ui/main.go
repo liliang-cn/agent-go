@@ -125,8 +125,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 		Enabled:           true,
 		Servers:           cfg.MCP.Servers,
 		ServersConfigPath: cfg.MCPServersPath(), // Keep for potential writing
-		FilesystemDirs:    cfg.MCP.FilesystemDirs,
-		LoadedServers:     mcp.GetBuiltInServers(cfg.MCP.FilesystemDirs),
+		LoadedServers:     mcp.GetBuiltInServers(),
 	}
 
 	// Merge configurations from all paths

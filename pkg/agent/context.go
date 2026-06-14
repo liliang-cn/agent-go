@@ -25,7 +25,7 @@ type SystemContext struct {
 	GoVersion  string
 	EnvInfo    map[string]string // selected env vars
 	HasMemory  bool              // memory system is enabled
-	MCPServers []string          // available MCP server names (e.g. mcp_filesystem)
+	MCPServers []string          // available MCP server names (e.g. mcp_websearch)
 	SkillNames []string          // available skill IDs
 }
 
@@ -80,7 +80,7 @@ func (s *Service) buildSystemContext() *SystemContext {
 		// Do NOT list memories here to avoid injecting irrelevant entries (List has no goal context).
 	}
 
-	// MCP server names (deduplicated prefixes, e.g. mcp_filesystem)
+	// MCP server names (deduplicated prefixes, e.g. mcp_websearch)
 	if s.mcpService != nil {
 		seen := map[string]bool{}
 		for _, t := range s.mcpService.ListTools() {

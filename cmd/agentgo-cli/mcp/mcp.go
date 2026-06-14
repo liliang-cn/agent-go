@@ -40,7 +40,7 @@ var mcpCallCmd = &cobra.Command{
 
 Examples:
   agentgo mcp call mcp_sqlite_query '{"query": "SELECT * FROM users LIMIT 5"}'
-  agentgo mcp call mcp_filesystem_read '{"path": "./README.md"}'
+  agentgo mcp call mcp_websearch_search '{"query": "golang generics"}'
   agentgo mcp call mcp_git_status '{}'`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: runMCPCall,
@@ -349,8 +349,6 @@ func configuredMCPServerRows(cfg *config.Config, serverFilter string) ([]mcpList
 		HealthCheckInterval:   cfg.MCP.HealthCheckInterval,
 		Servers:               append([]string(nil), cfg.MCP.Servers...),
 		ServersConfigPath:     cfg.MCP.ServersConfigPath,
-		FilesystemDirs:        append([]string(nil), cfg.MCP.FilesystemDirs...),
-		FilesystemIgnore:      append([]string(nil), cfg.MCP.FilesystemIgnore...),
 	}
 	mcpCfg.LoadedServers = nil
 	if err := mcpCfg.LoadServersFromJSON(); err != nil {

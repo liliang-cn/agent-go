@@ -164,8 +164,6 @@ func (c *Config) ApplyHomeLayout() {
 	c.MCP.HealthCheckInterval = defaultMCP.HealthCheckInterval
 	c.MCP.Servers = nil
 	c.MCP.ServersConfigPath = ""
-	c.MCP.FilesystemIgnore = append([]string(nil), defaultMCP.FilesystemIgnore...)
-	c.MCP.FilesystemDirs = []string{c.WorkspaceDir()}
 	c.resolveMCPServerPaths()
 
 	// 5. Skills

@@ -32,11 +32,10 @@ func NewService(mcpConfig *Config, llm domain.Generator) (*Service, error) {
 		return nil, fmt.Errorf("failed to load MCP servers: %w", err)
 	}
 
-	// Ensure built-in servers (filesystem, websearch) are always present.
+	// Ensure built-in servers (websearch) are always present.
 	// They are in-process — no external binary needed.
-	// FilesystemDirs from config overrides the default (user home dir).
 	loadedServers := mcpConfig.GetLoadedServers()
-	for _, builtin := range GetBuiltInServers(mcpConfig.FilesystemDirs) {
+	for _, builtin := range GetBuiltInServers() {
 		found := false
 		for _, loaded := range loadedServers {
 			if loaded.Name == builtin.Name {
@@ -160,15 +159,11 @@ func (s *Service) GetServerCount() int {
 
 // CallTool calls a specific tool by name
 func (s *Service) CallTool(ctx context.Context, toolName string, arguments map[string]interface{}) (*ToolResult, error) {
-	if err := validateFilesystemToolArgs(toolName, arguments, s.mcpConfig.FilesystemIgnore); err != nil {
-		return nil, err
-	}
-	arguments = sanitizeFilesystemToolArgs(toolName, arguments)
 	result, err := s.manager.CallTool(ctx, toolName, arguments)
 	if err != nil {
 		return nil, fmt.Errorf("%w (tool=%s args=%v)", err, toolName, arguments)
 	}
-	return filterFilesystemToolResult(toolName, result, s.mcpConfig.FilesystemIgnore), nil
+	return result, nil
 }
 
 // ChatOptions configures MCP-enabled chat

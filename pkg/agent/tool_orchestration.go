@@ -107,20 +107,6 @@ func inferDynamicToolMetadata(name string) (ToolMetadata, bool) {
 		return ToolMetadata{}, false
 	}
 
-	if strings.HasPrefix(lower, "mcp_filesystem_") {
-		switch {
-		case strings.Contains(lower, "read"),
-			strings.Contains(lower, "list"),
-			strings.Contains(lower, "search"),
-			strings.Contains(lower, "tree"),
-			strings.Contains(lower, "get_file_info"),
-			strings.Contains(lower, "allowed_directories"):
-			return ToolMetadata{ReadOnly: true, ConcurrencySafe: true, InterruptBehavior: InterruptBehaviorCancel}, true
-		default:
-			return ToolMetadata{Destructive: true, InterruptBehavior: InterruptBehaviorBlock}, true
-		}
-	}
-
 	if strings.HasPrefix(lower, "mcp_websearch_") {
 		return ToolMetadata{ReadOnly: true, ConcurrencySafe: true, InterruptBehavior: InterruptBehaviorCancel}, true
 	}

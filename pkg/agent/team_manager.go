@@ -1129,7 +1129,7 @@ func buildTeamMemberPrompt(model *AgentModel) string {
 	case "coder":
 		extras = append(extras,
 			"- Use only the tools and capabilities that are actually exposed in this runtime. Do not invent helper tools that are not present in the visible tool list.",
-			"- If the task says create/write/save/update a file, you MUST call a filesystem write or modify tool and actually change the file.",
+			"- If the task says create/write/save/update a file, you MUST call a file write/edit tool and actually change the file.",
 			"- Do not stop after listing files when the task clearly asks you to write or edit a file.",
 			"- Directory listing is only for confirmation or discovery. It is not a valid final action for a file-writing task.",
 			"- If a multi-file read result is incomplete, fall back to individual read_file calls before continuing.",
@@ -1139,7 +1139,7 @@ func buildTeamMemberPrompt(model *AgentModel) string {
 	default:
 		extras = append(extras,
 			"- Use only the tools and capabilities that are actually exposed in the current runtime. Do not invent helper tools that are not present in the visible tool list.",
-			"- For repository or filesystem questions, prefer targeted file reads over broad directory traversal.",
+			"- For repository or file questions, prefer targeted file reads over broad directory traversal.",
 			"- If the task already names specific files such as Makefile, package.json, App.tsx, or main.go, read those files first before calling list_directory.",
 			"- If a multi-file read result is incomplete, fall back to individual read_file calls before continuing.",
 			"- Never inspect blacklisted repository paths unless the user explicitly asks for them. Blacklist: "+FormatRepositoryIgnoreList(),
@@ -1203,51 +1203,14 @@ func defaultMemberMCPTools(name string) []string {
 		return []string{"*"}
 	case "assistant", "orchestrator", "evaluator":
 		return []string{
-			"mcp_filesystem_list_allowed_directories",
-			"mcp_filesystem_list_directory",
-			"mcp_filesystem_read_file",
-			"mcp_filesystem_read_multiple_files",
-			"mcp_filesystem_search_within_files",
-			"mcp_filesystem_get_file_info",
-			"mcp_filesystem_create_directory",
-			"mcp_filesystem_write_file",
-			"mcp_filesystem_modify_file",
-			"mcp_filesystem_move_file",
-			"mcp_filesystem_copy_file",
-			"mcp_filesystem_delete_file",
 			"mcp_websearch_websearch_ai_summary",
 			"mcp_websearch_fetch_page_content",
 			"mcp_websearch_deep_read_page",
 		}
 	case "coder":
-		return []string{
-			"mcp_filesystem_list_allowed_directories",
-			"mcp_filesystem_list_directory",
-			"mcp_filesystem_read_file",
-			"mcp_filesystem_read_multiple_files",
-			"mcp_filesystem_search_within_files",
-			"mcp_filesystem_get_file_info",
-			"mcp_filesystem_create_directory",
-			"mcp_filesystem_write_file",
-			"mcp_filesystem_modify_file",
-			"mcp_filesystem_move_file",
-			"mcp_filesystem_copy_file",
-			"mcp_filesystem_delete_file",
-		}
+		return []string{}
 	default:
 		return []string{
-			"mcp_filesystem_list_allowed_directories",
-			"mcp_filesystem_list_directory",
-			"mcp_filesystem_read_file",
-			"mcp_filesystem_read_multiple_files",
-			"mcp_filesystem_search_within_files",
-			"mcp_filesystem_get_file_info",
-			"mcp_filesystem_create_directory",
-			"mcp_filesystem_write_file",
-			"mcp_filesystem_modify_file",
-			"mcp_filesystem_move_file",
-			"mcp_filesystem_copy_file",
-			"mcp_filesystem_delete_file",
 			"mcp_websearch_websearch_ai_summary",
 			"mcp_websearch_fetch_page_content",
 			"mcp_websearch_deep_read_page",

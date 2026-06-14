@@ -215,10 +215,6 @@ var fileOutputIntentPatterns = []*regexp.Regexp{
 // delegation tools are included because the delegated CLI (codex/claude/agy/...)
 // does the actual file writing on the agent's behalf.
 var filesystemWriteTools = map[string]bool{
-	"mcp_filesystem_write_file":  true,
-	"mcp_filesystem_modify_file": true,
-	"mcp_filesystem_move_file":   true,
-	"mcp_filesystem_copy_file":   true,
 	// Built-in sandbox tools (pkg/sandbox via RegisterSandboxTools) — these
 	// write/mutate files in the agent's workspace.
 	"fs_write":      true,
@@ -339,8 +335,8 @@ func FileTaskMustWrite() OutputLint {
 			if usedFilesystemWriteTool(ctx.ToolCalls) {
 				return true, ""
 			}
-			return false, "the task asked you to create/write/save a file, but no filesystem write tool " +
-				"(e.g. mcp_filesystem_write_file) was called this run. Actually write the file to disk and " +
+			return false, "the task asked you to create/write/save a file, but no file write tool " +
+				"(e.g. fs_write) was called this run. Actually write the file to disk and " +
 				"verify it exists, then finish; or call task_blocked with the concrete blocker."
 		},
 	}

@@ -206,8 +206,8 @@ func TestExtractGoalFilePaths(t *testing.T) {
 
 func TestFileTaskMustWrite(t *testing.T) {
 	lint := FileTaskMustWrite()
-	write := []string{"mcp_websearch_search", "mcp_filesystem_write_file"}
-	readonly := []string{"mcp_filesystem_list_directory", "mcp_filesystem_read_file"}
+	write := []string{"mcp_websearch_search", "fs_write"}
+	readonly := []string{"fs_list", "fs_read"}
 
 	// Real files on disk for the artifact-verification (result, not attempt) cases.
 	dir := t.TempDir()

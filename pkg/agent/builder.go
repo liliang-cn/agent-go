@@ -614,7 +614,7 @@ func (b *Builder) build() (*Service, error) {
 		Type: "function",
 		Function: domain.ToolFunction{
 			Name:        "search_available_tools",
-			Description: "Search the catalog for available tools. If 'instruction' is provided, the tool will automatically execute the found tool. Use 'scope' to narrow the search to a specific MCP server (e.g. 'mcp_filesystem') or skill name.",
+			Description: "Search the catalog for available tools. If 'instruction' is provided, the tool will automatically execute the found tool. Use 'scope' to narrow the search to a specific MCP server (e.g. 'mcp_websearch') or skill name.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -628,7 +628,7 @@ func (b *Builder) build() (*Service, error) {
 					},
 					"scope": map[string]interface{}{
 						"type":        "string",
-						"description": "(Optional) Limit search to a specific MCP server prefix (e.g. 'mcp_filesystem', 'mcp_websearch') or skill ID.",
+						"description": "(Optional) Limit search to a specific MCP server prefix (e.g. 'mcp_websearch') or skill ID.",
 					},
 				},
 				"required": []string{"query"},

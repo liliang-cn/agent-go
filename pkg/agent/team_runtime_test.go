@@ -592,7 +592,7 @@ func TestBuildTeamMemberPrompt_IsAgentSpecific(t *testing.T) {
 		Name:         "Coder",
 		Instructions: "coder base",
 	})
-	if !strings.Contains(coderPrompt, "MUST call a filesystem write or modify tool") {
+	if !strings.Contains(coderPrompt, "MUST call a file write/edit tool") {
 		t.Fatalf("coder prompt missing file-writing rule: %s", coderPrompt)
 	}
 	if !strings.Contains(coderPrompt, "Do not invent helper tools that are not present in the visible tool list") {
@@ -627,7 +627,7 @@ func TestBuildTeamMemberPrompt_IsAgentSpecific(t *testing.T) {
 	if !strings.Contains(orchestratorPrompt, "fall back to individual read_file calls") {
 		t.Fatalf("orchestrator prompt missing multi-read fallback rule: %s", orchestratorPrompt)
 	}
-	if strings.Contains(orchestratorPrompt, "MUST call a filesystem write or modify tool") {
+	if strings.Contains(orchestratorPrompt, "MUST call a file write/edit tool") {
 		t.Fatalf("orchestrator prompt should not include coder file-writing rules: %s", orchestratorPrompt)
 	}
 
@@ -821,22 +821,17 @@ func TestPersistedSharedTasksRestoreAcrossManagerInstances(t *testing.T) {
 	}
 }
 
-func TestDefaultMemberMCPTools_OrchestratorIncludesFilesystemAndWebTools(t *testing.T) {
+func TestDefaultMemberMCPTools_OrchestratorIncludesWebTools(t *testing.T) {
 	tools := defaultMemberMCPTools("Orchestrator")
 	if len(tools) == 0 {
 		t.Fatal("expected orchestrator default tool allowlist")
 	}
-	if containsStr(tools, "mcp_filesystem_tree") {
-		t.Fatalf("orchestrator should not have tree by default: %v", tools)
-	}
-	if containsStr(tools, "mcp_filesystem_search_files") {
-		t.Fatalf("orchestrator should not have broad file search by default: %v", tools)
-	}
-	if !containsStr(tools, "mcp_filesystem_read_file") {
-		t.Fatalf("orchestrator should keep targeted file reads: %v", tools)
-	}
-	if !containsStr(tools, "mcp_filesystem_write_file") {
-		t.Fatalf("orchestrator should have file write capability: %v", tools)
+	// The built-in filesystem MCP server has been removed; file work now goes
+	// through the native sandbox fs_* tools, not an mcp_filesystem_* allowlist.
+	for _, tool := range tools {
+		if strings.HasPrefix(tool, "mcp_filesystem_") {
+			t.Fatalf("orchestrator allowlist should not reference mcp_filesystem tools: %v", tools)
+		}
 	}
 	if !containsStr(tools, "mcp_websearch_websearch_ai_summary") {
 		t.Fatalf("orchestrator should have websearch capability: %v", tools)

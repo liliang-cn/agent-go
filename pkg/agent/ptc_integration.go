@@ -397,7 +397,7 @@ func (p *PTCIntegration) GetPTCTools(availableTools []ptc.ToolInfo) []domain.Too
 }
 
 // collectMCPServerNames extracts unique MCP server names from tool list.
-// e.g. "mcp_filesystem_read_file" → "mcp_filesystem"
+// e.g. "mcp_websearch_search" → "mcp_websearch"
 func collectMCPServerNames(tools []ptc.ToolInfo) []string {
 	seen := map[string]bool{}
 	var names []string
@@ -434,11 +434,11 @@ func (p *PTCIntegration) GetPTCSystemPrompt(availableTools []ptc.ToolInfo) strin
 	sb.WriteString("- Do not invent fuzzy tool names or return keyword lists instead of performing tool discovery.\n")
 	sb.WriteString("- MCP tool results are commonly wrapped as `{ success, data, error }`.\n")
 	sb.WriteString("- Use `toolOk(result)` to check success and `toolData(result)` to read the payload safely.\n")
-	sb.WriteString("- `mcp_filesystem_list_directory` returns `toolData(result)` as a structured array of `{ name, type, path, uri, size_bytes? }` entries.\n")
-	sb.WriteString("- For filesystem tasks, if you know names such as `mcp_filesystem_write_file`, `mcp_filesystem_read_file`, or `mcp_filesystem_list_directory`, call them directly instead of searching.\n")
+	sb.WriteString("- `fs_list` returns `toolData(result)` as a structured array of file/directory entries.\n")
+	sb.WriteString("- For file tasks, if you know names such as `fs_write`, `fs_read`, or `fs_list`, call them directly instead of searching.\n")
 	sb.WriteString("- No async/await, no promises, no require/import.\n")
 	sb.WriteString("- End with a top-level `return` statement.\n")
-	sb.WriteString("Example: `<code>const r = callTool('mcp_filesystem_read_file', {path: '/tmp/f'}); if (!toolOk(r)) return r; return toolData(r);</code>`\n")
+	sb.WriteString("Example: `<code>const r = callTool('fs_read', {path: '/tmp/f'}); if (!toolOk(r)) return r; return toolData(r);</code>`\n")
 
 	// Add complete list of available tools with exact names
 	if len(availableTools) > 0 {

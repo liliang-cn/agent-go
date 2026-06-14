@@ -67,8 +67,6 @@ type Config struct {
 	HealthCheckInterval   time.Duration  `toml:"health_check_interval" json:"health_check_interval" mapstructure:"health_check_interval"`
 	Servers               []string       `toml:"servers" json:"servers" mapstructure:"servers"`                                     // Array of server config file paths
 	ServersConfigPath     string         `toml:"servers_config_path" json:"servers_config_path" mapstructure:"servers_config_path"` // Deprecated: use Servers instead
-	FilesystemDirs        []string       `toml:"filesystem_dirs" json:"filesystem_dirs" mapstructure:"filesystem_dirs"`             // Allowed dirs for built-in filesystem server; defaults to home dir
-	FilesystemIgnore      []string       `toml:"filesystem_ignore" json:"filesystem_ignore" mapstructure:"filesystem_ignore"`       // Blacklisted directory names filtered from filesystem MCP operations
 	LoadedServers         []ServerConfig `toml:"-" json:"-" mapstructure:"-"`                                                       // Internal: loaded server configurations
 	InlineServers         []ServerConfig `toml:"-" json:"-" mapstructure:"-"`                                                       // Internal: resource-registry backed server configurations
 	mu                    sync.Mutex     `toml:"-" json:"-" mapstructure:"-"`                                                       // Protects LoadedServers
@@ -84,31 +82,14 @@ func DefaultConfig() Config {
 		HealthCheckInterval:   60 * time.Second,
 		Servers:               []string{}, // Empty by default, resolved by resolveMCPServerPaths()
 		ServersConfigPath:     "",         // Deprecated
-		FilesystemIgnore:      DefaultFilesystemIgnoreNames(),
 		LoadedServers:         []ServerConfig{},
 	}
 }
 
 // GetBuiltInServers returns the list of built-in in-process MCP servers.
-// Both servers are compiled into the binary — no external commands needed.
-// filesystemDirs sets the allowed directories for the filesystem server;
-// if nil or empty, the user's home directory is used as the default root.
-func GetBuiltInServers(filesystemDirs []string) []ServerConfig {
-	if len(filesystemDirs) == 0 {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			homeDir = "/"
-		}
-		filesystemDirs = []string{homeDir}
-	}
+// They are compiled into the binary — no external commands needed.
+func GetBuiltInServers() []ServerConfig {
 	return []ServerConfig{
-		{
-			Name:        "filesystem",
-			Description: "Built-in filesystem MCP server (in-process, no external binary needed)",
-			Type:        ServerTypeInProcess,
-			Args:        filesystemDirs,
-			AutoStart:   true,
-		},
 		{
 			Name:        "websearch",
 			Description: "Built-in web search MCP server (in-process, no external binary needed)",

@@ -151,7 +151,7 @@ func (h *ConfigHandler) snapshot() ConfigSnapshot {
 		MemoryPath:        h.cfg.MemoryPrimaryPath(),
 		DataDir:           h.cfg.DataDir(),
 		WorkspaceDir:      h.cfg.WorkspaceDir(),
-		MCPAllowedDirs:    append([]string(nil), h.cfg.MCP.FilesystemDirs...),
+		MCPAllowedDirs:    []string{h.cfg.WorkspaceDir()},
 		MCPServersPath:    h.cfg.MCPServersPath(),
 		SkillsPaths:       h.cfg.SkillsPaths(),
 	}

@@ -21,7 +21,6 @@ require (
 	github.com/liliang-cn/cortexdb/v2 v2.21.0
 	github.com/liliang-cn/mcp-swagger-server v0.4.0
 	github.com/liliang-cn/skills-go v1.7.0
-	github.com/mark3labs/mcp-filesystem-server v0.11.1
 	github.com/mark3labs/mcp-go v0.32.0
 	github.com/mattn/go-runewidth v0.0.16
 	github.com/modelcontextprotocol/go-sdk v1.6.1
@@ -80,13 +79,11 @@ require (
 	github.com/charmbracelet/x/term v0.2.1 // indirect
 	github.com/chromedp/sysutil v1.1.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
-	github.com/djherbis/times v1.6.0 // indirect
 	github.com/dlclark/regexp2 v1.11.5 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
 	github.com/fatih/color v1.18.0 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
-	github.com/gabriel-vasile/mimetype v1.4.9 // indirect
 	github.com/go-json-experiment/json v0.0.0-20250725192818-e39067aee2d2 // indirect
 	github.com/go-openapi/jsonpointer v0.22.1 // indirect
 	github.com/go-openapi/jsonreference v0.21.2 // indirect
