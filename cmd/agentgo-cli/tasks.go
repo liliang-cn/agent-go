@@ -35,6 +35,7 @@ var (
 	inspectJSON            bool
 	taskReplayCheckpointID string
 	taskReplayFollowUp     string
+	taskArtifactsExtract   string
 )
 
 var taskListCmd = &cobra.Command{
@@ -68,6 +69,7 @@ func init() {
 	tasksCmd.AddCommand(taskResumeCmd)
 	tasksCmd.AddCommand(taskReplayCmd)
 	tasksCmd.AddCommand(taskCheckpointsCmd)
+	tasksCmd.AddCommand(taskArtifactsCmd)
 	tasksCmd.AddCommand(taskCancelCmd)
 	taskListCmd.Flags().BoolVar(&textOutput, "text", false, "Output as plain text")
 	taskListCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output as JSON")
@@ -77,6 +79,7 @@ func init() {
 	taskInspectCmd.Flags().BoolVar(&inspectJSON, "json", false, "Output as JSON")
 	taskReplayCmd.Flags().StringVar(&taskReplayCheckpointID, "checkpoint", "", "Replay from a specific checkpoint ID (default: latest)")
 	taskReplayCmd.Flags().StringVar(&taskReplayFollowUp, "follow-up", "", "Optional user instruction appended to the resumed history")
+	taskArtifactsCmd.Flags().StringVar(&taskArtifactsExtract, "extract", "", "Extract the task's workspace files into this directory")
 }
 
 var taskGetCmd = &cobra.Command{
@@ -251,6 +254,51 @@ var taskCheckpointsCmd = &cobra.Command{
 		for _, cp := range cps {
 			fmt.Printf("%-36s  %-4d  %-7d  %-16s  %s\n",
 				cp.ID, cp.Seq, cp.Round, cp.AgentName, cp.CreatedAt.Format("2006-01-02 15:04:05"))
+		}
+		return nil
+	},
+}
+
+var taskArtifactsCmd = &cobra.Command{
+	Use:   "artifacts [task-id]",
+	Short: "List (or extract) the files a task left in its sandbox workspace",
+	Long: `Artifacts lists the files captured in a task's most recent workspace
+snapshot — the deliverables an autonomous run produced in its sandbox.
+
+Only tasks run with a sandbox configured (e.g. via the claw CLI or
+agent.New().WithSandbox(...)) leave a workspace snapshot behind.
+
+Use --extract <dir> to write the files to disk.`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		manager, err := taskManager()
+		if err != nil {
+			return err
+		}
+		entries, archive, err := manager.TaskArtifacts(args[0])
+		if err != nil {
+			return err
+		}
+		if len(entries) == 0 {
+			fmt.Println("(no artifacts — the task left no workspace snapshot)")
+			return nil
+		}
+		fmt.Printf("%-10s  %s\n", "SIZE", "PATH")
+		var total int64
+		for _, e := range entries {
+			if e.Dir {
+				continue
+			}
+			fmt.Printf("%-10d  %s\n", e.Size, e.Path)
+			total += e.Size
+		}
+		fmt.Printf("\n%d file(s), %d bytes total\n", len(entries), total)
+
+		if dir := strings.TrimSpace(taskArtifactsExtract); dir != "" {
+			if err := agentpkg.ExtractArchive(archive, dir); err != nil {
+				return fmt.Errorf("extract: %w", err)
+			}
+			fmt.Printf("extracted to %s\n", dir)
 		}
 		return nil
 	},
