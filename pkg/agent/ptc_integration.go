@@ -223,6 +223,15 @@ func (p *PTCIntegration) ExecuteJavascriptTool(ctx context.Context, args map[str
 		return fmt.Sprintf("execute_javascript failed: %v", err), nil //nolint:nilerr
 	}
 
+	// Report the tools PTC actually invoked inside the sandbox (fs_write,
+	// web_search, ...) to the run's tool-use sink, so goal-aware output lints
+	// see them instead of only "execute_javascript".
+	if execResult != nil {
+		for _, rec := range execResult.ToolCalls {
+			recordToolUse(ctx, rec.ToolName)
+		}
+	}
+
 	result := &PTCResult{
 		Type:            PTCResultTypeExecuted,
 		OriginalContent: code,

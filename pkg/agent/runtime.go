@@ -210,6 +210,10 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		close(r.eventChan)
 	}()
 	ctx = withCurrentSession(ctx, r.session)
+	// Install a tool-use sink so inner tool calls made by PTC
+	// (execute_javascript → fs_write, web_search, ...) are recorded as used,
+	// making them visible to goal-aware output lints.
+	ctx = withToolUseSink(ctx, r.trackToolName)
 	r.goal = goal
 
 	r.emit(EventTypeStart, fmt.Sprintf("Starting task: %s", goal))
@@ -1237,6 +1241,22 @@ func (r *Runtime) trackToolCall(tc domain.ToolCall) {
 		}
 		r.toolNamesUsed[name] = true
 	}
+}
+
+// trackToolName records a tool name as used this run. Unlike trackToolCall it
+// takes a bare name, so PTC can report tools it invoked inside the sandbox
+// (execute_javascript → fs_write, ...) via the context tool-use sink.
+func (r *Runtime) trackToolName(name string) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return
+	}
+	r.pendingToolsMu.Lock()
+	defer r.pendingToolsMu.Unlock()
+	if r.toolNamesUsed == nil {
+		r.toolNamesUsed = make(map[string]bool)
+	}
+	r.toolNamesUsed[name] = true
 }
 
 // toolNamesUsedSnapshot returns the set of tool names invoked so far this run.
