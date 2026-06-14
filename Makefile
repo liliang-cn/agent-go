@@ -1,4 +1,4 @@
-.PHONY: help build agentgo-cli agentgo-ui ui-build sync-ui-dist ui-dev ui-api-dev ui-web-dev ui-deps test check clean deps coverage-core eval eval-verbose eval-live eval-all
+.PHONY: help build agentgo-cli agentgo-ui claw ui-build sync-ui-dist ui-dev ui-api-dev ui-web-dev ui-deps test check clean deps coverage-core eval eval-verbose eval-live eval-all
 
 CORE_COVERAGE_PKGS := ./pkg/config ./pkg/cache ./cmd/agentgo-ui/internal/handler ./pkg/prompt ./pkg/ptc/runtime/goja ./pkg/ptc/store ./pkg/rag/embedder ./pkg/scheduler/executors
 UI_RUNNER := $(shell if command -v fnm >/dev/null 2>&1; then printf 'fnm exec --using=24'; else printf 'env'; fi)
@@ -14,6 +14,7 @@ help:
 	@echo "  build       - Build all (agentgo-cli + agentgo-ui)"
 	@echo "  agentgo-cli    - Build agentgo-cli only"
 	@echo "  agentgo-ui     - Build agentgo-ui only"
+	@echo "  claw        - Build claw, the interactive autonomous agent CLI"
 	@echo "  test        - Run tests"
 	@echo "  check       - Run format, vet and tests"
 	@echo "  coverage-core - Run core unit-test coverage report"
@@ -34,13 +35,18 @@ help:
 	@echo ""
 	@echo "Version: $(GIT_TAG)"
 
-build: agentgo-cli agentgo-ui
+build: agentgo-cli agentgo-ui claw
 	@echo "✅ Done"
 
 agentgo-cli:
 	@echo "Building agentgo-cli..."
 	@mkdir -p bin
 	@go build $(LDFLAGS) -o bin/agentgo-cli ./cmd/agentgo-cli
+
+claw:
+	@echo "Building claw (autonomous agent CLI)..."
+	@mkdir -p bin
+	@go build $(LDFLAGS) -o bin/claw ./cmd/claw
 
 agentgo-ui: ui-build
 	@echo "Building agentgo-ui..."
