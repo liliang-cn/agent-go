@@ -161,6 +161,8 @@ func build(sandboxKind, workspace string, noBrowser, headless bool, maxRounds in
 	}
 
 	// LLM: env-configured pool if a key is present, else the agentgo.toml provider.
+	// (continues below; fetch_url is registered after Build so research tasks
+	// have a direct "read this page" tool even without the heavier browser.)
 	if key := envOr("LLM_KEY", os.Getenv("DASHSCOPE_API_KEY")); key != "" {
 		m := envOr("LLM_MODEL", "qwen-plus")
 		if strings.TrimSpace(model) != "" {
@@ -184,6 +186,10 @@ func build(sandboxKind, workspace string, noBrowser, headless bool, maxRounds in
 	if err != nil {
 		log.Fatalf("build agent: %v", err)
 	}
+
+	// A direct "read this web page" tool for research tasks, so the agent can
+	// fetch a URL without needing the heavier browser session.
+	agent.RegisterFetchURLTool(svc)
 
 	cleanup := func() {
 		_ = svc.Close()
@@ -322,6 +328,12 @@ func runTurn(ctx context.Context, svc *agent.Service, sb sandbox.Sandbox, sessio
 		case agent.EventTypeBlocked:
 			fmt.Printf("\n%s⨯ blocked:%s %s\n\n", cYellow, cReset, strings.TrimSpace(ev.Content))
 		case agent.EventTypeError:
+			if ev.DebugType == "lint_retry" {
+				// Recoverable: the model's draft was rejected and it's being
+				// re-prompted. Show as a soft nudge, not a fatal error.
+				fmt.Printf("%s↻ %s%s\n", cYellow, strings.TrimSpace(ev.Content), cReset)
+				break
+			}
 			fmt.Printf("\n%s⨯ error:%s %s\n\n", cRed, cReset, strings.TrimSpace(ev.Content))
 		}
 	}
