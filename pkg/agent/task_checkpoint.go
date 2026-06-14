@@ -31,7 +31,12 @@ type TaskCheckpoint struct {
 	AgentName string           `json:"agent_name"`
 	Messages  []domain.Message `json:"messages"`
 	FinalText string           `json:"final_text,omitempty"` // populated on terminal-tool snapshots
-	CreatedAt time.Time        `json:"created_at"`
+	// Workspace is an optional gzip-tar archive of the sandbox workspace at
+	// snapshot time. Populated only on terminal checkpoints when the service
+	// has a sandbox, so a resumed run (or `task artifacts`) can recover the
+	// files the agent produced. nil when no sandbox / not a terminal snapshot.
+	Workspace []byte    `json:"-"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // CheckpointReason describes why a snapshot was written; used by the
@@ -73,9 +78,9 @@ func (s *Store) SaveTaskCheckpoint(cp *TaskCheckpoint) error {
 	db := s.agentGoDB.GetDB()
 	_, err = db.Exec(`
 		INSERT INTO task_checkpoints
-		(id, task_id, seq, round, after_tool, session_id, agent_name, messages, final_text, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, cp.ID, cp.TaskID, cp.Seq, cp.Round, cp.AfterTool, cp.SessionID, cp.AgentName, string(bytes), cp.FinalText, cp.CreatedAt)
+		(id, task_id, seq, round, after_tool, session_id, agent_name, messages, final_text, workspace, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, cp.ID, cp.TaskID, cp.Seq, cp.Round, cp.AfterTool, cp.SessionID, cp.AgentName, string(bytes), cp.FinalText, cp.Workspace, cp.CreatedAt)
 	return err
 }
 
@@ -89,6 +94,11 @@ func (s *Store) LatestTaskCheckpoint(taskID string) (*TaskCheckpoint, error) {
 	if len(cps) == 0 {
 		return nil, errCheckpointMissing
 	}
+	// ListTaskCheckpoints omits the workspace blob to keep listing light;
+	// re-load the full row so resume/artifacts get the snapshot.
+	if full, err := s.GetTaskCheckpoint(cps[0].ID); err == nil {
+		return full, nil
+	}
 	return cps[0], nil
 }
 
@@ -99,12 +109,12 @@ func (s *Store) GetTaskCheckpoint(id string) (*TaskCheckpoint, error) {
 	}
 	db := s.agentGoDB.GetDB()
 	row := db.QueryRow(`
-		SELECT id, task_id, seq, round, after_tool, session_id, agent_name, messages, final_text, created_at
+		SELECT id, task_id, seq, round, after_tool, session_id, agent_name, messages, final_text, workspace, created_at
 		FROM task_checkpoints WHERE id = ?
 	`, id)
 	cp := &TaskCheckpoint{}
 	var messagesJSON string
-	if err := row.Scan(&cp.ID, &cp.TaskID, &cp.Seq, &cp.Round, &cp.AfterTool, &cp.SessionID, &cp.AgentName, &messagesJSON, &cp.FinalText, &cp.CreatedAt); err != nil {
+	if err := row.Scan(&cp.ID, &cp.TaskID, &cp.Seq, &cp.Round, &cp.AfterTool, &cp.SessionID, &cp.AgentName, &messagesJSON, &cp.FinalText, &cp.Workspace, &cp.CreatedAt); err != nil {
 		return nil, errCheckpointMissing
 	}
 	if err := json.Unmarshal([]byte(messagesJSON), &cp.Messages); err != nil {
@@ -239,7 +249,7 @@ func (w *checkpointWriter) SeedFromStore(taskID string) {
 // assignment and pruning stay coherent across resumes. Services without
 // a sink simply skip persistence.
 type CheckpointSink interface {
-	WriteCheckpoint(taskID string, reason CheckpointReason, round int, sessionID, agentName, finalText, afterTool string, messages []domain.Message) error
+	WriteCheckpoint(taskID string, reason CheckpointReason, round int, sessionID, agentName, finalText, afterTool string, messages []domain.Message, workspace []byte) error
 }
 
 // SetCheckpointSink wires a sink into the service. TeamManager calls

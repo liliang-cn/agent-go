@@ -823,7 +823,11 @@ func (r *Runtime) persistTerminalCheckpoint(taskID string, reason CheckpointReas
 	if r.session != nil {
 		sessionID = r.session.GetID()
 	}
-	if err := sink.WriteCheckpoint(taskID, reason, r.currentRound, sessionID, agentName, finalText, string(reason), messages); err != nil {
+	// Snapshot the sandbox workspace so a resumed run (or `task artifacts`)
+	// can recover the files this task produced. Only at terminal checkpoints,
+	// and only when a sandbox is configured. Best-effort: nil on any failure.
+	workspace := snapshotWorkspaceBytes(context.Background(), r.svc.Sandbox())
+	if err := sink.WriteCheckpoint(taskID, reason, r.currentRound, sessionID, agentName, finalText, string(reason), messages, workspace); err != nil {
 		r.svc.logger.Debug("failed to write terminal task checkpoint", slog.String("task_id", taskID), slog.String("error", err.Error()))
 	}
 }

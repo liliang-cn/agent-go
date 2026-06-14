@@ -290,12 +290,15 @@ func (s *AgentGoDB) initSchema() error {
 			agent_name TEXT,
 			messages TEXT NOT NULL,
 			final_text TEXT,
+			workspace BLOB,
 			created_at DATETIME NOT NULL
 		)
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to create task_checkpoints table: %w", err)
 	}
+	// Migration for DBs created before the workspace-snapshot column existed.
+	_, _ = s.db.Exec(`ALTER TABLE task_checkpoints ADD COLUMN workspace BLOB`)
 	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_task_checkpoints_task_seq ON task_checkpoints(task_id, seq)`); err != nil {
 		return fmt.Errorf("failed to create task_checkpoints index: %w", err)
 	}

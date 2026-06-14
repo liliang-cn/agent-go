@@ -8,13 +8,14 @@ import (
 	"time"
 
 	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v2/pkg/sandbox"
 	taskpkg "github.com/liliang-cn/agent-go/v2/pkg/task"
 )
 
 // WriteCheckpoint persists a snapshot of the given task and prunes older
 // entries beyond the per-task cap. Errors are returned but never block
 // the runtime; callers typically log and continue.
-func (m *TeamManager) WriteCheckpoint(taskID string, reason CheckpointReason, round int, sessionID, agentName, finalText, afterTool string, messages []domain.Message) error {
+func (m *TeamManager) WriteCheckpoint(taskID string, reason CheckpointReason, round int, sessionID, agentName, finalText, afterTool string, messages []domain.Message, workspace []byte) error {
 	if m == nil || m.checkpointWriter == nil {
 		return nil
 	}
@@ -29,6 +30,7 @@ func (m *TeamManager) WriteCheckpoint(taskID string, reason CheckpointReason, ro
 		AgentName: agentName,
 		Messages:  cloneMessagesForCheckpoint(messages),
 		FinalText: finalText,
+		Workspace: workspace,
 		CreatedAt: time.Now(),
 	}
 	return m.checkpointWriter.Write(cp)
@@ -52,6 +54,31 @@ func (m *TeamManager) LatestCheckpoint(taskID string) (*TaskCheckpoint, error) {
 	return m.store.LatestTaskCheckpoint(taskID)
 }
 
+// TaskArtifacts returns the files captured in a task's most recent workspace
+// snapshot, plus the raw gzip-tar archive (for extraction). Returns an empty
+// list (no error) when the task has no checkpoint or its checkpoints carry no
+// workspace snapshot (e.g. the run had no sandbox configured).
+func (m *TeamManager) TaskArtifacts(taskID string) ([]ArchiveEntry, []byte, error) {
+	if m == nil || m.store == nil {
+		return nil, nil, nil
+	}
+	cp, err := m.store.LatestTaskCheckpoint(taskID)
+	if err != nil {
+		if errors.Is(err, errCheckpointMissing) {
+			return nil, nil, nil
+		}
+		return nil, nil, err
+	}
+	if cp == nil || len(cp.Workspace) == 0 {
+		return nil, nil, nil
+	}
+	entries, err := ListArchive(cp.Workspace)
+	if err != nil {
+		return nil, nil, err
+	}
+	return entries, cp.Workspace, nil
+}
+
 // CheckpointResumeOptions configures Tasks().ResumeFromCheckpoint.
 type CheckpointResumeOptions struct {
 	// CheckpointID, if set, resumes from that specific checkpoint
@@ -60,6 +87,12 @@ type CheckpointResumeOptions struct {
 	// FollowUp is an optional user instruction appended to the resumed
 	// history. Useful for "and now also do X" style continuation.
 	FollowUp string
+	// RestoreWorkspace, when non-nil, is a sandbox the checkpoint's workspace
+	// snapshot is restored into before the resumed run starts — so the agent
+	// picks up with the files it had produced. Left nil by the default team
+	// resume path (which has no sandbox); library users / the claw CLI pass
+	// the sandbox they rebuilt for the resumed run.
+	RestoreWorkspace sandbox.Sandbox
 }
 
 // ResumeFromCheckpoint rebuilds an in-flight task from its latest (or
@@ -100,6 +133,14 @@ func (s *TaskService) ResumeFromCheckpoint(ctx context.Context, taskID string, o
 	}
 	if cp == nil {
 		return nil, errCheckpointMissing
+	}
+
+	// Restore the workspace snapshot into the caller-provided sandbox so the
+	// resumed run sees the files the task had produced. Best-effort.
+	if opts.RestoreWorkspace != nil && len(cp.Workspace) > 0 {
+		if err := restoreWorkspaceBytes(ctx, opts.RestoreWorkspace, cp.Workspace); err != nil {
+			return nil, fmt.Errorf("restore workspace for task %s: %w", taskID, err)
+		}
 	}
 
 	// Look up the original task to recover agent + session metadata.
@@ -174,7 +215,7 @@ func (s *TaskService) ResumeFromCheckpoint(ctx context.Context, taskID string, o
 
 	// Write a fresh "resume" checkpoint so the new run's lineage is
 	// preserved even if it crashes again.
-	_ = m.WriteCheckpoint(taskID, CheckpointReasonRoundEnd, cp.Round, sessionID, agentName, "", "resume", resumeMessages)
+	_ = m.WriteCheckpoint(taskID, CheckpointReasonRoundEnd, cp.Round, sessionID, agentName, "", "resume", resumeMessages, nil)
 
 	// Run the resumed task. We reuse the legacy async-task path so the
 	// existing subscriber/event-forwarding plumbing keeps working.

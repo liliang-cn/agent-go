@@ -115,7 +115,7 @@ func TestTeamManagerWriteCheckpointPrunesAtCap(t *testing.T) {
 	for i := 0; i < MaxCheckpointsPerTask+5; i++ {
 		if err := manager.WriteCheckpoint(taskID, CheckpointReasonRoundEnd, i, "session", "Operator", "", "", []domain.Message{
 			{Role: "user", Content: "ping"},
-		}); err != nil {
+		}, nil); err != nil {
 			t.Fatalf("write %d: %v", i, err)
 		}
 	}
@@ -179,7 +179,7 @@ func TestTaskServiceResumeFromCheckpointReplaysMessages(t *testing.T) {
 		{Role: "user", Content: "what is the answer?", TaskID: taskID},
 		{Role: "assistant", Content: "i'm thinking about it...", TaskID: taskID},
 	}
-	if err := manager.WriteCheckpoint(taskID, CheckpointReasonRoundEnd, 1, svc.CurrentSessionID(), "Operator", "", "", priorMessages); err != nil {
+	if err := manager.WriteCheckpoint(taskID, CheckpointReasonRoundEnd, 1, svc.CurrentSessionID(), "Operator", "", "", priorMessages, nil); err != nil {
 		t.Fatalf("write checkpoint: %v", err)
 	}
 
