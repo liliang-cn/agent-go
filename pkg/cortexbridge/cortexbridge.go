@@ -52,17 +52,26 @@ var ReadOnlyTools = map[string]bool{
 	"knowledge_graph_shacl_validate":      true,
 	"knowledge_memory_recall":             true,
 	"knowledge_memory_build_context_pack": true,
+	// importflow / connector read-only tools (introspect / plan / unmask).
+	"importflow_plan":      true,
+	"connector_introspect": true,
+	"connector_plan":       true,
+	"connector_unmask":     true,
 }
 
-// DestructiveTools lists the delete-style CortexDB tools. They are registered
-// Destructive so the runtime can treat them carefully (permission prompts).
+// DestructiveTools lists the delete-style / data-writing CortexDB tools. They
+// are registered Destructive so the runtime can treat them carefully
+// (permission prompts).
 var DestructiveTools = map[string]bool{
 	"knowledge_delete": true, "memory_delete": true, "knowledge_graph_delete": true,
+	// importflow / connector tools that write data into RAG+KG.
+	"importflow_run": true, "connector_run": true,
 }
 
-// toolbox is the minimal slice of *cortexdb.DB.GraphRAGTools() this package
-// needs. Declaring it as an interface keeps Register testable with a fake.
-type toolbox interface {
+// Toolbox is the in-process tool surface CortexDB packages expose
+// (db.GraphRAGTools(), importflow.NewToolbox(...), connector.NewToolbox(...)).
+// Declaring it as an interface keeps registration testable with a fake.
+type Toolbox interface {
 	Definitions() []cortexdb.ToolDefinition
 	Call(ctx context.Context, name string, input json.RawMessage) (any, error)
 }
@@ -129,8 +138,22 @@ func Register(svc *agent.Service, db *cortexdb.DB, opts ...Option) ([]string, er
 	return register(svc, db.GraphRAGTools(), opts...)
 }
 
+// RegisterToolbox adapts any CortexDB in-process Toolbox (GraphRAG, importflow,
+// connector, ...) onto the AgentGo service. It's the generic registrar used by
+// the importflow/connector bridges; metadata (read-only vs destructive) is
+// resolved from ReadOnlyTools/DestructiveTools by tool name.
+func RegisterToolbox(svc *agent.Service, tb Toolbox, opts ...Option) ([]string, error) {
+	if svc == nil {
+		return nil, fmt.Errorf("cortexbridge: nil agent service")
+	}
+	if tb == nil {
+		return nil, fmt.Errorf("cortexbridge: nil toolbox")
+	}
+	return register(svc, tb, opts...)
+}
+
 // register is the testable core that works against the toolbox + sink interfaces.
-func register(svc toolSink, tb toolbox, opts ...Option) ([]string, error) {
+func register(svc toolSink, tb Toolbox, opts ...Option) ([]string, error) {
 	cfg := &config{}
 	for _, opt := range opts {
 		opt(cfg)
