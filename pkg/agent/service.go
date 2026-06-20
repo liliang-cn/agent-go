@@ -350,13 +350,13 @@ func (s *Service) registerBuiltInTools() {
 		Type: "function",
 		Function: domain.ToolFunction{
 			Name:        "task_complete",
-			Description: "Mark the current task as complete and provide the final result to the user. Call this when you have fully answered the question or finished all required steps.",
+			Description: "Mark the current task as complete. The 'result' you pass is shown to the user verbatim as the final answer, so it must BE the answer itself — not a description of what you did.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"result": map[string]interface{}{
 						"type":        "string",
-						"description": "The final summary/result of the task",
+						"description": "The complete, final answer written directly to the user (second person). Include the full content — explanation, steps, commands, code — exactly as the user should read it. Do NOT write a third-person meta-summary of your work (e.g. \"Provided a step-by-step guide…\"); write the guide itself.",
 					},
 				},
 				"required": []string{"result"},
