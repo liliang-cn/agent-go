@@ -117,6 +117,7 @@ type Builder struct {
 	routerThreshold   float64
 	enableSkills      bool
 	skillsPaths       []string
+	requiredSkills    []string // Build() fails if any of these aren't installed
 	enablePTC         bool
 	ptcCfg            *PTCConfig
 	toolPolicy        ToolExecutionPolicy
@@ -232,6 +233,20 @@ func (b *Builder) WithSkills(opts ...SkillsOption) *Builder {
 		opt(&cfg)
 	}
 	b.skillsPaths = cfg.Paths
+	return b
+}
+
+// WithRequiredSkills enables skills (like WithSkills) AND records skill IDs/names
+// that MUST be installed — Build() returns an error listing any that are missing.
+// Use it when your agent depends on specific skills (e.g. the understand-*
+// codebase-comprehension skills) so a missing ~/.agentgo/skills install fails
+// fast instead of silently degrading at runtime.
+//
+//	svc, err := agent.New("x").WithRequiredSkills("understand", "understand-chat").Build()
+//	// err != nil if those skills aren't installed
+func (b *Builder) WithRequiredSkills(idsOrNames ...string) *Builder {
+	b.enableSkills = true
+	b.requiredSkills = append(b.requiredSkills, idsOrNames...)
 	return b
 }
 
@@ -718,6 +733,12 @@ func (b *Builder) build() (*Service, error) {
 	}
 	if skillsSvc != nil {
 		svc.SetSkillsService(skillsSvc)
+	}
+	// Fail fast if any explicitly-required skills are not installed.
+	if len(b.requiredSkills) > 0 {
+		if missing := svc.MissingSkills(b.requiredSkills...); len(missing) > 0 {
+			return nil, fmt.Errorf("required skills not installed: %v (checked skills paths; install them under ~/.agentgo/skills or pass WithSkills paths)", missing)
+		}
 	}
 	if mcpSvc != nil {
 		svc.SetMCPService(mcpSvc)
