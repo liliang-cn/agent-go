@@ -38,9 +38,21 @@ func (r *Runtime) buildStreamingTurnCallbacks(ctx context.Context, taskTerminalN
 		OnToolCall: func(tc domain.ToolCall) error {
 			tc = normalizeStreamingToolCall(tc)
 			if isTaskTerminalToolName(tc.Function.Name) {
+				// Tool-call arguments stream in fragments: early chunks carry the
+				// name but incomplete/unparseable JSON args, so the result is empty.
+				// Aborting now (errTaskTerminal) would drop the answer. Wait until
+				// the args have accumulated into a non-empty result before
+				// terminating; if they never do, the stream ends naturally and the
+				// post-turn terminal handler recovers from the full result.
+				res := taskTerminalToolResult(tc.Function.Name, tc.Function.Arguments, "")
+				if res == "" {
+					// args not fully accumulated yet — keep streaming; the
+					// post-turn handler recovers if they never complete.
+					return nil
+				}
 				r.emitToolCall(tc.Function.Name, tc.Function.Arguments, "")
 				*taskTerminalName = tc.Function.Name
-				*taskTerminalResult = taskTerminalToolResult(tc.Function.Name, tc.Function.Arguments, "")
+				*taskTerminalResult = res
 				return errTaskTerminal
 			}
 			if len(tc.Function.Arguments) == 0 {
