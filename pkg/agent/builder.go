@@ -158,13 +158,11 @@ type fastModelProvider interface {
 //	svc, err := agent.New("my-agent").WithRAG().WithMemory().WithMCP()
 func New(name string) *Builder {
 	return &Builder{
-		name:      name,
-		enablePTC: true,
-		ptcCfg: &PTCConfig{
-			Enabled:      true,
-			MaxToolCalls: 20,
-			Timeout:      600 * time.Second,
-		},
+		name: name,
+		// PTC (the JS tool-orchestration sandbox) is OFF by default; tools are
+		// called directly. Opt in with WithPTC() / WithPTC(WithPTCTimeout(...)).
+		enablePTC: false,
+		ptcCfg:    nil,
 	}
 }
 
@@ -250,7 +248,7 @@ func (b *Builder) WithRequiredSkills(idsOrNames ...string) *Builder {
 	return b
 }
 
-// WithPTC configures PTC.
+// WithPTC configures PTC. PTC is OFF by default; call this to opt in.
 //
 // Supported forms:
 //   - WithPTC()                     -> enable with defaults

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/liliang-cn/agent-go/v2/pkg/domain"
@@ -38,34 +39,50 @@ func TestHandleDuplicateToolCallsSearchReturnsSyntheticResult(t *testing.T) {
 	}
 }
 
-func TestHandleDuplicateToolCallsNonSearchReturnsBestEffortAnswer(t *testing.T) {
+// A repeated non-search, non-terminal tool call may be stateful (e.g. re-reading
+// a file after a write in a read-modify-write loop). It must be re-executed, not
+// short-circuited into a best-effort answer that aborts the run.
+func TestHandleDuplicateNonSearchToolReExecutes(t *testing.T) {
 	svc := &Service{}
 	seen := map[string]int{
-		"mcp_web_search:map[query:2024 champions league winner]": 1,
+		"read_file:map[path:counter.txt]": 1,
 	}
 	result := &domain.GenerationResult{
-		Content: "The task has been completed.",
 		ToolCalls: []domain.ToolCall{
 			{
 				ID:   "call-1",
 				Type: "function",
 				Function: domain.FunctionCall{
-					Name: "mcp_web_search",
-					Arguments: map[string]interface{}{
-						"query": "2024 champions league winner",
-					},
+					Name:      "read_file",
+					Arguments: map[string]interface{}{"path": "counter.txt"},
 				},
 			},
 		},
 	}
 	messages := []domain.Message{
-		{Role: "tool", Content: "2024年欧冠冠军是皇家马德里。"},
+		{Role: "tool", Content: `{"content":"1"}`},
 	}
 
-	_, _, fallback := svc.handleDuplicateToolCalls(messages, result, seen)
-	want := "2024年欧冠冠军是皇家马德里。"
-	if fallback != want {
-		t.Fatalf("fallback = %q, want %q", fallback, want)
+	filtered, duplicates, fallback := svc.handleDuplicateToolCalls(messages, result, seen)
+	if fallback != "" {
+		t.Fatalf("expected no fallback (run must continue), got %q", fallback)
+	}
+	if len(filtered) != 1 {
+		t.Fatalf("expected the duplicate stateful call to re-execute, got %d filtered", len(filtered))
+	}
+	if len(duplicates) != 0 {
+		t.Fatalf("expected no synthetic duplicate results, got %d", len(duplicates))
+	}
+}
+
+// extractBestEffortAnswer must never surface a raw tool-role result as the answer.
+func TestExtractBestEffortAnswerIgnoresToolRole(t *testing.T) {
+	messages := []domain.Message{
+		{Role: "tool", Content: `{"ok":true,"bytes":1}`},
+	}
+	got := extractBestEffortAnswer("", messages)
+	if strings.Contains(got, "bytes") {
+		t.Fatalf("best-effort answer leaked raw tool output: %q", got)
 	}
 }
 

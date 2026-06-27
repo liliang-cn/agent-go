@@ -683,13 +683,23 @@ func TestBuilder_NameSet(t *testing.T) {
 	}
 }
 
-func TestBuilder_DefaultsPTCEnabled(t *testing.T) {
+func TestBuilder_DefaultsPTCDisabled(t *testing.T) {
 	b := New("ptc-default-agent")
+	if b.enablePTC {
+		t.Fatal("expected PTC to be disabled by default")
+	}
+	if b.ptcCfg != nil {
+		t.Fatal("expected no PTC config by default")
+	}
+}
+
+func TestBuilder_WithPTCOptsIn(t *testing.T) {
+	b := New("ptc-optin-agent").WithPTC()
 	if !b.enablePTC {
-		t.Fatal("expected PTC to be enabled by default")
+		t.Fatal("expected WithPTC() to enable PTC")
 	}
 	if b.ptcCfg == nil || !b.ptcCfg.Enabled {
-		t.Fatal("expected default PTC config to be initialized and enabled")
+		t.Fatal("expected WithPTC() to initialize an enabled PTC config")
 	}
 }
 

@@ -495,7 +495,11 @@ func (s *Service) executeWithLLM(ctx context.Context, goal string, intent *Inten
 			cp.start("tool_execution")
 			var toolResults []ToolExecutionResult
 			beforeLen := len(state.Messages)
-			state.Messages, toolResults, err = s.executePreparedToolRound(ctx, state.CurrentAgent, session, state.Messages, result, filteredToolCalls, duplicateToolResults, s.buildRunTaskExecutionCallbacks(session, round+1), false)
+			// continueOnError=true: a tool returning a Go error is fed back to
+			// the model as an "Error: ..." tool result so it can recover (e.g.
+			// create a missing file and retry) instead of aborting the whole
+			// run. Blocked tools still terminate via the result.Blocked flag.
+			state.Messages, toolResults, err = s.executePreparedToolRound(ctx, state.CurrentAgent, session, state.Messages, result, filteredToolCalls, duplicateToolResults, s.buildRunTaskExecutionCallbacks(session, round+1), true)
 			toolDur := cp.end("tool_execution")
 			state.noteToolDuration(toolDur)
 			if err != nil {
@@ -1076,8 +1080,10 @@ func (s *Service) handleDuplicateToolCalls(messages []domain.Message, result *do
 			return nil, nil, extractBestEffortAnswer(result.Content, messages)
 		}
 
-		log.Printf("[Agent] Duplicate tool call detected: %s", key)
 		if isSearchToolName(tc.Function.Name) {
+			// Re-searching the internal tool registry is pointless; reuse the
+			// prior results instead of executing again.
+			log.Printf("[Agent] Duplicate tool search collapsed: %s", key)
 			duplicates = append(duplicates, ToolExecutionResult{
 				ToolCallID: tc.ID,
 				ToolName:   tc.Function.Name,
@@ -1087,7 +1093,14 @@ func (s *Service) handleDuplicateToolCalls(messages []domain.Message, result *do
 			continue
 		}
 
-		return nil, nil, extractBestEffortAnswer(result.Content, messages)
+		// Any other tool may be stateful: re-reading a file returns new content
+		// after a write, and a repeated write is idempotent or intentional.
+		// Re-executing is the only correct behavior — aborting here would kill
+		// legitimate read-modify-write loops (e.g. an incrementing counter) and
+		// could leak a raw tool result as the final answer. Genuine no-progress
+		// loops are still bounded by MaxTurns.
+		log.Printf("[Agent] Duplicate tool call re-executed (possibly stateful): %s", key)
+		filtered = append(filtered, tc)
 	}
 
 	return filtered, duplicates, ""
@@ -1102,9 +1115,12 @@ func extractBestEffortAnswer(currentContent string, messages []domain.Message) s
 		return strings.TrimSpace(currentContent)
 	}
 
+	// Only assistant text is a real answer. Tool-role messages hold raw tool
+	// output (e.g. {"ok":true,"bytes":1}); surfacing that as the final answer
+	// is never what the user asked for.
 	for i := len(messages) - 1; i >= 0; i-- {
 		msg := messages[i]
-		if msg.Role != "assistant" && msg.Role != "tool" {
+		if msg.Role != "assistant" {
 			continue
 		}
 
