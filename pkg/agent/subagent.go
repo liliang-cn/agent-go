@@ -68,6 +68,12 @@ type SubAgentConfig struct {
 	CancelOnTimeout bool                     // Cancel execution on timeout (default: true)
 	ToolCall        *domain.ToolCall         // (Optional) Specific tool call to execute
 	Debug           bool                     // Emit debug prompt/response events
+
+	// Worktree, when non-nil, runs this sub-agent inside an isolated git
+	// worktree. Its fs_* / bash / shell_* tools are rooted at the worktree
+	// checkout so writes land there instead of the parent repo. See
+	// WithSubAgentWorktree.
+	Worktree *WorktreeSpec
 }
 
 // SubAgent represents a wrapped agent execution with independent context
@@ -97,6 +103,10 @@ type SubAgent struct {
 	// Progress tracking
 	progressChan chan SubAgentProgress
 	events       chan *Event
+
+	// Worktree isolation (set up in Run when config.Worktree != nil).
+	activeWorktree *worktreeRuntime
+	worktreePath   string
 }
 
 // SubAgentOption configures a SubAgent
@@ -244,6 +254,21 @@ func (sa *SubAgent) Run(parentCtx context.Context) (interface{}, error) {
 		})
 	}
 	sa.emitStart(fmt.Sprintf("Starting sub-agent goal: %s", sa.config.Goal))
+
+	// Set up git-worktree isolation if requested: create the worktree, root the
+	// sub-agent's fs/bash tools there, and arrange teardown.
+	if sa.config.Worktree != nil {
+		rt, err := sa.setupWorktree(sa.ctx)
+		if err != nil {
+			sa.mu.Lock()
+			sa.err = fmt.Errorf("worktree setup: %w", err)
+			sa.state = SubAgentStateFailed
+			sa.mu.Unlock()
+			return nil, sa.err
+		}
+		sa.activeWorktree = rt
+		defer sa.teardownWorktree(context.WithoutCancel(sa.ctx))
+	}
 
 	defer func() {
 		sa.mu.Lock()
