@@ -1093,6 +1093,23 @@ func (s *Service) handleDuplicateToolCalls(messages []domain.Message, result *do
 			continue
 		}
 
+		// A read-only tool called again with identical arguments this turn cannot
+		// return anything new, so re-executing it just wastes a backend round-trip
+		// and lets a poorly-converging model spin (e.g. re-polling every resource's
+		// status). Collapse it to a reuse hint — the earlier result is already in
+		// context. Only tools explicitly flagged ReadOnly qualify; everything else
+		// is still re-executed (a re-read after a write, an incrementing counter…).
+		if s.toolRegistry != nil && s.toolRegistry.MetadataOf(tc.Function.Name).ReadOnly {
+			log.Printf("[Agent] Duplicate read-only tool call collapsed: %s", key)
+			duplicates = append(duplicates, ToolExecutionResult{
+				ToolCallID: tc.ID,
+				ToolName:   tc.Function.Name,
+				ToolType:   "tool",
+				Result:     "This read-only tool was already called with identical arguments this turn; its result is unchanged — reuse the earlier result instead of calling it again.",
+			})
+			continue
+		}
+
 		// Any other tool may be stateful: re-reading a file returns new content
 		// after a write, and a repeated write is idempotent or intentional.
 		// Re-executing is the only correct behavior — aborting here would kill
