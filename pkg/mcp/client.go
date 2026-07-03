@@ -281,8 +281,16 @@ func (c *Client) createStdioTransport(ctx context.Context) (mcp.Transport, error
 		}
 	}
 
-	// Create command for the MCP server
-	cmd := exec.CommandContext(ctx, execPath, args...)
+	// Create command for the MCP server.
+	// IMPORTANT: bind the subprocess to a client-owned context, NOT the caller's
+	// connect ctx. Callers commonly wrap Connect in a WithTimeout ctx and cancel
+	// it once the initialize handshake returns; if the process were bound to that
+	// ctx it would be killed immediately after tools/list, and every later
+	// tools/call would fail with "connection closed: EOF". The process now lives
+	// until Close() (which calls procCancel).
+	procCtx, procCancel := context.WithCancel(context.Background())
+	c.procCancel = procCancel
+	cmd := exec.CommandContext(procCtx, execPath, args...)
 
 	// Set working directory if specified
 	if c.config.WorkingDir != "" {
@@ -659,6 +667,13 @@ func (c *Client) Close() error {
 		if isBenignMCPCloseError(err) {
 			err = nil
 		}
+	}
+
+	// Tear down the stdio subprocess (bound to a client-owned context in
+	// createStdioTransport, so it outlives the connect ctx).
+	if c.procCancel != nil {
+		c.procCancel()
+		c.procCancel = nil
 	}
 
 	c.connected = false
