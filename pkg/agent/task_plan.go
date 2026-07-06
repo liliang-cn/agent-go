@@ -119,6 +119,12 @@ func (s *TaskPlanService) Create(_ context.Context, opts TaskPlanCreateOptions) 
 	}
 	normalizeTaskPlanDependencies(plan.Items)
 
+	// Reject structurally invalid plans (dangling deps, self-deps, cycles,
+	// duplicate IDs) after normalization so callers get one aggregated error.
+	if err := plan.Validate(); err != nil {
+		return nil, err
+	}
+
 	s.manager.planMu.Lock()
 	s.manager.ensureTaskPlansLocked()
 	s.manager.taskPlans[plan.ID] = cloneTaskPlan(plan)
@@ -359,6 +365,149 @@ func (m *TeamManager) restoreTaskPlans() {
 		}
 		m.taskPlans[plan.ID] = cloneTaskPlan(plan)
 	}
+}
+
+// TaskPlanValidationError aggregates every structural problem found in a plan
+// so callers see all issues at once instead of fixing them one at a time.
+type TaskPlanValidationError struct {
+	Problems []string
+}
+
+func (e *TaskPlanValidationError) Error() string {
+	if e == nil || len(e.Problems) == 0 {
+		return "task plan is invalid"
+	}
+	return "task plan is invalid: " + strings.Join(e.Problems, "; ")
+}
+
+// Validate checks a plan's dependency graph for structural problems and
+// returns a *TaskPlanValidationError listing ALL of them (or nil when clean).
+// Detected problems: duplicate item IDs, self-dependencies, dangling
+// dependency references, and dependency cycles (with the offending path).
+//
+// Safe to call standalone for pre-flight before Create.
+func (p *TaskPlan) Validate() error {
+	if p == nil {
+		return &TaskPlanValidationError{Problems: []string{"plan is nil"}}
+	}
+
+	var problems []string
+
+	// Index items by ID and detect duplicates.
+	idToIndex := make(map[string]int, len(p.Items))
+	seen := make(map[string]int, len(p.Items))
+	for i := range p.Items {
+		id := strings.TrimSpace(p.Items[i].ID)
+		seen[id]++
+		if _, ok := idToIndex[id]; !ok {
+			idToIndex[id] = i
+		}
+	}
+	// Report duplicates deterministically (in first-seen order).
+	reported := make(map[string]bool)
+	for i := range p.Items {
+		id := strings.TrimSpace(p.Items[i].ID)
+		if seen[id] > 1 && !reported[id] {
+			reported[id] = true
+			problems = append(problems, fmt.Sprintf("duplicate item id %q (appears %d times)", id, seen[id]))
+		}
+	}
+
+	// Per-item checks: self-dependency and dangling references.
+	for i := range p.Items {
+		item := &p.Items[i]
+		id := strings.TrimSpace(item.ID)
+		checkRefs := func(field string, refs []string) {
+			for _, ref := range refs {
+				ref = strings.TrimSpace(ref)
+				if ref == "" {
+					continue
+				}
+				if ref == id {
+					problems = append(problems, fmt.Sprintf("item %q depends on itself via %s", id, field))
+					continue
+				}
+				if _, ok := idToIndex[ref]; !ok {
+					problems = append(problems, fmt.Sprintf("item %q %s references unknown item %q", id, field, ref))
+				}
+			}
+		}
+		checkRefs("blocks", item.Blocks)
+		checkRefs("blocked_by", item.BlockedBy)
+	}
+
+	// Cycle detection over the dependency graph. Edge item -> blocker means
+	// "item is blocked_by blocker" (blocker must finish first). A cycle here is
+	// a circular dependency. Only edges between existing items are considered
+	// (dangling refs are reported separately above).
+	if cycle := detectTaskPlanCycle(p.Items, idToIndex); len(cycle) > 0 {
+		problems = append(problems, "dependency cycle detected: "+strings.Join(cycle, " -> "))
+	}
+
+	if len(problems) == 0 {
+		return nil
+	}
+	return &TaskPlanValidationError{Problems: problems}
+}
+
+// detectTaskPlanCycle runs a DFS over the blocked_by dependency graph and
+// returns the first cycle path found (e.g. ["a","b","a"]), or nil if the graph
+// is acyclic.
+func detectTaskPlanCycle(items []TaskPlanItem, idToIndex map[string]int) []string {
+	const (
+		white = 0 // unvisited
+		gray  = 1 // on current DFS stack
+		black = 2 // fully explored
+	)
+	color := make(map[string]int, len(items))
+	var stack []string
+
+	var dfs func(id string) []string
+	dfs = func(id string) []string {
+		color[id] = gray
+		stack = append(stack, id)
+		idx, ok := idToIndex[id]
+		if ok {
+			for _, dep := range items[idx].BlockedBy {
+				dep = strings.TrimSpace(dep)
+				if dep == "" || dep == id {
+					continue
+				}
+				if _, exists := idToIndex[dep]; !exists {
+					continue // dangling ref, reported elsewhere
+				}
+				switch color[dep] {
+				case gray:
+					// Found a back-edge: build the cycle path from dep.
+					cycle := []string{}
+					for i := len(stack) - 1; i >= 0; i-- {
+						cycle = append([]string{stack[i]}, cycle...)
+						if stack[i] == dep {
+							break
+						}
+					}
+					return append(cycle, dep)
+				case white:
+					if found := dfs(dep); found != nil {
+						return found
+					}
+				}
+			}
+		}
+		color[id] = black
+		stack = stack[:len(stack)-1]
+		return nil
+	}
+
+	for i := range items {
+		id := strings.TrimSpace(items[i].ID)
+		if color[id] == white {
+			if cycle := dfs(id); cycle != nil {
+				return cycle
+			}
+		}
+	}
+	return nil
 }
 
 func normalizeTaskPlanItem(item TaskPlanItem, index int, now time.Time) (TaskPlanItem, error) {

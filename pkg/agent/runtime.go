@@ -405,6 +405,21 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 
 		collector := newRuntimeAsyncToolCollector()
 
+		// Observer seam: bracket the model turn with a stable per-turn SpanID so
+		// listeners can pair OnModelStart / OnModelEnd (and streamed deltas)
+		// without threading context back into the kernel.
+		modelSpanID := uuid.NewString()
+		modelInfo := ModelInfo{
+			TaskID:    taskID,
+			SessionID: r.sessionID(),
+			AgentName: r.currentAgentName(),
+			Round:     round + 1,
+			SpanID:    modelSpanID,
+			Messages:  len(genMessages),
+			Tools:     len(tools),
+		}
+		r.svc.emitObserver(func(o Observer) { o.OnModelStart(ctx, modelInfo) })
+
 		llmStart := time.Now()
 		r.CheckpointStart("llm_call")
 		result, lastResponseID, recovery, err := r.svc.streamToolTurn(
@@ -412,7 +427,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			genMessages,
 			tools,
 			r.svc.toolGenerationOptions(0.3, 2000, toolChoiceForIntent(state.Intent, round)),
-			r.buildStreamingTurnCallbacks(ctx, &taskTerminalName, &taskTerminalResult, collector),
+			r.buildStreamingTurnCallbacks(ctx, modelSpanID, &taskTerminalName, &taskTerminalResult, collector),
 		)
 		r.CheckpointEnd("llm_call")
 		state.noteRecovery(recovery)
@@ -421,6 +436,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		// latency analytics. Split input vs output tokens so cost
 		// estimation matches provider pricing tables.
 		llmDur := time.Since(llmStart)
+		turnTokens := 0
 		{
 			tc := usage.NewTokenCounter()
 			model := r.svc.Info().Model
@@ -429,10 +445,25 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			if result != nil {
 				outputTokens = tc.EstimateTokens(result.Content, model)
 			}
+			turnTokens = inputTokens + outputTokens
 			state.noteTokens(inputTokens + outputTokens)
 			state.noteCost(inputTokens, outputTokens, usage.CalculateCost(model, inputTokens, outputTokens))
 		}
 		r.emitLLMLatency(round+1, state.Budget.EstimatedTokens, llmDur)
+
+		// Observer seam: model turn finished.
+		{
+			var modelRes *ModelResult
+			if result != nil {
+				modelRes = &ModelResult{
+					Content:    result.Content,
+					ToolCalls:  len(result.ToolCalls),
+					DurationMs: llmDur.Milliseconds(),
+					TokensUsed: turnTokens,
+				}
+			}
+			r.svc.emitObserver(func(o Observer) { o.OnModelEnd(ctx, modelInfo, modelRes, err) })
+		}
 
 		// Cache provider finish_reason for refusal classification on
 		// terminal events.
@@ -806,6 +837,22 @@ func (r *Runtime) runCompactionRound(ctx context.Context, state *queryLoopState,
 	return newMsgs, true
 }
 
+// sessionID returns the current session id, or "" if unset.
+func (r *Runtime) sessionID() string {
+	if r == nil || r.session == nil {
+		return ""
+	}
+	return r.session.GetID()
+}
+
+// currentAgentName returns the active agent's name, or "" if unset.
+func (r *Runtime) currentAgentName() string {
+	if r == nil || r.currentAgent == nil {
+		return ""
+	}
+	return r.currentAgent.Name()
+}
+
 // persistTerminalCheckpoint writes a snapshot at the moment the runtime
 // decides a task is done (completeRun) or blocked (blockRun). This
 // guarantees every task that produced any output leaves at least one
@@ -816,21 +863,30 @@ func (r *Runtime) persistTerminalCheckpoint(taskID string, reason CheckpointReas
 	if r == nil || r.svc == nil {
 		return
 	}
-	sink := r.svc.CheckpointSink()
-	if sink == nil {
-		return
-	}
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
 		return
 	}
-	agentName := ""
-	if r.currentAgent != nil {
-		agentName = r.currentAgent.Name()
-	}
-	sessionID := ""
-	if r.session != nil {
-		sessionID = r.session.GetID()
+	agentName := r.currentAgentName()
+	sessionID := r.sessionID()
+
+	// Observer seam: fire before the sink check so checkpoints are observable
+	// even on services that don't persist (no CheckpointSink wired).
+	r.svc.emitObserver(func(o Observer) {
+		o.OnCheckpoint(context.Background(), CheckpointInfo{
+			TaskID:    taskID,
+			SessionID: sessionID,
+			AgentName: agentName,
+			Reason:    string(reason),
+			Round:     r.currentRound,
+			Messages:  len(messages),
+			FinalText: finalText,
+		})
+	})
+
+	sink := r.svc.CheckpointSink()
+	if sink == nil {
+		return
 	}
 	// Snapshot the sandbox workspace so a resumed run (or `task artifacts`)
 	// can recover the files this task produced. Only at terminal checkpoints,
@@ -1327,6 +1383,10 @@ func (r *Runtime) executeAsyncTool(ctx context.Context, tc domain.ToolCall, wg *
 
 	// 1. Emit the tool call event (if not already emitted)
 	behavior := r.svc.toolInterruptBehavior(tc.Function.Name, r.currentAgent)
+	// Observer seam: the streaming loop dispatches fully-argumented tool calls
+	// here (bypassing executeSingleToolCall), so bracket the call for parity.
+	toolInfo := r.svc.toolObserverInfo(r.currentAgent, r.session, tc)
+	r.svc.emitObserver(func(o Observer) { o.OnToolStart(ctx, toolInfo) })
 	r.emitToolCall(tc.Function.Name, tc.Function.Arguments, behavior)
 	r.trackToolCall(tc)
 
@@ -1334,6 +1394,7 @@ func (r *Runtime) executeAsyncTool(ctx context.Context, tc domain.ToolCall, wg *
 	res, err, _ := r.executeToolOrHandoff(ctx, tc)
 
 	// 3. Emit result
+	r.svc.emitObserver(func(o Observer) { o.OnToolEnd(ctx, toolInfo, res, err) })
 	r.emitToolResult(tc.Function.Name, res, err, behavior)
 	r.trackToolResult(tc.ID)
 

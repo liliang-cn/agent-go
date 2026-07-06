@@ -190,6 +190,9 @@ func (s *Service) executeSingleToolCall(ctx context.Context, currentAgent *Agent
 		ToolName:   toolCall.Function.Name,
 	}
 
+	toolInfo := s.toolObserverInfo(currentAgent, session, toolCall)
+	s.emitObserver(func(o Observer) { o.OnToolStart(ctx, toolInfo) })
+
 	if callbacks.OnToolCall != nil {
 		callbacks.OnToolCall(toolCall.Function.Name, toolCall.Function.Arguments, behavior)
 	}
@@ -205,6 +208,7 @@ func (s *Service) executeSingleToolCall(ctx context.Context, currentAgent *Agent
 		slog.Any("arguments", toolCall.Function.Arguments))
 
 	execResult, err, _ := s.executeToolViaSubAgentWithEvents(toolCtx, currentAgent, session, toolCall, callbacks.EventSink, callbacks.Debug)
+	s.emitObserver(func(o Observer) { o.OnToolEnd(ctx, toolInfo, execResult, err) })
 	if callbacks.OnToolResult != nil {
 		callbacks.OnToolResult(toolCall.Function.Name, execResult, err, behavior)
 	}

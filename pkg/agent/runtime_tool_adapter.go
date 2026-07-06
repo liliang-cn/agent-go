@@ -31,7 +31,7 @@ func (c *runtimeAsyncToolCollector) collect() []ToolExecutionResult {
 	return toolResults
 }
 
-func (r *Runtime) buildStreamingTurnCallbacks(ctx context.Context, taskTerminalName *string, taskTerminalResult *string, collector *runtimeAsyncToolCollector) StreamTurnCallbacks {
+func (r *Runtime) buildStreamingTurnCallbacks(ctx context.Context, spanID string, taskTerminalName *string, taskTerminalResult *string, collector *runtimeAsyncToolCollector) StreamTurnCallbacks {
 	toolCallDetected := false
 
 	return StreamTurnCallbacks{
@@ -64,9 +64,15 @@ func (r *Runtime) buildStreamingTurnCallbacks(ctx context.Context, taskTerminalN
 			return nil
 		},
 		OnReasoning: func(text string) {
+			r.svc.emitObserver(func(o Observer) {
+				o.OnModelDelta(ctx, ModelDelta{SpanID: spanID, Kind: "reasoning", Text: text})
+			})
 			r.emit(EventTypeThinking, text)
 		},
 		OnPartial: func(text string) {
+			r.svc.emitObserver(func(o Observer) {
+				o.OnModelDelta(ctx, ModelDelta{SpanID: spanID, Kind: "partial", Text: text})
+			})
 			r.emit(EventTypePartial, text)
 		},
 		OnFirstToolCall: func() {

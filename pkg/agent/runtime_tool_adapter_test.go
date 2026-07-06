@@ -12,7 +12,7 @@ func TestStreamingTurnCallbacksSkipsEmptyArgumentToolDelta(t *testing.T) {
 	var terminalName, terminalResult string
 	collector := newRuntimeAsyncToolCollector()
 
-	callbacks := runtime.buildStreamingTurnCallbacks(context.Background(), &terminalName, &terminalResult, collector)
+	callbacks := runtime.buildStreamingTurnCallbacks(context.Background(), "span-test", &terminalName, &terminalResult, collector)
 	if err := callbacks.OnToolCall(domain.ToolCall{
 		Function: domain.FunctionCall{Name: "mcp_filesystem_write_file", Arguments: map[string]interface{}{}},
 	}); err != nil {

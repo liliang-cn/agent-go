@@ -163,6 +163,21 @@ func (sa *SubAgent) ID() string {
 	return sa.id
 }
 
+// observerInfo builds the SubAgentInfo passed to OnSubAgentStart/End.
+func (sa *SubAgent) observerInfo() SubAgentInfo {
+	sessionID := ""
+	if sa.session != nil {
+		sessionID = sa.session.GetID()
+	}
+	return SubAgentInfo{
+		ParentTaskID: currentTaskID(sa.config.ParentSession),
+		SubAgentID:   sa.id,
+		Name:         sa.config.Agent.Name(),
+		Goal:         sa.config.Goal,
+		SessionID:    sessionID,
+	}
+}
+
 // Name returns the agent name
 func (sa *SubAgent) Name() string {
 	return sa.config.Agent.Name()
@@ -255,6 +270,14 @@ func (sa *SubAgent) Run(parentCtx context.Context) (interface{}, error) {
 	}
 	sa.emitStart(fmt.Sprintf("Starting sub-agent goal: %s", sa.config.Goal))
 
+	// Observer seam: only for goal-driven sub-agents, not the per-tool-call
+	// wrapper sub-agents created by executeToolViaSubAgentWithEvents (those set
+	// ToolCall). Tool dispatch is already bracketed by OnToolStart/OnToolEnd.
+	subInfo := sa.observerInfo()
+	if sa.config.ToolCall == nil && sa.config.Service != nil {
+		sa.config.Service.emitObserver(func(o Observer) { o.OnSubAgentStart(sa.ctx, subInfo) })
+	}
+
 	// Set up git-worktree isolation if requested: create the worktree, root the
 	// sub-agent's fs/bash tools there, and arrange teardown.
 	if sa.config.Worktree != nil {
@@ -299,6 +322,13 @@ func (sa *SubAgent) Run(parentCtx context.Context) (interface{}, error) {
 			sa.emitError(finalErr.Error())
 		} else {
 			sa.emitComplete(toolResultToString(finalResult))
+		}
+
+		// Observer seam: pair with OnSubAgentStart (goal-driven sub-agents only).
+		if sa.config.ToolCall == nil && sa.config.Service != nil {
+			sa.config.Service.emitObserver(func(o Observer) {
+				o.OnSubAgentEnd(context.Background(), subInfo, finalResult, finalErr)
+			})
 		}
 
 		// Close progress channel

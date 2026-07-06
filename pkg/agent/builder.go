@@ -100,6 +100,7 @@ type Builder struct {
 	progressCb        ProgressCallback
 	permissionHandler PermissionHandler
 	permissionPolicy  PermissionPolicy
+	observers         []Observer
 
 	// Custom LLM service (optional - if not set, uses global pool)
 	llmService domain.Generator
@@ -339,6 +340,19 @@ func (b *Builder) WithProgressCallback(cb ProgressCallback) *Builder {
 // WithProgress is a concise alias for WithProgressCallback.
 func (b *Builder) WithProgress(cb ProgressCallback) *Builder {
 	b.progressCb = cb
+	return b
+}
+
+// WithObserver registers one or more passive observability aspects on the
+// service. Observers bracket model turns, tool calls, sub-agent runs, and
+// terminal checkpoints with paired Start/End callbacks (see Observer). They
+// cannot mutate or block a run — use hooks for that. Zero-overhead when unused.
+func (b *Builder) WithObserver(obs ...Observer) *Builder {
+	for _, o := range obs {
+		if o != nil {
+			b.observers = append(b.observers, o)
+		}
+	}
 	return b
 }
 
@@ -673,6 +687,9 @@ func (b *Builder) build() (*Service, error) {
 	}
 	if b.progressCb != nil {
 		svc.SetProgressCallback(b.progressCb)
+	}
+	if len(b.observers) > 0 {
+		svc.RegisterObserver(b.observers...)
 	}
 	if b.permissionHandler != nil {
 		svc.SetPermissionHandler(b.permissionHandler)

@@ -116,6 +116,12 @@ type Service struct {
 	outputLintsMu sync.RWMutex
 	outputLints   *OutputLintRegistry
 
+	// observers is the registry of passive observability aspects fanned out
+	// at the model / tool / sub-agent / checkpoint seams. See observer.go.
+	// Nil-safe: no observers means zero overhead.
+	observersMu sync.RWMutex
+	observers   []Observer
+
 	// checkpointSink, when non-nil, is called by the runtime at every
 	// round boundary so the message history can be persisted for
 	// Tasks().Resume. TeamManager.buildServiceForModel wires this up;

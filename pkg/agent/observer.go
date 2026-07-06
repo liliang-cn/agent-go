@@ -1,0 +1,206 @@
+package agent
+
+import (
+	"context"
+	"log/slog"
+
+	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+)
+
+// Observer is a unified aspect/observability hook that brackets the four
+// interesting seams of a run — model turns, tool calls, sub-agent runs, and
+// terminal checkpoints — with paired Start/End callbacks. Unlike HookRegistry
+// (which can mutate/​block a run) an Observer is strictly passive: it is fed
+// stable correlation IDs so Start/End pair up without the kernel having to
+// thread context back through every call site.
+//
+// Embed BaseObserver and override only the methods you care about. Register
+// observers on a Service via RegisterObserver / WithObserver. A nil / empty
+// observer set is zero-overhead.
+type Observer interface {
+	// OnModelStart fires immediately before an LLM turn is dispatched.
+	OnModelStart(ctx context.Context, info ModelInfo)
+	// OnModelDelta fires for each streamed reasoning / partial fragment.
+	OnModelDelta(ctx context.Context, delta ModelDelta)
+	// OnModelEnd fires after the LLM turn returns (res / err may be nil).
+	OnModelEnd(ctx context.Context, info ModelInfo, res *ModelResult, err error)
+
+	// OnToolStart fires before a tool call is dispatched.
+	OnToolStart(ctx context.Context, info ToolInfo)
+	// OnToolEnd fires after a tool call returns.
+	OnToolEnd(ctx context.Context, info ToolInfo, result any, err error)
+
+	// OnSubAgentStart fires when a goal-driven sub-agent begins.
+	OnSubAgentStart(ctx context.Context, info SubAgentInfo)
+	// OnSubAgentEnd fires when a goal-driven sub-agent finishes.
+	OnSubAgentEnd(ctx context.Context, info SubAgentInfo, result any, err error)
+
+	// OnCheckpoint fires when the runtime writes a terminal checkpoint.
+	OnCheckpoint(ctx context.Context, info CheckpointInfo)
+}
+
+// ModelInfo identifies a single model turn. SpanID is a stable per-turn id;
+// the SAME SpanID is passed to the matching OnModelEnd so listeners can pair
+// start/end without threading context.
+type ModelInfo struct {
+	TaskID    string
+	SessionID string
+	AgentName string
+	Round     int
+	SpanID    string
+	Messages  int // number of messages sent to the model
+	Tools     int // number of tools offered to the model
+}
+
+// ModelDelta carries a streamed fragment. Kind is "reasoning" or "partial".
+type ModelDelta struct {
+	SpanID string
+	Kind   string
+	Text   string
+}
+
+// ModelResult summarizes the outcome of a model turn.
+type ModelResult struct {
+	Content    string
+	ToolCalls  int
+	DurationMs int64
+	TokensUsed int
+}
+
+// ToolInfo identifies a single tool call. CallID is a stable per-call id; the
+// SAME CallID is passed to the matching OnToolEnd.
+type ToolInfo struct {
+	TaskID    string
+	SessionID string
+	AgentName string
+	Tool      string
+	CallID    string
+	Args      map[string]any
+	// Inner is true when the tool executes inside a sub-agent rather than at
+	// the top-level runtime loop.
+	Inner bool
+}
+
+// SubAgentInfo identifies a goal-driven sub-agent run.
+type SubAgentInfo struct {
+	ParentTaskID string
+	SubAgentID   string
+	Name         string
+	Goal         string
+	SessionID    string
+}
+
+// CheckpointInfo describes a terminal checkpoint snapshot.
+type CheckpointInfo struct {
+	TaskID    string
+	SessionID string
+	AgentName string
+	Reason    string
+	Round     int
+	Messages  int
+	FinalText string
+}
+
+// BaseObserver implements Observer with no-op methods. Embed it so you only
+// override the callbacks you actually need:
+//
+//	type myObs struct{ agent.BaseObserver }
+//	func (o *myObs) OnToolStart(ctx context.Context, info agent.ToolInfo) { ... }
+type BaseObserver struct{}
+
+func (BaseObserver) OnModelStart(context.Context, ModelInfo)                    {}
+func (BaseObserver) OnModelDelta(context.Context, ModelDelta)                   {}
+func (BaseObserver) OnModelEnd(context.Context, ModelInfo, *ModelResult, error) {}
+func (BaseObserver) OnToolStart(context.Context, ToolInfo)                      {}
+func (BaseObserver) OnToolEnd(context.Context, ToolInfo, any, error)            {}
+func (BaseObserver) OnSubAgentStart(context.Context, SubAgentInfo)              {}
+func (BaseObserver) OnSubAgentEnd(context.Context, SubAgentInfo, any, error)    {}
+func (BaseObserver) OnCheckpoint(context.Context, CheckpointInfo)               {}
+
+// Ensure BaseObserver satisfies the interface.
+var _ Observer = BaseObserver{}
+
+// RegisterObserver adds one or more observers to the service. Safe to call
+// concurrently and idempotent-friendly (observers are stored by identity, so
+// callers should avoid double-registering the same instance).
+func (s *Service) RegisterObserver(obs ...Observer) {
+	if s == nil {
+		return
+	}
+	s.observersMu.Lock()
+	defer s.observersMu.Unlock()
+	for _, o := range obs {
+		if o != nil {
+			s.observers = append(s.observers, o)
+		}
+	}
+}
+
+// Observers returns a snapshot of the registered observers.
+func (s *Service) Observers() []Observer {
+	if s == nil {
+		return nil
+	}
+	s.observersMu.RLock()
+	defer s.observersMu.RUnlock()
+	if len(s.observers) == 0 {
+		return nil
+	}
+	out := make([]Observer, len(s.observers))
+	copy(out, s.observers)
+	return out
+}
+
+// emitObserver fans out an invocation to every registered observer. It
+// snapshots under RLock and recovers from panics so a single misbehaving
+// observer can't crash a run. Nil-safe and zero-overhead when no observers
+// are registered.
+func (s *Service) emitObserver(fn func(Observer)) {
+	if s == nil || fn == nil {
+		return
+	}
+	s.observersMu.RLock()
+	if len(s.observers) == 0 {
+		s.observersMu.RUnlock()
+		return
+	}
+	snapshot := make([]Observer, len(s.observers))
+	copy(snapshot, s.observers)
+	s.observersMu.RUnlock()
+
+	for _, o := range snapshot {
+		s.invokeObserver(o, fn)
+	}
+}
+
+// toolObserverInfo builds a ToolInfo for a tool dispatch. CallID is the tool
+// call id so OnToolStart / OnToolEnd pair up.
+func (s *Service) toolObserverInfo(currentAgent *Agent, session *Session, tc domain.ToolCall) ToolInfo {
+	agentName := ""
+	if currentAgent != nil {
+		agentName = currentAgent.Name()
+	}
+	sessionID := ""
+	if session != nil {
+		sessionID = session.GetID()
+	}
+	return ToolInfo{
+		TaskID:    currentTaskID(session),
+		SessionID: sessionID,
+		AgentName: agentName,
+		Tool:      tc.Function.Name,
+		CallID:    tc.ID,
+		Args:      tc.Function.Arguments,
+	}
+}
+
+func (s *Service) invokeObserver(o Observer, fn func(Observer)) {
+	defer func() {
+		if r := recover(); r != nil {
+			if s.logger != nil {
+				s.logger.Warn("observer panicked", slog.Any("recover", r))
+			}
+		}
+	}()
+	fn(o)
+}
