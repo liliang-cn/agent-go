@@ -451,7 +451,10 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		}
 		r.emitLLMLatency(round+1, state.Budget.EstimatedTokens, llmDur)
 
-		// Observer seam: model turn finished.
+		// Observer seam: model turn finished. errTaskTerminal is the internal
+		// "the model called task_complete/task_blocked" control signal, not a
+		// real failure — don't surface it to observers as a model error (it
+		// otherwise paints the final LLM span red in tracing UIs like Phoenix).
 		{
 			var modelRes *ModelResult
 			if result != nil {
@@ -462,7 +465,11 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 					TokensUsed: turnTokens,
 				}
 			}
-			r.svc.emitObserver(func(o Observer) { o.OnModelEnd(ctx, modelInfo, modelRes, err) })
+			modelErr := err
+			if errors.Is(modelErr, errTaskTerminal) {
+				modelErr = nil
+			}
+			r.svc.emitObserver(func(o Observer) { o.OnModelEnd(ctx, modelInfo, modelRes, modelErr) })
 		}
 
 		// Cache provider finish_reason for refusal classification on

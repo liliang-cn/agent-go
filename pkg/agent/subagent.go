@@ -538,15 +538,50 @@ func (sa *SubAgent) execute(ctx context.Context) (interface{}, error) {
 			sa.emitDebug(round+1, "prompt", promptContent.String())
 		}
 
+		// Observer seam: bracket the sub-agent's model turn so worker/sub-agent
+		// LLM turns show up as LLM spans in tracing (not just the top-level run).
+		subSessionID := ""
+		if sa.session != nil {
+			subSessionID = sa.session.GetID()
+		}
+		subModelInfo := ModelInfo{
+			TaskID:    currentTaskID(sa.session),
+			SessionID: subSessionID,
+			AgentName: sa.config.Agent.Name(),
+			Round:     round + 1,
+			SpanID:    uuid.NewString(),
+			Messages:  len(genMessages),
+			Tools:     len(tools),
+		}
+		sa.config.Service.emitObserver(func(o Observer) { o.OnModelStart(ctx, subModelInfo) })
+		llmStart := time.Now()
+
 		result, responseID, recovery, err := sa.config.Service.streamToolTurn(ctx, genMessages, tools, genOpts, StreamTurnCallbacks{
 			OnReasoning: func(text string) {
 				sa.emitThinking(text)
+				sa.config.Service.emitObserver(func(o Observer) {
+					o.OnModelDelta(ctx, ModelDelta{SpanID: subModelInfo.SpanID, Kind: "reasoning", Text: text})
+				})
 			},
 			OnPartial: func(text string) {
 				sa.emitPartial(text)
+				sa.config.Service.emitObserver(func(o Observer) {
+					o.OnModelDelta(ctx, ModelDelta{SpanID: subModelInfo.SpanID, Kind: "partial", Text: text})
+				})
 			},
 		})
 		state.noteRecovery(recovery)
+		{
+			var modelRes *ModelResult
+			if result != nil {
+				modelRes = &ModelResult{
+					Content:    result.Content,
+					ToolCalls:  len(result.ToolCalls),
+					DurationMs: time.Since(llmStart).Milliseconds(),
+				}
+			}
+			sa.config.Service.emitObserver(func(o Observer) { o.OnModelEnd(ctx, subModelInfo, modelRes, err) })
+		}
 		if err != nil {
 			return nil, fmt.Errorf("LLM error: %w", err)
 		}
