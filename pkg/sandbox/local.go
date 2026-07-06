@@ -174,9 +174,22 @@ func (s *LocalSandbox) Exec(ctx context.Context, req ExecRequest) (ExecResult, e
 	cmd.Stderr = &stderr
 	configureProcAttr(cmd) // unix: own process group so timeouts kill children
 
+	// exec.CommandContext's default cancel only SIGKILLs the leader pid, so a
+	// child that survives in the process group (e.g. `sh -c "sleep 10"` on Linux
+	// where sh forks) keeps the stdout pipe open and blocks cmd.Run() for the
+	// full command duration — the timeout never appears to fire. Kill the whole
+	// group on cancel, and bound Wait's post-kill I/O drain so a lingering child
+	// can't hold us hostage.
+	cmd.Cancel = func() error {
+		killProcessGroup(cmd)
+		return nil
+	}
+	cmd.WaitDelay = 2 * time.Second
+
 	runErr := cmd.Run()
 
-	// If the context expired, make sure the whole process group is gone.
+	// Belt and suspenders: if the context expired, make sure the whole process
+	// group is gone even if Cancel raced with process startup.
 	if ctx.Err() != nil {
 		killProcessGroup(cmd)
 	}
