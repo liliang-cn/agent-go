@@ -131,6 +131,7 @@ type Builder struct {
 	browser       browser.Browser
 	enableVision  bool
 	enableDeliver bool
+	enableFiles   bool
 	autonomy      AutonomyProfile
 
 	// cached result
@@ -210,6 +211,17 @@ func (b *Builder) WithGraphMemory(opts ...MemoryOption) *Builder {
 	merged := append([]MemoryOption{WithMemoryGraphFlow()}, opts...)
 	b.WithMemory(merged...)
 	b.registerGraphTool = true
+	return b
+}
+
+// WithFileTools registers the built-in `read_document` tool so the agent can
+// read the content of Word/Excel/PowerPoint/PDF/image/text files. When a
+// sandbox is also attached (WithSandbox) reads are jailed to the workspace;
+// otherwise the tool reads host paths. CGO-free, no OCR.
+//
+//	svc, _ := agent.New("assistant").WithFileTools().Build()
+func (b *Builder) WithFileTools() *Builder {
+	b.enableFiles = true
 	return b
 }
 
@@ -794,6 +806,10 @@ func (b *Builder) build() (*Service, error) {
 		execToolsRegistered = true
 	}
 	svc.visionEnabled = b.enableVision
+	if b.enableFiles {
+		RegisterFileTools(svc)
+		execToolsRegistered = true
+	}
 	if b.enableDeliver && b.sandbox != nil {
 		RegisterDeliverableTools(svc, b.sandbox)
 		execToolsRegistered = true
