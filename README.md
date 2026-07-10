@@ -1,8 +1,11 @@
 # AgentGo
 
-**Agent / Team framework for Go with local-first AI capabilities.**
+[![CI](https://github.com/liliang-cn/agent-go/actions/workflows/ci.yml/badge.svg)](https://github.com/liliang-cn/agent-go/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/liliang-cn/agent-go/v2.svg)](https://pkg.go.dev/github.com/liliang-cn/agent-go/v2)
+[![Go Report Card](https://goreportcard.com/badge/github.com/liliang-cn/agent-go/v2)](https://goreportcard.com/report/github.com/liliang-cn/agent-go/v2)
+[![Release](https://img.shields.io/github/v/release/liliang-cn/agent-go)](https://github.com/liliang-cn/agent-go/releases)
 
-> “AgentGo? It's useless and it consumes a lot of tokens.” -- some guy on the internet
+**Agent / Team framework for Go with local-first AI capabilities.**
 
 AgentGo is a Go framework for building agent systems that can run locally, use tools, keep memory, and coordinate work through teams.
 
@@ -233,7 +236,7 @@ make eval           # behavioral eval, mock-LLM, CI-safe
 make eval-live      # behavioral eval, real provider
 ```
 
-See `CLAUDE.md` and `PLAN.md` for the harness-engineering roadmap and operational guidance.
+See `CLAUDE.md` and `docs/dev/PLAN.md` for the harness-engineering roadmap and operational guidance.
 
 ## License
 

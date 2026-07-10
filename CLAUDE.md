@@ -109,7 +109,7 @@ When a harness change (lint, prompt cut, tool-prep tweak) lands, run `make eval-
 
 ### PTC = Programmatic Tool Calling
 
-`pkg/ptc/` runs model-written JavaScript in a Goja sandbox so the model can `callTool(name, args)` inside loops/filters instead of doing N tool-call rounds through the chat protocol. PTC is **default-on**. See `PTC.md` for the design rationale; the short version: large intermediate data stays in the sandbox, only the small final result re-enters context. Tools used by PTC must return stable structured shapes (`{ ok, data, error }`-ish), not freeform strings.
+`pkg/ptc/` runs model-written JavaScript in a Goja sandbox so the model can `callTool(name, args)` inside loops/filters instead of doing N tool-call rounds through the chat protocol. PTC is **default-on**. See `docs/dev/PTC.md` for the design rationale; the short version: large intermediate data stays in the sandbox, only the small final result re-enters context. Tools used by PTC must return stable structured shapes (`{ ok, data, error }`-ish), not freeform strings.
 
 ### Skill surfacing is reminder-based
 
