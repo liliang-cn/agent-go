@@ -568,11 +568,21 @@ func (m *TeamManager) taskSessionID(taskID string) string {
 
 func (m *TeamManager) failAsyncTask(taskID, agentName string, err error) {
 	finishedAt := time.Now()
+	transitioned := false
 	task := m.updateAsyncTask(taskID, func(existing *AsyncTask) {
+		// A concurrent CancelTask (or another finisher) may have already put
+		// the task in a terminal state — never overwrite it with "failed".
+		if isTerminalAsyncTaskStatus(existing.Status) {
+			return
+		}
+		transitioned = true
 		existing.Status = AsyncTaskStatusFailed
 		existing.Error = strings.TrimSpace(err.Error())
 		existing.FinishedAt = &finishedAt
 	})
+	if !transitioned {
+		return
+	}
 	m.emitTaskEvent(taskID, &TaskEvent{
 		TaskID:    task.ID,
 		SessionID: task.SessionID,

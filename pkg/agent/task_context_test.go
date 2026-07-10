@@ -234,9 +234,42 @@ func TestTaskServiceFacade(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resume() error = %v", err)
 	}
-	if resumed.Status != "resuming" {
-		t.Fatalf("expected resuming, got %q", resumed.Status)
+	// Resume spawns a background runner for the (unregistered) "Responder"
+	// agent, which fails fast and races our status reads. Assert only the
+	// synchronous contract here: the task left the paused state.
+	if resumed.Status == "yielded" {
+		t.Fatalf("expected task to leave yielded state, got %q", resumed.Status)
 	}
+
+	// Wait for the doomed background runner to reach a terminal state so it
+	// can no longer race the cancel assertion below.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		current, getErr := manager.GetTask("task-service-1")
+		if getErr != nil {
+			t.Fatalf("GetTask() error = %v", getErr)
+		}
+		if isTerminalAsyncTaskStatus(current.Status) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("background runner did not finish, status %q", current.Status)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Re-arm the task as running (no live runner now) and verify Cancel's
+	// transition deterministically.
+	manager.upsertAsyncTask(&AsyncTask{
+		ID:        "task-service-1",
+		TaskID:    "task-service-1",
+		SessionID: "session-service",
+		Kind:      AsyncTaskKindAgent,
+		Status:    AsyncTaskStatusRunning,
+		AgentName: "Responder",
+		Prompt:    "do work",
+		CreatedAt: time.Now(),
+	})
 
 	cancelled, err := tasks.Cancel(t.Context(), "task-service-1")
 	if err != nil {

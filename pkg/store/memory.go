@@ -762,7 +762,7 @@ func (s *MemoryStore) ensureMemoryBucket(ctx context.Context, bucket memoryBucke
 			return err
 		}
 
-		return s.store.CreateSession(ctx, &core.Session{
+		createErr := s.store.CreateSession(ctx, &core.Session{
 			ID:     bucket.BucketID,
 			UserID: bucket.UserID,
 			Metadata: map[string]interface{}{
@@ -774,6 +774,15 @@ func (s *MemoryStore) ensureMemoryBucket(ctx context.Context, bucket memoryBucke
 				"logical_bank_id":    bucket.LogicalBankID,
 			},
 		})
+		if createErr != nil {
+			// A concurrent writer may have created the bucket between our
+			// GetSession and CreateSession; if it exists now, treat as success.
+			if _, getErr := s.store.GetSession(ctx, bucket.BucketID); getErr == nil {
+				return nil
+			}
+			return createErr
+		}
+		return nil
 	})
 }
 
