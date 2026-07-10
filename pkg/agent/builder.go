@@ -132,6 +132,8 @@ type Builder struct {
 	enableVision       bool
 	enableDeliver      bool
 	enableFiles        bool
+	enableOCR          bool
+	ocrOpts            []OCROption
 	enableSubconscious bool
 	autonomy           AutonomyProfile
 
@@ -223,6 +225,18 @@ func (b *Builder) WithGraphMemory(opts ...MemoryOption) *Builder {
 //	svc, _ := agent.New("assistant").WithFileTools().Build()
 func (b *Builder) WithFileTools() *Builder {
 	b.enableFiles = true
+	return b
+}
+
+// WithOCR registers the built-in `ocr_image` tool so the agent can extract text
+// from images via a local ollama-compatible OCR model (glm-ocr by default).
+// Opt-in and network-dependent — the rest of AgentGo works without it. Configure
+// the endpoint/model/prompt with WithOCREndpoint / WithOCRModel / WithOCRPrompt.
+//
+//	svc, _ := agent.New("assistant").WithOCR(agent.WithOCRModel("glm-ocr")).Build()
+func (b *Builder) WithOCR(opts ...OCROption) *Builder {
+	b.enableOCR = true
+	b.ocrOpts = append(b.ocrOpts, opts...)
 	return b
 }
 
@@ -824,6 +838,10 @@ func (b *Builder) build() (*Service, error) {
 	}
 	if b.enableFiles {
 		RegisterFileTools(svc)
+		execToolsRegistered = true
+	}
+	if b.enableOCR {
+		RegisterOCRTool(svc, b.ocrOpts...)
 		execToolsRegistered = true
 	}
 	if b.enableDeliver && b.sandbox != nil {

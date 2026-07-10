@@ -173,6 +173,56 @@ func writePDF(t *testing.T, dir string) string {
 	return path
 }
 
+// buildMultiPagePDF assembles a valid multi-page PDF where page i shows texts[i].
+func buildMultiPagePDF(texts []string) []byte {
+	n := len(texts)
+	kids := make([]string, n)
+	for i := 0; i < n; i++ {
+		kids[i] = itoa(4+2*i) + " 0 R"
+	}
+	objs := []string{
+		"<</Type/Catalog/Pages 2 0 R>>",
+		"<</Type/Pages/Kids[" + strings.Join(kids, " ") + "]/Count " + itoa(n) + ">>",
+		"<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>",
+	}
+	for i := 0; i < n; i++ {
+		contentObj := 5 + 2*i
+		objs = append(objs, "<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]"+
+			"/Resources<</Font<</F1 3 0 R>>>>/Contents "+itoa(contentObj)+" 0 R>>")
+		content := "BT\n/F1 24 Tf\n72 720 Td\n(" + texts[i] + ") Tj\nET\n"
+		objs = append(objs, "<</Length "+itoa(len(content))+">>\nstream\n"+content+"endstream")
+	}
+
+	var buf bytes.Buffer
+	buf.WriteString("%PDF-1.4\n")
+	offsets := make([]int, len(objs))
+	for i, body := range objs {
+		offsets[i] = buf.Len()
+		buf.WriteString(itoa(i+1) + " 0 obj\n")
+		buf.WriteString(body)
+		buf.WriteString("\nendobj\n")
+	}
+	xrefStart := buf.Len()
+	buf.WriteString("xref\n")
+	buf.WriteString("0 " + itoa(len(objs)+1) + "\n")
+	buf.WriteString("0000000000 65535 f \n")
+	for _, off := range offsets {
+		buf.WriteString(pad10(off) + " 00000 n \n")
+	}
+	buf.WriteString("trailer\n<</Size " + itoa(len(objs)+1) + "/Root 1 0 R>>\n")
+	buf.WriteString("startxref\n" + itoa(xrefStart) + "\n%%EOF\n")
+	return buf.Bytes()
+}
+
+func writeMultiPagePDF(t *testing.T, dir string, texts []string) string {
+	t.Helper()
+	path := filepath.Join(dir, "multi.pdf")
+	if err := os.WriteFile(path, buildMultiPagePDF(texts), 0o644); err != nil {
+		t.Fatalf("write multi pdf: %v", err)
+	}
+	return path
+}
+
 // --- table test -------------------------------------------------------------
 
 func TestExtract(t *testing.T) {
@@ -314,6 +364,149 @@ func TestMaxBytesCap(t *testing.T) {
 	}
 	if _, err := Extract(context.Background(), path, WithMaxBytes(100)); err == nil {
 		t.Fatalf("expected error when file exceeds max bytes")
+	}
+}
+
+func TestParsePageSpec(t *testing.T) {
+	tests := []struct {
+		name    string
+		spec    string
+		total   int
+		want    []int
+		wantErr bool
+	}{
+		{name: "empty=all", spec: "", total: 3, want: []int{1, 2, 3}},
+		{name: "single", spec: "2", total: 5, want: []int{2}},
+		{name: "range", spec: "2-4", total: 5, want: []int{2, 3, 4}},
+		{name: "mixed", spec: "1-2,4", total: 5, want: []int{1, 2, 4}},
+		{name: "spaces tolerated", spec: " 1 - 2 , 4 ", total: 5, want: []int{1, 2, 4}},
+		{name: "dedupe+sort", spec: "3,1,2-3,1", total: 5, want: []int{1, 2, 3}},
+		{name: "clamp out of range", spec: "3-10", total: 5, want: []int{3, 4, 5}},
+		{name: "reversed range", spec: "4-2", total: 5, want: []int{2, 3, 4}},
+		{name: "all out of range", spec: "8,9", total: 5, want: nil},
+		{name: "bad token", spec: "1,abc", total: 5, wantErr: true},
+		{name: "bad range", spec: "1-x", total: 5, wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ParsePageSpec(tc.spec, tc.total)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for %q", tc.spec)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParsePageSpec(%q): %v", tc.spec, err)
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("got %v, want %v", got, tc.want)
+				}
+			}
+		})
+	}
+}
+
+func TestExtractPDFPages(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+	path := writeMultiPagePDF(t, dir, []string{"PageOneAlpha", "PageTwoBeta", "PageThreeGamma"})
+
+	// Full extract: PageTexts length == total, metadata pages/pages_extracted.
+	doc, err := Extract(ctx, path)
+	if err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	if doc.Format != FormatPDF {
+		t.Fatalf("format = %q", doc.Format)
+	}
+	if len(doc.PageTexts) != 3 {
+		t.Fatalf("PageTexts len = %d, want 3", len(doc.PageTexts))
+	}
+	if doc.Metadata["pages"] != 3 {
+		t.Errorf("pages meta = %v, want 3", doc.Metadata["pages"])
+	}
+	if doc.Metadata["pages_extracted"] != 3 {
+		t.Errorf("pages_extracted meta = %v, want 3", doc.Metadata["pages_extracted"])
+	}
+	if !strings.Contains(doc.PageTexts[1], "PageTwoBeta") {
+		t.Errorf("page 2 text = %q, want it to contain PageTwoBeta", doc.PageTexts[1])
+	}
+
+	// WithPages("2") returns only page 2's text.
+	doc2, err := Extract(ctx, path, WithPages("2"))
+	if err != nil {
+		t.Fatalf("Extract WithPages: %v", err)
+	}
+	if len(doc2.PageTexts) != 1 {
+		t.Fatalf("selected PageTexts len = %d, want 1", len(doc2.PageTexts))
+	}
+	if doc2.Metadata["pages"] != 3 {
+		t.Errorf("pages meta = %v, want total 3 even when selecting", doc2.Metadata["pages"])
+	}
+	if doc2.Metadata["pages_extracted"] != 1 {
+		t.Errorf("pages_extracted meta = %v, want 1", doc2.Metadata["pages_extracted"])
+	}
+	if !strings.Contains(doc2.Text, "PageTwoBeta") {
+		t.Errorf("text = %q, want PageTwoBeta", doc2.Text)
+	}
+	if strings.Contains(doc2.Text, "PageOneAlpha") || strings.Contains(doc2.Text, "PageThreeGamma") {
+		t.Errorf("text %q leaked non-selected pages", doc2.Text)
+	}
+}
+
+func TestExtractPDFBytesPages(t *testing.T) {
+	// ExtractBytes must honor page selection and expose the same metadata.
+	data := buildMultiPagePDF([]string{"AlphaBytes", "BetaBytes", "GammaBytes"})
+	doc, err := ExtractBytes(context.Background(), "multi.pdf", data, WithPages("1,3"))
+	if err != nil {
+		t.Fatalf("ExtractBytes: %v", err)
+	}
+	if len(doc.PageTexts) != 2 {
+		t.Fatalf("PageTexts len = %d, want 2", len(doc.PageTexts))
+	}
+	if doc.Metadata["pages"] != 3 || doc.Metadata["pages_extracted"] != 2 {
+		t.Errorf("meta = %v", doc.Metadata)
+	}
+	if strings.Contains(doc.Text, "BetaBytes") {
+		t.Errorf("page 2 should be excluded: %q", doc.Text)
+	}
+}
+
+func TestExtractPptxSlideSelection(t *testing.T) {
+	dir := t.TempDir()
+	path := writePptx(t, dir, "SlideAaa", "SlideBbb", "SlideCcc")
+
+	doc, err := Extract(context.Background(), path)
+	if err != nil {
+		t.Fatalf("Extract pptx: %v", err)
+	}
+	if len(doc.PageTexts) != 3 {
+		t.Fatalf("PageTexts len = %d, want 3", len(doc.PageTexts))
+	}
+	if doc.Metadata["slides"] != 3 || doc.Metadata["slides_extracted"] != 3 {
+		t.Errorf("meta = %v", doc.Metadata)
+	}
+
+	sel, err := Extract(context.Background(), path, WithPages("2-3"))
+	if err != nil {
+		t.Fatalf("Extract pptx WithPages: %v", err)
+	}
+	if len(sel.PageTexts) != 2 {
+		t.Fatalf("selected slides = %d, want 2", len(sel.PageTexts))
+	}
+	if sel.Metadata["slides"] != 3 || sel.Metadata["slides_extracted"] != 2 {
+		t.Errorf("selected meta = %v", sel.Metadata)
+	}
+	if strings.Contains(sel.Text, "SlideAaa") {
+		t.Errorf("slide 1 should be excluded: %q", sel.Text)
+	}
+	if !strings.Contains(sel.Text, "SlideBbb") || !strings.Contains(sel.Text, "SlideCcc") {
+		t.Errorf("selected text missing slides 2-3: %q", sel.Text)
 	}
 }
 

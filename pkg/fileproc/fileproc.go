@@ -63,6 +63,7 @@ const imageDataURILimit = 256 << 10 // 256 KB
 type Document struct {
 	Format    string         // "docx" | "xlsx" | "pptx" | "pdf" | "image" | "text"
 	Text      string         // extracted plain text (empty for images)
+	PageTexts []string       // per-page/per-slide text; populated for pdf and pptx, nil otherwise
 	Metadata  map[string]any // format-specific: pages, sheets, sheet_names, width, height, ...
 	Truncated bool           // true when Text was capped by WithMaxChars
 }
@@ -70,6 +71,7 @@ type Document struct {
 type config struct {
 	maxChars int
 	maxBytes int64
+	pages    string
 }
 
 // Option configures extraction.
@@ -93,6 +95,71 @@ func WithMaxBytes(n int64) Option {
 	return func(c *config) { c.maxBytes = n }
 }
 
+// WithPages restricts extraction to a 1-indexed page/slide selection such as
+// "1-8,50,100-120" (ranges and singletons, spaces tolerated). An empty spec
+// means all pages. Out-of-range indices are skipped; a malformed (non-numeric)
+// token makes extraction fail. Applies to pdf (pages) and pptx (slides); it is
+// ignored for formats without pages.
+func WithPages(spec string) Option {
+	return func(c *config) { c.pages = strings.TrimSpace(spec) }
+}
+
+// ParsePageSpec parses a 1-indexed page selector like "1-8,50,100-120" against a
+// known total page count and returns the selected page numbers, sorted, de-duped
+// and clamped to the range 1..total. An empty spec selects every page. Reversed
+// ranges ("8-1") are normalized. Out-of-range numbers are dropped silently; a
+// non-numeric token returns an error.
+func ParsePageSpec(spec string, total int) ([]int, error) {
+	spec = strings.TrimSpace(spec)
+	if total < 0 {
+		total = 0
+	}
+	if spec == "" {
+		out := make([]int, 0, total)
+		for i := 1; i <= total; i++ {
+			out = append(out, i)
+		}
+		return out, nil
+	}
+	seen := make(map[int]bool)
+	var out []int
+	add := func(n int) {
+		if n >= 1 && n <= total && !seen[n] {
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	for _, part := range strings.Split(spec, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if idx := strings.Index(part, "-"); idx >= 0 {
+			lo := strings.TrimSpace(part[:idx])
+			hi := strings.TrimSpace(part[idx+1:])
+			l, err1 := strconv.Atoi(lo)
+			h, err2 := strconv.Atoi(hi)
+			if err1 != nil || err2 != nil {
+				return nil, fmt.Errorf("fileproc: invalid page range %q", part)
+			}
+			if l > h {
+				l, h = h, l
+			}
+			for i := l; i <= h; i++ {
+				add(i)
+			}
+		} else {
+			n, err := strconv.Atoi(part)
+			if err != nil {
+				return nil, fmt.Errorf("fileproc: invalid page number %q", part)
+			}
+			add(n)
+		}
+	}
+	sort.Ints(out)
+	return out, nil
+}
+
 func newConfig(opts []Option) *config {
 	c := &config{maxBytes: DefaultMaxBytes}
 	for _, o := range opts {
@@ -105,6 +172,11 @@ func newConfig(opts []Option) *config {
 
 // Extract reads a file from disk and extracts its content. Format is detected
 // from the extension first, then from magic bytes.
+//
+// PDFs are a special case: they stream from disk page-by-page (via pdf.Open)
+// rather than being slurped into memory, so the WithMaxBytes cap does not apply
+// to them and multi-hundred-megabyte PDFs extract without exhausting RAM. Every
+// other format is read fully into memory and still honors the byte cap.
 func Extract(ctx context.Context, path string, opts ...Option) (*Document, error) {
 	cfg := newConfig(opts)
 	fi, err := os.Stat(path)
@@ -114,6 +186,25 @@ func Extract(ctx context.Context, path string, opts ...Option) (*Document, error
 	if fi.IsDir() {
 		return nil, fmt.Errorf("fileproc: %q is a directory, not a file", path)
 	}
+	name := filepath.Base(path)
+
+	// PDFs stream from disk (no whole-file read, no byte cap) so large course
+	// PDFs work; page selection + per-page logic is shared with ExtractBytes.
+	if detectFormatPath(name, path) == FormatPDF {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		doc, err := extractPDFPath(path, cfg)
+		if err != nil {
+			return nil, fmt.Errorf("fileproc: %q (%s): %w", name, FormatPDF, err)
+		}
+		if doc.Metadata == nil {
+			doc.Metadata = map[string]any{}
+		}
+		applyMaxChars(doc, cfg.maxChars)
+		return doc, nil
+	}
+
 	if cfg.maxBytes > 0 && fi.Size() > cfg.maxBytes {
 		return nil, fmt.Errorf("fileproc: %q is %d bytes, exceeds cap of %d bytes", path, fi.Size(), cfg.maxBytes)
 	}
@@ -121,7 +212,7 @@ func Extract(ctx context.Context, path string, opts ...Option) (*Document, error
 	if err != nil {
 		return nil, fmt.Errorf("fileproc: read %q: %w", path, err)
 	}
-	return extract(ctx, filepath.Base(path), data, cfg)
+	return extract(ctx, name, data, cfg)
 }
 
 // ExtractBytes extracts content from an in-memory buffer. name provides the
@@ -150,9 +241,9 @@ func extract(ctx context.Context, name string, data []byte, cfg *config) (*Docum
 	case FormatXlsx:
 		doc, err = extractXlsx(data)
 	case FormatPptx:
-		doc, err = extractPptx(data)
+		doc, err = extractPptx(data, cfg)
 	case FormatPDF:
-		doc, err = extractPDF(data)
+		doc, err = extractPDF(data, cfg)
 	case FormatImage:
 		doc, err = extractImage(name, data)
 	case FormatText:
@@ -184,6 +275,15 @@ func applyMaxChars(doc *Document, maxChars int) {
 
 // detectFormat resolves a format by extension first, then magic bytes.
 func detectFormat(name string, data []byte) string {
+	if f := formatByExt(name); f != "" {
+		return f
+	}
+	return sniffFormat(data)
+}
+
+// formatByExt resolves a format from the filename extension alone, returning ""
+// when the extension is unknown.
+func formatByExt(name string) string {
 	switch strings.ToLower(filepath.Ext(name)) {
 	case ".docx":
 		return FormatDocx
@@ -199,7 +299,26 @@ func detectFormat(name string, data []byte) string {
 		".json", ".xml", ".yaml", ".yml", ".html", ".htm", ".go", ".py", ".js", ".ts":
 		return FormatText
 	}
-	return sniffFormat(data)
+	return ""
+}
+
+// detectFormatPath resolves a format for a file on disk without reading the
+// whole file: it tries the extension first, then peeks at a small header. It is
+// used to route PDFs to the streaming (no byte cap) extraction path. Formats
+// other than PDF may return "" here; the caller falls back to a full read that
+// re-detects from the complete bytes.
+func detectFormatPath(name, path string) string {
+	if f := formatByExt(name); f != "" {
+		return f
+	}
+	fh, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer fh.Close()
+	buf := make([]byte, 512)
+	n, _ := io.ReadFull(fh, buf)
+	return sniffFormat(buf[:n])
 }
 
 func sniffFormat(data []byte) string {
@@ -273,7 +392,7 @@ func extractDocx(data []byte) (*Document, error) {
 
 var pptxSlideRe = regexp.MustCompile(`^ppt/slides/slide(\d+)\.xml$`)
 
-func extractPptx(data []byte) (*Document, error) {
+func extractPptx(data []byte, cfg *config) (*Document, error) {
 	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		return nil, fmt.Errorf("open zip: %w", err)
@@ -291,8 +410,16 @@ func extractPptx(data []byte) (*Document, error) {
 	}
 	sort.Slice(slides, func(i, j int) bool { return slides[i].idx < slides[j].idx })
 
-	parts := make([]string, 0, len(slides))
-	for _, s := range slides {
+	total := len(slides)
+	selected, err := ParsePageSpec(cfg.pages, total)
+	if err != nil {
+		return nil, err
+	}
+
+	parts := make([]string, 0, len(selected))
+	pageTexts := make([]string, 0, len(selected))
+	for _, n := range selected {
+		s := slides[n-1] // ParsePageSpec guarantees 1 <= n <= total
 		rc, err := s.f.Open()
 		if err != nil {
 			return nil, fmt.Errorf("open %s: %w", s.f.Name, err)
@@ -304,12 +431,15 @@ func extractPptx(data []byte) (*Document, error) {
 		}
 		text, _ := extractOOXMLText(xmlData)
 		parts = append(parts, text)
+		pageTexts = append(pageTexts, text)
 	}
 	return &Document{
-		Format: FormatPptx,
-		Text:   strings.Join(parts, "\n\n"),
+		Format:    FormatPptx,
+		Text:      strings.Join(parts, "\n\n"),
+		PageTexts: pageTexts,
 		Metadata: map[string]any{
-			"slides": len(slides),
+			"slides":           total,
+			"slides_extracted": len(selected),
 		},
 	}, nil
 }
@@ -394,21 +524,51 @@ func extractXlsx(data []byte) (*Document, error) {
 
 // --- pdf -------------------------------------------------------------------
 
-func extractPDF(data []byte) (*Document, error) {
+// extractPDF reads a PDF from an in-memory buffer (used by ExtractBytes, which
+// still honors the byte cap).
+func extractPDF(data []byte, cfg *config) (*Document, error) {
 	r, err := pdf.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		return nil, fmt.Errorf("open pdf: %w", err)
 	}
-	n := r.NumPage()
+	return extractPDFReader(r, cfg)
+}
+
+// extractPDFPath streams a PDF from disk page-by-page (used by Extract for large
+// files; no whole-file read and no byte cap).
+func extractPDFPath(path string, cfg *config) (*Document, error) {
+	r, err := pdf.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open pdf: %w", err)
+	}
+	return extractPDFReader(r, cfg)
+}
+
+// extractPDFReader is the shared page-selection + per-page logic behind both PDF
+// entry points. PageTexts holds one entry per selected page (empty string for a
+// null or unreadable page); Text joins the non-empty pages.
+func extractPDFReader(r *pdf.Reader, cfg *config) (*Document, error) {
+	total := r.NumPage()
+	selected, err := ParsePageSpec(cfg.pages, total)
+	if err != nil {
+		return nil, err
+	}
+	pageTexts := make([]string, 0, len(selected))
 	var b strings.Builder
-	for i := 1; i <= n; i++ {
+	for _, i := range selected {
 		p := r.Page(i)
 		if p.V.IsNull() {
+			pageTexts = append(pageTexts, "")
 			continue
 		}
 		text, err := p.GetPlainText(nil)
 		if err != nil {
 			// Skip an unreadable page rather than failing the whole document.
+			pageTexts = append(pageTexts, "")
+			continue
+		}
+		pageTexts = append(pageTexts, text)
+		if text == "" {
 			continue
 		}
 		b.WriteString(text)
@@ -417,10 +577,12 @@ func extractPDF(data []byte) (*Document, error) {
 		}
 	}
 	return &Document{
-		Format: FormatPDF,
-		Text:   strings.TrimRight(b.String(), "\n"),
+		Format:    FormatPDF,
+		Text:      strings.TrimRight(b.String(), "\n"),
+		PageTexts: pageTexts,
 		Metadata: map[string]any{
-			"pages": n,
+			"pages":           total,
+			"pages_extracted": len(selected),
 		},
 	}, nil
 }
