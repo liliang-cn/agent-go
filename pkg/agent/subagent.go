@@ -517,6 +517,18 @@ func (sa *SubAgent) execute(ctx context.Context) (interface{}, error) {
 		systemMsg := sa.buildSystemPrompt(ctx, tools)
 		genMessages := append([]domain.Message{{Role: "system", Content: systemMsg}}, state.Messages...)
 
+		// PII/guardrail seam: scrub non-system messages before the sub-agent's
+		// LLM call, mirroring the main runtime. Only what's sent to the provider
+		// is redacted; state.Messages (persisted history) is untouched. A block
+		// stops the sub-agent instead of forwarding the content.
+		if sa.config.Service != nil && sa.config.Service.guardrails != nil {
+			redacted, reason, blocked := sa.config.Service.redactInputMessages(ctx, genMessages)
+			if blocked {
+				return nil, fmt.Errorf("input guardrail blocked the sub-agent request: %s", reason)
+			}
+			genMessages = redacted
+		}
+
 		// On the first turn with tools available and before any tool has been used
 		// or nudge has been attempted, set tool_choice=required to force the API
 		// to emit a function call rather than plain text.
