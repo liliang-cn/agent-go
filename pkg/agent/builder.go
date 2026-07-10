@@ -127,12 +127,13 @@ type Builder struct {
 	extraModules []Module
 
 	// Execution capabilities (all optional, zero-value = disabled)
-	sandbox       sandbox.Sandbox
-	browser       browser.Browser
-	enableVision  bool
-	enableDeliver bool
-	enableFiles   bool
-	autonomy      AutonomyProfile
+	sandbox            sandbox.Sandbox
+	browser            browser.Browser
+	enableVision       bool
+	enableDeliver      bool
+	enableFiles        bool
+	enableSubconscious bool
+	autonomy           AutonomyProfile
 
 	// cached result
 	svc *Service
@@ -222,6 +223,18 @@ func (b *Builder) WithGraphMemory(opts ...MemoryOption) *Builder {
 //	svc, _ := agent.New("assistant").WithFileTools().Build()
 func (b *Builder) WithFileTools() *Builder {
 	b.enableFiles = true
+	return b
+}
+
+// WithSubconscious enables the background "subconscious" memory-extraction
+// worker: after each completed run it spends one extra background LLM call
+// distilling the conversation into durable memory (only when a memory service
+// is configured). OFF by default — the framework starts no background task on
+// its own. Pass false to be explicit.
+//
+//	svc, _ := agent.New("assistant").WithMemory().WithSubconscious().Build()
+func (b *Builder) WithSubconscious(on ...bool) *Builder {
+	b.enableSubconscious = len(on) == 0 || on[0]
 	return b
 }
 
@@ -806,6 +819,9 @@ func (b *Builder) build() (*Service, error) {
 		execToolsRegistered = true
 	}
 	svc.visionEnabled = b.enableVision
+	if b.enableSubconscious {
+		svc.StartSubconscious()
+	}
 	if b.enableFiles {
 		RegisterFileTools(svc)
 		execToolsRegistered = true

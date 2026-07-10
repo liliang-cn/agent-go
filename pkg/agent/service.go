@@ -241,9 +241,10 @@ func NewService(
 		Prompts: promptMgr,
 	}
 
-	// Initialize and start subconscious pool
+	// Create the subconscious pool but DO NOT start it by default — no
+	// framework-default background task. Opt in with Builder.WithSubconscious()
+	// or Service.StartSubconscious(). While unstarted, Enqueue is a no-op.
 	s.subconscious = NewSubconsciousWorkerPool(s)
-	s.subconscious.Start(1) // 1 worker is enough for background tasks
 
 	// Inject prompt manager into memory service if it supports it
 	if memoryService != nil {
@@ -543,6 +544,44 @@ func (s *Service) RegisterOutputLint(lint OutputLint, agents ...string) {
 	for _, name := range agents {
 		reg.RegisterForAgent(name, lint)
 	}
+}
+
+// DisableOutputLint removes one or more output lints by name from this
+// service's registry. This is the opt-out for baseline lints that don't fit a
+// product — e.g. a text-generating agent that should never be forced to call a
+// file-write tool can drop the built-in "file_task_must_write". Safe to call
+// after the service is built; no-op for names that aren't registered.
+func (s *Service) DisableOutputLint(names ...string) {
+	if s == nil {
+		return
+	}
+	reg := s.OutputLints()
+	for _, n := range names {
+		reg.RemoveByName(n)
+	}
+}
+
+// StopSubconscious halts the background subconscious memory-extraction worker
+// pool. After it stops, the per-turn extraction job is dropped (Enqueue becomes
+// a no-op), so no extra LLM call is made after each run. Useful for agents that
+// only produce text and don't need durable episodic memory — it removes both
+// the background token cost and its log noise.
+func (s *Service) StopSubconscious() {
+	if s == nil || s.subconscious == nil {
+		return
+	}
+	s.subconscious.Stop()
+}
+
+// StartSubconscious enables the background subconscious memory-extraction worker.
+// It is OFF by default (no framework-default background task); opt in here or via
+// Builder.WithSubconscious(). Costs one extra background LLM call after each run
+// (only when a memory service is configured). Safe to call more than once.
+func (s *Service) StartSubconscious() {
+	if s == nil || s.subconscious == nil {
+		return
+	}
+	s.subconscious.Start(1)
 }
 
 // RunStream executes a goal and returns a stream of events
