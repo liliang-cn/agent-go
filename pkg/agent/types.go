@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/liliang-cn/agent-go/v2/pkg/domain"
@@ -222,6 +223,12 @@ type RunConfig struct {
 	// the next round.
 	ResumeMessages []domain.Message
 
+	// InputParts, when non-empty, are appended to the fresh run's initial
+	// user message as structured multimodal content blocks (e.g. images) so
+	// vision-capable providers see them directly. The goal text is fronted as
+	// a text part. Ignored on resume runs.
+	InputParts []domain.MessagePart
+
 	// Thinking, when non-nil, is forwarded to the provider as the
 	// `thinking` request field (DeepSeek v4 + reasoner-compatible
 	// providers). Use WithThinking(false) to disable chain-of-thought
@@ -355,6 +362,33 @@ func WithResumeMessages(msgs []domain.Message) RunOption {
 		}
 		c.ResumeMessages = make([]domain.Message, len(msgs))
 		copy(c.ResumeMessages, msgs)
+	}
+}
+
+// WithInputParts attaches structured multimodal content blocks (e.g. images
+// via domain.ImageLocalPathPart / ImageBase64Part) to the fresh run's initial
+// user message, so vision-capable providers receive them alongside the goal
+// text. Honored on the streaming runtime path (RunStream / RunStreamWithOptions);
+// no effect on resume runs.
+func WithInputParts(parts ...domain.MessagePart) RunOption {
+	return func(c *RunConfig) {
+		if len(parts) == 0 {
+			return
+		}
+		c.InputParts = append(c.InputParts, parts...)
+	}
+}
+
+// WithInputImages is a convenience over WithInputParts that attaches local
+// image files (by path) to the initial user message for vision models.
+func WithInputImages(paths ...string) RunOption {
+	return func(c *RunConfig) {
+		for _, p := range paths {
+			if strings.TrimSpace(p) == "" {
+				continue
+			}
+			c.InputParts = append(c.InputParts, domain.ImageLocalPathPart(p))
+		}
 	}
 }
 

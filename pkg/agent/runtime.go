@@ -343,6 +343,24 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 	if !resuming {
 		r.session.AddMessage(withTaskID(domain.Message{Role: "user", Content: goal}, taskID))
 	}
+	// Multimodal input: attach caller-supplied parts (e.g. images) to the
+	// current user turn so vision-capable providers see them. state.Messages
+	// already carries the goal as the last user message; front its text as a
+	// text part, then append the images.
+	if !resuming && r.cfg != nil && len(r.cfg.InputParts) > 0 {
+		for i := len(messages) - 1; i >= 0; i-- {
+			if messages[i].Role != "user" {
+				continue
+			}
+			parts := make([]domain.MessagePart, 0, len(r.cfg.InputParts)+1)
+			if c := messages[i].Content; c != "" {
+				parts = append(parts, domain.TextPart(c))
+			}
+			parts = append(parts, r.cfg.InputParts...)
+			messages[i].Parts = parts
+			break
+		}
+	}
 	for round := 0; round < maxRounds; round++ {
 		// Check cancellation
 		if ctx.Err() != nil {
