@@ -112,6 +112,34 @@ func (r *OutputLintRegistry) RegisterForAgent(agentName string, lint OutputLint)
 	r.byAgent[key] = append(r.byAgent[key], lint)
 }
 
+// RemoveByName deletes any registered lint — global or agent-specific — whose
+// Name() matches name. It lets a caller opt out of a baseline lint that does
+// not fit a particular product (e.g. a text-generation agent that legitimately
+// returns prose instead of calling a file-write tool, which should not be held
+// to file_task_must_write). No-op when the name is absent.
+func (r *OutputLintRegistry) RemoveByName(name string) {
+	if r == nil || strings.TrimSpace(name) == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.global = filterOutLintByName(r.global, name)
+	for k := range r.byAgent {
+		r.byAgent[k] = filterOutLintByName(r.byAgent[k], name)
+	}
+}
+
+func filterOutLintByName(lints []OutputLint, name string) []OutputLint {
+	out := make([]OutputLint, 0, len(lints))
+	for _, l := range lints {
+		if l != nil && l.Name() == name {
+			continue
+		}
+		out = append(out, l)
+	}
+	return out
+}
+
 // Run executes every applicable lint in registration order (global first,
 // then agent-specific) and returns the first violation. If no lint rejects
 // the text, the returned violation is nil.

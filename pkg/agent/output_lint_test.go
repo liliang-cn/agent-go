@@ -146,3 +146,30 @@ func TestLintFuncNilFnIsPass(t *testing.T) {
 		t.Fatalf("nil-fn lint should pass with no reason, got ok=%v reason=%q", ok, reason)
 	}
 }
+
+// RemoveByName must drop a lint from both the global and per-agent buckets so a
+// product can opt out of a baseline lint that doesn't fit it.
+func TestOutputLintRegistryRemoveByName(t *testing.T) {
+	r := NewOutputLintRegistry()
+	r.RegisterGlobal(failLint("file_task_must_write", "need a file"))
+	r.RegisterGlobal(passLint("other"))
+	r.RegisterForAgent("Drafter", failLint("file_task_must_write", "need a file"))
+
+	// Before removal: the failing lint rejects.
+	if v := r.Run("some text", LintContext{AgentName: "Drafter"}); v == nil {
+		t.Fatal("expected a violation before removal")
+	}
+
+	r.RemoveByName("file_task_must_write")
+
+	if v := r.Run("some text", LintContext{AgentName: "Drafter"}); v != nil {
+		t.Fatalf("after RemoveByName the lint still fired: %+v", v)
+	}
+	// The unrelated lint remains registered.
+	names := r.Names("Drafter")
+	if len(names) != 1 || names[0] != "other" {
+		t.Fatalf("names = %v, want [other]", names)
+	}
+	// Removing an absent name is a no-op.
+	r.RemoveByName("nonexistent")
+}
