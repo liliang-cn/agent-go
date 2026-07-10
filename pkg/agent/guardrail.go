@@ -238,6 +238,43 @@ type GuardrailChainResult struct {
 	Reason           string             `json:"reason,omitempty"`
 }
 
+// Guardrails returns the service's guardrail chain, or nil when none are
+// registered. The runtime checks for nil to skip the guardrail path entirely
+// (zero overhead when unused).
+func (s *Service) Guardrails() *GuardrailChain {
+	if s == nil {
+		return nil
+	}
+	s.guardrailsMu.RLock()
+	defer s.guardrailsMu.RUnlock()
+	return s.guardrails
+}
+
+// RegisterGuardrail adds one or more guardrails to the service, creating the
+// chain lazily on first use. The chain threads redacted content through each
+// applicable guardrail (matched by kind) at the runtime seams. No-op for nil
+// guardrails. Safe to call after Build().
+func (s *Service) RegisterGuardrail(gs ...*Guardrail) {
+	if s == nil {
+		return
+	}
+	s.guardrailsMu.Lock()
+	defer s.guardrailsMu.Unlock()
+	for _, g := range gs {
+		if g == nil {
+			continue
+		}
+		if s.guardrails == nil {
+			s.guardrails = NewGuardrailChain()
+			// Redaction chains must run every applicable guardrail so each
+			// pass can thread its modified content into the next; don't bail
+			// on the first non-pass (that's for hard-block chains only).
+			s.guardrails.WithFailFast(false)
+		}
+		s.guardrails.Add(g)
+	}
+}
+
 // InputGuardrail creates a guardrail for input validation
 func InputGuardrail(name string, fn func(ctx context.Context, content string) (*GuardrailResult, error), opts ...GuardrailOption) *Guardrail {
 	return NewGuardrail(name, GuardrailKindInput, func(ctx context.Context, content string, kind GuardrailKind) (*GuardrailResult, error) {

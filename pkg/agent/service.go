@@ -122,6 +122,14 @@ type Service struct {
 	observersMu sync.RWMutex
 	observers   []Observer
 
+	// guardrails is the optional content-transform chain applied by the
+	// runtime at the input (pre-LLM), output (final answer), and memory
+	// seams. Default OFF: nil means zero overhead (the runtime skips the
+	// whole guardrail path). Registered via RegisterGuardrail /
+	// Builder.WithGuardrails / Builder.WithPIIRedaction. See guardrail.go.
+	guardrailsMu sync.RWMutex
+	guardrails   *GuardrailChain
+
 	// checkpointSink, when non-nil, is called by the runtime at every
 	// round boundary so the message history can be persisted for
 	// Tasks().Resume. TeamManager.buildServiceForModel wires this up;

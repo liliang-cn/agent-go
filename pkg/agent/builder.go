@@ -101,6 +101,7 @@ type Builder struct {
 	permissionHandler PermissionHandler
 	permissionPolicy  PermissionPolicy
 	observers         []Observer
+	guardrails        []*Guardrail
 
 	// Custom LLM service (optional - if not set, uses global pool)
 	llmService domain.Generator
@@ -391,6 +392,51 @@ func (b *Builder) WithObserver(obs ...Observer) *Builder {
 		if o != nil {
 			b.observers = append(b.observers, o)
 		}
+	}
+	return b
+}
+
+// WithGuardrails registers arbitrary content guardrails on the service. They
+// run at the input (pre-LLM), output (final answer), and memory seams,
+// threading redacted content through the chain. Default OFF — the framework
+// registers no guardrails unless you ask. Zero overhead when unused.
+func (b *Builder) WithGuardrails(gs ...*Guardrail) *Builder {
+	for _, g := range gs {
+		if g != nil {
+			b.guardrails = append(b.guardrails, g)
+		}
+	}
+	return b
+}
+
+// WithPIIRedaction is a convenience that wires PII redaction guardrails.
+// By default it adds an INPUT guardrail (so PII is stripped before it ever
+// reaches the LLM — the key "don't leak to the cloud" use) and an OUTPUT
+// guardrail (so PII never lands in the final answer or durable memory).
+// Defaults: RedactPartial mode, all PII kinds, both directions. Tune with
+// PIIOptions. Default OFF — nothing happens unless you call this.
+//
+//	svc, _ := agent.New("assistant").WithPIIRedaction().Build()
+//	svc, _ := agent.New("assistant").
+//		WithPIIRedaction(agent.WithPIIMode(agent.RedactBlock)).Build()
+func (b *Builder) WithPIIRedaction(opts ...PIIOption) *Builder {
+	o := piiOptions{mode: RedactPartial}
+	for _, opt := range opts {
+		opt(&o)
+	}
+	if !o.outputOnly {
+		b.guardrails = append(b.guardrails, NewPIIGuardrail(PIIConfig{
+			Kinds: o.kinds,
+			Mode:  o.mode,
+			Kind:  GuardrailKindInput,
+		}))
+	}
+	if !o.inputOnly {
+		b.guardrails = append(b.guardrails, NewPIIGuardrail(PIIConfig{
+			Kinds: o.kinds,
+			Mode:  o.mode,
+			Kind:  GuardrailKindOutput,
+		}))
 	}
 	return b
 }
@@ -729,6 +775,9 @@ func (b *Builder) build() (*Service, error) {
 	}
 	if len(b.observers) > 0 {
 		svc.RegisterObserver(b.observers...)
+	}
+	if len(b.guardrails) > 0 {
+		svc.RegisterGuardrail(b.guardrails...)
 	}
 	if b.permissionHandler != nil {
 		svc.SetPermissionHandler(b.permissionHandler)

@@ -392,6 +392,20 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		// 3. Build model inputs for CURRENT agent
 		tools, genMessages := r.svc.prepareTurnInputs(ctx, r.currentAgent, messages, goal)
 
+		// Guardrail seam (INPUT): redact PII/etc. in a COPY of the messages
+		// before the provider sees them, without touching the persisted
+		// session/history or the system message. A blocking guardrail
+		// (e.g. PII RedactBlock) refuses the run instead of sending. Gated on
+		// a non-nil chain so unused guardrails cost nothing.
+		if r.svc.guardrails != nil {
+			redacted, reason, blocked := r.applyInputGuardrails(ctx, genMessages)
+			if blocked {
+				r.blockRun(goal, "input guardrail blocked the request: "+reason, messages, true)
+				return
+			}
+			genMessages = redacted
+		}
+
 		// --- DEBUG: LOG FULL PROMPT + TOOLS ---
 		if r.debugEnabled() {
 			var promptBuilder strings.Builder
@@ -1030,6 +1044,13 @@ func (r *Runtime) completeRun(goal, content string, messages []domain.Message, p
 // refusal text) can pass the reason directly; everything else flows
 // through completeRun's classifier.
 func (r *Runtime) completeRunWithStop(goal, content string, messages []domain.Message, persistHistory bool, reason StopReason) {
+	// Guardrail seam (OUTPUT): redact the final answer before it is emitted and
+	// persisted as the run result. The persisted message history (messages) is
+	// intentionally left untouched — only the terminal content is scrubbed.
+	if r.svc != nil && r.svc.guardrails != nil {
+		content = r.applyOutputGuardrails(context.Background(), content)
+	}
+
 	// Final-state checkpoint: capture the message history immediately before
 	// the terminal Complete event is emitted. This means a 1-round task
 	// still produces a snapshot, and `task replay` can re-run from "the
@@ -1056,7 +1077,17 @@ func (r *Runtime) completeRunWithStop(goal, content string, messages []domain.Me
 		r.persistMessages(messages)
 	}
 	r.clearCollectedSources()
-	go r.saveToMemory(context.Background(), goal, content)
+
+	// Guardrail seam (MEMORY): redact goal+content with the OUTPUT guardrails
+	// before durable memory persists them, so PII never lands in MEMORY.md /
+	// the vector store. content is already output-redacted above; re-running is
+	// idempotent, and this additionally scrubs the goal (the user's prompt).
+	memGoal, memContent := goal, content
+	if r.svc != nil && r.svc.guardrails != nil {
+		memGoal = r.applyOutputGuardrails(context.Background(), goal)
+		memContent = r.applyOutputGuardrails(context.Background(), content)
+	}
+	go r.saveToMemory(context.Background(), memGoal, memContent)
 
 	// Trigger subconscious memory extraction
 	if r.svc.subconscious != nil {
