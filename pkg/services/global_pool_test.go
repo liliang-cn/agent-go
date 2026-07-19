@@ -212,14 +212,12 @@ func TestGlobalPoolServiceSaveLLMPoolConfigPersistsEmbeddingModel(t *testing.T) 
 		t.Fatalf("expected persisted embedding model embed-v2, got %q", persistedCfg.EmbeddingModel)
 	}
 
-	embeddingClient, err := restarted.GetEmbedding()
-	if err != nil {
-		t.Fatalf("GetEmbedding failed: %v", err)
-	}
-	defer restarted.ReleaseEmbedding(embeddingClient)
-
-	if got := embeddingClient.GetModelName(); got != "embed-v2" {
-		t.Fatalf("expected embedding client model embed-v2, got %q", got)
+	// The embedding_model config still persists (asserted above), but LLM/chat
+	// providers are no longer silently reused as an embedding backend — that
+	// produced hard 404s on chat-only gateways. With no dedicated embedding
+	// provider configured, embedding is disabled and GetEmbedding must say so.
+	if _, err := restarted.GetEmbedding(); err == nil {
+		t.Fatal("expected GetEmbedding to fail without a dedicated embedding provider (LLM fallback removed)")
 	}
 }
 

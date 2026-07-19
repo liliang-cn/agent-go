@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 
@@ -109,21 +110,17 @@ func (s *GlobalPoolService) Initialize(ctx context.Context, cfg *config.Config) 
 	}
 
 	// 3. Build embedding pool from DB providers.
-	//    If no dedicated embedding providers exist, fall back to LLM providers
-	//    with EmbeddingModel override.
+	//    Only DEDICATED embedding providers are used. We deliberately do NOT
+	//    fall back to the LLM/chat providers for embeddings: most chat gateways
+	//    don't serve /embeddings, so the old fallback produced a hard 404 on
+	//    every memory/RAG write. With no embedding provider, embedding is simply
+	//    disabled (vector memory/RAG degrade gracefully) and we hint once.
 	embeddingModel := cfg.RAG.EmbeddingModel
 	var embeddingProviders []pool.Provider
 	if len(cfg.RAG.Embedding.Providers) > 0 {
 		embeddingProviders = append(embeddingProviders, cfg.RAG.Embedding.Providers...)
 	} else {
-		// Fallback: derive from LLM providers, override model name.
-		embeddingProviders = make([]pool.Provider, len(llmProviders))
-		for i, p := range llmProviders {
-			embeddingProviders[i] = p
-			if embeddingModel != "" {
-				embeddingProviders[i].ModelName = embeddingModel
-			}
-		}
+		hintNoEmbeddingProvider()
 	}
 	embEnabled := strings.TrimSpace(embeddingModel) != "" && len(embeddingProviders) > 0
 
@@ -139,6 +136,20 @@ func (s *GlobalPoolService) Initialize(ctx context.Context, cfg *config.Config) 
 
 	s.initialized = true
 	return nil
+}
+
+var noEmbeddingHintOnce sync.Once
+
+// hintNoEmbeddingProvider prints a one-time, non-fatal nudge when no dedicated
+// embedding provider is configured. Vector memory / RAG are disabled until one
+// is added; everything else works. Kept to stderr so it never pollutes command
+// output that gets parsed.
+func hintNoEmbeddingProvider() {
+	noEmbeddingHintOnce.Do(func() {
+		fmt.Fprintln(os.Stderr, "ℹ️  No embedding provider configured — vector memory/RAG are disabled "+
+			"(text chat, tools, and skills all work). To enable them, add one, e.g.:\n"+
+			"    agentgo embedding add --name ollama --url http://localhost:11434/v1 --model nomic-embed-text")
+	})
 }
 
 // GetLLM 获取LLM client（自动选择）
