@@ -1134,7 +1134,9 @@ func (r *Runtime) completeRunWithStop(goal, content string, messages []domain.Me
 		memGoal = r.applyOutputGuardrails(context.Background(), goal)
 		memContent = r.applyOutputGuardrails(context.Background(), content)
 	}
-	go r.saveToMemory(context.Background(), memGoal, memContent)
+	// Background, but owned: Close waits for it, so it cannot write into a
+	// directory the caller has already torn down.
+	r.svc.goBackground(func() { r.saveToMemory(context.Background(), memGoal, memContent) })
 
 	// Trigger subconscious memory extraction
 	if r.svc.subconscious != nil {

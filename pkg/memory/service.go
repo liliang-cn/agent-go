@@ -42,7 +42,11 @@ type Service struct {
 	mu sync.RWMutex
 
 	backgroundOnce sync.Once
+	closeOnce      sync.Once
 	durableQueue   chan *domain.MemoryStoreRequest
+	// durableDone is closed when the worker has drained the queue, so Close can
+	// wait for pending writes instead of dropping them.
+	durableDone chan struct{}
 }
 
 // Config holds configuration for the memory service
@@ -128,11 +132,13 @@ func (s *Service) startDurableWorkerIfNeeded() {
 	}
 	s.backgroundOnce.Do(func() {
 		s.durableQueue = make(chan *domain.MemoryStoreRequest, 32)
+		s.durableDone = make(chan struct{})
 		go s.runDurableWorker()
 	})
 }
 
 func (s *Service) runDurableWorker() {
+	defer close(s.durableDone)
 	for req := range s.durableQueue {
 		if req == nil {
 			continue
@@ -1431,4 +1437,30 @@ func (s *Service) GetEvolution(ctx context.Context, memoryID string) (*MemoryEvo
 	}
 
 	return node, nil
+}
+
+// Close drains the durable write queue and stops its worker.
+//
+// runDurableWorker ranges over a channel nothing ever closed, so the worker
+// outlived every caller: a test that ran an agent inside t.TempDir() returned,
+// the directory was removed, and the worker recreated files inside it —
+// surfacing as a flaky "TempDir RemoveAll cleanup: directory not empty" with
+// nothing to do with what the test asserted. In a long-lived process it was a
+// goroutine and a queue that could never be reclaimed.
+//
+// Safe to call more than once, and safe on a service that never started a
+// worker.
+func (s *Service) Close() error {
+	if s == nil {
+		return nil
+	}
+	s.closeOnce.Do(func() {
+		if s.durableQueue != nil {
+			// Closing ends the range loop once the queued writes are done, so
+			// pending memories are still written rather than dropped.
+			close(s.durableQueue)
+			<-s.durableDone
+		}
+	})
+	return nil
 }

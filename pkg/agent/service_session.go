@@ -273,6 +273,15 @@ func (s *Service) Close() error {
 	if s.subconscious != nil {
 		s.subconscious.Stop()
 	}
+	// Wait for work a run left running (memory extraction) before closing the
+	// store underneath it.
+	s.waitBackground()
+	// The memory service owns a worker goroutine and a write queue; closing it
+	// drains pending writes rather than leaving them to land after the caller
+	// has torn its directory down.
+	if closer, ok := s.memoryService.(interface{ Close() error }); ok && closer != nil {
+		_ = closer.Close()
+	}
 	return s.store.Close()
 }
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/liliang-cn/agent-go/v2/pkg/domain"
 	"github.com/liliang-cn/agent-go/v2/pkg/store"
@@ -218,15 +217,24 @@ func TestFileMemoryIntegrationBackgroundDurableWorker(t *testing.T) {
 		t.Fatal("expected durable worker enqueue to succeed")
 	}
 
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		mems, total, err := service.List(ctx, 10, 0)
-		if err == nil && total > 0 && len(mems) > 0 {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("expected background worker to store memories, got total=%d err=%v", total, err)
-		}
-		time.Sleep(20 * time.Millisecond)
+	// Close drains the queue and waits for the worker, so the assertion below is
+	// deterministic. This used to poll for up to two seconds, which held under
+	// no load and failed intermittently when the rest of the suite was competing
+	// for CPU — a wall-clock deadline in a unit test.
+	if err := service.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	mems, total, err := service.List(ctx, 10, 0)
+	if err != nil {
+		t.Fatalf("list after drain: %v", err)
+	}
+	if total == 0 || len(mems) == 0 {
+		t.Fatalf("expected the background worker to have stored the memory, got total=%d", total)
+	}
+
+	// Closing twice must be safe, and must not lose what was already written.
+	if err := service.Close(); err != nil {
+		t.Fatalf("second close: %v", err)
 	}
 }
