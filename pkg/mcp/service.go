@@ -87,12 +87,23 @@ func (s *Service) StopServer(serverName string) error {
 
 // AddDynamicServer adds and starts a server dynamically
 func (s *Service) AddDynamicServer(ctx context.Context, name string, command string, args []string) error {
-	// Create server configuration
+	return s.AddDynamicServerWithEnv(ctx, name, command, args, nil)
+}
+
+// AddDynamicServerWithEnv registers and starts a stdio server, passing env to
+// the child process.
+//
+// Most useful MCP servers need a credential (GITHUB_TOKEN, DATABASE_URL, an API
+// key). AddDynamicServer has no env parameter, so a server installed at runtime
+// started without one and failed — or worse, came up unable to do anything —
+// even when the caller had persisted env to its config file for the next launch.
+func (s *Service) AddDynamicServerWithEnv(ctx context.Context, name string, command string, args []string, env map[string]string) error {
 	serverConfig := &ServerConfig{
 		Name:      name,
 		Type:      ServerTypeStdio,
 		Command:   []string{command},
 		Args:      args,
+		Env:       env,
 		AutoStart: true,
 	}
 
