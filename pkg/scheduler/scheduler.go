@@ -21,9 +21,12 @@ type TaskScheduler struct {
 
 	// Runtime state
 	running bool
-	stopCh  chan struct{}
-	wg      sync.WaitGroup
-	mu      sync.RWMutex
+	// executing distinguishes a scheduler that fires tasks from one opened only
+	// to manage them; see StartManageOnly.
+	executing bool
+	stopCh    chan struct{}
+	wg        sync.WaitGroup
+	mu        sync.RWMutex
 
 	// Concurrency control
 	semaphore chan struct{}
@@ -67,7 +70,27 @@ func (s *TaskScheduler) RegisterExecutor(executor Executor) {
 }
 
 // Start starts the scheduler
-func (s *TaskScheduler) Start() error {
+func (s *TaskScheduler) Start() error { return s.start(true) }
+
+// StartManageOnly opens the store and accepts task management, without running
+// the cron loop — nothing fires.
+//
+// Two processes sharing a home directory (a desktop app and a background daemon,
+// say) both need to create and list tasks, but only one may execute them, or
+// every task runs twice. Since Start couples opening the store to starting the
+// loop, the process that does not own execution had no way to manage tasks at
+// all. This is that way.
+func (s *TaskScheduler) StartManageOnly() error { return s.start(false) }
+
+// IsExecuting reports whether this scheduler fires tasks, as opposed to only
+// managing them.
+func (s *TaskScheduler) IsExecuting() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.running && s.executing
+}
+
+func (s *TaskScheduler) start(execute bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -90,6 +113,12 @@ func (s *TaskScheduler) Start() error {
 	s.registerDefaultExecutors()
 
 	s.running = true
+	s.executing = execute
+
+	if !execute {
+		log.Printf("Task scheduler opened for management only (no execution): %s", s.config.DatabasePath)
+		return nil
+	}
 
 	// Start the main scheduler loop
 	s.wg.Add(1)
