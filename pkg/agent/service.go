@@ -822,9 +822,15 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 			runErr = err
 			return nil, runErr
 		}
-		// Use execution result if available
+		// PTCResult.Output is FormatForLLM's execution report, not an answer.
+		// Overwriting the model's reply with it is what made PTC turns come back
+		// as raw JSON; see ptcFinalAnswer.
 		if ptcRes != nil && ptcRes.Output != "" {
-			finalResult = ptcRes.Output
+			modelSaid := ""
+			if finalResult != nil {
+				modelSaid = fmt.Sprintf("%v", finalResult)
+			}
+			finalResult = s.ptcFinalAnswer(runCtx, goal, session, modelSaid, ptcRes.Output)
 		}
 	} else {
 		var err error

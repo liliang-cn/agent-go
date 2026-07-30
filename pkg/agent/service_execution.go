@@ -1173,7 +1173,43 @@ func isMeaningfulAnswerText(text string) bool {
 		}
 	}
 
+	// A machine-facing payload is not an answer. PTC's terminal short-circuit
+	// uses this to decide whether a script's return value can stand as the final
+	// reply and skip the summarising round; when the script returns a struct —
+	// which is the normal thing for code to do — the user was shown raw JSON
+	// instead of a sentence, and the system prompt's rules (tone, a required
+	// trailing tag, a language) never got applied. Rejecting it here sends the
+	// result back to the model for one more round, which is where a reply is
+	// supposed to come from.
+	if looksLikeMachinePayload(text) {
+		return false
+	}
+
 	return true
+}
+
+// looksLikeMachinePayload reports whether text is a serialized value rather than
+// prose: a JSON object or array, possibly fenced.
+func looksLikeMachinePayload(text string) bool {
+	t := strings.TrimSpace(text)
+	// Unwrap a single fenced block so ```json {...} ``` is judged on content.
+	if strings.HasPrefix(t, "```") {
+		if end := strings.LastIndex(t, "```"); end > 3 {
+			inner := t[3:end]
+			if nl := strings.IndexByte(inner, '\n'); nl >= 0 {
+				inner = inner[nl+1:]
+			}
+			t = strings.TrimSpace(inner)
+		}
+	}
+	if len(t) < 2 {
+		return false
+	}
+	first, last := t[0], t[len(t)-1]
+	if (first == '{' && last == '}') || (first == '[' && last == ']') {
+		return json.Valid([]byte(t))
+	}
+	return false
 }
 
 // toolResultToString converts a tool execution result to a string suitable for
