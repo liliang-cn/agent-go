@@ -20,7 +20,10 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          # Read from go.mod, as ci.yml does. Pinned here it was 1.24 against a
+          # module requiring 1.25.0, so every release build would have failed on
+          # the toolchain before it got as far as the tests.
+          go-version-file: go.mod
 
       - name: Run tests
         run: make test
