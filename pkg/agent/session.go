@@ -21,6 +21,10 @@ type Session struct {
 	Metadata  map[string]interface{} `json:"metadata,omitempty"`
 	CreatedAt time.Time              `json:"created_at"`
 	UpdatedAt time.Time              `json:"updated_at"`
+
+	// loadedCount is how many messages this copy was loaded with, so a save can
+	// merge only what this run appended. See store_session_merge.go.
+	loadedCount int
 }
 
 // NewSession creates a new session with a UUID v4 ID

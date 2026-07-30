@@ -162,7 +162,22 @@ func taskPlanFromStore(plan *store.TaskPlan) *TaskPlan {
 // concurrent AddMessage calls and crashes with an index-out-of-range panic
 // when the underlying slice grows mid-iteration.
 func (s *Store) SaveSession(session *Session) error {
+	// Serialised per session id: two runs finishing together would otherwise
+	// interleave read-modify-write and lose one side's turns.
+	unlock := lockSessionSave(session.ID)
+	defer unlock()
+
 	src := session.GetMessages()
+	// Merge this run's additions into whatever is stored now, rather than
+	// replacing the history with this copy's view of it.
+	if appended := session.appendedSince(); len(appended) > 0 {
+		if latest, err := s.GetSession(session.ID); err == nil && latest != nil {
+			src = mergeMessagesForSave(latest.GetMessages(), appended)
+		}
+	}
+	// This copy is now in sync with what is about to be written.
+	defer session.setBaseline(len(src))
+
 	messages := make([]store.ChatMessage, len(src))
 	for i, m := range src {
 		messages[i] = store.ChatMessage{
@@ -281,6 +296,9 @@ func (s *Store) GetSession(id string) (*Session, error) {
 			ResponseID:       m.ResponseID,
 		}
 	}
+	// Remember where this copy started; SaveSession merges only what gets
+	// appended past this point, so a concurrent run cannot be overwritten.
+	session.loadedCount = len(session.Messages)
 
 	return session, nil
 }
