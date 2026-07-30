@@ -168,15 +168,18 @@ func (s *Store) SaveSession(session *Session) error {
 	defer unlock()
 
 	src := session.GetMessages()
-	// Merge this run's additions into whatever is stored now, rather than
-	// replacing the history with this copy's view of it.
-	if appended := session.appendedSince(); len(appended) > 0 {
-		if latest, err := s.GetSession(session.ID); err == nil && latest != nil {
-			src = mergeMessagesForSave(latest.GetMessages(), appended)
-		}
+	// Merge this copy's additions into whatever is stored now, rather than
+	// replacing the history with this copy's view of it. Done unconditionally:
+	// skipping the merge when nothing was appended would fall through to
+	// writing this copy's list, which is exactly the overwrite to avoid.
+	if latest, err := s.GetSession(session.ID); err == nil && latest != nil {
+		src = mergeMessagesForSave(latest.GetMessages(), session.appendedSince())
 	}
-	// This copy is now in sync with what is about to be written.
-	defer session.setBaseline(len(src))
+	// The baseline is a position in THIS copy's message list, so it must be that
+	// list's length — not len(src), which counts other runs' turns too and would
+	// push the baseline past the end, making appendedSince() report nothing and
+	// the next save overwrite instead of merge.
+	defer session.setBaseline(len(session.GetMessages()))
 
 	messages := make([]store.ChatMessage, len(src))
 	for i, m := range src {

@@ -1023,15 +1023,59 @@ func (r *Runtime) clearCollectedSources() {
 	r.svc.ragSourcesMu.Unlock()
 }
 
+// persistMessages appends a turn's messages to the session and saves it.
+//
+// messages is what was sent to the model, which already contains the user's
+// goal — the run added it at the top (see the AddMessage on the fresh-run
+// path). Appending blindly stored the question twice. Skip anything the
+// session already holds; the key matches mergeMessagesForSave so both paths
+// agree on what "the same turn" means.
 func (r *Runtime) persistMessages(messages []domain.Message) {
 	if len(messages) == 0 {
 		return
 	}
+	seen := make(map[string]bool)
+	for _, m := range r.session.GetMessages() {
+		seen[sessionMessageKey(m)] = true
+	}
+	added := 0
 	for _, msg := range messages {
+		k := sessionMessageKey(msg)
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
 		r.session.AddMessage(msg)
+		added++
+	}
+	if added == 0 {
+		return
 	}
 	if err := r.svc.store.SaveSession(r.session); err != nil {
 		r.svc.logger.Warn("failed to save session history", slog.String("error", err.Error()))
+	}
+}
+
+// persistFinalAnswer stores the answer the run ended with.
+//
+// The final content is generated after messages was assembled, so it is in
+// neither — nobody stored it, and a completed conversation read back as a list
+// of questions with no replies. Reopening such a history showed the user's own
+// messages and nothing else.
+func (r *Runtime) persistFinalAnswer(content string) {
+	if strings.TrimSpace(content) == "" {
+		return
+	}
+	msg := withTaskID(domain.Message{Role: "assistant", Content: content}, currentTaskID(r.session))
+	key := sessionMessageKey(msg)
+	for _, m := range r.session.GetMessages() {
+		if sessionMessageKey(m) == key {
+			return // already there (e.g. a path that appended it itself)
+		}
+	}
+	r.session.AddMessage(msg)
+	if err := r.svc.store.SaveSession(r.session); err != nil {
+		r.svc.logger.Warn("failed to save the final answer", slog.String("error", err.Error()))
 	}
 }
 
@@ -1076,6 +1120,9 @@ func (r *Runtime) completeRunWithStop(goal, content string, messages []domain.Me
 	if persistHistory {
 		r.persistMessages(messages)
 	}
+	// The answer is stored regardless: persistHistory decides whether the
+	// intermediate turn goes to disk, not whether the conversation has a reply.
+	r.persistFinalAnswer(content)
 	r.clearCollectedSources()
 
 	// Guardrail seam (MEMORY): redact goal+content with the OUTPUT guardrails

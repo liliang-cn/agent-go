@@ -70,6 +70,13 @@ func (s *Session) appendedSince() []domain.Message {
 	return out
 }
 
+// sessionMessageKey identifies a turn for deduplication. Role and content alone
+// would collapse two distinct tool results that happen to return the same text,
+// so the tool_call_id is part of it.
+func sessionMessageKey(m domain.Message) string {
+	return m.Role + "\x00" + m.Content + "\x00" + m.ToolCallID
+}
+
 // mergeMessagesForSave computes what should be persisted: the stored history,
 // plus this run's new turns, minus any that are already there.
 //
@@ -80,9 +87,7 @@ func mergeMessagesForSave(stored, appended []domain.Message) []domain.Message {
 		return stored
 	}
 	seen := make(map[string]bool, len(stored))
-	key := func(m domain.Message) string {
-		return m.Role + "\x00" + m.Content + "\x00" + m.ToolCallID
-	}
+	key := sessionMessageKey
 	for _, m := range stored {
 		seen[key(m)] = true
 	}
