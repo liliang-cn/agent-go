@@ -19,7 +19,7 @@ const (
 	PIICreditCard PIIKind = "credit_card" // 16-digit grouped card numbers (Luhn-checked)
 	PIISSN        PIIKind = "ssn"         // US Social Security numbers
 	PIICNID       PIIKind = "cn_id"       // 中国居民身份证 (18 digits, checksum-validated)
-	PIICNMobile   PIIKind = "cn_mobile"   // 中国大陆手机号 (1[3-9] + 9 digits)
+	PIICNMobile   PIIKind = "cn_mobile"   // 中国大陆手机号 (1[3-9] + 9 digits, optionally grouped 3-4-4)
 	PIIBankCard   PIIKind = "bank_card"   // 13-19 contiguous digits (Luhn-checked)
 	PIIPassport   PIIKind = "passport"    // letter-prefixed passport-style ids
 	PIIIPv4       PIIKind = "ipv4"        // IPv4 addresses
@@ -138,8 +138,11 @@ var piiDetectors = map[PIIKind]piiDetector{
 		priority: 70,
 	},
 	PIICNMobile: {
-		kind:     PIICNMobile,
-		re:       regexp.MustCompile(`\b1[3-9]\d{9}\b`),
+		kind: PIICNMobile,
+		// Contiguous, or grouped 3-4-4 with spaces / hyphens — the way phone
+		// numbers are actually written on a CV or a business card
+		// ("138 0013 8000", "138-0013-8000").
+		re:       regexp.MustCompile(`\b1[3-9]\d[-\s]?\d{4}[-\s]?\d{4}\b`),
 		priority: 65,
 	},
 	PIIPhoneUS: {

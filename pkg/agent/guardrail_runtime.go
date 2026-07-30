@@ -47,42 +47,11 @@ func (r *Runtime) redactWithGuardrails(ctx context.Context, text string, kind Gu
 	return text, false, ""
 }
 
-// applyInputGuardrails redacts the non-system messages in a COPY of msgs with
-// the input-direction guardrails, so the provider receives scrubbed text while
-// the persisted session/history stays intact. Only Content and text Parts are
-// rewritten; roles, tool_calls, and tool_call_ids are preserved verbatim so
-// tool-call pairing is never broken. Returns (redactedCopy, blockReason,
-// blocked); on block the copy is discarded by the caller.
+// applyInputGuardrails scrubs the input-direction guardrails over a copy of
+// msgs before the provider sees them, so the persisted session/history stays
+// intact. A blocking guardrail discards the copy and refuses the run.
 func (r *Runtime) applyInputGuardrails(ctx context.Context, msgs []domain.Message) ([]domain.Message, string, bool) {
-	out := make([]domain.Message, len(msgs))
-	copy(out, msgs)
-	for i := range out {
-		if out[i].Role == "system" {
-			continue
-		}
-		if c := out[i].Content; c != "" {
-			nc, blocked, reason := r.redactWithGuardrails(ctx, c, GuardrailKindInput)
-			if blocked {
-				return nil, reason, true
-			}
-			out[i].Content = nc
-		}
-		if len(out[i].Parts) > 0 {
-			newParts := make([]domain.MessagePart, len(out[i].Parts))
-			copy(newParts, out[i].Parts)
-			for j := range newParts {
-				if newParts[j].Type == domain.MessagePartTypeText && newParts[j].Text != "" {
-					nt, blocked, reason := r.redactWithGuardrails(ctx, newParts[j].Text, GuardrailKindInput)
-					if blocked {
-						return nil, reason, true
-					}
-					newParts[j].Text = nt
-				}
-			}
-			out[i].Parts = newParts
-		}
-	}
-	return out, "", false
+	return redactMessagesWith(ctx, msgs, r.redactWithGuardrails)
 }
 
 // applyOutputGuardrails redacts a terminal text value with the output-direction

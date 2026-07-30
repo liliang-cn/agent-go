@@ -102,6 +102,9 @@ type Builder struct {
 	permissionPolicy  PermissionPolicy
 	observers         []Observer
 	guardrails        []*Guardrail
+	// piiInput mirrors WithPIIRedaction's input-side options so Build can wrap
+	// the Generator, making the provider boundary the enforcement point.
+	piiInput *piiOptions
 
 	// Custom LLM service (optional - if not set, uses global pool)
 	llmService domain.Generator
@@ -424,6 +427,13 @@ func (b *Builder) WithPIIRedaction(opts ...PIIOption) *Builder {
 	for _, opt := range opts {
 		opt(&o)
 	}
+	// Kept for Build, which wraps the Generator itself: the guardrails below
+	// only cover the conversation turn, while helper calls (intent
+	// classification, MCP, memory) reach the provider through other paths.
+	if !o.outputOnly {
+		pii := o
+		b.piiInput = &pii
+	}
 	if !o.outputOnly {
 		b.guardrails = append(b.guardrails, NewPIIGuardrail(PIIConfig{
 			Kinds: o.kinds,
@@ -583,6 +593,13 @@ func (b *Builder) build() (*Service, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to get LLM: %w", err)
 		}
+	}
+
+	// PII redaction at the provider boundary. Everything constructed below
+	// (planner, MCP service, memory service) gets this wrapper, so a helper
+	// call cannot leak what the conversation turn scrubs.
+	if b.piiInput != nil {
+		llmSvc = newPIIRedactingGenerator(llmSvc, b.piiInput.kinds, b.piiInput.mode)
 	}
 
 	// Determine Embedder service: use custom if provided, otherwise try global pool

@@ -238,3 +238,51 @@ func luhnComplete(prefix string) string {
 	check := (10 - (sum % 10)) % 10
 	return prefix + string(rune('0'+check))
 }
+
+// TestPIICNMobileGroupedForms covers how mobile numbers are actually written on
+// a CV or business card. The pattern used to demand 11 contiguous digits, so
+// "138 0013 8000" — the most common way to type it — sailed past redaction.
+func TestPIICNMobileGroupedForms(t *testing.T) {
+	hits := []string{
+		"13812345678",        // contiguous
+		"138 1234 5678",      // 3-4-4, spaces
+		"138-1234-5678",      // 3-4-4, hyphens
+		"联系电话：138 0013 8000", // in running Chinese text
+	}
+	for _, in := range hits {
+		t.Run("hit/"+in, func(t *testing.T) {
+			out, detected, _ := runPII(in, []PIIKind{PIICNMobile}, RedactMask)
+			found := false
+			for _, k := range detected {
+				if k == PIICNMobile {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("%q should be detected as a mobile number, got %q", in, out)
+			}
+		})
+	}
+
+	// Partial mode reports digits only, so a grouped number masks the same way
+	// as a contiguous one.
+	out, _, _ := runPII("138 1234 5678", []PIIKind{PIICNMobile}, RedactPartial)
+	if out != "138****5678" {
+		t.Errorf("grouped partial redaction = %q, want %q", out, "138****5678")
+	}
+
+	misses := []string{
+		"2024 1234 5678", // not a mobile prefix
+		"12812345678",    // second digit out of range
+	}
+	for _, in := range misses {
+		t.Run("miss/"+in, func(t *testing.T) {
+			_, detected, _ := runPII(in, []PIIKind{PIICNMobile}, RedactMask)
+			for _, k := range detected {
+				if k == PIICNMobile {
+					t.Errorf("%q must not be treated as a mobile number", in)
+				}
+			}
+		})
+	}
+}

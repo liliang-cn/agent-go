@@ -39,42 +39,12 @@ func (s *Service) redactWithGuardrails(ctx context.Context, text string, kind Gu
 	return text, false, ""
 }
 
-// redactInputMessages redacts the non-system messages in a COPY of msgs with
-// the input-direction guardrails, leaving the caller's slice (and the persisted
-// session) untouched — only what is handed to the provider is scrubbed. Roles,
-// tool_calls and tool_call_ids are preserved verbatim so tool-call pairing is
-// never broken. Returns (redactedCopy, reason, blocked); on block the copy is nil.
+// redactInputMessages scrubs the input-direction guardrails over a copy of
+// msgs. Sub-agents only hold a *Service, so this is their route to the same
+// protection the main loop gets.
 func (s *Service) redactInputMessages(ctx context.Context, msgs []domain.Message) ([]domain.Message, string, bool) {
 	if s == nil || s.guardrails == nil {
 		return msgs, "", false
 	}
-	out := make([]domain.Message, len(msgs))
-	copy(out, msgs)
-	for i := range out {
-		if out[i].Role == "system" {
-			continue
-		}
-		if c := out[i].Content; c != "" {
-			nc, blocked, reason := s.redactWithGuardrails(ctx, c, GuardrailKindInput)
-			if blocked {
-				return nil, reason, true
-			}
-			out[i].Content = nc
-		}
-		if len(out[i].Parts) > 0 {
-			newParts := make([]domain.MessagePart, len(out[i].Parts))
-			copy(newParts, out[i].Parts)
-			for j := range newParts {
-				if newParts[j].Type == domain.MessagePartTypeText && newParts[j].Text != "" {
-					nt, blocked, reason := s.redactWithGuardrails(ctx, newParts[j].Text, GuardrailKindInput)
-					if blocked {
-						return nil, reason, true
-					}
-					newParts[j].Text = nt
-				}
-			}
-			out[i].Parts = newParts
-		}
-	}
-	return out, "", false
+	return redactMessagesWith(ctx, msgs, s.redactWithGuardrails)
 }
