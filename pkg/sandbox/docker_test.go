@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -10,6 +11,16 @@ import (
 
 func skipIfNoDocker(t *testing.T) {
 	t.Helper()
+	// Opt-in, not "run whenever a daemon happens to be up". These tests pull an
+	// image and start a container, which takes tens of seconds — on a machine
+	// with Docker running they silently turned `go test ./...` into a
+	// minutes-long job, and on one without they skipped, so the cost landed
+	// exactly where it was least expected.
+	//
+	//	AGENTGO_DOCKER_TEST=1 go test ./pkg/sandbox/ -run Docker
+	if os.Getenv("AGENTGO_DOCKER_TEST") != "1" {
+		t.Skip("set AGENTGO_DOCKER_TEST=1 to run the docker sandbox tests (they pull an image and start a container)")
+	}
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("docker binary not found; skipping docker sandbox tests")
 	}
