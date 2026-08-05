@@ -106,36 +106,6 @@ func (r *ToolRegistry) IsActivatedForSession(sessionID, toolName string) bool {
 	return activeMap != nil && activeMap[toolName]
 }
 
-// SearchDeferredTools searches for deferred tools matching the query.
-func (r *ToolRegistry) SearchDeferredTools(query string) []domain.ToolDefinition {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	query = strings.ToLower(query)
-	keywords := strings.Fields(query)
-	var matches []domain.ToolDefinition
-
-	for _, t := range r.tools {
-		if t.def.DeferLoading {
-			name := strings.ToLower(t.def.Function.Name)
-			desc := strings.ToLower(t.def.Function.Description)
-
-			matched := false
-			for _, kw := range keywords {
-				if strings.Contains(name, kw) || strings.Contains(desc, kw) {
-					matched = true
-					break
-				}
-			}
-
-			if matched {
-				matches = append(matches, t.def)
-			}
-		}
-	}
-	return matches
-}
-
 // Register adds (or replaces) a tool. Tools registered here are:
 //   - Visible to the LLM in non-PTC mode
 //   - Accessible via callTool() inside the PTC JavaScript sandbox
@@ -406,24 +376,6 @@ func (r *ToolRegistry) SyncToPTCRouter(router *ptc.AgentGoRouter) {
 		_ = router.RegisterTool(toolName, info, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 			return handler(ctx, args)
 		})
-	}
-}
-
-// ToolSearchConfig configures tool search functionality
-type ToolSearchConfig struct {
-	Enabled      bool
-	SearchType   string // "regex" or "bm25"
-	MaxResults   int    // Maximum tools to return per search
-	AutoActivate bool   // Automatically activate tools after search
-}
-
-// DefaultToolSearchConfig returns default configuration
-func DefaultToolSearchConfig() *ToolSearchConfig {
-	return &ToolSearchConfig{
-		Enabled:      true,
-		SearchType:   "regex",
-		MaxResults:   5,
-		AutoActivate: true,
 	}
 }
 

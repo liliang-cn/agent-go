@@ -901,28 +901,6 @@ func (s *AgentGoDB) GetConfig(key string) (string, error) {
 	return value, nil
 }
 
-// ListConfig retrieves all config key-value pairs
-func (s *AgentGoDB) ListConfig() (map[string]string, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	rows, err := s.db.Query("SELECT key, value FROM config")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	config := make(map[string]string)
-	for rows.Next() {
-		var key, value string
-		if err := rows.Scan(&key, &value); err != nil {
-			continue
-		}
-		config[key] = value
-	}
-	return config, nil
-}
-
 // ChatSession methods below
 
 // AgentModel represents an agent model configuration
@@ -1369,27 +1347,6 @@ func (s *AgentGoDB) ListResources() ([]resource.Resource, error) {
 		out = append(out, res)
 	}
 	return out, rows.Err()
-}
-
-func (s *AgentGoDB) DeleteResource(id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	_, err := s.db.Exec(`DELETE FROM resources WHERE id = ?`, id)
-	return err
-}
-
-// NormalizeAgentKind normalizes the agent kind string
-func NormalizeAgentKind(kind string) string {
-	kind = strings.TrimSpace(kind)
-	if kind == "" {
-		return "orchestrator"
-	}
-	switch kind {
-	case "orchestrator", "specialist", "agent", "leader", "lead", "lead-agent", "commander":
-		return "orchestrator"
-	default:
-		return "orchestrator"
-	}
 }
 
 // AddMessage adds a message to a session and ensures the session exists

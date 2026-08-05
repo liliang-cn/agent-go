@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"encoding/json"
 	"sync"
 	"time"
 
@@ -136,75 +135,4 @@ func (s *Session) GetContext(key string) (interface{}, bool) {
 	}
 	val, ok := s.Context[key]
 	return val, ok
-}
-
-// ToMessages converts session messages to domain.Message format for LLM
-func (s *Session) ToMessages() []domain.Message {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.GetMessages()
-}
-
-// ToJSON serializes the session to JSON
-func (s *Session) ToJSON() ([]byte, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return json.Marshal(s)
-}
-
-// SessionFromJSON deserializes a session from JSON
-func SessionFromJSON(data []byte) (*Session, error) {
-	var s Session
-	if err := json.Unmarshal(data, &s); err != nil {
-		return nil, err
-	}
-	return &s, nil
-}
-
-// SessionManager manages multiple sessions
-type SessionManager struct {
-	mu       sync.RWMutex
-	sessions map[string]*Session
-}
-
-// NewSessionManager creates a new session manager
-func NewSessionManager() *SessionManager {
-	return &SessionManager{
-		sessions: make(map[string]*Session),
-	}
-}
-
-// CreateSession creates a new session
-func (sm *SessionManager) CreateSession(agentID string) *Session {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	session := NewSession(agentID)
-	sm.sessions[session.ID] = session
-	return session
-}
-
-// GetSession retrieves a session by ID
-func (sm *SessionManager) GetSession(id string) (*Session, bool) {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-	session, ok := sm.sessions[id]
-	return session, ok
-}
-
-// DeleteSession removes a session
-func (sm *SessionManager) DeleteSession(id string) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	delete(sm.sessions, id)
-}
-
-// ListSessions returns all session IDs
-func (sm *SessionManager) ListSessions() []string {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-	ids := make([]string, 0, len(sm.sessions))
-	for id := range sm.sessions {
-		ids = append(ids, id)
-	}
-	return ids
 }

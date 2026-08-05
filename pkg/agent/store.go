@@ -25,11 +25,6 @@ func NewStore(dbPath string) (*Store, error) {
 	return &Store{agentGoDB: agentGoDB}, nil
 }
 
-// NewStoreWithAgentGoDB creates a store with an existing AgentGoDB instance
-func NewStoreWithAgentGoDB(agentGoDB *store.AgentGoDB) *Store {
-	return &Store{agentGoDB: agentGoDB}
-}
-
 // GetAgentGoDB returns the underlying unified AgentGoDB
 func (s *Store) GetAgentGoDB() *store.AgentGoDB {
 	return s.agentGoDB
