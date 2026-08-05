@@ -205,7 +205,6 @@ func (h *Handler) HandleAgents(w http.ResponseWriter, r *http.Request) {
 
 		agentModel, err := h.teamManager.CreateAgent(r.Context(), &agent.AgentModel{
 			ID:                    uuid.New().String(),
-			TeamID:                strings.TrimSpace(req.TeamID),
 			Name:                  strings.TrimSpace(req.Name),
 			Kind:                  agent.AgentKind(strings.TrimSpace(req.Kind)),
 			Description:           strings.TrimSpace(req.Description),

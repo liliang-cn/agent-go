@@ -353,7 +353,6 @@ func (s *Store) SaveAgentModel(agent *AgentModel) error {
 	return s.agentGoDB.SaveAgentModel(&store.AgentModel{
 		ID:                    agent.ID,
 		A2AID:                 agent.A2AID,
-		TeamID:                agent.TeamID,
 		Name:                  agent.Name,
 		Kind:                  string(agent.Kind),
 		Description:           agent.Description,
@@ -419,64 +418,6 @@ func (s *Store) ListAgentModels() ([]*AgentModel, error) {
 	return result, nil
 }
 
-// SaveTeam saves or updates a team
-func (s *Store) SaveTeam(team *Team) error {
-	return s.agentGoDB.SaveTeam(&store.Team{
-		ID:          team.ID,
-		A2AID:       team.A2AID,
-		Name:        team.Name,
-		Description: team.Description,
-		EnableA2A:   team.EnableA2A,
-		CreatedAt:   team.CreatedAt,
-		UpdatedAt:   team.UpdatedAt,
-	})
-}
-
-func (s *Store) GetTeamByA2AID(a2aID string) (*Team, error) {
-	sq, err := s.agentGoDB.GetTeamByA2AID(a2aID)
-	if err != nil {
-		return nil, err
-	}
-	return convertToTeam(sq), nil
-}
-
-// GetTeam retrieves a team by ID
-func (s *Store) GetTeam(id string) (*Team, error) {
-	sq, err := s.agentGoDB.GetTeam(id)
-	if err != nil {
-		return nil, err
-	}
-	return convertToTeam(sq), nil
-}
-
-// GetTeamByName retrieves a team by name
-func (s *Store) GetTeamByName(name string) (*Team, error) {
-	sq, err := s.agentGoDB.GetTeamByName(name)
-	if err != nil {
-		return nil, err
-	}
-	return convertToTeam(sq), nil
-}
-
-// ListTeams retrieves all teams
-func (s *Store) ListTeams() ([]*Team, error) {
-	teams, err := s.agentGoDB.ListTeams()
-	if err != nil {
-		return nil, err
-	}
-
-	result := make([]*Team, len(teams))
-	for i, sq := range teams {
-		result[i] = convertToTeam(sq)
-	}
-	return result, nil
-}
-
-// DeleteTeam deletes a team
-func (s *Store) DeleteTeam(id string) error {
-	return s.agentGoDB.DeleteTeam(id)
-}
-
 // DeleteAgentModel
 func (s *Store) DeleteAgentModel(id string) error {
 	return s.agentGoDB.DeleteAgentModel(id)
@@ -493,7 +434,6 @@ func convertToAgentModel(a *store.AgentModel) *AgentModel {
 	return &AgentModel{
 		ID:                    a.ID,
 		A2AID:                 a.A2AID,
-		TeamID:                a.TeamID,
 		Name:                  a.Name,
 		Kind:                  AgentKind(a.Kind),
 		Description:           a.Description,
@@ -515,29 +455,14 @@ func convertToAgentModel(a *store.AgentModel) *AgentModel {
 	}
 }
 
-func convertToTeam(sq *store.Team) *Team {
-	return &Team{
-		ID:          sq.ID,
-		A2AID:       sq.A2AID,
-		Name:        sq.Name,
-		Description: sq.Description,
-		EnableA2A:   sq.EnableA2A,
-		CreatedAt:   sq.CreatedAt,
-		UpdatedAt:   sq.UpdatedAt,
-	}
-}
-
+// normalizeAgentKind defaults every stored agent to the plain agent kind.
+// v3 has no orchestrator/specialist distinction; the constants survive only
+// so old rows still deserialize.
 func normalizeAgentKind(agent *AgentModel) AgentKind {
-	if agent == nil {
-		return AgentKindOrchestrator
-	}
-	if agent.Kind == AgentKindOrchestrator || agent.Kind == AgentKindSpecialist || agent.Kind == AgentKindAgent {
+	if agent != nil && agent.Kind != "" {
 		return agent.Kind
 	}
-	if strings.TrimSpace(agent.TeamID) == "" {
-		return AgentKindAgent
-	}
-	return AgentKindOrchestrator
+	return AgentKindAgent
 }
 
 func replaceTaskFramesForSession(existing []taskpkg.Frame, sessionID string, replacement []taskpkg.Frame) []taskpkg.Frame {

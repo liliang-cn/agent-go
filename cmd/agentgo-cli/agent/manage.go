@@ -171,7 +171,6 @@ var agentUpdateCmd = &cobra.Command{
 			ID:                current.ID,
 			Name:              current.Name,
 			Kind:              current.Kind,
-			TeamID:            current.TeamID,
 			Description:       current.Description,
 			Instructions:      current.Instructions,
 			PreferredProvider: current.PreferredProvider,
