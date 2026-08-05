@@ -231,11 +231,11 @@ func (m *TeamManager) dispatchTaskWithOptionalStream(...) {
 
 关键点是 `eventSinkFromContext(ctx)`：调用方在 context 里注入一个回调，下游 agent 的每一个 partial token、每一个工具调用事件，都会被实时塞回这个回调。
 
-更妙的是嵌套传播：当 A delegate 给 B 之后，B 的事件会沿 A 的 event sink 一路冒泡，最终到达最外层的订阅者。这意味着 CLI 或者 UI 只要订阅一次，就能看到整条调用链的实时活动。
+更妙的是嵌套传播：当 A delegate 给 B 之后，B 的事件会沿 A 的 event sink 一路冒泡，最终到达最外层的订阅者。这意味着嵌入方只要订阅一次，就能看到整条调用链的实时活动。
 
 这背后还有一层细节。AgentGo 的 `forwardRuntimeEvents`（`pkg/agent/async_tasks.go:440`）会把每个 streamed `Event` 立刻包成 `TaskEvent.Runtime`，订阅 `SubscribeTask` 的客户端不会等待——事件来一个就转发一个。
 
-光有这套机制还不够。如果调用方（CLI、UI、上游 agent）不主动订阅，所有这些 partial event 就只是在框架里转一圈然后被丢弃。最近 AgentGo 的 CLI 才把这一段彻底接上：在 `cmd/agentgo-cli/chat_tasks.go` 增加了一个 `chatTaskStreamRenderer`，把 partial event 实时渲染到终端，并在最后任务完成时合并掉重复的 final block。
+光有这套机制还不够。如果调用方（嵌入方应用、上游 agent）不主动订阅，所有这些 partial event 就只是在框架里转一圈然后被丢弃。嵌入方需要自己订阅 `SubscribeTask` 并把 partial event 渲染出来，最后在任务完成时合并掉重复的 final block。
 
 设计原则其实只有一句：**stream 是默认的，buffered 是退路，不是反过来。**
 

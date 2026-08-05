@@ -28,39 +28,9 @@ jobs:
       - name: Run tests
         run: make test
 
-      - name: Build binaries
-        run: |
-          # Extract version from tag
-          VERSION=${GITHUB_REF#refs/tags/v}
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
-
-          # Create build directory
-          mkdir -p dist
-
-          # Build for requested platforms
-          # linux/amd64 and darwin/arm64 (mac arm64)
-          PLATFORMS="linux/amd64 darwin/arm64"
-          for platform in $PLATFORMS; do
-            os=$(echo $platform | cut -d'/' -f1)
-            arch=$(echo $platform | cut -d'/' -f2)
-            
-            # Using a consistent naming for the binary inside the archive if needed, 
-            # but for the release asset we use the platform-specific name.
-            output_name="agentgo"
-            
-            echo "Building for $os/$arch..."
-            GOOS=$os GOARCH=$arch go build -ldflags="-X 'main.version=$VERSION'" -o "dist/$output_name" ./cmd/agentgo-cli
-            
-            # Create archive with the platform name but containing the agentgo binary
-            (cd dist && tar -czf "agentgo-$VERSION-$os-$arch.tar.gz" "$output_name")
-            # Remove the binary after archiving to prepare for the next platform
-            rm "dist/$output_name"
-          done
-
       - name: Generate changelog
         id: changelog
         run: |
-          # Simple changelog generation
           echo "## What's Changed" > CHANGELOG.md
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
           if [ -n "$PREV_TAG" ]; then
@@ -70,9 +40,9 @@ jobs:
           fi
           echo "" >> CHANGELOG.md
           if [ -n "$PREV_TAG" ]; then
-            echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...v$VERSION" >> CHANGELOG.md
+            echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${{ github.ref_name }}" >> CHANGELOG.md
           else
-            echo "**Full Changelog**: https://github.com/${{ github.repository }}/commits/v$VERSION" >> CHANGELOG.md
+            echo "**Full Changelog**: https://github.com/${{ github.repository }}/commits/${{ github.ref_name }}" >> CHANGELOG.md
           fi
 
       - name: Create Release
@@ -83,6 +53,5 @@ jobs:
           body_path: CHANGELOG.md
           draft: false
           prerelease: false
-          files: dist/*.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

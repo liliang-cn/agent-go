@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this project is
 
-AgentGo is a **Go framework for building agents**, not a CLI app, not a UI app, not a RAG app. The architectural center is `pkg/agent`. `cmd/agentgo-cli`, `cmd/agentgo-ui`, and `ui/` are adapters around the framework.
+AgentGo is a **Go framework for building agents** — a library, not an app. There are no binaries: no CLI, no UI, no servers. Consumers embed `pkg/agent` in their own programs (the reference consumer is superai-desktop).
 
 Module path is `github.com/liliang-cn/agent-go/v3`.
 
@@ -13,9 +13,9 @@ Reason about the repo in this order:
 1. `pkg/agent` — framework core (agent, loop, tools, context, hooks/lints, session/checkpoint, events)
 2. `pkg/*` capability modules — `providers`, `mcp`, `skills`, `memory`, `rag`, `ptc`, `prompt`, `scheduler`, `sandbox`, `worktree`, `search`
 3. Support modules — `pkg/store`, `pkg/config`, `pkg/log`, `pkg/cache`, `pkg/pool`, `pkg/poolsvc`, `pkg/domain`, `pkg/cortexbridge`, `pkg/otelobserver`
-4. Optional adapters — `cmd/agentgo-cli`, `cmd/agentgo-ui`, `ui/`
+4. `eval/` — the behavioral eval harness; `examples/` — runnable library examples
 
-Prefer changes in `pkg/` over `cmd/`. New capabilities plug into the framework core, not the adapters. Keep public package APIs intentional and embeddable.
+Keep public package APIs intentional and embeddable.
 
 ### The seven concepts
 
@@ -33,50 +33,31 @@ There is **no** team, dispatcher, router, handoff or built-in role hierarchy. Co
 
 ## Development commands
 
-Use the Makefile. The repo has two binaries — `agentgo-cli` (CLI) and `agentgo-ui` (Go API + embedded React UI).
-
 ```bash
-make build          # build both binaries into bin/
-make agentgo-cli    # CLI only
-make agentgo-ui     # builds UI assets, syncs to cmd/agentgo-ui/dist, then builds Go binary
 make test           # go test ./...
 make check          # fmt + vet + test
-make coverage-core  # focused coverage report for the core packages listed in $CORE_COVERAGE_PKGS
+make coverage-core  # focused coverage report for the packages in $CORE_COVERAGE_PKGS
 make deps           # go mod download && tidy
-make clean          # removes bin/, cmd/agentgo-ui/dist, .agentgo/data/*.db
+make clean          # removes .agentgo/data/*.db (local dev databases)
 
-# Behavioral eval harness — runs scenarios under eval/scenarios/ against
-# either a scripted MockLLM (CI-safe, deterministic) or the configured
-# real provider. See "Eval harness" below.
-make eval           # mock-only run, uses go test
+# Behavioral eval harness — scenarios under eval/scenarios/
+make eval           # mock profile, deterministic, CI-safe
 make eval-verbose   # same with -v
-make eval-live      # real provider, builds CLI and runs `agentgo eval --profile=live --save`
-make eval-all       # mock + live
-
-# UI dev (Vite + Go API together; API is air-reloaded on :7127)
-make ui-dev
-make ui-api-dev     # Go API only with air
-make ui-web-dev     # Vite only
-make ui-deps        # npm ci in ui/
+make eval-live      # AGENTGO_EVAL_LIVE=1 go test ./eval/runner -run TestLiveScenarios
 ```
 
 ### Running tests
 
 ```bash
 go test ./pkg/agent/...                              # one package tree
-go test ./pkg/agent -run TestTaskPlanItem            # one test
 go test ./pkg/agent -run TestX -v -count=1           # force re-run, verbose
 go test ./pkg/agent -race                            # race detector — useful here, see "Concurrency"
 ```
 
-`make test` and `make check` run a `fix-embed` step that touches `cmd/agentgo-ui/dist/index.html` so the Go embed in `cmd/agentgo-ui` doesn't fail when UI assets aren't built. Don't delete that file unconditionally in scripts.
-
 ### Quick smoke run
 
 ```bash
-go run ./cmd/agentgo-cli chat            # interactive single-agent chat
-go run ./cmd/agentgo-cli agent list
-go run ./cmd/agentgo-cli task list
+go run ./examples/quickstart      # minimal agent.New(...).Build() + RunStream
 ```
 
 ## Architecture notes that aren't obvious from reading one file
@@ -103,11 +84,11 @@ Tool execution has its own state model — `ReadOnly`, `ConcurrencySafe`, `Destr
 
 Tasks (`task_id` in `pkg/domain/types.go` and `pkg/agent/types.go`) are propagated through async dispatch and used for history filtering. Treat `task_id` as load-bearing — when adding a new piece of state (history, memory, discovered tools, retries), scope it by task where possible.
 
-### Task checkpoint + replay (v2.70.0)
+### Task checkpoint + replay
 
 Every terminal `completeRun` / `blockRun` writes a `TaskCheckpoint` snapshot of the message history to `task_checkpoints` (capped at `MaxCheckpointsPerTask=32`, pruned by `checkpointWriter`). The wiring lives in `pkg/agent/task_checkpoint.go` + `task_checkpoint_manager.go`; `Service.SetCheckpointSink(...)` is what the runtime calls — `Manager.buildServiceForModel` auto-wires this, services built directly via `agent.New(...).Build()` skip persistence.
 
-To re-run a crashed/cancelled task from its latest snapshot: `manager.Tasks().ResumeFromCheckpoint(ctx, taskID, CheckpointResumeOptions{FollowUp: "..."})`. CLI surface: `agentgo task replay <id> [--checkpoint X] [--follow-up "..."]` and `agentgo task checkpoints <id>`.
+To re-run a crashed/cancelled task from its latest snapshot: `manager.Tasks().ResumeFromCheckpoint(ctx, taskID, CheckpointResumeOptions{FollowUp: "..."})`.
 
 The `WithResumeMessages([]domain.Message)` `RunOption` is what makes the runtime skip its normal context-prep step and start the loop from a snapshot.
 
@@ -131,14 +112,12 @@ The discipline: when a model keeps making the same mistake, **don't add another 
 
 An explicit "without using any tools" is satisfied by *withholding the tools* (`prepareTurnInputs` filters the list to nothing, including PTC's `execute_javascript` and `search_available_tools`), and any tool call the model emits anyway is refused with structured feedback. Forbidding a capability means not offering it — not offering it and then arguing about it.
 
-### Eval harness (v2.69.0)
+### Eval harness
 
 `eval/runner/` is a behavioral eval driver: every YAML in `eval/scenarios/` defines an `input`, an entry agent, optional lint registrations, expected `status`/`final_text_match` constraints, and optional `lint_violations` counts. Two profiles:
 
-- **mock** (default, CI-safe): `MockLLM` plays back a scripted `llm_replies` sequence — deterministic.
-- **live**: scenarios with `mode: live` run against the configured provider pool (same setup as `agentgo chat`). Loose assertions (regex, max-violation caps).
-
-CLI: `agentgo eval [--profile=mock|live|all] [--filter=substring] [--runs=N] [--save]`. `--save` writes a timestamped JSON to `eval/results/` (gitignored). The pretty terminal table comes from `eval/runner/results.go:FormatSummary`.
+- **mock** (default, CI-safe): `MockLLM` plays back a scripted `llm_replies` sequence — deterministic. `make eval`.
+- **live**: scenarios with `mode: live` run against the configured provider pool via `eval/runner/live.go` (`BuildPoolLiveBuilder`). `make eval-live` (gated on `AGENTGO_EVAL_LIVE=1`); results are saved as timestamped JSON in `eval/results/` (gitignored).
 
 When a harness change (lint, prompt cut, tool-prep tweak) lands, run `make eval-live` and diff the result JSON against the previous run — that's the harness-engineering loop.
 
@@ -170,18 +149,6 @@ Skills aren't all dumped into the prompt. The runtime surfaces a small relevant 
 
 `agentgo.toml` at repo root is the dev config; `home = '/Users/.../.agentgo'` redirects all of the above.
 
-### CLI structure
-
-`cmd/agentgo-cli/root.go` registers cobra subcommands from sibling sub-packages: `agent/`, `mcp/`, `memory/`, `ptc/`, `rag/`, `skills/`, `cache/`, `eval/`, plus top-level files for `chat`, `llm`, `embedding`, `status`, `tasks`, `config`, `session`, `resources`. New commands go in those sub-packages. The root `PersistentPreRunE` loads config, sets log level from `--verbose/--debug/--quiet`, and lazily initializes the global pool service for any command except `cache`.
-
-`tasks.go` bundles the canonical task surface: `task list / get / inspect / trace / yield / resume / replay / checkpoints / cancel`. `replay` is the checkpoint-driven re-run; `resume` is the yield-and-resume-with-input flow.
-
-`chat` runs a single agent. `agentgo-cli/internal/rank` holds the six-test provider capability probe behind `llm rank`.
-
-### UI
-
-`cmd/agentgo-ui/` is a Go server with an embedded React/Vite SPA at `cmd/agentgo-ui/dist` (synced from `ui/dist`). Hot-reload dev: `make ui-dev` runs air on the Go API and Vite on the frontend together; the script waits for `http://127.0.0.1:7127/api/status` before starting Vite.
-
 ## Conventions that bite if you don't know them
 
 - **Identity = session UUID, not userID.** Conversations are keyed by UUID. Don't introduce `userID` as a primary identity field for chat or task APIs. Use `github.com/google/uuid`.
@@ -195,10 +162,8 @@ Skills aren't all dumped into the prompt. The runtime surfaces a small relevant 
 
 ## Debugging entry points
 
-- Provider connectivity: `agentgo status --verbose`
-- Provider compat probe: `agentgo llm test <name>` (single round trip), `agentgo llm rank <name>` (6-test capability rank)
-- MCP servers: `agentgo mcp status`, then `agentgo mcp tools call <server> <tool> '<json>'`; logs in `~/.agentgo/logs/`
-- Skills: `agentgo skills list` / `skills show <id>` / `skills run <id> --var k=v`
-- Tasks: `agentgo task list`, `agentgo task get <id>`, `agentgo task trace <id>`
-- Checkpoint recovery: `agentgo task checkpoints <id>`, `agentgo task replay <id> [--checkpoint X] [--follow-up "..."]`
-- Behavioral eval: `make eval` (mock) / `make eval-live` (real provider) / `agentgo eval --filter <name>`
+- Behavioral eval: `make eval` (mock) / `make eval-live` (real provider)
+- Provider connectivity / compat: `examples/` + `pkg/poolsvc` (`poolsvc.Global().Initialize(...)`); provider fallback behavior lives in `pkg/pool/client.go`
+- MCP: `pkg/mcp` client logs land in `~/.agentgo/logs/`
+- Tasks / checkpoints: `Manager.Tasks()` API — list, trace, `ResumeFromCheckpoint`
+- Tracing: wire an observer (`pkg/otelobserver`) into the service to see per-round loop state

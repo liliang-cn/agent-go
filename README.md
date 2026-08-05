@@ -10,7 +10,7 @@
 
 AgentGo is a Go framework for building agents that run locally, use tools, keep memory, and compose with each other.
 
-It is centered on `pkg/agent`: one transparent loop, everything-is-a-tool, and determinism enforced by lints rather than by longer prompts. The CLI and UI are adapters around the framework, not the core.
+It is centered on `pkg/agent`: one transparent loop, everything-is-a-tool, and determinism enforced by lints rather than by longer prompts. AgentGo is a library — there is no CLI, no UI, no server. You embed it.
 
 ## Install
 
@@ -122,39 +122,16 @@ fmt.Println(done.Status)
 fmt.Println(done.Output)
 ```
 
-## CLI
+## Checkpoint + replay
 
-```bash
-# Chat with your agent
-agentgo chat
-
-# Ask once
-agentgo chat "Summarise what changed in this repo today"
-
-# Manage agents
-agentgo agent list
-agentgo agent show Assistant
-agentgo agent run --agent Assistant "Run git status and summarize it"
-
-# Inspect tasks
-agentgo task list
-agentgo task get <task_id>
-agentgo task trace <task_id>
-
-# Crashed task? Re-play it from the last checkpoint.
-agentgo task checkpoints <task_id>
-agentgo task replay <task_id> --follow-up "and now also do X"
-
-# Behavioral eval — runs scenarios in eval/scenarios/
-agentgo eval                           # mock-only
-agentgo eval --profile=live --save     # real LLM, JSON to eval/results/
-
-# Manage LLM providers
-agentgo llm list
-agentgo llm add --name local --url http://localhost:11434/v1 --model qwen2.5
-agentgo llm test <name>                # one-shot connectivity check
-agentgo llm rank <name>                # 6-test capability rank
+```go
+// Crashed or cancelled task? Re-play it from the last snapshot.
+resumed, _ := manager.Tasks().ResumeFromCheckpoint(ctx, task.ID, agent.CheckpointResumeOptions{
+	FollowUp: "and now also do X",
+})
 ```
+
+Every terminal state writes a `TaskCheckpoint`; `WithResumeMessages` is the low-level `RunOption` underneath.
 
 ## Output lints — moving "please don't" out of prompts
 
@@ -196,11 +173,7 @@ By default AgentGo uses:
 └── workspace/         # agent working directory
 ```
 
-Override the home directory with:
-
-```bash
-AGENTGO_HOME=/path/to/home agentgo chat
-```
+Override the home directory with the `AGENTGO_HOME` environment variable.
 
 ## Repository Layout
 
@@ -212,10 +185,9 @@ pkg/rag        optional retrieval
 pkg/skills     skill loading
 pkg/providers  LLM providers (with reasoner-model fallbacks)
 pkg/pool       provider pool + token/cost accounting
-pkg/poolsvc    process-global pool service used by the CLI and UI
+pkg/poolsvc    process-global pool service for embedders
 pkg/ptc        Programmatic Tool Calling — JS sandbox
 pkg/store      SQLite storage
-cmd/           CLI and UI adapters
 eval/          behavioral eval harness (scenarios + runner)
 examples/      runnable examples
 ```
