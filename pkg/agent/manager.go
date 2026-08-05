@@ -36,10 +36,8 @@ type Manager struct {
 	sessionTasks   map[string][]string
 	taskSubs       map[string]map[chan *TaskEvent]struct{}
 	taskCancels    map[string]context.CancelFunc
-	disableMemory  bool
 	checkpointWr   *checkpointWriter
 	agentTools     map[string][]registeredAgentTool
-	defaultBuilder func(*AgentModel, *Builder)
 
 	// streamOverride, when non-nil, replaces the real agent run inside
 	// RunStream. It is the single dispatch seam v3 exposes: embedders (and
@@ -86,28 +84,6 @@ func (m *Manager) SetEmbedder(embedder domain.Embedder) {
 	defer m.mu.Unlock()
 	m.injectedEmbedder = embedder
 	m.services = make(map[string]*Service)
-}
-
-// SetDisableMemory globally disables memory for all agents built by this
-// manager (used by CLI flags like --no-memory).
-func (m *Manager) SetDisableMemory(disable bool) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.disableMemory == disable {
-		return
-	}
-	m.disableMemory = disable
-	m.services = make(map[string]*Service)
-}
-
-// SetAgentName overrides the global agent name used in built-in prompts.
-func (m *Manager) SetAgentName(name string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.cfg == nil {
-		m.cfg = &config.Config{}
-	}
-	m.cfg.Agent.Name = name
 }
 
 // GetStore returns the underlying Store.
@@ -220,14 +196,6 @@ func (m *Manager) getOrBuildService(name string) (*Service, error) {
 	return newSvc, nil
 }
 
-func (m *Manager) buildEphemeralService(name string) (*Service, error) {
-	model, err := m.store.GetAgentModelByName(strings.TrimSpace(name))
-	if err != nil {
-		return nil, err
-	}
-	return m.buildServiceForModel(model)
-}
-
 func (m *Manager) buildServiceForModel(model *AgentModel) (*Service, error) {
 	if model == nil {
 		return nil, fmt.Errorf("agent model is required")
@@ -278,7 +246,7 @@ func (m *Manager) buildServiceForModel(model *AgentModel) (*Service, error) {
 	if model.EnableRAG {
 		builder.WithRAG()
 	}
-	if model.EnableMemory && !m.disableMemory {
+	if model.EnableMemory {
 		storeType := strings.TrimSpace(model.MemoryStoreType)
 		if storeType == "" && cfg != nil {
 			storeType = cfg.GetMemoryStoreType().String()
@@ -295,9 +263,6 @@ func (m *Manager) buildServiceForModel(model *AgentModel) (*Service, error) {
 	}
 	if len(model.Skills) > 0 {
 		builder.WithSkills()
-	}
-	if m.defaultBuilder != nil {
-		m.defaultBuilder(model, builder)
 	}
 
 	newSvc, err := builder.Build()
@@ -391,65 +356,6 @@ func sessionIDOrEmpty(session *Session) string {
 		return ""
 	}
 	return session.GetID()
-}
-
-// DispatchTask runs a one-off task on the named agent (fresh session).
-func (m *Manager) DispatchTask(ctx context.Context, agentName, instruction string) (string, error) {
-	res, err := m.Run(ctx, agentName, instruction, WithSessionID(uuid.New().String()))
-	if err != nil {
-		return "", err
-	}
-	return res.Text(), nil
-}
-
-// DispatchTaskStream is the streaming form of DispatchTask.
-func (m *Manager) DispatchTaskStream(ctx context.Context, agentName, instruction string, opts ...RunOption) (<-chan *Event, error) {
-	opts = append([]RunOption{WithSessionID(uuid.New().String())}, opts...)
-	return m.RunStream(ctx, agentName, instruction, opts...)
-}
-
-// ChatWithAgent runs the named agent inside a stable conversation session.
-func (m *Manager) ChatWithAgent(ctx context.Context, conversationKey, agentName, instruction string) (string, error) {
-	res, err := m.Run(ctx, agentName, instruction, WithSessionID(m.sessionIDFor(conversationKey, agentName)))
-	if err != nil {
-		return "", err
-	}
-	return res.Text(), nil
-}
-
-// ChatWithAgentStream is the streaming form of ChatWithAgent.
-func (m *Manager) ChatWithAgentStream(ctx context.Context, conversationKey, agentName, instruction string, opts ...RunOption) (<-chan *Event, error) {
-	opts = append([]RunOption{WithSessionID(m.sessionIDFor(conversationKey, agentName))}, opts...)
-	return m.RunStream(ctx, agentName, instruction, opts...)
-}
-
-// SaveAgent upserts an existing agent definition and drops its cached service.
-func (m *Manager) SaveAgent(_ context.Context, model *AgentModel) (*AgentModel, error) {
-	if model == nil {
-		return nil, fmt.Errorf("agent model is required")
-	}
-	if err := m.store.SaveAgentModel(model); err != nil {
-		return nil, err
-	}
-	m.mu.Lock()
-	delete(m.services, model.Name)
-	m.mu.Unlock()
-	return model, nil
-}
-
-// DeleteAgent removes an agent definition by name.
-func (m *Manager) DeleteAgent(_ context.Context, name string) error {
-	model, err := m.store.GetAgentModelByName(strings.TrimSpace(name))
-	if err != nil {
-		return err
-	}
-	if err := m.store.DeleteAgentModel(model.ID); err != nil {
-		return err
-	}
-	m.mu.Lock()
-	delete(m.services, model.Name)
-	m.mu.Unlock()
-	return nil
 }
 
 // SetStreamOverride installs (or clears, with nil) the dispatch seam used by

@@ -92,14 +92,6 @@ type TaskEvent struct {
 	Timestamp        time.Time       `json:"timestamp"`
 }
 
-// SubmitAgentTask submits a legacy async agent task.
-//
-// Deprecated: library users should prefer manager.Tasks().Submit(...), which
-// returns the canonical *task.Task.
-func (m *Manager) SubmitAgentTask(ctx context.Context, sessionID, agentName, prompt string) (*AsyncTask, error) {
-	return m.submitAgentTaskWithSchema(ctx, sessionID, agentName, prompt, nil)
-}
-
 // submitAgentTaskWithSchema is SubmitAgentTask plus an optional per-task output
 // schema. When schema != nil the agent is forced to emit a schema-validated
 // structured result (validate + retry), so ResultText is guaranteed valid JSON.
@@ -166,35 +158,6 @@ func (m *Manager) GetTask(taskID string) (*AsyncTask, error) {
 		return nil, fmt.Errorf("task %s not found", taskID)
 	}
 	return cloneAsyncTask(task), nil
-}
-
-// ListSessionTasks returns legacy AsyncTask views for a session.
-//
-// Deprecated: use manager.Tasks().List(...) and filter by SessionID.
-func (m *Manager) ListSessionTasks(sessionID string, limit int) []*AsyncTask {
-	sessionID = strings.TrimSpace(sessionID)
-	if sessionID == "" {
-		return nil
-	}
-
-	m.taskMu.RLock()
-	taskIDs := append([]string(nil), m.sessionTasks[sessionID]...)
-	out := make([]*AsyncTask, 0, len(taskIDs))
-	for _, taskID := range taskIDs {
-		if task := m.asyncTasks[taskID]; task != nil {
-			out = append(out, cloneAsyncTask(task))
-		}
-	}
-	m.taskMu.RUnlock()
-
-	if len(out) == 0 {
-		return nil
-	}
-	slicesSortAsyncTasks(out)
-	if limit > 0 && len(out) > limit {
-		out = out[len(out)-limit:]
-	}
-	return out
 }
 
 func (m *Manager) SubscribeTask(taskID string) (<-chan *TaskEvent, func(), error) {
@@ -372,15 +335,6 @@ func (m *Manager) blockAsyncTask(taskID, blocker, agentName string) {
 		Message:   task.ResultText,
 		Timestamp: finishedAt,
 	}, true)
-}
-
-func (m *Manager) taskSessionID(taskID string) string {
-	m.taskMu.RLock()
-	defer m.taskMu.RUnlock()
-	if task := m.asyncTasks[taskID]; task != nil {
-		return strings.TrimSpace(task.SessionID)
-	}
-	return ""
 }
 
 func (m *Manager) failAsyncTask(taskID, agentName string, err error) {
