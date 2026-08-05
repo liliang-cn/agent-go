@@ -209,7 +209,6 @@ type RunConfig struct {
 	// service has PTC enabled.
 	DisablePTC bool
 
-
 	// ResumeMessages, when non-empty, makes the runtime skip its normal
 	// initial-history assembly and instead use these messages as the
 	// task's starting point. Used by Tasks().Resume to rebuild a run

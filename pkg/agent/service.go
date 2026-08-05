@@ -79,9 +79,9 @@ type Service struct {
 	taskSkillSatisfied    map[string]bool
 
 	// Model metadata for Info()
-	modelName     string
-	baseURL       string
-	isFastModel   bool
+	modelName   string
+	baseURL     string
+	isFastModel bool
 
 	// Hook system for lifecycle events
 	hooks *HookRegistry

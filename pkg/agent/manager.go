@@ -29,15 +29,15 @@ type Manager struct {
 	services         map[string]*Service
 	mu               sync.RWMutex
 
-	sessionMu      sync.Mutex
-	agentSessions  map[string]string
-	taskMu         sync.RWMutex
-	asyncTasks     map[string]*AsyncTask
-	sessionTasks   map[string][]string
-	taskSubs       map[string]map[chan *TaskEvent]struct{}
-	taskCancels    map[string]context.CancelFunc
-	checkpointWr   *checkpointWriter
-	agentTools     map[string][]registeredAgentTool
+	sessionMu     sync.Mutex
+	agentSessions map[string]string
+	taskMu        sync.RWMutex
+	asyncTasks    map[string]*AsyncTask
+	sessionTasks  map[string][]string
+	taskSubs      map[string]map[chan *TaskEvent]struct{}
+	taskCancels   map[string]context.CancelFunc
+	checkpointWr  *checkpointWriter
+	agentTools    map[string][]registeredAgentTool
 
 	// streamOverride, when non-nil, replaces the real agent run inside
 	// RunStream. It is the single dispatch seam v3 exposes: embedders (and
