@@ -4,16 +4,32 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this project is
 
-AgentGo is a **Go framework for Agent / Team based systems**, not a CLI app, not a UI app, not a RAG app. The architectural center is `pkg/agent`. `cmd/agentgo-cli`, `cmd/agentgo-ui`, and `ui/` are adapters around the framework.
+AgentGo is a **Go framework for building agents**, not a CLI app, not a UI app, not a RAG app. The architectural center is `pkg/agent`. `cmd/agentgo-cli`, `cmd/agentgo-ui`, and `ui/` are adapters around the framework.
+
+Module path is `github.com/liliang-cn/agent-go/v3`.
 
 Reason about the repo in this order:
 
-1. `pkg/agent` — framework core (agents, teams, tasks, task plans, runtime)
-2. `pkg/*` capability modules — `providers`, `mcp`, `skills`, `memory`, `rag`, `router`, `ptc`, `prompt`, `scheduler`, `a2a`, `acp`
-3. Support modules — `pkg/store`, `pkg/config`, `pkg/log`, `pkg/cache`, `pkg/pool`, `pkg/usage`, `pkg/domain`
+1. `pkg/agent` — framework core (agent, loop, tools, context, hooks/lints, session/checkpoint, events)
+2. `pkg/*` capability modules — `providers`, `mcp`, `skills`, `memory`, `rag`, `ptc`, `prompt`, `scheduler`, `sandbox`, `worktree`, `search`
+3. Support modules — `pkg/store`, `pkg/config`, `pkg/log`, `pkg/cache`, `pkg/pool`, `pkg/poolsvc`, `pkg/domain`, `pkg/cortexbridge`, `pkg/otelobserver`
 4. Optional adapters — `cmd/agentgo-cli`, `cmd/agentgo-ui`, `ui/`
 
 Prefer changes in `pkg/` over `cmd/`. New capabilities plug into the framework core, not the adapters. Keep public package APIs intentional and embeddable.
+
+### The seven concepts
+
+v3 deliberately has exactly seven things in it. If a change does not fit one of these, it probably does not belong in `pkg/agent`.
+
+1. **Agent** — a name, a system prompt, a model, a tool set, optional sub-agents.
+2. **Loop** — one streaming state machine: assemble context → call the model → execute tools → lint the answer → terminate. `Runtime.loop` is the only implementation.
+3. **Tool** — everything the agent can do is a tool: built-ins, MCP, skills, PTC, and sub-agents.
+4. **Context** — message assembly, task-scoped history filtering, compaction, skill reminders.
+5. **Hooks + Lints** — the deterministic layer. Hooks bracket the run and each tool; lints reject a final answer and force a retry.
+6. **Session + Checkpoint** — a session UUID owns the conversation; every terminal state writes a replayable checkpoint.
+7. **Events** — the single output channel. `Run()` is `RunStream()` plus a collector.
+
+There is **no** team, dispatcher, router, handoff or built-in role hierarchy. Composition happens inside one agent via `WithSubagents(...)`, which exposes a single `task(agent_name, prompt)` tool.
 
 ## Development commands
 
@@ -58,43 +74,62 @@ go test ./pkg/agent -race                            # race detector — useful 
 ### Quick smoke run
 
 ```bash
-go run ./cmd/agentgo-cli chat            # interactive Dispatcher chat
+go run ./cmd/agentgo-cli chat            # interactive single-agent chat
 go run ./cmd/agentgo-cli agent list
 go run ./cmd/agentgo-cli task list
 ```
 
 ## Architecture notes that aren't obvious from reading one file
 
-### Runtime is a kernel, not a loop
+### There is exactly one loop
 
-`pkg/agent/runtime.go`, `pkg/agent/service_execution.go`, `pkg/agent/subagent.go` are converging on a single state machine with shared helpers (`prepareToolRound`, `executeToolCallsWithOptions`, `executePreparedToolRound`, `streamToolTurn`, …). Streaming, non-streaming, and subagent execution should differ only in output mode. When extending runtime behavior, push it into the shared helpers; don't fork a new branch.
+`Runtime.loop` (`pkg/agent/runtime.go`) is the only execution path in the framework.
+
+- `Service.RunStream` starts it and returns the event channel.
+- `Service.Run` calls `RunStream` and collects the events into an `ExecutionResult`. There is no second, non-streaming implementation to keep in sync.
+- A sub-agent (`pkg/agent/subagent.go`) builds a **child `Runtime` over the same `Service`** — its own session, a narrower tool surface (`RunConfig.ToolAllowlist` / `ToolDenylist`), a different event sink. It is not a second engine.
+
+When extending runtime behavior, push it into the shared helpers (`prepareTurnInputsWithConfig`, `prepareToolRound`, `executePreparedToolRound`, `streamToolTurn`, …). Do not fork a branch.
 
 Tool execution has its own state model — `ReadOnly`, `ConcurrencySafe`, `Destructive`, `InterruptBehavior`, plus `queued`/`executing`/`completed` lifecycle. New tools should declare these honestly so batching, permissioning, and cancel work.
 
-### Task is becoming a first-class object
+### Sub-agents are tools
 
-Sessions used to be the only boundary; tasks (`task_id` in `pkg/domain/types.go` and `pkg/agent/types.go`) are now propagated through async/team dispatch and used for history filtering. Treat `task_id` as load-bearing — when adding a new piece of state (history, memory, discovered tools, retries), scope it by task where possible.
+`WithSubagents(specs...)` registers one tool: `task(agent_name, prompt)`. Calling it runs the named sub-agent through the same loop and returns only its final answer; its events bubble up nested. That is the whole composition story — there is no team, no dispatcher, no router, no handoff.
+
+`agent.Manager` is the application-level host, not an orchestrator: it owns the `Store` (agent definitions, sessions, tasks, checkpoints), caches one `*Service` per named agent, and exposes the task surface. `Manager.SetStreamOverride` is the single dispatch seam if an embedder needs to intercept runs.
+
+### Task is a first-class object
+
+Tasks (`task_id` in `pkg/domain/types.go` and `pkg/agent/types.go`) are propagated through async dispatch and used for history filtering. Treat `task_id` as load-bearing — when adding a new piece of state (history, memory, discovered tools, retries), scope it by task where possible.
 
 ### Task checkpoint + replay (v2.70.0)
 
-Every terminal `completeRun` / `blockRun` writes a `TaskCheckpoint` snapshot of the message history to `task_checkpoints` (capped at `MaxCheckpointsPerTask=32`, pruned by `checkpointWriter`). The wiring lives in `pkg/agent/task_checkpoint.go` + `task_checkpoint_manager.go`; `Service.SetCheckpointSink(...)` is what the runtime calls — TeamManager auto-wires this in `buildServiceForModel`, services built directly via `agent.New(...).Build()` skip persistence.
+Every terminal `completeRun` / `blockRun` writes a `TaskCheckpoint` snapshot of the message history to `task_checkpoints` (capped at `MaxCheckpointsPerTask=32`, pruned by `checkpointWriter`). The wiring lives in `pkg/agent/task_checkpoint.go` + `task_checkpoint_manager.go`; `Service.SetCheckpointSink(...)` is what the runtime calls — `Manager.buildServiceForModel` auto-wires this, services built directly via `agent.New(...).Build()` skip persistence.
 
 To re-run a crashed/cancelled task from its latest snapshot: `manager.Tasks().ResumeFromCheckpoint(ctx, taskID, CheckpointResumeOptions{FollowUp: "..."})`. CLI surface: `agentgo task replay <id> [--checkpoint X] [--follow-up "..."]` and `agentgo task checkpoints <id>`.
 
 The `WithResumeMessages([]domain.Message)` `RunOption` is what makes the runtime skip its normal context-prep step and start the loop from a snapshot.
 
-### Output lint registry (v2.69.0 / harness engineering)
+### Output lint registry — the deterministic layer
 
-`pkg/agent/output_lint.go` ships a deterministic post-output-check layer. When the model produces a free-form final answer, the runtime consults `Service.OutputLints()`; on violation it appends structured feedback as a system message and re-prompts (bounded by `defaultLintRetryBudget = 2`; exhaustion → `task_blocked`).
+`pkg/agent/output_lint.go` ships a deterministic post-output-check layer. When the model produces a free-form final answer, the runtime consults `Service.OutputLints()`; on violation it appends structured feedback and re-prompts (bounded by `defaultLintRetryBudget = 2`; exhaustion → `task_blocked`).
 
-Three built-in lints in `pkg/agent/output_lints_builtin.go`:
-- `dispatcher_no_bounce_back` — Dispatcher must not narrate routing intent
-- `archivist_no_relative_time` — Archivist must resolve `明天 / tomorrow / next ...` to absolute dates
+Every service built through `agent.New(...).Build()` gets the built-in set automatically — there are no agent-scoped or role-scoped lints in v3:
+
 - `no_planning_only_finish` — final text mustn't read like "Next steps:" / "I will..."
+- `file_task_must_write` — a task that asked for a file must have produced one
+- `no_raw_ptc_code` — sandbox JS must not leak into the user-facing answer
+- `non_empty_final_answer` — a run cannot terminate with no text at all
+- `task_delivery_contract` — a goal that names a delivery action (send the mail, post the message, write the file) cannot complete unless a matching tool was actually called *and* such a tool was available
 
-TeamManager auto-wires the agent-scoped lints (`applyBuiltInOutputLints`) when it builds Dispatcher / Archivist services. User-built services via `agent.New(...).Build()` are unaffected — opt in with `agent.RegisterDefaultOutputLints(svc)` or `svc.RegisterOutputLint(lint, agentNames...)`.
+`LintContext` carries `ToolCalls` (what ran) and `AvailableTools` (what could have run), so a lint can tell "the agent skipped a capability it had" from "the agent never had it".
 
-The discipline (Hashimoto): when a model keeps making the same mistake, **don't add another sentence to the prompt — write a lint** in `output_lints_builtin.go` and the runtime will reject + retry deterministically.
+The discipline: when a model keeps making the same mistake, **don't add another sentence to the prompt — write a lint** in `output_lints_builtin.go` / `output_lints_delivery.go` and the runtime will reject + retry deterministically.
+
+### Hard constraints live in the runtime, not the prompt
+
+An explicit "without using any tools" is satisfied by *withholding the tools* (`prepareTurnInputs` filters the list to nothing, including PTC's `execute_javascript` and `search_available_tools`), and any tool call the model emits anyway is refused with structured feedback. Forbidding a capability means not offering it — not offering it and then arguing about it.
 
 ### Eval harness (v2.69.0)
 
@@ -126,7 +161,7 @@ Skills aren't all dumped into the prompt. The runtime surfaces a small relevant 
 ```
 ~/.agentgo/                      # override with AGENTGO_HOME=...
 ├── data/
-│   ├── agentgo.db               # config, providers, agents, teams, tasks, plans (SQLite)
+│   ├── agentgo.db               # config, providers, agents, tasks, checkpoints (SQLite)
 │   └── cortex.db                # optional memory/vector/graph (cortexdb)
 ├── memories/                    # file memory when enabled
 ├── skills/                      # local skills (SKILL.md format)
@@ -137,9 +172,11 @@ Skills aren't all dumped into the prompt. The runtime surfaces a small relevant 
 
 ### CLI structure
 
-`cmd/agentgo-cli/root.go` registers cobra subcommands from sibling sub-packages: `agent/`, `team/`, `mcp/`, `memory/`, `ptc/`, `rag/`, `skills/`, `acp/`, `cache/`, `eval/`, plus top-level files for `chat`, `llm`, `embedding`, `status`, `tasks`, `config`, `explain`, `session`, `resources`. New commands go in those sub-packages. The root `PersistentPreRunE` loads config, sets log level from `--verbose/--debug/--quiet`, and lazily initializes the global pool service for any command except `cache`.
+`cmd/agentgo-cli/root.go` registers cobra subcommands from sibling sub-packages: `agent/`, `mcp/`, `memory/`, `ptc/`, `rag/`, `skills/`, `cache/`, `eval/`, plus top-level files for `chat`, `llm`, `embedding`, `status`, `tasks`, `config`, `session`, `resources`. New commands go in those sub-packages. The root `PersistentPreRunE` loads config, sets log level from `--verbose/--debug/--quiet`, and lazily initializes the global pool service for any command except `cache`.
 
-`tasks.go` bundles the canonical task surface: `task list / get / inspect / trace / yield / resume / replay / checkpoints / cancel`. `replay` is the checkpoint-driven re-run; `resume` is the older yield-and-resume-with-input flow.
+`tasks.go` bundles the canonical task surface: `task list / get / inspect / trace / yield / resume / replay / checkpoints / cancel`. `replay` is the checkpoint-driven re-run; `resume` is the yield-and-resume-with-input flow.
+
+`chat` runs a single agent. `agentgo-cli/internal/rank` holds the six-test provider capability probe behind `llm rank`.
 
 ### UI
 
@@ -147,8 +184,8 @@ Skills aren't all dumped into the prompt. The runtime surfaces a small relevant 
 
 ## Conventions that bite if you don't know them
 
-- **Identity = session UUID, not userID.** Conversations are keyed by UUID. Don't introduce `userID` as a primary identity field for chat / task / plan APIs. Use `github.com/google/uuid`.
-- **Concurrency.** Recent commits (`fix agent concurrency races`) tightened goroutine sharing in dispatcher/team manager paths. Run `go test -race` for changes touching `pkg/agent/dispatcher_*`, `pkg/agent/team_*`, `pkg/agent/async_tasks*`, or `pkg/agent/store.go`.
+- **Identity = session UUID, not userID.** Conversations are keyed by UUID. Don't introduce `userID` as a primary identity field for chat or task APIs. Use `github.com/google/uuid`.
+- **Concurrency.** Run `go test -race ./pkg/agent/...` for changes touching `pkg/agent/runtime.go`, `pkg/agent/manager.go`, `pkg/agent/subagent*.go`, `pkg/agent/async_tasks*`, or `pkg/agent/store.go`.
 - **Provider compatibility fallbacks.** `pkg/pool/client.go` and `pkg/providers/openai.go` both have `applyRetryFallbacks` helpers that strip `web_search_options` or `tool_choice` and retry once when the upstream rejects them with "unsupported / does not support / invalid" errors. DeepSeek's reasoner (e.g. `deepseek-v4-flash`) needs the `tool_choice` fallback. When adding new optional params, mirror the same shape: detect the rejection, strip, retry once.
 - **`tool_choice` JSON shape.** `"auto" / "required" / "none"` go in as plain strings; named-tool choice is `{"type":"function","function":{"name":"X"}}`. Don't reuse the named-tool form for `"required"` — DeepSeek and some OpenAI variants reject that.
 - **Use random high ports** (3000+, e.g. 3076, 6759, 43510) for any new dev port; avoid 8080 and other common defaults.
@@ -165,4 +202,3 @@ Skills aren't all dumped into the prompt. The runtime surfaces a small relevant 
 - Tasks: `agentgo task list`, `agentgo task get <id>`, `agentgo task trace <id>`
 - Checkpoint recovery: `agentgo task checkpoints <id>`, `agentgo task replay <id> [--checkpoint X] [--follow-up "..."]`
 - Behavioral eval: `make eval` (mock) / `make eval-live` (real provider) / `agentgo eval --filter <name>`
-- Routing: `agentgo explain "..."` shows which agent/route would be picked

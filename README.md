@@ -6,11 +6,11 @@
 [![Release](https://img.shields.io/github/v/release/liliang-cn/agent-go)](https://github.com/liliang-cn/agent-go/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**Agent / Team framework for Go with local-first AI capabilities.**
+**Agent framework for Go with local-first AI capabilities.**
 
-AgentGo is a Go framework for building agent systems that can run locally, use tools, keep memory, and coordinate work through teams.
+AgentGo is a Go framework for building agents that run locally, use tools, keep memory, and compose with each other.
 
-It is centered on `pkg/agent`. The CLI and UI are adapters around the framework, not the core.
+It is centered on `pkg/agent`: one transparent loop, everything-is-a-tool, and determinism enforced by lints rather than by longer prompts. The CLI and UI are adapters around the framework, not the core.
 
 ## Install
 
@@ -21,9 +21,10 @@ go get github.com/liliang-cn/agent-go/v3
 ## Core Ideas
 
 - **Agent**: a named runtime with instructions, tools, memory, and sessions.
-- **Team**: a persistent group of agents with an orchestrator and specialists.
+- **Loop**: one streaming state machine. `Run()` is `RunStream()` plus a collector; sub-agents reuse the same loop.
+- **Tool**: everything the agent can do — built-ins, MCP, skills, PTC, and sub-agents.
+- **Sub-agent**: registered with `WithSubagents(...)` and reached through a single `task(agent_name, prompt)` tool. There is no team, dispatcher or router.
 - **Task**: a first-class unit of work with status, events, frames, and output.
-- **Task plan**: a lightweight work plan whose items can be submitted as real tasks.
 - **Memory**: durable local context, separate from cache and RAG.
 - **MCP**: tool integration layer for filesystem, web, and external capabilities.
 - **Skills**: reusable Markdown/YAML workflows.
@@ -78,16 +79,41 @@ result, _ := svc.Chat(ctx, "What do you know about me?")
 fmt.Println(result.Text())
 ```
 
-## Team Manager
+## Sub-agents are just a tool
+
+```go
+svc, _ := agent.New("lead").
+	WithSubagents(
+		agent.SubagentSpec{
+			Name:         "researcher",
+			Description:  "Gathers and summarises background information.",
+			Instructions: "You research a topic and return a tight, factual brief.",
+		},
+		agent.SubagentSpec{
+			Name:         "writer",
+			Description:  "Turns notes into finished prose.",
+			Instructions: "You write clear, plain prose from the notes you are given.",
+		},
+	).
+	Build()
+defer svc.Close()
+
+result, _ := svc.Run(ctx, "Research X and write two paragraphs about it.")
+fmt.Println(result.Text())
+```
+
+The model reaches a sub-agent by calling `task(agent_name, prompt)`. It runs through the same loop, so its events bubble up, its answer is linted, and its terminal state is checkpointed.
+
+## Tasks
 
 ```go
 store, _ := agent.NewStore("agentgo.db")
-manager := agent.NewTeamManager(store)
-_ = manager.SeedDefaultMembers()
+manager := agent.NewManager(store)
+_ = manager.SeedDefaultAgent()
 
 task, _ := manager.Tasks().Submit(ctx, agent.TaskSubmitOptions{
 	SessionID: "demo-session",
-	AgentName: "Operator",
+	AgentName: "Assistant",
 	Input:     "Check the current repository status.",
 })
 
@@ -96,58 +122,19 @@ fmt.Println(done.Status)
 fmt.Println(done.Output)
 ```
 
-## Task Plans
-
-Task plans are coordination records. Actual execution still happens through tasks.
-
-```go
-plan, _ := manager.Plans().Create(ctx, agent.TaskPlanCreateOptions{
-	SessionID: "demo-session",
-	Goal:      "Verify the CLI task-plan flow",
-	Items: []agent.TaskPlanItem{
-		{
-			ID:         "inspect",
-			Subject:    "Inspect CLI output",
-			OwnerAgent: "Operator",
-			Blocks:     []string{"summarize"},
-		},
-		{
-			ID:         "summarize",
-			Subject:    "Summarize result",
-			OwnerAgent: "Responder",
-			BlockedBy:  []string{"inspect"},
-		},
-	},
-})
-
-task, _ := manager.Plans().SubmitItem(ctx, plan.ID, "inspect", agent.TaskPlanSubmitItemOptions{})
-fmt.Println(task.ID)
-```
-
 ## CLI
 
 ```bash
-# Chat with Dispatcher
+# Chat with your agent
 agentgo chat
 
 # Ask once
-agentgo chat "Create a small task plan for validating this repo"
-
-# Inspect plans in the current chat session
-agentgo chat --session my-session
-# then type:
-# /plans
-# /plan ready <plan_id>
-# /plan submit <plan_id> <item_id> [agent_name]
+agentgo chat "Summarise what changed in this repo today"
 
 # Manage agents
 agentgo agent list
-agentgo agent show Dispatcher
-agentgo agent run --agent Operator "Run git status and summarize it"
-
-# Manage teams
-agentgo team list
-agentgo team add "Docs Team" --description "Documentation work"
+agentgo agent show Assistant
+agentgo agent run --agent Assistant "Run git status and summarize it"
 
 # Inspect tasks
 agentgo task list
@@ -171,7 +158,7 @@ agentgo llm rank <name>                # 6-test capability rank
 
 ## Output lints — moving "please don't" out of prompts
 
-When an agent keeps making the same mistake (narrating routing instead of doing it, storing relative dates, ending with "Next steps:..."), don't add another sentence to its instruction. Register a lint:
+When an agent keeps making the same mistake (ending with "Next steps:...", claiming it sent an email it never sent, answering with nothing at all), don't add another sentence to its instruction. Register a lint:
 
 ```go
 svc.RegisterOutputLint(agent.LintFunc{
@@ -182,15 +169,18 @@ svc.RegisterOutputLint(agent.LintFunc{
         }
         return true, ""
     },
-}, "Operator")  // empty agentNames = global
+})
 ```
 
-Built-ins (`agent.RegisterDefaultOutputLints(svc)`):
-- `dispatcher_no_bounce_back` — reject "I will route this..." style
-- `archivist_no_relative_time` — reject 明天 / tomorrow without an absolute date
-- `no_planning_only_finish` — reject planning-only endings
+Every service built with `agent.New(...).Build()` gets the built-ins automatically:
 
-When running through `TeamManager`, the agent-scoped lints are auto-wired for built-in agents (Dispatcher, Archivist).
+- `no_planning_only_finish` — reject planning-only endings
+- `file_task_must_write` — a task that asked for a file must have produced one
+- `no_raw_ptc_code` — sandbox JS must never be the user-facing answer
+- `non_empty_final_answer` — a run cannot terminate with no text
+- `task_delivery_contract` — a goal naming a delivery action (send the mail, post the message, write the file) cannot complete unless a matching tool was actually called
+
+Related: a task that says "without using any tools" is given **zero** tools, and any tool call it makes anyway is refused. Hard constraints are enforced by the runtime, not requested in the prompt.
 
 ## Storage
 
@@ -199,7 +189,7 @@ By default AgentGo uses:
 ```text
 ~/.agentgo/
 ├── data/
-│   ├── agentgo.db     # config, providers, agents, teams, tasks, plans
+│   ├── agentgo.db     # config, providers, agents, tasks, checkpoints
 │   └── cortex.db      # optional memory/vector/graph storage
 ├── memories/          # file memory when enabled
 ├── skills/            # local skills
@@ -215,12 +205,14 @@ AGENTGO_HOME=/path/to/home agentgo chat
 ## Repository Layout
 
 ```text
-pkg/agent      framework core: agents, teams, tasks, task plans, lints, checkpoints
+pkg/agent      framework core: agent, loop, tools, context, hooks/lints, sessions, checkpoints
 pkg/mcp        MCP tools and servers
 pkg/memory     durable memory
 pkg/rag        optional retrieval
 pkg/skills     skill loading
-pkg/providers  LLM provider pool (with reasoner-model fallbacks)
+pkg/providers  LLM providers (with reasoner-model fallbacks)
+pkg/pool       provider pool + token/cost accounting
+pkg/poolsvc    process-global pool service used by the CLI and UI
 pkg/ptc        Programmatic Tool Calling — JS sandbox
 pkg/store      SQLite storage
 cmd/           CLI and UI adapters
