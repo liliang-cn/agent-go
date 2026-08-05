@@ -1,12 +1,8 @@
 package agent
 
 import (
-	"context"
-	"log/slog"
 	"regexp"
 	"strings"
-
-	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 )
 
 // Turning a PTC run into an answer for the user.
@@ -78,52 +74,4 @@ func looksLikeExecutionReport(text string) bool {
 		return true
 	}
 	return false
-}
-
-// ptcFinalAnswer decides what the user sees after a PTC turn.
-//
-// modelSaid is whatever text the model produced alongside its tool call;
-// report is PTCResult.Output. Returns the answer to use.
-func (s *Service) ptcFinalAnswer(ctx context.Context, goal string, session *Session, modelSaid, report string) string {
-	// The model already answered: keep it. This is the common case, and it is
-	// the one the old code broke by overwriting it with the report.
-	if !looksLikeExecutionReport(modelSaid) {
-		return modelSaid
-	}
-	if strings.TrimSpace(report) == "" {
-		return modelSaid
-	}
-	if s.llmService == nil {
-		return report
-	}
-
-	messages := []domain.Message{
-		{Role: "system", Content: s.buildSystemPrompt(ctx, s.resolveCurrentAgent(session))},
-		{Role: "user", Content: goal},
-		{Role: "assistant", Content: report},
-		{Role: "user", Content: ptcAnswerPrompt},
-	}
-
-	// No tools on purpose: this round is for wording, and offering tools invites
-	// another round of work.
-	res, err := s.llmService.GenerateWithTools(ctx, messages, nil, &domain.GenerationOptions{})
-	if err != nil || res == nil || strings.TrimSpace(res.Content) == "" {
-		if err != nil {
-			s.logger.Warn("PTC answer summarisation failed; falling back to the execution report",
-				slog.Any("error", err))
-		}
-		// Falling back to the report is ugly but truthful — better than an empty
-		// reply that hides a completed job.
-		return report
-	}
-	if answer := stripPTCCodeBlocks(res.Content); answer != "" {
-		return answer
-	}
-	// The round replied with nothing but a code block. Its return value is
-	// usually the answer, so un-tag and flatten rather than surrender to the
-	// report.
-	if inline := extractInlineTaskCompleteResult(res.Content); inline != "" {
-		return inline
-	}
-	return report
 }

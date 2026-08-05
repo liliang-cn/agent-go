@@ -158,20 +158,6 @@ func (s *queryLoopState) recordToolResults(results []ToolExecutionResult) {
 	s.TotalToolCalls += len(results)
 }
 
-// recordRoundTokens records tokens used in a round for diminishing returns detection
-func (s *queryLoopState) recordRoundTokens(tokens int) {
-	s.Budget.tokensPerRound = append(s.Budget.tokensPerRound, tokens)
-	// Keep window bounded
-	if len(s.Budget.tokensPerRound) > diminishingReturnsWindow*2 {
-		s.Budget.tokensPerRound = s.Budget.tokensPerRound[len(s.Budget.tokensPerRound)-diminishingReturnsWindow:]
-	}
-}
-
-// incrementContinuation increments the continuation counter (no meaningful progress)
-func (s *queryLoopState) incrementContinuation() {
-	s.Budget.continuationCount++
-}
-
 // resetContinuation resets the continuation counter (meaningful progress made)
 func (s *queryLoopState) resetContinuation() {
 	s.Budget.continuationCount = 0
@@ -234,25 +220,6 @@ func newServiceExecutionLoopState(goal string, messages []domain.Message, maxRou
 	}
 }
 
-func (s *serviceExecutionLoopState) beginExecutionRound(round int) {
-	s.roundStartedAt = time.Now()
-	s.currentRound = roundMetrics{round: round}
-}
-
-func (s *serviceExecutionLoopState) noteLLMDuration(d time.Duration) {
-	s.currentRound.llmMs += d.Milliseconds()
-}
-
-func (s *serviceExecutionLoopState) noteToolDuration(d time.Duration) {
-	s.currentRound.toolMs += d.Milliseconds()
-}
-
-func (s *serviceExecutionLoopState) finalizeRound() {
-	s.currentRound.durationMs = time.Since(s.roundStartedAt).Milliseconds()
-	s.Metrics.roundStats = append(s.Metrics.roundStats, s.currentRound)
-	s.Metrics.rounds++
-}
-
 func (s *serviceExecutionLoopState) noteTurnTokens(tokens int) {
 	s.queryLoopState.noteTokens(tokens)
 	if tokens > 0 {
@@ -278,12 +245,6 @@ func (s *serviceExecutionLoopState) continueWith(transition, reason string, mess
 		s.setMessages(messages)
 	}
 	s.noteRoundCompleted()
-}
-
-func (s *serviceExecutionLoopState) setCurrentAgent(agent *Agent) {
-	if agent != nil {
-		s.CurrentAgent = agent
-	}
 }
 
 func (s *serviceExecutionLoopState) metricsSnapshot() *executionMetrics {

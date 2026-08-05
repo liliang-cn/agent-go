@@ -713,45 +713,8 @@ func (s *Service) setRunning(running bool) {
 	s.isRunning = running
 }
 
-func (s *Service) estimateGenerationTokens(messages []domain.Message, result *domain.GenerationResult) int {
-	total := s.estimateDomainMessagesTokens(messages)
-	if result == nil {
-		return total
-	}
-	total += s.estimateTextTokens(result.Content)
-	total += s.estimateTextTokens(result.ReasoningContent)
-	for _, tc := range result.ToolCalls {
-		total += s.estimateTextTokens(tc.Function.Name)
-		if b, err := json.Marshal(tc.Function.Arguments); err == nil {
-			total += s.estimateTextTokens(string(b))
-		}
-	}
-	return total
-}
-
 func (s *Service) estimateRunTokens(goal string, finalResult interface{}) int {
 	return s.estimateTextTokens(goal) + s.estimateTextTokens(formatResultForContent(finalResult))
-}
-
-func (s *Service) estimatePTCTokens(res *PTCResult) int {
-	if res == nil || res.ExecutionResult == nil {
-		return 0
-	}
-
-	total := s.estimateTextTokens(formatResultForContent(res.ExecutionResult.Output))
-	total += s.estimateTextTokens(formatResultForContent(res.ExecutionResult.ReturnValue))
-	for _, logLine := range res.ExecutionResult.Logs {
-		total += s.estimateTextTokens(logLine)
-	}
-	for _, tc := range res.ExecutionResult.ToolCalls {
-		total += s.estimateTextTokens(tc.ToolName)
-		if b, err := json.Marshal(tc.Arguments); err == nil {
-			total += s.estimateTextTokens(string(b))
-		}
-		total += s.estimateTextTokens(formatResultForContent(tc.Result))
-		total += s.estimateTextTokens(tc.Error)
-	}
-	return total
 }
 
 func (s *Service) estimateDomainMessagesTokens(messages []domain.Message) int {
@@ -783,36 +746,4 @@ func (s *Service) estimateTextTokens(text string) int {
 		model = "default"
 	}
 	return s.tokenCounter.EstimateTokens(text, model)
-}
-
-func toolNamesFromPTC(res *PTCResult) []string {
-	if res == nil || res.ExecutionResult == nil {
-		return nil
-	}
-	names := make([]string, 0, len(res.ExecutionResult.ToolCalls))
-	for _, tc := range res.ExecutionResult.ToolCalls {
-		if tc.ToolName != "" {
-			names = append(names, tc.ToolName)
-		}
-	}
-	return names
-}
-
-func uniqueStrings(values []string) []string {
-	if len(values) == 0 {
-		return nil
-	}
-	seen := make(map[string]struct{}, len(values))
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	return result
 }

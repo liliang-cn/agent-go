@@ -450,16 +450,6 @@ func convertToAgentModel(a *store.AgentModel) *AgentModel {
 	}
 }
 
-// normalizeAgentKind defaults every stored agent to the plain agent kind.
-// v3 has no orchestrator/specialist distinction; the constants survive only
-// so old rows still deserialize.
-func normalizeAgentKind(agent *AgentModel) AgentKind {
-	if agent != nil && agent.Kind != "" {
-		return agent.Kind
-	}
-	return AgentKindAgent
-}
-
 func replaceTaskFramesForSession(existing []taskpkg.Frame, sessionID string, replacement []taskpkg.Frame) []taskpkg.Frame {
 	out := make([]taskpkg.Frame, 0, len(existing)+len(replacement))
 	for _, frame := range existing {
