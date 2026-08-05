@@ -179,11 +179,15 @@ type RunConfig struct {
 	// Debug enables verbose logging
 	Debug bool
 
-	// StoreHistory enables storing execution history to database
-	StoreHistory bool
+	// ToolAllowlist, when non-empty, restricts this run to the named tools.
+	// ToolDenylist removes named tools. Both are applied by the single loop's
+	// turn preparation, which is how sub-agents get a narrower tool surface
+	// without needing an execution path of their own.
+	ToolAllowlist []string
+	ToolDenylist  []string
 
-	// HistoryDBPath specifies the database path for history storage
-	HistoryDBPath string
+	// SystemPromptOverride replaces the agent's instructions for this run.
+	SystemPromptOverride string
 
 	// SessionID specifies a session ID for multi-turn conversations
 	SessionID string
@@ -291,11 +295,10 @@ type ErrorHandlerResult struct {
 // DefaultRunConfig returns the default run configuration
 func DefaultRunConfig() *RunConfig {
 	return &RunConfig{
-		MaxTurns:     20,
-		Temperature:  0.3,
-		MaxTokens:    2000,
-		Debug:        false,
-		StoreHistory: false,
+		MaxTurns:    20,
+		Temperature: 0.3,
+		MaxTokens:   2000,
+		Debug:       false,
 	}
 }
 
@@ -330,16 +333,6 @@ func WithErrorHandler(kind string, handler ErrorHandlerFunc) RunOption {
 		}
 		c.ErrorHandlers[kind] = handler
 	}
-}
-
-// WithStoreHistory enables storing execution history to database
-func WithStoreHistory(store bool) RunOption {
-	return func(c *RunConfig) { c.StoreHistory = store }
-}
-
-// WithHistoryDBPath sets the database path for history storage
-func WithHistoryDBPath(path string) RunOption {
-	return func(c *RunConfig) { c.HistoryDBPath = path }
 }
 
 // WithSessionID sets a specific session ID for the run
@@ -484,4 +477,14 @@ func WithPTCEnabled(enabled bool) RunOption {
 // injected as context.
 func WithMemoryRecallShortcut(enabled bool) RunOption {
 	return func(c *RunConfig) { c.DisableMemoryRecallShortcut = !enabled }
+}
+
+// WithToolAllowlist restricts a run to the named tools.
+func WithToolAllowlist(names []string) RunOption {
+	return func(c *RunConfig) { c.ToolAllowlist = names }
+}
+
+// WithToolDenylist removes the named tools from a run.
+func WithToolDenylist(names []string) RunOption {
+	return func(c *RunConfig) { c.ToolDenylist = names }
 }

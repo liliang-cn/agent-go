@@ -2,6 +2,10 @@ package agent
 
 import "context"
 
+// contextKey is the private key type for values the runtime threads through
+// context.Context (session, agent, tool-use state, discovery budget).
+type contextKey string
+
 const currentAgentKey contextKey = "current_agent"
 
 func withCurrentAgent(ctx context.Context, agent *Agent) context.Context {

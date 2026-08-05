@@ -148,16 +148,6 @@ func (s *Service) EffectiveContextWindow() int {
 	return s.contextWindow
 }
 
-// SetHistoryStore sets the history store for execution recording
-func (s *Service) SetHistoryStore(historyStore *HistoryStore) {
-	s.historyStore = historyStore
-}
-
-// GetHistoryStore returns the current history store
-func (s *Service) GetHistoryStore() *HistoryStore {
-	return s.historyStore
-}
-
 // MemoryService returns the agent's DB-backed memory service (may be nil).
 // Use this to integrate external components with the same memory store.
 func (s *Service) MemoryService() domain.MemoryService {

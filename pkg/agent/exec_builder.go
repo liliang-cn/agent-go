@@ -36,13 +36,6 @@ func (b *Builder) WithSandbox(sb sandbox.Sandbox) *Builder {
 	return b
 }
 
-// WithDeliverables registers the list_deliverables tool, which scans the
-// sandbox workspace for produced artifacts. Requires WithSandbox.
-func (b *Builder) WithDeliverables(on bool) *Builder {
-	b.enableDeliver = on
-	return b
-}
-
 // WithAutonomy configures long-horizon execution (round budget, lint retry
 // budget, scratchpad). See AutonomyProfile.
 func (b *Builder) WithAutonomy(p AutonomyProfile) *Builder {

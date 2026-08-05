@@ -194,8 +194,19 @@ func shouldKeepToolForSkillFirst(toolName string, relevantSkillNames []string) b
 }
 
 func (s *Service) prepareTurnInputs(ctx context.Context, currentAgent *Agent, messages []domain.Message, goal string) ([]domain.ToolDefinition, []domain.Message) {
+	return s.prepareTurnInputsWithConfig(ctx, currentAgent, messages, goal, nil)
+}
+
+// prepareTurnInputsWithConfig is the single place where a turn's tool list and
+// message list are assembled. cfg may be nil; when it carries an allow/deny
+// list the tool surface is narrowed accordingly, which is how a sub-agent run
+// gets a restricted toolset without a separate execution path.
+func (s *Service) prepareTurnInputsWithConfig(ctx context.Context, currentAgent *Agent, messages []domain.Message, goal string, cfg *RunConfig) ([]domain.ToolDefinition, []domain.Message) {
 	s.syncDiscoveredToolsFromHistory(messages, "")
 	tools := s.collectAllAvailableToolsWithPolicy(ctx, currentAgent, s.buildToolPreparationPolicy(ctx))
+	if cfg != nil && (len(cfg.ToolAllowlist) > 0 || len(cfg.ToolDenylist) > 0) {
+		tools = filterTools(tools, cfg.ToolAllowlist, cfg.ToolDenylist)
+	}
 	// An explicit "without using any tools" is satisfied by withholding them,
 	// not by asking the model to resist what is attached to its request. Only
 	// the terminal signals survive — the turn still has to end.
@@ -206,6 +217,9 @@ func (s *Service) prepareTurnInputs(ctx context.Context, currentAgent *Agent, me
 	}
 
 	systemMsg := s.buildSystemPrompt(ctx, currentAgent)
+	if cfg != nil && strings.TrimSpace(cfg.SystemPromptOverride) != "" {
+		systemMsg = cfg.SystemPromptOverride
+	}
 	genMessages := append([]domain.Message{{Role: "system", Content: systemMsg}}, messages...)
 	return tools, genMessages
 }

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -111,11 +112,6 @@ type SubAgent struct {
 
 // SubAgentOption configures a SubAgent
 type SubAgentOption func(*SubAgentConfig)
-
-// WithSubAgentToolCall sets a specific tool call to execute
-func WithSubAgentToolCall(tc *domain.ToolCall) SubAgentOption {
-	return func(c *SubAgentConfig) { c.ToolCall = tc }
-}
 
 // NewSubAgent creates a new sub-agent wrapper
 func NewSubAgent(cfg SubAgentConfig, opts ...SubAgentOption) *SubAgent {
@@ -362,12 +358,13 @@ func (sa *SubAgent) Run(parentCtx context.Context) (interface{}, error) {
 	var err error
 	for attempt := 0; attempt <= sa.config.RetryOnFailure; attempt++ {
 		if sa.config.ToolCall != nil {
-			// Specific tool execution mode
+			// Single-tool mode: the sub-agent wraps ONE tool call so it gets
+			// its own isolation, event stream and (optionally) worktree. No
+			// model turn is involved, so it must not enter the agent loop.
 			sa.emitProgress(fmt.Sprintf("Executing specific tool: %s", sa.config.ToolCall.Function.Name))
 			res, terr, _ := sa.executeTool(sa.ctx, *sa.config.ToolCall)
 			result, err = res, terr
 		} else {
-			// Normal agent execution mode
 			result, err = sa.execute(sa.ctx)
 		}
 
@@ -475,252 +472,95 @@ func (sa *SubAgent) IsTerminal() bool {
 }
 
 // execute runs the agent with tool filtering
+// execute runs the sub-agent through the SAME loop the top-level run uses.
+// A sub-agent is not a second execution engine — it is one more Runtime over
+// the same Service, with its own session, a narrower tool surface and a
+// different event sink. Everything the loop provides (lints, compaction,
+// checkpoints, tool lifecycle, observers) therefore applies unchanged.
 func (sa *SubAgent) execute(ctx context.Context) (interface{}, error) {
 	if sa.config.Service == nil {
 		return nil, fmt.Errorf("service not configured for sub-agent")
 	}
 
-	// Collect tools with filtering
-	currentAgent := sa.config.Agent
-	tools := sa.collectFilteredTools(ctx, currentAgent)
-
 	sa.emitProgress("Starting execution")
 
-	state := newServiceExecutionLoopState(sa.config.Goal, sa.buildInitialMessages(tools), sa.config.MaxTurns, currentAgent)
-	state.TaskID = currentTaskID(sa.session)
-	state.setStage(TurnStagePreparingContext, "starting subagent execution", 0)
-	sa.emitLoopState(state.queryLoopState)
-
-	// Execute with turn limit
-	for round := 0; round < sa.config.MaxTurns; round++ {
-		// Check cancellation
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-		}
-
-		state.beginRound()
-		sa.mu.Lock()
-		sa.currentTurn = state.CurrentRound
-		sa.mu.Unlock()
-
-		sa.emitProgress(fmt.Sprintf("Turn %d/%d", sa.currentTurn, sa.config.MaxTurns))
-		state.setStage(TurnStageAwaitingModel, "requesting model output", 0)
-		sa.emitLoopState(state.queryLoopState)
-
-		// Build system prompt with SubAgent-specific tool instructions
-		systemMsg := sa.buildSystemPrompt(ctx, tools)
-		genMessages := append([]domain.Message{{Role: "system", Content: systemMsg}}, state.Messages...)
-
-		// PII/guardrail seam: scrub non-system messages before the sub-agent's
-		// LLM call, mirroring the main runtime. Only what's sent to the provider
-		// is redacted; state.Messages (persisted history) is untouched. A block
-		// stops the sub-agent instead of forwarding the content.
-		if sa.config.Service != nil && sa.config.Service.guardrails != nil {
-			redacted, reason, blocked := sa.config.Service.redactInputMessages(ctx, genMessages)
-			if blocked {
-				return nil, fmt.Errorf("input guardrail blocked the sub-agent request: %s", reason)
-			}
-			genMessages = redacted
-		}
-
-		// On the first turn with tools available and before any tool has been used
-		// or nudge has been attempted, set tool_choice=required to force the API
-		// to emit a function call rather than plain text.
-		// After a nudge or once tools have been used, let the model choose freely
-		// ("auto") — forcing "required" beyond Turn 1 can cause some proxies to
-		// return non-standard binary responses.
-		genOpts := sa.config.Service.toolGenerationOptions(0.3, 2000, "")
-		if genOpts.ToolChoice == "" && len(tools) > 0 && !state.ToolUsed && !state.Nudged {
-			genOpts.ToolChoice = "required"
-		}
-
-		if sa.config.Debug {
-			var promptContent strings.Builder
-			if sections := formatSystemPromptSectionsForDebug(sa.config.Service.buildSystemPromptSections(ctx, sa.config.Agent, systemPromptOptions{includePTC: sa.config.Service.ptcIntegration != nil})); sections != "" {
-				promptContent.WriteString(sections)
-				promptContent.WriteString("\n\n")
-			}
-			promptContent.WriteString(buildDebugPrompt(sa.config.Service.Info(), tools, genMessages))
-			sa.emitDebug(round+1, "prompt", promptContent.String())
-		}
-
-		// Observer seam: bracket the sub-agent's model turn so worker/sub-agent
-		// LLM turns show up as LLM spans in tracing (not just the top-level run).
-		subSessionID := ""
-		if sa.session != nil {
-			subSessionID = sa.session.GetID()
-		}
-		subModelInfo := ModelInfo{
-			TaskID:    currentTaskID(sa.session),
-			SessionID: subSessionID,
-			AgentName: sa.config.Agent.Name(),
-			Round:     round + 1,
-			SpanID:    uuid.NewString(),
-			Messages:  len(genMessages),
-			Tools:     len(tools),
-		}
-		sa.config.Service.emitObserver(func(o Observer) { o.OnModelStart(ctx, subModelInfo) })
-		llmStart := time.Now()
-
-		result, responseID, recovery, err := sa.config.Service.streamToolTurn(ctx, genMessages, tools, genOpts, StreamTurnCallbacks{
-			OnReasoning: func(text string) {
-				sa.emitThinking(text)
-				sa.config.Service.emitObserver(func(o Observer) {
-					o.OnModelDelta(ctx, ModelDelta{SpanID: subModelInfo.SpanID, Kind: "reasoning", Text: text})
-				})
-			},
-			OnPartial: func(text string) {
-				sa.emitPartial(text)
-				sa.config.Service.emitObserver(func(o Observer) {
-					o.OnModelDelta(ctx, ModelDelta{SpanID: subModelInfo.SpanID, Kind: "partial", Text: text})
-				})
-			},
-		})
-		state.noteRecovery(recovery)
-		{
-			var modelRes *ModelResult
-			if result != nil {
-				modelRes = &ModelResult{
-					Content:    result.Content,
-					ToolCalls:  len(result.ToolCalls),
-					DurationMs: time.Since(llmStart).Milliseconds(),
-				}
-			}
-			sa.config.Service.emitObserver(func(o Observer) { o.OnModelEnd(ctx, subModelInfo, modelRes, err) })
-		}
-		if err != nil {
-			return nil, fmt.Errorf("LLM error: %w", err)
-		}
-		state.noteResponse(responseID)
-
-		if sa.config.Debug {
-			sa.emitDebug(round+1, "response", buildDebugResponse(result.Content, result.ToolCalls, nil))
-		}
-
-		// Handle tool calls
-		if len(result.ToolCalls) > 0 {
-			nextAgent, handoffReason, filteredToolCalls, duplicateToolResults, fallback, handoff := sa.config.Service.prepareToolRound(ctx, &state.Messages, state.CurrentAgent, sa.session, result, state.PrevToolCalls, round)
-			if handoff {
-				decision := decideHandoff(nextAgent, handoffReason)
-				state.setCurrentAgent(decision.NextAgent)
-				sa.config.Agent = decision.NextAgent
-				tools = sa.collectFilteredTools(ctx, state.CurrentAgent)
-				state.continueWith(decision.Transition, "subagent handoff requested", state.Messages)
-				continue
-			}
-			if fallback != "" {
-				sa.emitProgress("Execution completed")
-				return fallback, nil
-			}
-			if len(filteredToolCalls) == 0 {
-				if len(duplicateToolResults) > 0 {
-					state.Messages = sa.config.Service.appendToolRoundToMessages(state.Messages, currentTaskID(sa.session), result, duplicateToolResults)
-					state.noteToolResults(duplicateToolResults)
-				}
-				state.continueWith(queryLoopTransitionDuplicateToolResults, "reused duplicate tool results", state.Messages)
-				continue
-			}
-
-			state.setStage(TurnStageHandlingTools, "executing tool batch", len(filteredToolCalls))
-			sa.emitLoopState(state.queryLoopState)
-			var toolResults []ToolExecutionResult
-			state.Messages, toolResults, err = sa.config.Service.executePreparedToolRound(ctx, state.CurrentAgent, sa.session, state.Messages, result, filteredToolCalls, duplicateToolResults, ToolExecutionCallbacks{
-				OnToolCall: func(name string, args map[string]interface{}, interruptBehavior string) {
-					sa.emitProgress(fmt.Sprintf("Executing tool: %s", name))
-					sa.emitToolCall(name, args)
-				},
-				OnToolResult: func(name string, result interface{}, err error, interruptBehavior string) {
-					sa.emitToolResult(name, result, err)
-				},
-				OnToolState: func(name string, toolState string, interruptBehavior string) {
-					sa.emitEvent(&Event{
-						ID:        uuid.NewString(),
-						Type:      EventTypeStateUpdate,
-						AgentID:   state.CurrentAgent.ID(),
-						AgentName: state.CurrentAgent.Name(),
-						Content:   fmt.Sprintf("Tool %s is %s", name, toolState),
-						StateDelta: map[string]interface{}{
-							"tool_name":          name,
-							"tool_state":         toolState,
-							"interrupt_behavior": interruptBehavior,
-						},
-						Timestamp: time.Now(),
-					})
-				},
-				EventSink: sa.emitEvent,
-				Debug:     sa.config.Debug,
-			}, true)
-			if err != nil {
-				return nil, fmt.Errorf("tool execution failed: %w", err)
-			}
-			decision := sa.config.Service.decidePostToolRound(state.Messages, currentTaskID(sa.session), result, duplicateToolResults, toolResults, sa.config.Service.isPTCEnabled(), filteredToolCalls)
-			state.setMessages(decision.Messages)
-			state.noteToolResults(decision.ToolResults)
-			if final := decision.Terminal; final != "" {
-				sa.emitProgress("Execution completed")
-				state.setStage(TurnStageCompleted, decision.Reason, 0)
-				state.setLoopTransition(decision.Transition, decision.Reason)
-				sa.emitLoopState(state.queryLoopState)
-				if decision.Blocked {
-					return terminalRunResult{Text: final, Blocked: true}, nil
-				}
-				return final, nil
-			}
-			if decision.AwaitAnswer {
-				state.setStage(TurnStageAwaitingAnswer, "waiting for final answer after tool results", len(filteredToolCalls))
-			}
-			state.continueWith(decision.Transition, decision.Reason, state.Messages)
-			continue
-		}
-
-		textDecision := decideTextRound(state.queryLoopState, len(tools) > 0, state.ToolUsed, state.Nudged, result.Content, true)
-		if textDecision.Kind == textRoundDecisionContinue {
-			state.Nudged = textDecision.Prompt == toolUseNudgePrompt
-			state.setMessages(append(state.Messages, domain.Message{
-				Role:    "user",
-				Content: textDecision.Prompt,
-			}))
-			sa.emitProgress("Nudging LLM to use available tools")
-			state.continueWith(textDecision.Transition, textDecision.Reason, state.Messages)
-			continue
-		}
-
-		sa.emitProgress("Execution completed")
-		state.setStage(TurnStageCompleted, textDecision.Reason, 0)
-		state.setLoopTransition(textDecision.Transition, "subagent text response completed")
-		sa.emitLoopState(state.queryLoopState)
-		return result.Content, nil
+	svc := sa.config.Service
+	agentForRun := sa.config.Agent
+	if agentForRun != nil && svc.registry != nil {
+		svc.registry.Register(agentForRun)
+		sa.session.AgentID = agentForRun.ID()
 	}
 
-	return nil, fmt.Errorf("exceeded maximum turns (%d)", sa.config.MaxTurns)
+	cfg := DefaultRunConfig()
+	cfg.MaxTurns = sa.config.MaxTurns
+	cfg.SessionID = sa.session.GetID()
+	cfg.TaskID = currentTaskID(sa.session)
+	cfg.ToolAllowlist = sa.config.ToolAllowlist
+	cfg.ToolDenylist = sa.config.ToolDenylist
+	cfg.SystemPromptOverride = svc.buildSystemPrompt(ctx, agentForRun) + subAgentToolPrompt
+
+	runtime := NewRuntime(svc, sa.session, cfg)
+	runtime.currentAgent = agentForRun
+
+	var (
+		final   string
+		blocked string
+		runErr  error
+	)
+	for evt := range runtime.RunStream(ctx, sa.subAgentGoal()) {
+		if evt == nil {
+			continue
+		}
+		switch evt.Type {
+		case EventTypeComplete:
+			final = evt.Content
+		case EventTypeBlocked:
+			blocked = evt.Content
+		case EventTypeError:
+			if strings.TrimSpace(evt.Content) != "" {
+				runErr = errors.New(evt.Content)
+			}
+		}
+		sa.emitEvent(evt)
+	}
+
+	sa.emitProgress("Execution completed")
+	switch {
+	case blocked != "":
+		return terminalRunResult{Text: blocked, Blocked: true}, nil
+	case final != "":
+		return final, nil
+	case runErr != nil:
+		return nil, runErr
+	default:
+		return "", nil
+	}
 }
 
-// buildInitialMessages constructs the initial message list for the SubAgent.
-// When tools are available, the goal is framed to encourage tool usage.
-func (sa *SubAgent) buildInitialMessages(tools []domain.ToolDefinition) []domain.Message {
-	content := sa.config.Goal
+// executeTool runs one tool call directly (single-tool sub-agent mode).
+func (sa *SubAgent) executeTool(ctx context.Context, tc domain.ToolCall) (interface{}, error, bool) {
+	if len(sa.config.ToolAllowlist) > 0 && !containsStr(sa.config.ToolAllowlist, tc.Function.Name) {
+		return nil, fmt.Errorf("tool %s not in allowlist", tc.Function.Name), false
+	}
+	if containsStr(sa.config.ToolDenylist, tc.Function.Name) {
+		return nil, fmt.Errorf("tool %s is denied", tc.Function.Name), false
+	}
 
-	// Add context if provided
+	ctx = withEventSink(ctx, sa.emitEvent)
+	ctx = withRunDebug(ctx, sa.config.Debug)
+	ctx = withCurrentSession(ctx, sa.session)
+
+	return sa.config.Service.executeDirectToolCall(ctx, sa.config.Agent, sa.session, tc, DirectToolExecutionOptions{})
+}
+
+// subAgentGoal renders the goal plus any caller-supplied context. The sub-agent
+// cannot see the parent conversation, so everything it needs has to be here.
+func (sa *SubAgent) subAgentGoal() string {
+	content := sa.config.Goal
 	if len(sa.config.Context) > 0 {
 		content += "\n\n--- Context ---\n" + formatContext(sa.config.Context)
 	}
-
-	// When tools are available, append explicit instruction
-	if len(tools) > 0 {
-		toolNames := make([]string, len(tools))
-		for i, t := range tools {
-			toolNames[i] = t.Function.Name
-		}
-		content += "\n\nYou MUST use the available tools (" +
-			strings.Join(toolNames, ", ") +
-			") to accomplish this goal. Do not just describe what you would do — actually call the tools."
-	}
-
-	return []domain.Message{
-		{Role: "user", Content: content},
-	}
+	return content
 }
 
 // buildSystemPrompt constructs the system prompt with SubAgent-specific
@@ -746,48 +586,6 @@ You are executing as a sub-agent with a specific goal. Follow these rules strict
 1. You MUST call the provided tool functions to accomplish the goal. Do NOT respond with text describing what you would do.
 2. After receiving tool results, synthesize them into a final answer.
 3. Only respond with a text-only message (no tool calls) when you have gathered all necessary information and are ready to provide the final answer.`
-
-// executeTool executes a single tool call with filtering
-func (sa *SubAgent) executeTool(ctx context.Context, tc domain.ToolCall) (interface{}, error, bool) {
-	// Check tool allowlist
-	if len(sa.config.ToolAllowlist) > 0 && !containsStr(sa.config.ToolAllowlist, tc.Function.Name) {
-		return nil, fmt.Errorf("tool %s not in allowlist", tc.Function.Name), false
-	}
-
-	// Check tool denylist
-	if containsStr(sa.config.ToolDenylist, tc.Function.Name) {
-		return nil, fmt.Errorf("tool %s is denied", tc.Function.Name), false
-	}
-
-	ctx = withEventSink(ctx, sa.emitEvent)
-	ctx = withRunDebug(ctx, sa.config.Debug)
-	ctx = withCurrentSession(ctx, sa.session)
-
-	currentAgent := sa.config.Agent
-	return sa.config.Service.executeDirectToolCall(ctx, currentAgent, sa.session, tc, DirectToolExecutionOptions{
-		OnHandoff: func(targetAgent *Agent, reason interface{}) {
-			sa.emitEvent(&Event{
-				ID:        uuid.NewString(),
-				Type:      EventTypeHandoff,
-				AgentID:   currentAgent.ID(),
-				AgentName: currentAgent.Name(),
-				Content:   fmt.Sprintf("Transferring to %s: %v", targetAgent.Name(), reason),
-				Timestamp: time.Now(),
-			})
-			sa.config.Agent = targetAgent
-		},
-	})
-}
-
-// collectFilteredTools collects and filters tools for this sub-agent
-func (sa *SubAgent) collectFilteredTools(ctx context.Context, agent *Agent) []domain.ToolDefinition {
-	if sa.config.Service == nil {
-		return nil
-	}
-
-	allTools := sa.config.Service.collectAllAvailableTools(ctx, agent)
-	return filterTools(allTools, sa.config.ToolAllowlist, sa.config.ToolDenylist)
-}
 
 // filterTools filters tools based on allowlist and denylist
 func filterTools(tools []domain.ToolDefinition, allowlist, denylist []string) []domain.ToolDefinition {
@@ -916,7 +714,7 @@ func copyMap(m map[string]interface{}) map[string]interface{} {
 // SubAgentCoordinator - Manages concurrent SubAgent execution
 // ============================================================
 
-// SubAgentResult represents the result of a SubAgent execution
+// SubAgentResult is the outcome of one coordinated sub-agent run.
 type SubAgentResult struct {
 	ID     string
 	Name   string
@@ -1010,112 +808,6 @@ func (c *SubAgentCoordinator) RunAsync(ctx context.Context, sa *SubAgent) <-chan
 	return resultChan
 }
 
-// RunAllAsync starts all SubAgents concurrently in separate goroutines
-func (c *SubAgentCoordinator) RunAllAsync(ctx context.Context) <-chan *SubAgentResult {
-	resultChan := make(chan *SubAgentResult, len(c.subagents))
-
-	c.mu.RLock()
-	count := len(c.subagents)
-	c.mu.RUnlock()
-
-	if count == 0 {
-		close(resultChan)
-		return resultChan
-	}
-
-	go func() {
-		var wg sync.WaitGroup
-
-		c.mu.RLock()
-		for _, sa := range c.subagents {
-			wg.Add(1)
-			go func(subagent *SubAgent) {
-				defer wg.Done()
-
-				runCtx, cancel := context.WithCancel(ctx)
-				c.mu.Lock()
-				c.running[subagent.id] = cancel
-				c.mu.Unlock()
-
-				defer func() {
-					c.mu.Lock()
-					delete(c.running, subagent.id)
-					c.mu.Unlock()
-				}()
-
-				result, err := subagent.Run(runCtx)
-
-				r := &SubAgentResult{
-					ID:     subagent.id,
-					Name:   subagent.config.Agent.Name(),
-					Result: result,
-					Error:  err,
-					State:  subagent.GetState(),
-				}
-
-				c.mu.Lock()
-				c.results[subagent.id] = r
-				c.mu.Unlock()
-
-				resultChan <- r
-			}(sa)
-		}
-		c.mu.RUnlock()
-
-		wg.Wait()
-		close(resultChan)
-	}()
-
-	return resultChan
-}
-
-// WaitAll waits for all SubAgents to complete
-func (c *SubAgentCoordinator) WaitAll(ctx context.Context) map[string]*SubAgentResult {
-	results := make(map[string]*SubAgentResult)
-
-	for result := range c.RunAllAsync(ctx) {
-		results[result.ID] = result
-	}
-
-	return results
-}
-
-// WaitAny waits for any SubAgent to complete and returns its result
-func (c *SubAgentCoordinator) WaitAny(ctx context.Context) *SubAgentResult {
-	resultChan := c.RunAllAsync(ctx)
-
-	select {
-	case result, ok := <-resultChan:
-		if ok {
-			// Cancel remaining SubAgents
-			c.CancelAll()
-			return result
-		}
-	case <-ctx.Done():
-		c.CancelAll()
-		return &SubAgentResult{
-			Error: ctx.Err(),
-			State: SubAgentStateCancelled,
-		}
-	}
-
-	return nil
-}
-
-// CancelAll cancels all running SubAgents
-func (c *SubAgentCoordinator) CancelAll() {
-	c.mu.RLock()
-	cancels := make([]context.CancelFunc, 0, len(c.running))
-	for _, cancel := range c.running {
-		cancels = append(cancels, cancel)
-	}
-	c.mu.RUnlock()
-
-	for _, cancel := range cancels {
-		cancel()
-	}
-}
-
 // Cancel cancels a specific SubAgent
 func (c *SubAgentCoordinator) Cancel(id string) bool {
 	c.mu.RLock()
@@ -1137,42 +829,11 @@ func (c *SubAgentCoordinator) GetResult(id string) (*SubAgentResult, bool) {
 	return r, ok
 }
 
-// GetAllResults returns all results
-func (c *SubAgentCoordinator) GetAllResults() map[string]*SubAgentResult {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	results := make(map[string]*SubAgentResult, len(c.results))
-	for k, v := range c.results {
-		results[k] = v
-	}
-	return results
-}
-
-// ListRunning returns IDs of all running SubAgents
-func (c *SubAgentCoordinator) ListRunning() []string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	ids := make([]string, 0, len(c.running))
-	for id := range c.running {
-		ids = append(ids, id)
-	}
-	return ids
-}
-
 // Count returns the number of managed SubAgents
 func (c *SubAgentCoordinator) Count() int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return len(c.subagents)
-}
-
-// CountRunning returns the number of currently running SubAgents
-func (c *SubAgentCoordinator) CountRunning() int {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return len(c.running)
 }
 
 func formatContext(ctx map[string]interface{}) string {

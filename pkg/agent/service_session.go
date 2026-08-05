@@ -3,11 +3,9 @@ package agent
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 	"github.com/liliang-cn/agent-go/v3/pkg/prompt"
 )
 
@@ -105,42 +103,6 @@ func (s *Service) Stream(ctx context.Context, message string) <-chan string {
 	return ch
 }
 
-// ChatStream is like Chat() but streams the reply token-by-token.
-// Conversation history is preserved across calls (same session UUID).
-//
-//	for token := range svc.ChatStream(ctx, "Tell me a story") {
-//	    fmt.Print(token)
-//	}
-func (s *Service) ChatStream(ctx context.Context, message string) <-chan string {
-	s.sessionMu.Lock()
-	if s.currentSessionID == "" {
-		s.currentSessionID = uuid.New().String()
-	}
-	sessionID := s.currentSessionID
-	s.sessionMu.Unlock()
-
-	ch := make(chan string, 32)
-	events, err := s.RunStream(ctx, message)
-	_ = sessionID // session binding already set via currentSessionID; RunStream picks it up
-	if err != nil {
-		close(ch)
-		return ch
-	}
-	go func() {
-		defer close(ch)
-		for evt := range events {
-			if evt.Type == EventTypePartial && evt.Content != "" {
-				select {
-				case ch <- evt.Content:
-				case <-ctx.Done():
-					return
-				}
-			}
-		}
-	}()
-	return ch
-}
-
 // CurrentSessionID returns the current session UUID used by Chat()
 func (s *Service) CurrentSessionID() string {
 	s.sessionMu.RLock()
@@ -160,22 +122,6 @@ func (s *Service) ResetSession() {
 	s.sessionMu.Lock()
 	defer s.sessionMu.Unlock()
 	s.currentSessionID = uuid.New().String()
-}
-
-// ConfigureMemory sets the memory bank personality for the current session
-func (s *Service) ConfigureMemory(ctx context.Context, config *domain.MemoryBankConfig) error {
-	if s.memoryService == nil {
-		return fmt.Errorf("memory service not enabled")
-	}
-	return s.memoryService.ConfigureBank(ctx, s.CurrentSessionID(), config)
-}
-
-// ReflectMemory triggers memory consolidation and returns current system observations
-func (s *Service) ReflectMemory(ctx context.Context) (string, error) {
-	if s.memoryService == nil {
-		return "", fmt.Errorf("memory service not enabled")
-	}
-	return s.memoryService.Reflect(ctx, s.CurrentSessionID())
 }
 
 // CompactSession summarizes a session into key points using LLM
@@ -238,27 +184,6 @@ func (s *Service) CompactSession(ctx context.Context, sessionID string) (string,
 	return resolveConversationSummary(session), nil
 }
 
-// RunRealtime starts a bidirectional realtime session with the agent's capabilities.
-func (s *Service) RunRealtime(ctx context.Context, opts *domain.GenerationOptions) (domain.RealtimeSession, error) {
-	// 1. Check if provider supports realtime
-	realtimeGen, ok := s.llmService.(domain.RealtimeGenerator)
-	if !ok {
-		return nil, fmt.Errorf("current LLM provider does not support realtime interactions")
-	}
-
-	// 2. Collect tools for the current agent
-	tools := s.collectAllAvailableTools(ctx, s.agent)
-
-	// 3. Create session
-	session, err := realtimeGen.NewSession(ctx, tools, opts)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create realtime session: %w", err)
-	}
-
-	s.logger.Info("Realtime session started", slog.Int("tools_count", len(tools)))
-	return session, nil
-}
-
 // Close closes the service and releases resources
 func (s *Service) Close() error {
 	// Wait for work a run left running (memory extraction) before closing the
@@ -271,12 +196,4 @@ func (s *Service) Close() error {
 		_ = closer.Close()
 	}
 	return s.store.Close()
-}
-
-// AddMCPServer dynamically adds and starts an MCP server
-func (s *Service) AddMCPServer(ctx context.Context, name string, command string, args []string) error {
-	if s.mcpService == nil {
-		return fmt.Errorf("MCP service not initialized")
-	}
-	return s.mcpService.AddServer(ctx, name, command, args)
 }

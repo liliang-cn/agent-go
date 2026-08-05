@@ -562,25 +562,6 @@ func (s *Service) appendToolRoundToMessages(messages []domain.Message, taskID st
 	return messages
 }
 
-// recordToolResults writes tool results to history store if enabled.
-func (s *Service) recordToolResults(ctx context.Context, session *Session, agent *Agent, goal string, toolResults []ToolExecutionResult, cfg *RunConfig, round int) {
-	if !cfg.StoreHistory || s.historyStore == nil {
-		return
-	}
-	for _, tr := range toolResults {
-		success := true
-		var errMsg string
-		if errMap, ok := tr.Result.(map[string]interface{}); ok {
-			if errVal, exists := errMap["error"]; exists && errVal != nil {
-				success = false
-				errMsg = fmt.Sprintf("%v", errVal)
-			}
-		}
-		s.historyStore.RecordToolResult(ctx, session.GetID(), agent.ID(), goal,
-			tr.ToolName, tr.ToolCallID, nil, tr.Result, success, errMsg, round+1)
-	}
-}
-
 // logDebugPrompt logs the full prompt for debugging.
 func (s *Service) logDebugPrompt(genMessages []domain.Message, round int) {
 	fmt.Println("\n" + strings.Repeat("=", 40))

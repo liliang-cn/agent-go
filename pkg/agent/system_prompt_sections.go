@@ -196,6 +196,9 @@ func (s *Service) buildSystemPromptSections(ctx context.Context, agent *Agent, o
 		options: opts,
 		data:    data,
 	}
+	if s.promptManager == nil {
+		return nil
+	}
 	resolved, err := s.promptManager.ResolveSections(ctx, []string{
 		"identity",
 		"operational",

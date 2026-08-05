@@ -92,7 +92,6 @@ type Builder struct {
 	permissionHandler PermissionHandler
 	permissionPolicy  PermissionPolicy
 	observers         []Observer
-	guardrails        []*Guardrail
 	// Custom LLM service (optional - if not set, uses global pool)
 	llmService domain.Generator
 	// Custom Embedder service (optional - used with custom LLM for RAG/Memory)
@@ -114,6 +113,7 @@ type Builder struct {
 
 	tools        []*Tool // pre-registered via WithTool/WithTools
 	extraModules []Module
+	subagents    []SubagentSpec
 
 	// Execution capabilities (all optional, zero-value = disabled)
 	sandbox       sandbox.Sandbox
@@ -211,20 +211,6 @@ func (b *Builder) WithSkills(opts ...SkillsOption) *Builder {
 	return b
 }
 
-// WithRequiredSkills enables skills (like WithSkills) AND records skill IDs/names
-// that MUST be installed — Build() returns an error listing any that are missing.
-// Use it when your agent depends on specific skills (e.g. the understand-*
-// codebase-comprehension skills) so a missing ~/.agentgo/skills install fails
-// fast instead of silently degrading at runtime.
-//
-//	svc, err := agent.New("x").WithRequiredSkills("understand", "understand-chat").Build()
-//	// err != nil if those skills aren't installed
-func (b *Builder) WithRequiredSkills(idsOrNames ...string) *Builder {
-	b.enableSkills = true
-	b.requiredSkills = append(b.requiredSkills, idsOrNames...)
-	return b
-}
-
 // WithPTC configures PTC. PTC is OFF by default; call this to opt in.
 //
 // Supported forms:
@@ -261,19 +247,6 @@ func (b *Builder) WithPTC(args ...interface{}) *Builder {
 	return b
 }
 
-// WithModule registers an additional Module whose tools are self-registered
-// into the ToolRegistry before PTC sync. Use this to add custom RAG, Memory,
-// or domain-specific tool sets without modifying the builder internals.
-//
-//	agent.New("bot").
-//	    WithModule(NewRAGModule(proc, nil)).
-//	    WithModule(NewMemoryModule(memSvc, nil)).
-//	    Build()
-func (b *Builder) WithModule(mod Module) *Builder {
-	b.extraModules = append(b.extraModules, mod)
-	return b
-}
-
 // WithDBPath sets database path
 func (b *Builder) WithDBPath(path string) *Builder {
 	b.dbPath = path
@@ -307,12 +280,6 @@ func (b *Builder) WithDebug(on ...bool) *Builder {
 	return b
 }
 
-// WithProgressCallback sets the progress callback.
-func (b *Builder) WithProgressCallback(cb ProgressCallback) *Builder {
-	b.progressCb = cb
-	return b
-}
-
 // WithProgress is a concise alias for WithProgressCallback.
 func (b *Builder) WithProgress(cb ProgressCallback) *Builder {
 	b.progressCb = cb
@@ -329,31 +296,6 @@ func (b *Builder) WithObserver(obs ...Observer) *Builder {
 			b.observers = append(b.observers, o)
 		}
 	}
-	return b
-}
-
-// WithGuardrails registers arbitrary content guardrails on the service. They
-// run at the input (pre-LLM), output (final answer), and memory seams,
-// threading redacted content through the chain. Default OFF — the framework
-// registers no guardrails unless you ask. Zero overhead when unused.
-func (b *Builder) WithGuardrails(gs ...*Guardrail) *Builder {
-	for _, g := range gs {
-		if g != nil {
-			b.guardrails = append(b.guardrails, g)
-		}
-	}
-	return b
-}
-
-// WithPermissionHandler installs a runtime permission handler for tool execution.
-func (b *Builder) WithPermissionHandler(handler PermissionHandler) *Builder {
-	b.permissionHandler = handler
-	return b
-}
-
-// WithPermissionPolicy overrides the policy that decides which tools need approval.
-func (b *Builder) WithPermissionPolicy(policy PermissionPolicy) *Builder {
-	b.permissionPolicy = policy
 	return b
 }
 
@@ -421,11 +363,6 @@ func (b *Builder) WithTools(tools ...*Tool) *Builder {
 			b.tools = append(b.tools, t)
 		}
 	}
-	return b
-}
-
-func (b *Builder) WithToolExecutionPolicy(policy ToolExecutionPolicy) *Builder {
-	b.toolPolicy = policy
 	return b
 }
 
@@ -651,9 +588,6 @@ func (b *Builder) build() (*Service, error) {
 	if len(b.observers) > 0 {
 		svc.RegisterObserver(b.observers...)
 	}
-	if len(b.guardrails) > 0 {
-		svc.RegisterGuardrail(b.guardrails...)
-	}
 	if b.permissionHandler != nil {
 		svc.SetPermissionHandler(b.permissionHandler)
 	}
@@ -763,6 +697,13 @@ func (b *Builder) build() (*Service, error) {
 			RegisterScratchpadTools(svc)
 			execToolsRegistered = true
 		}
+	}
+	// Sub-agents are tools, not orchestration: WithSubagents installs a single
+	// `task(agent_name, prompt)` tool that runs the named sub-agent through
+	// the same loop.
+	if len(b.subagents) > 0 {
+		RegisterSubagentTool(svc, b.subagents...)
+		execToolsRegistered = true
 	}
 	if execToolsRegistered && svc.ptcIntegration != nil && svc.ptcIntegration.router != nil {
 		svc.toolRegistry.SyncToPTCRouter(svc.ptcIntegration.router)

@@ -596,27 +596,17 @@ func (c *Client) Chat(ctx context.Context, sessionID string, message string, opt
 }
 
 // ============================================================================
-// Agent Methods - Autonomous AI Agent with Handoffs, Guardrails, Tracing
+// Agent Methods
 // ============================================================================
 
 // AgentOptions configures agent behavior
 type AgentOptions struct {
-	EnableGuardrails bool               // Enable input/output guardrails
-	EnableTracing    bool               // Enable execution tracing
-	Guardrails       []*agent.Guardrail // Custom guardrails
-	SessionID        string             // Resume existing session
+	SessionID string // Resume existing session
 }
 
 // DefaultAgentOptions returns default agent options
 func DefaultAgentOptions() *AgentOptions {
-	return &AgentOptions{
-		EnableGuardrails: true,
-		EnableTracing:    false,
-		Guardrails: []*agent.Guardrail{
-			agent.ContentModerationGuardrail(),
-			agent.PromptInjectionGuardrail(),
-		},
-	}
+	return &AgentOptions{}
 }
 
 // initAgentService initializes the agent service if not already done
@@ -731,17 +721,6 @@ func (c *Client) ListAgentSessions(limit int) ([]*agent.Session, error) {
 	}
 
 	return c.agentService.ListSessions(limit)
-}
-
-// GetAgentTracer returns the agent tracer for exporting traces
-func (c *Client) GetAgentTracer() *agent.Tracer {
-	if c.agentService == nil {
-		return nil
-	}
-
-	// This would require exposing tracer from agent.Service
-	// For now, return a new tracer that can read traces
-	return agent.NewTracer()
 }
 
 // CreateAgent creates a custom agent with specific configuration

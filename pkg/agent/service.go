@@ -103,9 +103,6 @@ type Service struct {
 	// PTC (Programmatic Tool Calling) integration
 	ptcIntegration *PTCIntegration
 
-	// Execution history storage
-	historyStore *HistoryStore
-
 	// outputLints is the registry of post-output lint rules consulted by the
 	// runtime before emitting a final completion event. Lazily initialized via
 	// OutputLints(); see pkg/agent/output_lint.go.
@@ -117,14 +114,6 @@ type Service struct {
 	// Nil-safe: no observers means zero overhead.
 	observersMu sync.RWMutex
 	observers   []Observer
-
-	// guardrails is the optional content-transform chain applied by the
-	// runtime at the input (pre-LLM), output (final answer), and memory
-	// seams. Default OFF: nil means zero overhead (the runtime skips the
-	// whole guardrail path). Registered via RegisterGuardrail /
-	// Builder.WithGuardrails / Builder.WithPIIRedaction. See guardrail.go.
-	guardrailsMu sync.RWMutex
-	guardrails   *GuardrailChain
 
 	// checkpointSink, when non-nil, is called by the runtime at every
 	// round boundary so the message history can be persisted for

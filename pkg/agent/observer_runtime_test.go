@@ -110,38 +110,3 @@ func TestRuntimeObserverModelAndToolSeams(t *testing.T) {
 		t.Fatalf("tool call not paired by CallID: start=%q end=%q", rec.toolStarts[0], rec.toolEnds[0])
 	}
 }
-
-func TestTracingObserverPopulatesTracer(t *testing.T) {
-	tracer := NewTracer()
-	svc := buildObserverTestService(t, NewTracingObserver(tracer))
-	defer svc.Close()
-
-	events, err := svc.RunStream(context.Background(), "please ping")
-	if err != nil {
-		t.Fatalf("RunStream failed: %v", err)
-	}
-	_ = Concat(events)
-
-	traces := tracer.ListTraces()
-	if len(traces) == 0 {
-		t.Fatal("expected the tracer to have at least one trace after a run")
-	}
-
-	kinds := map[SpanKind]int{}
-	total := 0
-	for _, tr := range traces {
-		for _, span := range tr.Spans {
-			kinds[span.Kind]++
-			total++
-		}
-	}
-	if total == 0 {
-		t.Fatal("expected spans in the tracer after a run")
-	}
-	if kinds[SpanKindLLM] == 0 {
-		t.Fatalf("expected at least one LLM span, got kinds=%v", kinds)
-	}
-	if kinds[SpanKindTool] == 0 {
-		t.Fatalf("expected at least one tool span, got kinds=%v", kinds)
-	}
-}
