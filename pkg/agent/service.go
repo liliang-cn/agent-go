@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"log/slog"
@@ -715,23 +714,6 @@ func (s *Service) setRunning(running bool) {
 
 func (s *Service) estimateRunTokens(goal string, finalResult interface{}) int {
 	return s.estimateTextTokens(goal) + s.estimateTextTokens(formatResultForContent(finalResult))
-}
-
-func (s *Service) estimateDomainMessagesTokens(messages []domain.Message) int {
-	total := 0
-	for _, message := range messages {
-		total += 4
-		total += s.estimateTextTokens(message.Role)
-		total += s.estimateTextTokens(message.Content)
-		total += s.estimateTextTokens(message.ReasoningContent)
-		for _, tc := range message.ToolCalls {
-			total += s.estimateTextTokens(tc.Function.Name)
-			if b, err := json.Marshal(tc.Function.Arguments); err == nil {
-				total += s.estimateTextTokens(string(b))
-			}
-		}
-	}
-	return total
 }
 
 func (s *Service) estimateTextTokens(text string) int {

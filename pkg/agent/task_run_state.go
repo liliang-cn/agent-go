@@ -191,30 +191,3 @@ func (s *Service) persistRunTaskStats(session *Session, taskID string, metrics *
 	task.Stats = stats
 	_ = s.store.SaveTask(task)
 }
-
-func (s *Service) persistRunMessages(session *Session, messages ...domain.Message) {
-	if s == nil || s.store == nil || session == nil || len(messages) == 0 {
-		return
-	}
-	for _, message := range messages {
-		session.AddMessage(message)
-	}
-	_ = s.store.SaveSession(session)
-}
-
-func appendNewMessagesToSession(session *Session, previousLen int, messages []domain.Message) []domain.Message {
-	if session == nil {
-		return nil
-	}
-	if previousLen < 0 {
-		previousLen = 0
-	}
-	if previousLen >= len(messages) {
-		return nil
-	}
-	delta := append([]domain.Message(nil), messages[previousLen:]...)
-	for _, message := range delta {
-		session.AddMessage(message)
-	}
-	return delta
-}

@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"fmt"
-	"log/slog"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 	"github.com/liliang-cn/agent-go/v3/pkg/mcp"
@@ -349,14 +348,6 @@ func (s *Service) emitProgress(eventType, message string, round int, tool string
 			Tool:    tool,
 		})
 	}
-}
-
-// emitAnalyticsEvent logs an analytics event
-func (s *Service) emitAnalyticsEvent(name string, data map[string]interface{}) {
-	s.logger.Debug("analytics_event",
-		slog.String("name", name),
-		slog.Any("data", data),
-	)
 }
 
 // AddFunctionSkill adds a function-based skill dynamically

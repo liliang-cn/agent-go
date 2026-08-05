@@ -59,9 +59,6 @@ func TestSessionBaselineTracksAppendedTurns(t *testing.T) {
 	s.AddMessage(msg("assistant", "loaded-2"))
 	s.setBaseline(2)
 
-	if got := s.baseline(); got != 2 {
-		t.Errorf("baseline = %d, want 2", got)
-	}
 	if got := s.appendedSince(); len(got) != 0 {
 		t.Errorf("nothing appended yet, got %+v", got)
 	}
@@ -76,7 +73,7 @@ func TestSessionBaselineTracksAppendedTurns(t *testing.T) {
 
 	// A nil session must not panic — saves run on whatever the caller holds.
 	var nilSession *Session
-	if nilSession.baseline() != 0 || nilSession.appendedSince() != nil {
+	if nilSession.appendedSince() != nil {
 		t.Error("a nil session should report nothing rather than panic")
 	}
 	nilSession.setBaseline(3) // must not panic

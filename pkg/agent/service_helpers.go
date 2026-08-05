@@ -193,10 +193,6 @@ func shouldKeepToolForSkillFirst(toolName string, relevantSkillNames []string) b
 	}
 }
 
-func (s *Service) prepareTurnInputs(ctx context.Context, currentAgent *Agent, messages []domain.Message, goal string) ([]domain.ToolDefinition, []domain.Message) {
-	return s.prepareTurnInputsWithConfig(ctx, currentAgent, messages, goal, nil)
-}
-
 // prepareTurnInputsWithConfig is the single place where a turn's tool list and
 // message list are assembled. cfg may be nil; when it carries an allow/deny
 // list the tool surface is narrowed accordingly, which is how a sub-agent run
@@ -867,12 +863,6 @@ func (s *Service) markRunMemorySaved() {
 	s.memorySaveMu.Unlock()
 }
 
-func (s *Service) hasRunMemorySaved() bool {
-	s.memorySaveMu.RLock()
-	defer s.memorySaveMu.RUnlock()
-	return s.memorySavedInRun
-}
-
 // containsStr checks if a string slice contains a string
 func containsStr(slice []string, s string) bool {
 	for _, item := range slice {
@@ -978,11 +968,6 @@ func collectAvailableTools(mcpService MCPToolExecutor, ragProcessor domain.Proce
 	}
 
 	return tools
-}
-
-// executeToolViaSubAgent runs a tool or skill call using a separate SubAgent goroutine
-func (s *Service) executeToolViaSubAgent(ctx context.Context, currentAgent *Agent, session *Session, tc domain.ToolCall) (interface{}, error, bool) {
-	return s.executeToolViaSubAgentWithEvents(ctx, currentAgent, session, tc, nil, s.debug)
 }
 
 func (s *Service) executeToolViaSubAgentWithEvents(ctx context.Context, currentAgent *Agent, session *Session, tc domain.ToolCall, sink func(*Event), debug bool) (interface{}, error, bool) {

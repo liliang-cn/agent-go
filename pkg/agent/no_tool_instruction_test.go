@@ -51,7 +51,7 @@ func TestExplicitNoToolInstructionWithholdsTools(t *testing.T) {
 	}
 
 	for _, goal := range goals {
-		tools, _ := svc.prepareTurnInputs(context.Background(), svc.agent, nil, goal)
+		tools, _ := svc.prepareTurnInputsWithConfig(context.Background(), svc.agent, nil, goal, nil)
 		names := toolNamesOf(tools)
 		for _, banned := range []string{"execute_javascript", "search_available_tools"} {
 			if containsName(names, banned) {
@@ -86,7 +86,7 @@ func TestOrdinaryGoalKeepsTools(t *testing.T) {
 		"Use a tool to compute 5 * 4 + 10.",
 		"名古屋明天天气怎么样？",
 	} {
-		tools, _ := svc.prepareTurnInputs(context.Background(), svc.agent, nil, goal)
+		tools, _ := svc.prepareTurnInputsWithConfig(context.Background(), svc.agent, nil, goal, nil)
 		if !containsName(toolNamesOf(tools), "execute_javascript") {
 			t.Errorf("goal %q lost execute_javascript; the guard is over-triggering", goal)
 		}

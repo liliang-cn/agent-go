@@ -2,8 +2,6 @@ package agent
 
 import (
 	"context"
-	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
@@ -108,50 +106,6 @@ func (m *Manager) indexTaskSessionLocked(sessionID, taskID string) {
 		}
 	}
 	m.sessionTasks[sessionID] = append(m.sessionTasks[sessionID], taskID)
-}
-
-var sharedTaskChildIDSanitizer = regexp.MustCompile(`[^a-z0-9]+`)
-
-func sharedTaskChildID(parentTaskID string, index int, agentName string) string {
-	parentTaskID = strings.TrimSpace(parentTaskID)
-	if parentTaskID == "" {
-		parentTaskID = uuid.NewString()
-	}
-	segment := strings.ToLower(strings.TrimSpace(agentName))
-	segment = sharedTaskChildIDSanitizer.ReplaceAllString(segment, "-")
-	segment = strings.Trim(segment, "-")
-	if segment == "" {
-		segment = "member"
-	}
-	return fmt.Sprintf("%s:member:%02d:%s", parentTaskID, index+1, segment)
-}
-
-func firstTaskTeamID(task *AsyncTask) string {
-	if task == nil {
-		return ""
-	}
-	return strings.TrimSpace(task.TeamID)
-}
-
-func firstTaskTeamName(task *AsyncTask) string {
-	if task == nil {
-		return ""
-	}
-	return strings.TrimSpace(task.TeamName)
-}
-
-func parentTaskIDFromAsync(task *AsyncTask) string {
-	if task == nil {
-		return ""
-	}
-	return strings.TrimSpace(task.ID)
-}
-
-func parentCreatedAt(task *AsyncTask) time.Time {
-	if task == nil {
-		return time.Time{}
-	}
-	return task.CreatedAt
 }
 
 func isPausedAsyncTaskStatus(status AsyncTaskStatus) bool {

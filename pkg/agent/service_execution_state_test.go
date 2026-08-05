@@ -58,46 +58,6 @@ func (l *serviceExecutionStateTestLLM) RecognizeIntent(ctx context.Context, requ
 	return nil, nil
 }
 
-func TestServiceExecutionLoopState_TracksTransitionAndMetrics(t *testing.T) {
-	state := newServiceExecutionLoopState(
-		"inspect repo",
-		[]domain.Message{{Role: "user", Content: "inspect repo"}},
-		3,
-		NewAgent("Responder"),
-	)
-	state.Transition = "tool_first"
-
-	state.beginRound()
-	state.noteTurnTokens(42)
-	state.noteToolResults([]ToolExecutionResult{{ToolName: "read_file"}})
-	nextMessages := append(state.Messages, domain.Message{Role: "tool", Content: "ok"})
-	state.continueWith(queryLoopTransitionToolBatch, "tool batch completed; continue to next turn", nextMessages)
-
-	if state.LoopTransition != queryLoopTransitionToolBatch {
-		t.Fatalf("loop transition = %q", state.LoopTransition)
-	}
-	if state.Transition != "tool_first" {
-		t.Fatalf("intent transition = %q", state.Transition)
-	}
-	if state.Budget.CompletedRounds != 1 {
-		t.Fatalf("completed rounds = %d, want 1", state.Budget.CompletedRounds)
-	}
-	if state.TotalToolCalls != 1 {
-		t.Fatalf("total tool calls = %d, want 1", state.TotalToolCalls)
-	}
-
-	metrics := state.metricsSnapshot()
-	if metrics.toolCalls != 1 {
-		t.Fatalf("metrics.toolCalls = %d, want 1", metrics.toolCalls)
-	}
-	if metrics.estimatedTokens != 42 {
-		t.Fatalf("metrics.estimatedTokens = %d, want 42", metrics.estimatedTokens)
-	}
-	if len(metrics.toolsUsed) != 1 || metrics.toolsUsed[0] != "read_file" {
-		t.Fatalf("metrics.toolsUsed = %#v", metrics.toolsUsed)
-	}
-}
-
 func TestRunPersistsNonStreamingTaskEventsAndFrames(t *testing.T) {
 	llm := &serviceExecutionStateTestLLM{
 		results: []*domain.GenerationResult{

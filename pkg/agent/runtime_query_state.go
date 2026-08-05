@@ -1,8 +1,6 @@
 package agent
 
 import (
-	"time"
-
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 )
 
@@ -19,7 +17,6 @@ type queryLoopBudget struct {
 
 	// Diminishing returns detection
 	continuationCount int   // rounds without meaningful progress
-	lastDeltaTokens   int   // tokens from previous round
 	tokensPerRound    []int // rolling window of tokens per round
 }
 
@@ -199,64 +196,4 @@ func hasDiminishingReturns(tokensPerRound []int) bool {
 		}
 	}
 	return true
-}
-
-type serviceExecutionLoopState struct {
-	*queryLoopState
-	CurrentAgent   *Agent
-	Metrics        executionMetrics
-	ToolUsed       bool
-	Nudged         bool
-	roundStartedAt time.Time    // set at the start of each round
-	currentRound   roundMetrics // accumulator for the current round
-	execStartedAt  time.Time    // overall execution start
-}
-
-func newServiceExecutionLoopState(goal string, messages []domain.Message, maxRounds int, currentAgent *Agent) *serviceExecutionLoopState {
-	return &serviceExecutionLoopState{
-		queryLoopState: newQueryLoopState(goal, messages, maxRounds),
-		CurrentAgent:   currentAgent,
-		execStartedAt:  time.Now(),
-	}
-}
-
-func (s *serviceExecutionLoopState) noteTurnTokens(tokens int) {
-	s.queryLoopState.noteTokens(tokens)
-	if tokens > 0 {
-		s.Metrics.estimatedTokens += tokens
-		s.currentRound.tokens += tokens
-	}
-}
-
-func (s *serviceExecutionLoopState) noteToolResults(results []ToolExecutionResult) {
-	if len(results) == 0 {
-		return
-	}
-	s.ToolUsed = true
-	s.queryLoopState.recordToolResults(results)
-	s.Metrics.toolCalls += len(results)
-	s.Metrics.toolsUsed = appendToolNames(s.Metrics.toolsUsed, results)
-	s.currentRound.toolCalls += len(results)
-}
-
-func (s *serviceExecutionLoopState) continueWith(transition, reason string, messages []domain.Message) {
-	s.setLoopTransition(transition, reason)
-	if messages != nil {
-		s.setMessages(messages)
-	}
-	s.noteRoundCompleted()
-}
-
-func (s *serviceExecutionLoopState) metricsSnapshot() *executionMetrics {
-	if s == nil {
-		return &executionMetrics{}
-	}
-	return &executionMetrics{
-		toolCalls:       s.Metrics.toolCalls,
-		toolsUsed:       append([]string(nil), s.Metrics.toolsUsed...),
-		estimatedTokens: s.Metrics.estimatedTokens,
-		rounds:          s.Metrics.rounds,
-		roundStats:      append([]roundMetrics(nil), s.Metrics.roundStats...),
-		totalDurationMs: time.Since(s.execStartedAt).Milliseconds(),
-	}
 }

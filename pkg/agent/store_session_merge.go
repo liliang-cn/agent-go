@@ -34,16 +34,6 @@ func lockSessionSave(id string) func() {
 	return mu.Unlock
 }
 
-// baseline returns how many messages the session was loaded with.
-func (s *Session) baseline() int {
-	if s == nil {
-		return 0
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.loadedCount
-}
-
 // setBaseline records the loaded message count, so a later save knows which
 // turns this run added.
 func (s *Session) setBaseline(n int) {

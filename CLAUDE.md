@@ -110,7 +110,7 @@ The discipline: when a model keeps making the same mistake, **don't add another 
 
 ### Hard constraints live in the runtime, not the prompt
 
-An explicit "without using any tools" is satisfied by *withholding the tools* (`prepareTurnInputs` filters the list to nothing, including PTC's `execute_javascript` and `search_available_tools`), and any tool call the model emits anyway is refused with structured feedback. Forbidding a capability means not offering it — not offering it and then arguing about it.
+An explicit "without using any tools" is satisfied by *withholding the tools* (`prepareTurnInputsWithConfig` filters the list to nothing, including PTC's `execute_javascript` and `search_available_tools`), and any tool call the model emits anyway is refused with structured feedback. Forbidding a capability means not offering it — not offering it and then arguing about it.
 
 ### Eval harness
 

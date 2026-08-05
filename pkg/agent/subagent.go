@@ -563,19 +563,6 @@ func (sa *SubAgent) subAgentGoal() string {
 	return content
 }
 
-// buildSystemPrompt constructs the system prompt with SubAgent-specific
-// instructions layered on top of the base agent system prompt.
-func (sa *SubAgent) buildSystemPrompt(ctx context.Context, tools []domain.ToolDefinition) string {
-	base := sa.config.Service.buildSystemPrompt(ctx, sa.config.Agent)
-
-	if len(tools) == 0 {
-		return base
-	}
-
-	// Append SubAgent-specific tool-use instructions
-	return base + subAgentToolPrompt
-}
-
 // subAgentToolPrompt is appended to the system prompt when tools are available.
 // It overrides the default "summarize and stop" behavior to encourage actual
 // tool invocation — the most common failure mode for SubAgent execution.

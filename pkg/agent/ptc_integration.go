@@ -424,28 +424,6 @@ func (p *PTCIntegration) GetPTCTools(availableTools []ptc.ToolInfo) []domain.Too
 	}
 }
 
-// collectMCPServerNames extracts unique MCP server names from tool list.
-// e.g. "mcp_websearch_search" → "mcp_websearch"
-func collectMCPServerNames(tools []ptc.ToolInfo) []string {
-	seen := map[string]bool{}
-	var names []string
-	for _, t := range tools {
-		if !strings.HasPrefix(t.Name, "mcp_") {
-			continue
-		}
-		parts := strings.SplitN(t.Name, "_", 3)
-		if len(parts) < 3 {
-			continue
-		}
-		server := parts[0] + "_" + parts[1]
-		if !seen[server] {
-			seen[server] = true
-			names = append(names, server)
-		}
-	}
-	return names
-}
-
 // GetPTCSystemPrompt returns system prompt additions for PTC mode.
 // Tool list is NOT repeated here — it's already embedded in the execute_javascript tool description.
 func (p *PTCIntegration) GetPTCSystemPrompt(availableTools []ptc.ToolInfo) string {

@@ -27,13 +27,6 @@ func buildStandaloneAgentPrompt(cfg *config.Config, model *AgentModel) string {
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
-func buildEvaluatorAgentPrompt(model *AgentModel) string {
-	if model == nil {
-		return ""
-	}
-	return strings.TrimSpace(model.Instructions)
-}
-
 func shouldIncludeTaskCompleteHint(model *AgentModel) bool {
 	return model != nil
 }

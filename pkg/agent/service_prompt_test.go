@@ -301,7 +301,10 @@ func TestBuildSystemPromptSections_SplitsBaseIntoCoreSections(t *testing.T) {
 	}
 }
 
-func TestBuildDynamicSystemPromptSections_UsesNamedSections(t *testing.T) {
+// The memory / messaging / web_search sections are dynamic: they only appear
+// when the corresponding tools are actually callable. They are resolved as part
+// of the single buildSystemPromptSections pass.
+func TestBuildSystemPromptSections_IncludesDynamicNamedSections(t *testing.T) {
 	assistant := NewAgentWithConfig("Responder", "assistant instructions", nil)
 	registry := NewToolRegistry()
 	registry.Register(domain.ToolDefinition{
@@ -334,7 +337,7 @@ func TestBuildDynamicSystemPromptSections_UsesNamedSections(t *testing.T) {
 		},
 	}
 
-	sections := svc.buildDynamicSystemPromptSections(context.Background(), assistant, systemPromptOptions{})
+	sections := svc.buildSystemPromptSections(context.Background(), assistant, systemPromptOptions{})
 	names := make([]string, 0, len(sections))
 	for _, section := range sections {
 		names = append(names, section.name)

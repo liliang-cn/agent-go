@@ -34,10 +34,3 @@ func configuredModelLabel(model *AgentModel) string {
 	}
 	return strings.TrimSpace(model.Model)
 }
-
-func configuredProviderLabel(model *AgentModel) string {
-	if model == nil {
-		return ""
-	}
-	return strings.TrimSpace(model.PreferredProvider)
-}

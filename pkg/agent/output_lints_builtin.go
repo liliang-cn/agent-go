@@ -17,53 +17,6 @@ import (
 // keeps the framework backward-compatible: existing services see no change
 // until they explicitly enable a lint.
 
-// --- 1. dispatcher_no_bounce_back ----------------------------------------------
-//
-// Dispatcher's job is to call route_builtin_request and return the routed
-// result inline. It must not narrate "I will route this..." back to the user
-// without actually doing it. This lint catches the common failure mode where
-// the model writes a routing intention as the final answer.
-
-var dispatcherBounceBackPatterns = []*regexp.Regexp{
-	// "I will / I am going to route|dispatch|hand off|..."
-	regexp.MustCompile(`(?i)\bi (?:will|am going to)\s+(?:route|dispatch|hand(?:\s|-)?off|forward|delegate|pass)\b`),
-	// Contracted "I'll route|dispatch|hand off|..."
-	regexp.MustCompile(`(?i)\bi'll\s+(?:route|dispatch|hand(?:\s|-)?off|forward|delegate|pass)\b`),
-	regexp.MustCompile(`(?i)\blet me (?:route|dispatch|hand(?:\s|-)?off|forward|delegate)\b`),
-	regexp.MustCompile(`(?i)\brouting (?:this|the (?:request|task)) (?:to|over to)\b`),
-	// Chinese: 我会让 X 处理 / 将由 X 完成 / 我来转交给 X / 接下来由 X 来
-	regexp.MustCompile(`我(?:会|将|来)?(?:让|把|转交|交给|分派|派给)[^。\n]{1,20}(?:处理|完成|来做|执行|负责)`),
-	regexp.MustCompile(`(?:接下来|下一步)?(?:将|由)[^。\n]{1,20}(?:负责|完成|处理|来做|来执行)`),
-}
-
-// --- 2. archivist_no_relative_time ---------------------------------------------
-//
-// Archivist must resolve relative time references (明天 / 后天 / 下周 /
-// tomorrow / next Monday / ...) to absolute dates before storing memory.
-// The lint fails when the response contains a relative-time keyword AND no
-// absolute date marker (YYYY-MM-DD / YYYY/MM/DD / YYYY年MM月DD日) is present
-// nearby. This avoids false positives when the agent legitimately echoes a
-// relative phrase next to its resolved absolute date.
-
-var (
-	archivistRelativeTimePatterns = []*regexp.Regexp{
-		// Chinese
-		regexp.MustCompile(`(?:明天|后天|大后天|今天|昨天|前天|大前天)`),
-		regexp.MustCompile(`(?:本|这|下|上)(?:周|星期|礼拜)(?:[一二三四五六日天])?`),
-		regexp.MustCompile(`(?:本|这|下|上)(?:个)?月`),
-		// English
-		regexp.MustCompile(`(?i)\b(?:tomorrow|yesterday|today|tonight)\b`),
-		regexp.MustCompile(`(?i)\b(?:next|last|this)\s+(?:week|month|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b`),
-		regexp.MustCompile(`(?i)\bin\s+\d+\s+(?:hour|hours|day|days|week|weeks|minute|minutes)\b`),
-	}
-
-	absoluteDatePatterns = []*regexp.Regexp{
-		regexp.MustCompile(`\b\d{4}[-/.]\d{1,2}[-/.]\d{1,2}\b`),
-		regexp.MustCompile(`\d{4}年\s*\d{1,2}\s*月\s*\d{1,2}\s*日`),
-		regexp.MustCompile(`(?i)\b(?:january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2}(?:,\s*\d{4})?\b`),
-	}
-)
-
 // --- 3. no_planning_only_finish ------------------------------------------------
 //
 // Catch the most common failure mode of any agent: ending with "我会做这个 /

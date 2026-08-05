@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"fmt"
 	"strings"
 )
 
@@ -12,35 +11,6 @@ func (s *Service) buildSystemPrompt(ctx context.Context, agent *Agent) string {
 	return renderSystemPromptSections(s.buildSystemPromptSections(ctx, agent, systemPromptOptions{
 		includePTC: s.ptcIntegration != nil,
 	}))
-}
-
-// buildEnrichedPrompt builds a prompt enriched with memory and RAG results
-func (s *Service) buildEnrichedPrompt(goal, memoryContext, ragResult string) string {
-	var prompt strings.Builder
-
-	prompt.WriteString(fmt.Sprintf("User Question: %s\n\n", goal))
-
-	if memoryContext != "" {
-		prompt.WriteString("--- Relevant Memory ---\n")
-		prompt.WriteString(memoryContext)
-		prompt.WriteString("\n\n")
-	}
-
-	if ragResult != "" {
-		prompt.WriteString("--- Knowledge Base Results ---\n")
-		prompt.WriteString(ragResult)
-		prompt.WriteString("\n\n")
-	}
-
-	prompt.WriteString("Please answer the user's question based on the memory and knowledge base information above.")
-	prompt.WriteString(" If there's no relevant information, say so honestly.")
-
-	return prompt.String()
-}
-
-// buildPTCSystemPrompt builds the system prompt with PTC instructions
-func (s *Service) buildPTCSystemPrompt(ctx context.Context) string {
-	return renderSystemPromptSections(s.buildSystemPromptSections(ctx, s.agent, systemPromptOptions{includePTC: true}))
 }
 
 func (s *Service) buildMemoryPromptNote(ctx context.Context, agent *Agent) string {

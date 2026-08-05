@@ -201,16 +201,6 @@ func terminalToolResultFromToolRound(filteredToolCalls []domain.ToolCall, toolRe
 	return "", false
 }
 
-func (s *Service) executePreparedToolRound(ctx context.Context, currentAgent *Agent, session *Session, messages []domain.Message, result *domain.GenerationResult, filteredToolCalls []domain.ToolCall, duplicateToolResults []ToolExecutionResult, callbacks ToolExecutionCallbacks, continueOnError bool) ([]domain.Message, []ToolExecutionResult, error) {
-	result.ToolCalls = filteredToolCalls
-	toolResults, err := s.executeToolCallsWithOptions(ctx, currentAgent, session, filteredToolCalls, callbacks, continueOnError)
-	if err != nil {
-		return messages, nil, err
-	}
-	messages = s.appendToolRoundToMessages(messages, currentTaskID(session), result, append(duplicateToolResults, toolResults...))
-	return messages, toolResults, nil
-}
-
 // buildConversationMessages constructs the next-turn user message and prepends prior session history when available.
 func buildSkillReminderMessage(session *Session, reminder *skillReminder) *domain.Message {
 	if reminder == nil || strings.TrimSpace(reminder.Text) == "" {
@@ -309,16 +299,6 @@ func buildConversationContextMessage(summary, memoryContext, ragContext string) 
 		Content: content,
 		TaskID:  "",
 	}
-}
-
-func appendToolNames(existing []string, results []ToolExecutionResult) []string {
-	for _, result := range results {
-		if result.ToolName == "" {
-			continue
-		}
-		existing = append(existing, result.ToolName)
-	}
-	return existing
 }
 
 func normalizeToolCalls(toolCalls []domain.ToolCall) []domain.ToolCall {
@@ -562,38 +542,6 @@ func (s *Service) appendToolRoundToMessages(messages []domain.Message, taskID st
 	return messages
 }
 
-// logDebugPrompt logs the full prompt for debugging.
-func (s *Service) logDebugPrompt(genMessages []domain.Message, round int) {
-	fmt.Println("\n" + strings.Repeat("=", 40))
-	fmt.Printf("DEBUG: [ROUND %d] LLM FULL PROMPT\n", round+1)
-	fmt.Println(strings.Repeat("-", 40))
-	for _, m := range genMessages {
-		fmt.Printf("[%s]:\n%s\n", strings.ToUpper(m.Role), m.Content)
-		if len(m.ToolCalls) > 0 {
-			fmt.Printf("  (ToolCalls: %d)\n", len(m.ToolCalls))
-		}
-	}
-	fmt.Println(strings.Repeat("=", 40) + "\n")
-}
-
-// logDebugResponse logs the raw LLM response for debugging.
-func (s *Service) logDebugResponse(result *domain.GenerationResult, round int) {
-	fmt.Println("\n" + strings.Repeat("=", 40))
-	fmt.Printf("DEBUG: [ROUND %d] LLM RAW RESPONSE\n", round+1)
-	fmt.Println(strings.Repeat("-", 40))
-	if result.ReasoningContent != "" {
-		fmt.Printf("REASONING: %s\n", result.ReasoningContent)
-	}
-	fmt.Printf("CONTENT: %s\n", result.Content)
-	if len(result.ToolCalls) > 0 {
-		fmt.Println("TOOL CALLS:")
-		for _, tc := range result.ToolCalls {
-			fmt.Printf("  - %s(%v)\n", tc.Function.Name, tc.Function.Arguments)
-		}
-	}
-	fmt.Println(strings.Repeat("=", 40) + "\n")
-}
-
 // executeToolCalls executes the tool calls decided by LLM and returns all results
 func (s *Service) executeToolCalls(ctx context.Context, currentAgent *Agent, session *Session, toolCalls []domain.ToolCall) ([]ToolExecutionResult, error) {
 	return s.executeToolCallsWithOptions(ctx, currentAgent, session, toolCalls, ToolExecutionCallbacks{}, false)
@@ -607,35 +555,6 @@ type ToolExecutionResult struct {
 	Result     interface{} `json:"result"`
 	Error      string      `json:"error,omitempty"`
 	Blocked    bool        `json:"blocked,omitempty"`
-}
-
-// formatToolResults formats tool execution results for LLM consumption
-func (s *Service) formatToolResults(results []ToolExecutionResult) string {
-	var sb strings.Builder
-
-	for i, r := range results {
-		sb.WriteString(fmt.Sprintf("Tool %d: %s (%s)\n", i+1, r.ToolName, r.ToolType))
-
-		// Format result based on type
-		switch v := r.Result.(type) {
-		case string:
-			if len(v) > 5000 {
-				sb.WriteString(fmt.Sprintf("Result: %s...\n", v[:5000]))
-			} else {
-				sb.WriteString(fmt.Sprintf("Result: %s\n", v))
-			}
-		case []interface{}:
-			// Handle array results (e.g., search results)
-			for j, item := range v {
-				sb.WriteString(fmt.Sprintf("  [%d] %v\n", j+1, item))
-			}
-		default:
-			sb.WriteString(fmt.Sprintf("Result: %v\n", r.Result))
-		}
-		sb.WriteString("\n")
-	}
-
-	return sb.String()
 }
 
 // performRAGQuery performs a RAG query to get relevant documents

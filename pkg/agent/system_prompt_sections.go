@@ -27,14 +27,6 @@ type systemPromptSectionData struct {
 	data    map[string]interface{}
 }
 
-func dynamicPromptSection(name, content string) *systemPromptSection {
-	content = strings.TrimSpace(content)
-	if content == "" {
-		return nil
-	}
-	return &systemPromptSection{name: name, content: content, dynamic: true}
-}
-
 func (s *Service) renderPromptSection(key string, data map[string]interface{}) string {
 	if s == nil || s.promptManager == nil {
 		return ""
@@ -245,32 +237,5 @@ func (s *Service) buildSystemPromptSections(ctx context.Context, agent *Agent, o
 	if contextSection != "" {
 		sections = append(sections, systemPromptSection{name: "system_context", content: contextSection})
 	}
-	return sections
-}
-
-func (s *Service) buildDynamicSystemPromptSections(ctx context.Context, agent *Agent, opts systemPromptOptions) []systemPromptSection {
-	sections := make([]systemPromptSection, 0, 5)
-
-	if opts.includePTC && s.ptcIntegration != nil {
-		availableCallTools := s.ptcAvailableCallTools(ctx)
-		if section := dynamicPromptSection("ptc", s.ptcIntegration.GetPTCSystemPrompt(availableCallTools)); section != nil {
-			sections = append(sections, *section)
-		}
-	}
-	if section := dynamicPromptSection("memory", s.buildMemoryPromptNote(ctx, agent)); section != nil {
-		sections = append(sections, *section)
-	}
-	if section := dynamicPromptSection("messaging", s.buildAgentMessagingPromptNote(ctx, agent)); section != nil {
-		sections = append(sections, *section)
-	}
-	if section := dynamicPromptSection("tool_catalog", s.buildToolCatalogSummary(ctx)); section != nil {
-		sections = append(sections, *section)
-	}
-	if !alwaysFalse(agent) {
-		if section := dynamicPromptSection("web_search", s.buildWebSearchPromptNote(agent)); section != nil {
-			sections = append(sections, *section)
-		}
-	}
-
 	return sections
 }

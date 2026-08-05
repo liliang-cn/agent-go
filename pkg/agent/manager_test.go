@@ -24,7 +24,9 @@ func TestNewStoreAppliesSQLitePragmas(t *testing.T) {
 	if err := store.GetAgentGoDB().GetDB().QueryRow(`PRAGMA busy_timeout;`).Scan(&busyTimeout); err != nil {
 		t.Fatalf("query busy_timeout failed: %v", err)
 	}
-	if busyTimeout < sqliteBusyTimeoutMillis {
-		t.Fatalf("expected busy_timeout >= %d, got %d", sqliteBusyTimeoutMillis, busyTimeout)
+	// pkg/store sets PRAGMA busy_timeout=5000 when it opens the DB.
+	const wantBusyTimeoutMillis = 5000
+	if busyTimeout < wantBusyTimeoutMillis {
+		t.Fatalf("expected busy_timeout >= %d, got %d", wantBusyTimeoutMillis, busyTimeout)
 	}
 }
