@@ -768,6 +768,11 @@ func (b *Builder) build() (*Service, error) {
 		queryStr, _ := args["query"].(string)
 		instruction, _ := args["instruction"].(string)
 		scope, _ := args["scope"].(string)
+		// Enforced here rather than in the execution loop: the PTC sandbox
+		// calls this handler directly via callTool().
+		if guidance, refused := admitToolDiscovery(ctx, queryStr); refused {
+			return guidance, nil
+		}
 		return svc.SearchAndExecute(ctx, queryStr, instruction, scope)
 	}, CategoryCustom, ToolMetadata{ReadOnly: true, ConcurrencySafe: true, InterruptBehavior: InterruptBehaviorCancel})
 

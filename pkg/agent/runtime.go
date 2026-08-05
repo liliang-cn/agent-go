@@ -223,6 +223,10 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 	// (execute_javascript → fs_write, web_search, ...) are recorded as used,
 	// making them visible to goal-aware output lints.
 	ctx = withToolUseSink(ctx, r.trackToolName)
+	// Bound tool discovery for this run. Installed on the context (not the
+	// loop state) so it also reaches searches issued from inside the PTC
+	// sandbox, which bypass the chat-protocol tool path entirely.
+	ctx = ensureDiscoveryBudget(ctx)
 	r.goal = goal
 
 	r.emit(EventTypeStart, fmt.Sprintf("Starting task: %s", goal))
@@ -1159,6 +1163,14 @@ func (r *Runtime) blockRun(goal, blocker string, messages []domain.Message, pers
 // a lint exhaustion.
 func (r *Runtime) blockRunWithStop(goal, blocker string, messages []domain.Message, persistHistory bool, reason StopReason) {
 	_ = goal
+	// Single chokepoint for every blocked path (stream interception, post-turn
+	// terminal recovery, budget caps, lint exhaustion). A model that calls
+	// task_blocked without filling in `blocker` — common when it gives up on a
+	// capability it does not have — would otherwise emit an empty event and the
+	// user would see nothing at all.
+	if strings.TrimSpace(blocker) == "" {
+		blocker = defaultBlockedText
+	}
 	r.persistTerminalCheckpoint(currentTaskID(r.session), CheckpointReasonTaskBlocked, blocker, messages)
 
 	if reason == "" {

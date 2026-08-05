@@ -9,9 +9,6 @@ import (
 
 func TestHandleDuplicateToolCallsSearchReturnsSyntheticResult(t *testing.T) {
 	svc := &Service{}
-	seen := map[string]int{
-		"search_available_tools:map[query:web search]": 1,
-	}
 	result := &domain.GenerationResult{
 		ToolCalls: []domain.ToolCall{
 			{
@@ -25,6 +22,11 @@ func TestHandleDuplicateToolCallsSearchReturnsSyntheticResult(t *testing.T) {
 				},
 			},
 		},
+	}
+	// Seed via the real signature helper rather than a hand-written key, so
+	// this test asserts the collapse behavior and not the key format.
+	seen := map[string]int{
+		toolCallSignature(result.ToolCalls[0]): 1,
 	}
 
 	filtered, duplicates, fallback := svc.handleDuplicateToolCalls(nil, result, seen)

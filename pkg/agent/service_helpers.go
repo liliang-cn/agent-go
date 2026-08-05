@@ -196,6 +196,14 @@ func shouldKeepToolForSkillFirst(toolName string, relevantSkillNames []string) b
 func (s *Service) prepareTurnInputs(ctx context.Context, currentAgent *Agent, messages []domain.Message, goal string) ([]domain.ToolDefinition, []domain.Message) {
 	s.syncDiscoveredToolsFromHistory(messages, "")
 	tools := s.collectAllAvailableToolsWithPolicy(ctx, currentAgent, s.buildToolPreparationPolicy(ctx))
+	// An explicit "without using any tools" is satisfied by withholding them,
+	// not by asking the model to resist what is attached to its request. Only
+	// the terminal signals survive — the turn still has to end.
+	if looksLikeNoToolInstruction(goal) {
+		tools = filterToolDefinitions(tools, func(tool domain.ToolDefinition) bool {
+			return isTaskTerminalToolName(tool.Function.Name)
+		})
+	}
 	if looksLikeInformationSeekingQuery(goal) {
 		tools = filterToolDefinitions(tools, func(tool domain.ToolDefinition) bool {
 			return tool.Function.Name != "memory_save"

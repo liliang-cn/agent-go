@@ -1066,7 +1066,12 @@ func (s *Service) handleDuplicateToolCalls(messages []domain.Message, result *do
 	duplicates := make([]ToolExecutionResult, 0)
 
 	for _, tc := range result.ToolCalls {
-		key := fmt.Sprintf("%s:%v", tc.Function.Name, tc.Function.Arguments)
+		// Search-tool keys are normalized here so casing/word-order variants
+		// collapse. The discovery *budget* is enforced further down, at the
+		// tool handlers themselves (see context_discovery_budget.go) — that is
+		// the only point both chat-protocol calls and PTC sandbox callTool()
+		// pass through.
+		key := toolCallSignature(tc)
 		seen[key]++
 		if seen[key] <= 1 {
 			filtered = append(filtered, tc)

@@ -459,6 +459,7 @@ func (p *PTCIntegration) GetPTCSystemPrompt(availableTools []ptc.ToolInfo) strin
 	sb.WriteString("- Use `callTool(name, args)` to invoke any tool. No direct tool calls.\n")
 	sb.WriteString("- Prefer `callTool(name, args)` whenever you already know the exact tool name.\n")
 	sb.WriteString("- If you do NOT know the exact tool name, first call `search_available_tools` or `tool_search_tool_bm25`, inspect the returned tool references, then call the exact tool name.\n")
+	sb.WriteString("- Tool discovery is bounded to one search per task. If that search returns nothing usable, stop searching: answer from your own knowledge, or call task_blocked naming the missing capability. Rewording a failed search does not make it a new search — the tool catalog does not change mid-task.\n")
 	sb.WriteString("- Do not invent fuzzy tool names or return keyword lists instead of performing tool discovery.\n")
 	sb.WriteString("- MCP tool results are commonly wrapped as `{ success, data, error }`.\n")
 	sb.WriteString("- Use `toolOk(result)` to check success and `toolData(result)` to read the payload safely.\n")

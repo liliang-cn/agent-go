@@ -175,9 +175,10 @@ func (s *Service) buildSystemPromptSections(ctx context.Context, agent *Agent, o
 		"- Treat the visible callable tool list as the authoritative source of what can actually be executed in this runtime.",
 		"- Do not invent hidden tool or API names such as generic run/status/start methods when concrete callable tool names are already exposed.",
 		"- If you are unsure which exact tool fits a request, call `search_available_tools` before claiming the capability is unavailable.",
+		"- Tool discovery is bounded to one search per task. If that search returns nothing usable, stop searching: answer directly from your own knowledge, or call task_blocked naming the missing capability. Rewording a failed search does not make it a new search — the tool catalog does not change mid-task.",
 		"- If the conversation context includes a 'Relevant Skills For This Task' section and one of those skills clearly matches the request, call the corresponding `skill_*` tool before doing the task manually.",
 		"- Skills: calling a skill tool returns step-by-step instructions — follow them, then call task_complete or task_blocked.",
-		"- Never repeat the same tool call with identical arguments.",
+		"- Never repeat a tool call that cannot return anything new.",
 	}, "\n")
 	if isDispatchOnlyAgent(agent) {
 		operationalRules = ""

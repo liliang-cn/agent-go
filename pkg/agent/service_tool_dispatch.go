@@ -136,6 +136,9 @@ func (s *Service) dispatchResolvedTool(ctx context.Context, currentAgent *Agent,
 		if query == "" {
 			return nil, fmt.Errorf("tool search requires a 'query' argument")
 		}
+		if guidance, refused := admitToolDiscovery(ctx, query); refused {
+			return guidance, nil
+		}
 		searchType := "regex"
 		if resolvedToolName == "tool_search_tool_bm25" {
 			searchType = "bm25"

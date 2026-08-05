@@ -406,7 +406,7 @@ func (s *Service) registerBuiltInTools() {
 		},
 	}
 	s.toolRegistry.RegisterWithMetadata(blockedDef, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-		return taskTerminalToolResult("task_blocked", args, "Task blocked."), nil
+		return taskTerminalToolResult("task_blocked", args, defaultBlockedText), nil
 	}, CategoryCustom, ToolMetadata{ReadOnly: true, ConcurrencySafe: true, InterruptBehavior: InterruptBehaviorCancel})
 }
 
@@ -686,6 +686,11 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 
 	// Create cancellable context for this run
 	runCtx, cancel := context.WithCancel(ctx)
+	// Bound tool discovery for this run. Needed here as well as in
+	// Runtime.Run: this is the non-streaming entry point, and it is the one
+	// that reaches runPTCExecution, whose sandbox searches would otherwise be
+	// unbounded.
+	runCtx = ensureDiscoveryBudget(runCtx)
 
 	// Store cancel function for external cancellation
 	s.cancelMu.Lock()
