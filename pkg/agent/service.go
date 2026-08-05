@@ -82,7 +82,6 @@ type Service struct {
 	modelName     string
 	baseURL       string
 	isFastModel   bool
-	contextWindow int // Optional: context window size (0 = unknown, use default)
 
 	// Hook system for lifecycle events
 	hooks *HookRegistry

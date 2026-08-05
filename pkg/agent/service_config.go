@@ -127,27 +127,6 @@ func (s *Service) SetModelInfo(modelName, baseURL string, isFastModel bool) {
 	s.isFastModel = isFastModel
 }
 
-// SetContextWindow sets the context window size for the model.
-// This is optional - if not set, auto-compact won't trigger based on context limits.
-// Typical values: 4096, 8192, 128000, 200000
-func (s *Service) SetContextWindow(tokens int) {
-	s.contextWindow = tokens
-}
-
-// GetContextWindow returns the configured context window size (0 = unknown)
-func (s *Service) GetContextWindow() int {
-	return s.contextWindow
-}
-
-// EffectiveContextWindow returns context window or a safe default (32k) if not set.
-// Use this when you need to make decisions about compaction.
-func (s *Service) EffectiveContextWindow() int {
-	if s.contextWindow <= 0 {
-		return 32000 // Safe default for most models
-	}
-	return s.contextWindow
-}
-
 // MemoryService returns the agent's DB-backed memory service (may be nil).
 // Use this to integrate external components with the same memory store.
 func (s *Service) MemoryService() domain.MemoryService {
