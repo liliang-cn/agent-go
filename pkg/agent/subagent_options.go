@@ -41,13 +41,6 @@ func WithSubAgentToolDenylist(tools []string) SubAgentOption {
 	}
 }
 
-// WithSubAgentParentSession sets the parent session for context inheritance
-func WithSubAgentParentSession(session *Session) SubAgentOption {
-	return func(cfg *SubAgentConfig) {
-		cfg.ParentSession = session
-	}
-}
-
 // WithSubAgentContext sets additional context for the sub-agent
 func WithSubAgentContext(ctx map[string]interface{}) SubAgentOption {
 	return func(cfg *SubAgentConfig) {

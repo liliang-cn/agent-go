@@ -176,7 +176,7 @@ func runWeb(svc *agent.Service, db *store, gen domain.Generator, h *hub, addr, t
 			reply = "(空消息)"
 		} else {
 			ctx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
-			res, err := svc.Run(ctx, userText, agent.WithSessionID(sid), agent.WithMemoryRecallShortcut(false))
+			res, err := svc.Run(ctx, userText, agent.WithSessionID(sid))
 			cancel()
 			if err != nil {
 				log.Printf("chat error (session=%s): %v", sid, err)

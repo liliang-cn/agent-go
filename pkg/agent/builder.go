@@ -883,16 +883,6 @@ func (b *Builder) buildSkillsService(agentgoCfg *config.Config) (*skills.Service
 // AgentGoption modifies RAGConfig
 type AgentGoption func(*RAGConfig)
 
-// WithRAGEnabled sets RAG enabled status
-func WithRAGEnabled(enabled bool) AgentGoption {
-	return func(c *RAGConfig) { c.Enabled = enabled }
-}
-
-// WithRAGEmbeddingModel sets RAG embedding model
-func WithRAGEmbeddingModel(model string) AgentGoption {
-	return func(c *RAGConfig) { c.EmbeddingModel = model }
-}
-
 // MCPOption modifies MCPConfig
 type MCPOption func(*MCPConfig)
 
@@ -919,17 +909,6 @@ func WithMemoryStoreType(storeType string) MemoryOption {
 // Set to 0 to disable auto-reflection.
 func WithMemoryReflect(threshold int) MemoryOption {
 	return func(c *MemoryConfig) { c.ReflectThreshold = threshold }
-}
-
-// WithMemoryCortex enables the cortexdb-backed memory store directly.
-// This mode can operate without an embedder, relying on lexical retrieval as needed.
-func WithMemoryCortex() MemoryOption {
-	return func(c *MemoryConfig) { c.StoreType = "cortex" }
-}
-
-// WithMemoryFlow enables the CortexDB MemoryFlow-backed memory store.
-func WithMemoryFlow() MemoryOption {
-	return func(c *MemoryConfig) { c.StoreType = "memoryflow" }
 }
 
 // WithMemoryGraphFlow enables the CortexDB GraphFlow-enhanced memory store.

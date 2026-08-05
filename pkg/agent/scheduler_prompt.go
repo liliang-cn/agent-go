@@ -147,19 +147,9 @@ func (e *PromptExecutor) Execute(ctx context.Context, parameters map[string]stri
 	runCtx, cancel := context.WithTimeout(ctx, e.timeout)
 	defer cancel()
 
-	// A scheduled prompt is an instruction to do something, never a question
-	// about what is already remembered — nobody schedules "what is my API key?"
-	// for eight every morning. Left on, the memory-recall short-circuit answers
-	// the turn straight out of long-term memory whenever anything relevant is
-	// recalled, so "统计我的股票收益并发消息给我" comes back as "I couldn't find
-	// that in memory." having called no tool at all, every morning, silently.
-	//
-	// Placed before e.runOpts so a host that really wants the shortcut can turn
-	// it back on with WithPromptRunOptions(WithMemoryRecallShortcut(true)).
-	opts := append([]RunOption{
-		WithSessionID(sessionID),
-		WithMemoryRecallShortcut(false),
-	}, e.runOpts...)
+	// Host-supplied options win, so WithPromptRunOptions can override the
+	// session binding if a caller needs to.
+	opts := append([]RunOption{WithSessionID(sessionID)}, e.runOpts...)
 	result, err := e.svc.Run(runCtx, prompt, opts...)
 
 	run := PromptRun{

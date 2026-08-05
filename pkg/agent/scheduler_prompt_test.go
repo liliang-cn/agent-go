@@ -331,19 +331,19 @@ func TestScheduledPromptDoesNotAnswerFromMemory(t *testing.T) {
 		t.Fatalf("run failed: %s", res.Error)
 	}
 	if strings.Contains(res.Output, "couldn't find that in memory") {
-		t.Fatalf("the run was hijacked by the memory-recall shortcut: %q", res.Output)
+		t.Fatalf("the run answered out of memory instead of acting: %q", res.Output)
 	}
 	if llm.generateWithToolsCalls == 0 {
 		t.Error("a scheduled prompt must reach the tool path — it exists to do something")
 	}
 
-	// The default is overridable, for a host that really does want recall.
-	shortcut := NewPromptExecutor(svc, WithPromptRunOptions(WithMemoryRecallShortcut(true)))
+	// A host can still thread its own run options through the executor.
+	custom := NewPromptExecutor(svc, WithPromptRunOptions(WithMaxTurns(3)))
 	cfg := DefaultRunConfig()
-	for _, opt := range append([]RunOption{WithMemoryRecallShortcut(false)}, shortcut.runOpts...) {
+	for _, opt := range custom.runOpts {
 		opt(cfg)
 	}
-	if cfg.DisableMemoryRecallShortcut {
-		t.Error("WithPromptRunOptions must be able to turn the shortcut back on")
+	if cfg.MaxTurns != 3 {
+		t.Errorf("WithPromptRunOptions must reach the run config; MaxTurns = %d", cfg.MaxTurns)
 	}
 }

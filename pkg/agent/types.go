@@ -204,20 +204,11 @@ type RunConfig struct {
 	InheritedMemoryUserID  string
 
 	// Stream enables streaming mode for real-time events
-	Stream bool
 
 	// DisablePTC forces this run through direct function calling even if the
 	// service has PTC enabled.
 	DisablePTC bool
 
-	// DisableMemoryRecallShortcut, when true, prevents the runtime from
-	// answering a turn directly out of recalled long-term memory (the
-	// "explicit memory recall" short-circuit). With memory enabled, that
-	// shortcut otherwise fires whenever relevant memories exist — which
-	// hijacks action turns ("记下这件事") on an assistant that also has
-	// tools to call. Set true for action-taking agents that use memory only
-	// as context; recall still works through the normal tool/LLM path.
-	DisableMemoryRecallShortcut bool
 
 	// ResumeMessages, when non-empty, makes the runtime skip its normal
 	// initial-history assembly and instead use these messages as the
@@ -325,16 +316,6 @@ func WithDebug(debug bool) RunOption {
 	return func(c *RunConfig) { c.Debug = debug }
 }
 
-// WithErrorHandler adds an error handler for a specific error kind
-func WithErrorHandler(kind string, handler ErrorHandlerFunc) RunOption {
-	return func(c *RunConfig) {
-		if c.ErrorHandlers == nil {
-			c.ErrorHandlers = make(map[string]ErrorHandlerFunc)
-		}
-		c.ErrorHandlers[kind] = handler
-	}
-}
-
 // WithSessionID sets a specific session ID for the run
 func WithSessionID(sessionID string) RunOption {
 	return func(c *RunConfig) { c.SessionID = sessionID }
@@ -424,9 +405,10 @@ func WithAutoCompaction(thresholdTokens, keepRecent int) RunOption {
 	}
 }
 
-// WithoutAutoCompaction disables in-loop compaction entirely so the
-// runtime keeps the full history until a hard stop. Useful when an
-// external archive process owns the history.
+// WithoutAutoCompaction disables in-loop compaction entirely so the runtime
+// keeps the full history until a hard stop. Useful when an external archive
+// process owns the history. This is the only way to turn compaction off —
+// WithAutoCompaction only ever enables it.
 func WithoutAutoCompaction() RunOption {
 	return func(c *RunConfig) { c.DisableAutoCompaction = true }
 }
@@ -451,32 +433,8 @@ func WithParentTaskID(parentTaskID string) RunOption {
 	return func(c *RunConfig) { c.ParentTaskID = parentTaskID }
 }
 
-// WithInheritedMemoryScope carries the caller's memory scope into a delegated run.
-func WithInheritedMemoryScope(agentID, teamID, userID string) RunOption {
-	return func(c *RunConfig) {
-		c.InheritedMemoryAgentID = agentID
-		c.InheritedMemoryTeamID = teamID
-		c.InheritedMemoryUserID = userID
-	}
-}
-
-// WithStream enables streaming mode, returns events via the returned channel
-func WithStream() RunOption {
-	return func(c *RunConfig) { c.Stream = true }
-}
-
 func WithPTCEnabled(enabled bool) RunOption {
 	return func(c *RunConfig) { c.DisablePTC = !enabled }
-}
-
-// WithMemoryRecallShortcut toggles the "answer directly from recalled memory"
-// short-circuit for this run. It is enabled by default. Pass false on
-// action-taking agents (ones with tools that must fire even when relevant
-// memories exist) so statement/command turns aren't hijacked into a memory
-// answer; recall questions still work via the normal LLM path with memory
-// injected as context.
-func WithMemoryRecallShortcut(enabled bool) RunOption {
-	return func(c *RunConfig) { c.DisableMemoryRecallShortcut = !enabled }
 }
 
 // WithToolAllowlist restricts a run to the named tools.

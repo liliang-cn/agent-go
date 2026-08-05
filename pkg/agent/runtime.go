@@ -189,7 +189,7 @@ func (r *Runtime) forceFinalSynthesis(ctx context.Context, state *queryLoopState
 			"fully achieved, state clearly what was completed and what still remains.",
 	})
 	// tools=nil + no tool_choice → the provider must return plain text.
-	res, err := r.svc.llmService.GenerateWithTools(ctx, sanitizeToolPairing(synth), nil, r.svc.toolGenerationOptions(0.3, 2000, ""))
+	res, err := r.svc.llmService.GenerateWithTools(ctx, sanitizeToolPairing(synth), nil, r.svc.toolGenerationOptions(r.temperature(), r.maxTokens(), ""))
 	if err != nil || res == nil {
 		return ""
 	}
@@ -447,7 +447,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			ctx,
 			genMessages,
 			tools,
-			r.svc.toolGenerationOptions(0.3, 2000, ""),
+			r.svc.toolGenerationOptions(r.temperature(), r.maxTokens(), ""),
 			r.buildStreamingTurnCallbacks(ctx, modelSpanID, &taskTerminalName, &taskTerminalResult, collector),
 		)
 		r.CheckpointEnd("llm_call")
@@ -1498,3 +1498,25 @@ func errorString(err error) string {
 func (r *Runtime) debugEnabled() bool {
 	return r.svc.debug || (r.cfg != nil && r.cfg.Debug)
 }
+
+// temperature and maxTokens read the per-run generation knobs (WithTemperature
+// / WithMaxTokens), falling back to the loop defaults. Without these the
+// options existed but silently did nothing on the main tool rounds.
+func (r *Runtime) temperature() float64 {
+	if r.cfg != nil && r.cfg.Temperature > 0 {
+		return r.cfg.Temperature
+	}
+	return defaultRunTemperature
+}
+
+func (r *Runtime) maxTokens() int {
+	if r.cfg != nil && r.cfg.MaxTokens > 0 {
+		return r.cfg.MaxTokens
+	}
+	return defaultRunMaxTokens
+}
+
+const (
+	defaultRunTemperature = 0.3
+	defaultRunMaxTokens   = 2000
+)

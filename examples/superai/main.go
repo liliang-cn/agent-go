@@ -363,7 +363,6 @@ func turn(svc *agent.Service, sessionID, msg string) {
 	defer cancel()
 	res, err := svc.Run(ctx, msg,
 		agent.WithSessionID(sessionID),
-		agent.WithMemoryRecallShortcut(false), // action assistant: tools must fire
 	)
 	if err != nil {
 		fmt.Printf("   ⚠️  错误：%v\n", err)
