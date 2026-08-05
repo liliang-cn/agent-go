@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/agent"
+	"github.com/liliang-cn/agent-go/v3/pkg/agent"
 )
 
 func (h *Handler) HandleTeamTasks(w http.ResponseWriter, r *http.Request) {

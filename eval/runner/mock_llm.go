@@ -5,7 +5,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 )
 
 // MockLLM is a deterministic Generator stub used by the eval runner. It

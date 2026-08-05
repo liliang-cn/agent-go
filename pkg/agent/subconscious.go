@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 )
 
 // SubconsciousJob represents a background task for the Subconscious Agent

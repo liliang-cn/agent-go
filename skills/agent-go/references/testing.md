@@ -85,7 +85,7 @@ expect:
 Run via library:
 
 ```go
-import evalrunner "github.com/liliang-cn/agent-go/v2/eval/runner"
+import evalrunner "github.com/liliang-cn/agent-go/v3/eval/runner"
 
 func TestEvalSuite(t *testing.T) {
     results, err := evalrunner.RunAll(context.Background(), "eval/scenarios", evalrunner.RunOptions{})

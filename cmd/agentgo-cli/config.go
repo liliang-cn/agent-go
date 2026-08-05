@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/store"
+	"github.com/liliang-cn/agent-go/v3/pkg/store"
 	"github.com/spf13/cobra"
 )
 

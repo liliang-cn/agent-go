@@ -564,7 +564,7 @@ go build -o agentgo-cli ./cmd/agentgo-cli
                         <div class="code-content">
                             <pre><code>package main
 
-import "github.com/liliang-cn/agent-go/v2/pkg/agent"
+import "github.com/liliang-cn/agent-go/v3/pkg/agent"
 
 func main() {
     svc, err := agent.New("my-agent").
@@ -595,7 +595,7 @@ func main() {
                         <div class="code-content">
                             <pre><code>package main
 
-import "github.com/liliang-cn/agent-go/v2/pkg/agent"
+import "github.com/liliang-cn/agent-go/v3/pkg/agent"
 
 func main() {
     mgr, err := agent.NewTeam("~/.agentgo/data/agentgo.db").
@@ -626,7 +626,7 @@ func main() {
                         <div class="code-content">
                             <pre><code>package main
 
-import "github.com/liliang-cn/agent-go/v2/pkg/agent"
+import "github.com/liliang-cn/agent-go/v3/pkg/agent"
 
 func main() {
     // Build agent first
@@ -660,7 +660,7 @@ func main() {
                         <div class="code-content">
                             <pre><code>package main
 
-import "github.com/liliang-cn/agent-go/v2/pkg/rag"
+import "github.com/liliang-cn/agent-go/v3/pkg/rag"
 
 func main() {
     client := rag.NewClient(cfg)

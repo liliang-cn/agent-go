@@ -7,9 +7,9 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
-	"github.com/liliang-cn/agent-go/v2/pkg/search"
-	"github.com/liliang-cn/agent-go/v2/pkg/skills"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/search"
+	"github.com/liliang-cn/agent-go/v3/pkg/skills"
 )
 
 // SearchAndExecute searches for tools matching the query and optionally executes them.

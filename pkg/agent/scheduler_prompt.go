@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/scheduler"
+	"github.com/liliang-cn/agent-go/v3/pkg/scheduler"
 )
 
 // Running an agent on a schedule.

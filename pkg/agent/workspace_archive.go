@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/sandbox"
+	"github.com/liliang-cn/agent-go/v3/pkg/sandbox"
 )
 
 // maxWorkspaceSnapshotBytes caps how large a workspace snapshot we embed in a

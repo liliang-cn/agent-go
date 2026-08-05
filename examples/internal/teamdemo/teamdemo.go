@@ -6,9 +6,9 @@ import (
 	"os"
 	"strings"
 
-	agenta2a "github.com/liliang-cn/agent-go/v2/pkg/a2a"
-	"github.com/liliang-cn/agent-go/v2/pkg/agent"
-	"github.com/liliang-cn/agent-go/v2/pkg/config"
+	agenta2a "github.com/liliang-cn/agent-go/v3/pkg/a2a"
+	"github.com/liliang-cn/agent-go/v3/pkg/agent"
+	"github.com/liliang-cn/agent-go/v3/pkg/config"
 )
 
 const ExampleHomeEnv = "AGENTGO_EXAMPLE_HOME"

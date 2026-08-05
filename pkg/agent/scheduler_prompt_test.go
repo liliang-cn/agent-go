@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
-	"github.com/liliang-cn/agent-go/v2/pkg/scheduler"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/scheduler"
 )
 
 // scheduledTestLLM answers whatever it is asked, recording the prompts so a test

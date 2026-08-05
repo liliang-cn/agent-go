@@ -1,6 +1,6 @@
 package agent
 
-import "github.com/liliang-cn/agent-go/v2/pkg/domain"
+import "github.com/liliang-cn/agent-go/v3/pkg/domain"
 
 const (
 	textRoundDecisionComplete = "complete"

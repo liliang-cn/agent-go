@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/agent"
-	"github.com/liliang-cn/agent-go/v2/pkg/config"
+	"github.com/liliang-cn/agent-go/v3/pkg/agent"
+	"github.com/liliang-cn/agent-go/v3/pkg/config"
 )
 
 // LiveBuilder constructs a real-LLM Service for live-mode runs. Callers

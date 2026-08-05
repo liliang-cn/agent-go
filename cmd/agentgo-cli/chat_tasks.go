@@ -7,10 +7,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/liliang-cn/agent-go/v2/cmd/agentgo-cli/internal/cliui"
-	"github.com/liliang-cn/agent-go/v2/cmd/agentgo-cli/internal/lineinput"
-	"github.com/liliang-cn/agent-go/v2/pkg/agent"
-	taskpkg "github.com/liliang-cn/agent-go/v2/pkg/task"
+	"github.com/liliang-cn/agent-go/v3/cmd/agentgo-cli/internal/cliui"
+	"github.com/liliang-cn/agent-go/v3/cmd/agentgo-cli/internal/lineinput"
+	"github.com/liliang-cn/agent-go/v3/pkg/agent"
+	taskpkg "github.com/liliang-cn/agent-go/v3/pkg/task"
 )
 
 type chatTaskFollower struct {

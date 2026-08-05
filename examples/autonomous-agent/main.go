@@ -35,10 +35,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/agent"
-	"github.com/liliang-cn/agent-go/v2/pkg/browser"
-	"github.com/liliang-cn/agent-go/v2/pkg/pool"
-	"github.com/liliang-cn/agent-go/v2/pkg/sandbox"
+	"github.com/liliang-cn/agent-go/v3/pkg/agent"
+	"github.com/liliang-cn/agent-go/v3/pkg/browser"
+	"github.com/liliang-cn/agent-go/v3/pkg/pool"
+	"github.com/liliang-cn/agent-go/v3/pkg/sandbox"
 )
 
 func envOr(key, def string) string {

@@ -3,9 +3,9 @@ package mcp
 import (
 	"path/filepath"
 
-	agentmcp "github.com/liliang-cn/agent-go/v2/pkg/mcp"
-	"github.com/liliang-cn/agent-go/v2/pkg/resource"
-	"github.com/liliang-cn/agent-go/v2/pkg/store"
+	agentmcp "github.com/liliang-cn/agent-go/v3/pkg/mcp"
+	"github.com/liliang-cn/agent-go/v3/pkg/resource"
+	"github.com/liliang-cn/agent-go/v3/pkg/store"
 )
 
 func saveMCPResource(serverName, configPath string, cfg serverConfig) {

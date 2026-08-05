@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	taskpkg "github.com/liliang-cn/agent-go/v2/pkg/task"
+	taskpkg "github.com/liliang-cn/agent-go/v3/pkg/task"
 )
 
 func TestListTasksPaged(t *testing.T) {

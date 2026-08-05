@@ -28,8 +28,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/agent"
-	"github.com/liliang-cn/agent-go/v2/pkg/fileproc"
+	"github.com/liliang-cn/agent-go/v3/pkg/agent"
+	"github.com/liliang-cn/agent-go/v3/pkg/fileproc"
 )
 
 const ocrEndpoint = "http://localhost:11434"

@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/config"
-	agentgomcp "github.com/liliang-cn/agent-go/v2/pkg/mcp"
+	"github.com/liliang-cn/agent-go/v3/pkg/config"
+	agentgomcp "github.com/liliang-cn/agent-go/v3/pkg/mcp"
 )
 
 func TestConfiguredMCPServerRowsFormatsConfiguredServers(t *testing.T) {

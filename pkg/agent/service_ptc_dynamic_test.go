@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/ptc"
+	"github.com/liliang-cn/agent-go/v3/pkg/ptc"
 )
 
 // The PTC router discovers MCP tools and skills by duck-typing the services it

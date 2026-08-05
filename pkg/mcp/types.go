@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	agentgolog "github.com/liliang-cn/agent-go/v2/pkg/log"
+	agentgolog "github.com/liliang-cn/agent-go/v3/pkg/log"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 

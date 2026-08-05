@@ -10,10 +10,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/mcp"
-	"github.com/liliang-cn/agent-go/v2/pkg/pool"
-	"github.com/liliang-cn/agent-go/v2/pkg/resource"
-	"github.com/liliang-cn/agent-go/v2/pkg/store"
+	"github.com/liliang-cn/agent-go/v3/pkg/mcp"
+	"github.com/liliang-cn/agent-go/v3/pkg/pool"
+	"github.com/liliang-cn/agent-go/v3/pkg/resource"
+	"github.com/liliang-cn/agent-go/v3/pkg/store"
 )
 
 var configLoadMu sync.Mutex

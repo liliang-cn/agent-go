@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
-	"github.com/liliang-cn/agent-go/v2/pkg/ptc"
-	"github.com/liliang-cn/agent-go/v2/pkg/resource"
-	storepkg "github.com/liliang-cn/agent-go/v2/pkg/store"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/ptc"
+	"github.com/liliang-cn/agent-go/v3/pkg/resource"
+	storepkg "github.com/liliang-cn/agent-go/v3/pkg/store"
 )
 
 type metadataTestMCP struct{}

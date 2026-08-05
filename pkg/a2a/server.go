@@ -14,7 +14,7 @@ import (
 	a2aproto "github.com/a2aproject/a2a-go/a2a"
 	a2asrv "github.com/a2aproject/a2a-go/a2asrv"
 	"github.com/a2aproject/a2a-go/a2asrv/eventqueue"
-	agentpkg "github.com/liliang-cn/agent-go/v2/pkg/agent"
+	agentpkg "github.com/liliang-cn/agent-go/v3/pkg/agent"
 )
 
 type AgentRunner interface {

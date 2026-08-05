@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/browser"
-	"github.com/liliang-cn/agent-go/v2/pkg/sandbox"
+	"github.com/liliang-cn/agent-go/v3/pkg/browser"
+	"github.com/liliang-cn/agent-go/v3/pkg/sandbox"
 )
 
 // Built-in browser-control tools backed by a browser.Browser. They let an agent

@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/config"
-	agentgomcp "github.com/liliang-cn/agent-go/v2/pkg/mcp"
-	"github.com/liliang-cn/agent-go/v2/pkg/services"
-	"github.com/liliang-cn/agent-go/v2/pkg/store"
+	"github.com/liliang-cn/agent-go/v3/pkg/config"
+	agentgomcp "github.com/liliang-cn/agent-go/v3/pkg/mcp"
+	"github.com/liliang-cn/agent-go/v3/pkg/services"
+	"github.com/liliang-cn/agent-go/v3/pkg/store"
 	skillsmcp "github.com/liliang-cn/skills-go/mcp"
 	"github.com/spf13/cobra"
 )

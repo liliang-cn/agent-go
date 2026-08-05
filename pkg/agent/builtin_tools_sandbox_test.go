@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/sandbox"
+	"github.com/liliang-cn/agent-go/v3/pkg/sandbox"
 )
 
 func newSandboxTestService(t *testing.T) (*Service, sandbox.Sandbox) {

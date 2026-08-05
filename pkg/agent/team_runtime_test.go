@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/config"
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/config"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 )
 
 func newIsolatedTeamRuntimeManager(t *testing.T, store *Store) *TeamManager {

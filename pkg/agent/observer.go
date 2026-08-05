@@ -4,7 +4,7 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 )
 
 // Observer is a unified aspect/observability hook that brackets the four

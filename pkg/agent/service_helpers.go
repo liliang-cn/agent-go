@@ -9,9 +9,9 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
-	"github.com/liliang-cn/agent-go/v2/pkg/ptc"
-	"github.com/liliang-cn/agent-go/v2/pkg/skills"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/ptc"
+	"github.com/liliang-cn/agent-go/v3/pkg/skills"
 )
 
 const sessionContextSentSkillReminders = "skills.sent_relevant_names"

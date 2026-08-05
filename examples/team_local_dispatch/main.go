@@ -15,7 +15,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/liliang-cn/agent-go/v2/examples/internal/teamdemo"
+	"github.com/liliang-cn/agent-go/v3/examples/internal/teamdemo"
 )
 
 func main() {

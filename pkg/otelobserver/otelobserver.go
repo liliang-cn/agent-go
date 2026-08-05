@@ -23,7 +23,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/agent"
+	"github.com/liliang-cn/agent-go/v3/pkg/agent"
 )
 
 // OpenInference semantic-convention attribute keys.
@@ -105,7 +105,7 @@ func New(tp trace.TracerProvider, opts ...Option) *Observer {
 	if tp == nil {
 		tp = trace.NewNoopTracerProvider()
 	}
-	o.tracer = tp.Tracer("github.com/liliang-cn/agent-go/v2/pkg/otelobserver")
+	o.tracer = tp.Tracer("github.com/liliang-cn/agent-go/v3/pkg/otelobserver")
 	return o
 }
 

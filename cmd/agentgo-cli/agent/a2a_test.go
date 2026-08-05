@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	agenta2a "github.com/liliang-cn/agent-go/v2/pkg/a2a"
-	"github.com/liliang-cn/agent-go/v2/pkg/agent"
-	"github.com/liliang-cn/agent-go/v2/pkg/config"
+	agenta2a "github.com/liliang-cn/agent-go/v3/pkg/a2a"
+	"github.com/liliang-cn/agent-go/v3/pkg/agent"
+	"github.com/liliang-cn/agent-go/v3/pkg/config"
 )
 
 func TestAgentAddWithA2AFlagPersistsExposure(t *testing.T) {

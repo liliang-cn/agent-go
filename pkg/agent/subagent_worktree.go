@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/config"
-	"github.com/liliang-cn/agent-go/v2/pkg/sandbox"
-	"github.com/liliang-cn/agent-go/v2/pkg/worktree"
+	"github.com/liliang-cn/agent-go/v3/pkg/config"
+	"github.com/liliang-cn/agent-go/v3/pkg/sandbox"
+	"github.com/liliang-cn/agent-go/v3/pkg/worktree"
 )
 
 // WorktreeSpec configures git-worktree isolation for a sub-agent. When attached

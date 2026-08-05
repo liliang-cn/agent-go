@@ -3,7 +3,7 @@ package processor
 import (
 	"sort"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 )
 
 // ReciprocalRankFusion merges two ranked lists of chunks (vector and keyword)

@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
-	"github.com/liliang-cn/agent-go/v2/pkg/resource"
-	taskpkg "github.com/liliang-cn/agent-go/v2/pkg/task"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/resource"
+	taskpkg "github.com/liliang-cn/agent-go/v3/pkg/task"
 	_ "modernc.org/sqlite"
 )
 

@@ -9,11 +9,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/liliang-cn/agent-go/v2/pkg/config"
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
-	"github.com/liliang-cn/agent-go/v2/pkg/memory"
-	"github.com/liliang-cn/agent-go/v2/pkg/services"
-	"github.com/liliang-cn/agent-go/v2/pkg/store"
+	"github.com/liliang-cn/agent-go/v3/pkg/config"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/memory"
+	"github.com/liliang-cn/agent-go/v3/pkg/services"
+	"github.com/liliang-cn/agent-go/v3/pkg/store"
 	"github.com/spf13/cobra"
 )
 

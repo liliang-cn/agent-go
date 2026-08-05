@@ -13,10 +13,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	agentpkg "github.com/liliang-cn/agent-go/v2/pkg/agent"
-	"github.com/liliang-cn/agent-go/v2/pkg/scheduler"
-	storepkg "github.com/liliang-cn/agent-go/v2/pkg/store"
-	taskpkg "github.com/liliang-cn/agent-go/v2/pkg/task"
+	agentpkg "github.com/liliang-cn/agent-go/v3/pkg/agent"
+	"github.com/liliang-cn/agent-go/v3/pkg/scheduler"
+	storepkg "github.com/liliang-cn/agent-go/v3/pkg/store"
+	taskpkg "github.com/liliang-cn/agent-go/v3/pkg/task"
 	"github.com/spf13/cobra"
 )
 

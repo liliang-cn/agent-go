@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/agent"
+	"github.com/liliang-cn/agent-go/v3/pkg/agent"
 )
 
 func TestParseDelegatedTasks(t *testing.T) {

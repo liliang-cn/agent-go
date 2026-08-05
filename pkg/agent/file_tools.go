@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/fileproc"
+	"github.com/liliang-cn/agent-go/v3/pkg/fileproc"
 )
 
 // Built-in document tools. They let an agent read the *content* of Word, Excel,

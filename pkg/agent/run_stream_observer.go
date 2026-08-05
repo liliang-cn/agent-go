@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	taskpkg "github.com/liliang-cn/agent-go/v2/pkg/task"
+	taskpkg "github.com/liliang-cn/agent-go/v3/pkg/task"
 )
 
 func (s *Service) observeRunStream(session *Session, taskID, goal string, startedAt time.Time, upstream <-chan *Event) <-chan *Event {

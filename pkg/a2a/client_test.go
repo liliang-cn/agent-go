@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	a2aproto "github.com/a2aproject/a2a-go/a2a"
-	agentpkg "github.com/liliang-cn/agent-go/v2/pkg/agent"
+	agentpkg "github.com/liliang-cn/agent-go/v3/pkg/agent"
 )
 
 func TestExtractTextFromSendResultMessage(t *testing.T) {

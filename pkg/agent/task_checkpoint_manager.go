@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
-	"github.com/liliang-cn/agent-go/v2/pkg/sandbox"
-	taskpkg "github.com/liliang-cn/agent-go/v2/pkg/task"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/sandbox"
+	taskpkg "github.com/liliang-cn/agent-go/v3/pkg/task"
 )
 
 // WriteCheckpoint persists a snapshot of the given task and prunes older

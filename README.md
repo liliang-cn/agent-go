@@ -1,8 +1,8 @@
 # AgentGo
 
 [![CI](https://github.com/liliang-cn/agent-go/actions/workflows/ci.yml/badge.svg)](https://github.com/liliang-cn/agent-go/actions/workflows/ci.yml)
-[![Go Reference](https://pkg.go.dev/badge/github.com/liliang-cn/agent-go/v2.svg)](https://pkg.go.dev/github.com/liliang-cn/agent-go/v2)
-[![Go Report Card](https://goreportcard.com/badge/github.com/liliang-cn/agent-go/v2)](https://goreportcard.com/report/github.com/liliang-cn/agent-go/v2)
+[![Go Reference](https://pkg.go.dev/badge/github.com/liliang-cn/agent-go/v3.svg)](https://pkg.go.dev/github.com/liliang-cn/agent-go/v3)
+[![Go Report Card](https://goreportcard.com/badge/github.com/liliang-cn/agent-go/v3)](https://goreportcard.com/report/github.com/liliang-cn/agent-go/v3)
 [![Release](https://img.shields.io/github/v/release/liliang-cn/agent-go)](https://github.com/liliang-cn/agent-go/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -15,7 +15,7 @@ It is centered on `pkg/agent`. The CLI and UI are adapters around the framework,
 ## Install
 
 ```bash
-go get github.com/liliang-cn/agent-go/v2
+go get github.com/liliang-cn/agent-go/v3
 ```
 
 ## Core Ideas
@@ -42,7 +42,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/agent"
+	"github.com/liliang-cn/agent-go/v3/pkg/agent"
 )
 
 func main() {

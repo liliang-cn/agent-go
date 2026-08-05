@@ -10,11 +10,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
-	"github.com/liliang-cn/agent-go/v2/pkg/mcp"
-	"github.com/liliang-cn/agent-go/v2/pkg/pool"
-	"github.com/liliang-cn/agent-go/v2/pkg/services"
-	"github.com/liliang-cn/agent-go/v2/pkg/store"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/mcp"
+	"github.com/liliang-cn/agent-go/v3/pkg/pool"
+	"github.com/liliang-cn/agent-go/v3/pkg/services"
+	"github.com/liliang-cn/agent-go/v3/pkg/store"
 )
 
 type directChatToolLLM interface {

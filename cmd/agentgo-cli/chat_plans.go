@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/liliang-cn/agent-go/v2/cmd/agentgo-cli/internal/cliui"
-	"github.com/liliang-cn/agent-go/v2/pkg/agent"
+	"github.com/liliang-cn/agent-go/v3/cmd/agentgo-cli/internal/cliui"
+	"github.com/liliang-cn/agent-go/v3/pkg/agent"
 )
 
 func handleChatPlanCommand(ctx context.Context, manager *agent.TeamManager, sessionID, input string, follower *chatTaskFollower) (bool, error) {

@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/liliang-cn/agent-go/v2/pkg/agent"
-	agentgolog "github.com/liliang-cn/agent-go/v2/pkg/log"
+	"github.com/liliang-cn/agent-go/v3/pkg/agent"
+	agentgolog "github.com/liliang-cn/agent-go/v3/pkg/log"
 )
 
 // Agent handlers

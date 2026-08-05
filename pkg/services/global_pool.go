@@ -8,11 +8,11 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/config"
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
-	"github.com/liliang-cn/agent-go/v2/pkg/pool"
-	"github.com/liliang-cn/agent-go/v2/pkg/store"
-	"github.com/liliang-cn/agent-go/v2/pkg/usage"
+	"github.com/liliang-cn/agent-go/v3/pkg/config"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/pool"
+	"github.com/liliang-cn/agent-go/v3/pkg/store"
+	"github.com/liliang-cn/agent-go/v3/pkg/usage"
 )
 
 var (

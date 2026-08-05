@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
-	"github.com/liliang-cn/agent-go/v2/pkg/ptc"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/ptc"
 )
 
 type ptcSearchTestMCP struct {

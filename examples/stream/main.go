@@ -8,7 +8,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/agent"
+	"github.com/liliang-cn/agent-go/v3/pkg/agent"
 )
 
 // streamOf turns a final answer into a small event stream: a couple of partial

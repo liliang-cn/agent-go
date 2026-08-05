@@ -26,7 +26,7 @@ with the lint name in the message.
 ### Registering one
 
 ```go
-import "github.com/liliang-cn/agent-go/v2/pkg/agent"
+import "github.com/liliang-cn/agent-go/v3/pkg/agent"
 
 svc.RegisterOutputLint(agent.LintFunc{
     NameValue: "must_cite_source",
@@ -170,7 +170,7 @@ live), `expect.final_text_match` / `expect.final_text_must_not_match`
 ### Library API
 
 ```go
-import evalrunner "github.com/liliang-cn/agent-go/v2/eval/runner"
+import evalrunner "github.com/liliang-cn/agent-go/v3/eval/runner"
 
 opts := evalrunner.RunOptions{
     Live: func(scenarioName, agentName string, lints []string, home string) (*agent.Service, error) {

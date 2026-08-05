@@ -1,6 +1,6 @@
 package agent
 
-import "github.com/liliang-cn/agent-go/v2/pkg/domain"
+import "github.com/liliang-cn/agent-go/v3/pkg/domain"
 
 // extractToolImageParts inspects a structured tool result for embedded image
 // data (the {ok, data:{image_base64, mime}} shape produced by browser_screenshot

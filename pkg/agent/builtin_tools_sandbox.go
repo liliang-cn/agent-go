@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/sandbox"
+	"github.com/liliang-cn/agent-go/v3/pkg/sandbox"
 )
 
 // Built-in filesystem / shell tools backed by a sandbox.Sandbox. These give an

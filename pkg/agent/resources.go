@@ -4,8 +4,8 @@ import (
 	"context"
 	"strings"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/resource"
-	"github.com/liliang-cn/agent-go/v2/pkg/skills"
+	"github.com/liliang-cn/agent-go/v3/pkg/resource"
+	"github.com/liliang-cn/agent-go/v3/pkg/skills"
 )
 
 func (s *Service) Resources(ctx context.Context) []resource.Resource {

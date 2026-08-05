@@ -4,10 +4,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/config"
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
-	memorypkg "github.com/liliang-cn/agent-go/v2/pkg/memory"
-	"github.com/liliang-cn/agent-go/v2/pkg/pool"
+	"github.com/liliang-cn/agent-go/v3/pkg/config"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	memorypkg "github.com/liliang-cn/agent-go/v3/pkg/memory"
+	"github.com/liliang-cn/agent-go/v3/pkg/pool"
 )
 
 type testModelInfoLLM struct {

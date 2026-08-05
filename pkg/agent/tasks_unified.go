@@ -4,8 +4,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/store"
-	taskpkg "github.com/liliang-cn/agent-go/v2/pkg/task"
+	"github.com/liliang-cn/agent-go/v3/pkg/store"
+	taskpkg "github.com/liliang-cn/agent-go/v3/pkg/task"
 )
 
 type TaskKind = taskpkg.Kind

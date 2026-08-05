@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
-	mcppkg "github.com/liliang-cn/agent-go/v2/pkg/mcp"
-	"github.com/liliang-cn/agent-go/v2/pkg/services"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	mcppkg "github.com/liliang-cn/agent-go/v3/pkg/mcp"
+	"github.com/liliang-cn/agent-go/v3/pkg/services"
 	"github.com/spf13/cobra"
 )
 

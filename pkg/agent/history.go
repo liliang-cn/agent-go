@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 	_ "modernc.org/sqlite" // pure-Go driver; no CGO required
 )
 

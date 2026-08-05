@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 )
 
 func (s *Service) tryDirectOperatorMCPExecution(ctx context.Context, goal string) (string, bool, error) {

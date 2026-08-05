@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 )
 
 // Real graph path: store a fact, then KnowledgeRecall returns a populated,

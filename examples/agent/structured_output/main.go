@@ -27,7 +27,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/agent"
+	"github.com/liliang-cn/agent-go/v3/pkg/agent"
 )
 
 // ArticleSummary is the Go type the model must populate. Field tags drive

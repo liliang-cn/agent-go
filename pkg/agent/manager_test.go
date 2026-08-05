@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/config"
-	"github.com/liliang-cn/agent-go/v2/pkg/store"
+	"github.com/liliang-cn/agent-go/v3/pkg/config"
+	"github.com/liliang-cn/agent-go/v3/pkg/store"
 )
 
 func TestSanitizeDispatchText(t *testing.T) {

@@ -32,7 +32,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/agent"
+	"github.com/liliang-cn/agent-go/v3/pkg/agent"
 	"github.com/liliang-cn/cortexdb/v2/pkg/cortexdb"
 )
 

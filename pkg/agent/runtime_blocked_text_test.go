@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 )
 
 // blockedNoArgsLLM emits a bare `task_blocked` tool call with no arguments and

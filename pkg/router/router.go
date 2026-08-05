@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 	semanticrouter "github.com/liliang-cn/cortexdb/v2/pkg/semantic-router"
 )
 

@@ -3,9 +3,9 @@ package skills
 import (
 	"path/filepath"
 
-	"github.com/liliang-cn/agent-go/v2/cmd/agentgo-cli/rag"
-	"github.com/liliang-cn/agent-go/v2/pkg/resource"
-	"github.com/liliang-cn/agent-go/v2/pkg/store"
+	"github.com/liliang-cn/agent-go/v3/cmd/agentgo-cli/rag"
+	"github.com/liliang-cn/agent-go/v3/pkg/resource"
+	"github.com/liliang-cn/agent-go/v3/pkg/store"
 )
 
 func saveSkillResource(skillName, skillDir string) {

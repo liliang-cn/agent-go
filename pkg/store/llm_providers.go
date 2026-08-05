@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/pool"
+	"github.com/liliang-cn/agent-go/v3/pkg/pool"
 )
 
 // LLMProvider persisted provider configuration.

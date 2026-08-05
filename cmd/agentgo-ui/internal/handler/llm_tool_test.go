@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
-	"github.com/liliang-cn/agent-go/v2/pkg/mcp"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/mcp"
 )
 
 type fakeDirectChatLLM struct {

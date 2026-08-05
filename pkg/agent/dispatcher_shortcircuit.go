@@ -8,8 +8,8 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
-	memorypkg "github.com/liliang-cn/agent-go/v2/pkg/memory"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	memorypkg "github.com/liliang-cn/agent-go/v3/pkg/memory"
 )
 
 type dispatcherDirectRouteResult struct {

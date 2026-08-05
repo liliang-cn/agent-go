@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	cachepkg "github.com/liliang-cn/agent-go/v2/pkg/cache"
-	"github.com/liliang-cn/agent-go/v2/pkg/config"
+	cachepkg "github.com/liliang-cn/agent-go/v3/pkg/cache"
+	"github.com/liliang-cn/agent-go/v3/pkg/config"
 	"github.com/spf13/cobra"
 )
 

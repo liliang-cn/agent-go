@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/agent"
-	"github.com/liliang-cn/agent-go/v2/pkg/store"
+	"github.com/liliang-cn/agent-go/v3/pkg/agent"
+	"github.com/liliang-cn/agent-go/v3/pkg/store"
 )
 
 // HandleTasks serves a paginated, filterable task list:

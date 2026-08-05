@@ -33,9 +33,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/liliang-cn/agent-go/v2/examples/internal/teamdemo"
-	"github.com/liliang-cn/agent-go/v2/pkg/agent"
-	"github.com/liliang-cn/agent-go/v2/pkg/pool"
+	"github.com/liliang-cn/agent-go/v3/examples/internal/teamdemo"
+	"github.com/liliang-cn/agent-go/v3/pkg/agent"
+	"github.com/liliang-cn/agent-go/v3/pkg/pool"
 )
 
 func main() {

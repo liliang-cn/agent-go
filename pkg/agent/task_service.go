@@ -3,7 +3,7 @@ package agent
 import (
 	"context"
 
-	taskpkg "github.com/liliang-cn/agent-go/v2/pkg/task"
+	taskpkg "github.com/liliang-cn/agent-go/v3/pkg/task"
 )
 
 type TaskListOptions struct {

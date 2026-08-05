@@ -8,10 +8,10 @@ import (
 	"fmt"
 	"path/filepath"
 
-	evalrunner "github.com/liliang-cn/agent-go/v2/eval/runner"
-	"github.com/liliang-cn/agent-go/v2/pkg/agent"
-	"github.com/liliang-cn/agent-go/v2/pkg/config"
-	"github.com/liliang-cn/agent-go/v2/pkg/services"
+	evalrunner "github.com/liliang-cn/agent-go/v3/eval/runner"
+	"github.com/liliang-cn/agent-go/v3/pkg/agent"
+	"github.com/liliang-cn/agent-go/v3/pkg/config"
+	"github.com/liliang-cn/agent-go/v3/pkg/services"
 	"github.com/spf13/cobra"
 )
 

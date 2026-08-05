@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 )
 
 // codeReplyLLM always answers with the same PTC code block, so Service.Run

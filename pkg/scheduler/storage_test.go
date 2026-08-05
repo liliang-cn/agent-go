@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	storepkg "github.com/liliang-cn/agent-go/v2/pkg/store"
+	storepkg "github.com/liliang-cn/agent-go/v3/pkg/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

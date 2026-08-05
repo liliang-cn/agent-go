@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/resource"
+	"github.com/liliang-cn/agent-go/v3/pkg/resource"
 	_ "modernc.org/sqlite"
 )
 

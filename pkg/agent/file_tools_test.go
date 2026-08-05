@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/sandbox"
+	"github.com/liliang-cn/agent-go/v3/pkg/sandbox"
 )
 
 // writeSampleDocx creates a minimal valid .docx with the given paragraphs.

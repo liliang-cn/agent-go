@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 )
 
 // jsonReplyLLM is a mock generator whose every turn returns a fixed JSON

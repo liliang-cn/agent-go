@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/config"
+	"github.com/liliang-cn/agent-go/v3/pkg/config"
 )
 
 type ConfigHandler struct {

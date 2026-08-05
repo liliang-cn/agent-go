@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
-	taskpkg "github.com/liliang-cn/agent-go/v2/pkg/task"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	taskpkg "github.com/liliang-cn/agent-go/v3/pkg/task"
 )
 
 type persistedAsyncTestLLM struct {

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	agentpkg "github.com/liliang-cn/agent-go/v2/pkg/agent"
+	agentpkg "github.com/liliang-cn/agent-go/v3/pkg/agent"
 )
 
 func TestRenderStreamEventSkipsTaskCompleteToolResult(t *testing.T) {

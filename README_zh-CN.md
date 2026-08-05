@@ -9,7 +9,7 @@ AgentGo 是一个 Go 框架，用于构建 Agent / Team 系统。Team、Agent、
 默认体验并不依赖 embedding model。基础 Agent runtime、MCP、skills、文件记忆、task 和 PTC 都可以在没有向量检索的情况下工作。只有在你明确需要 RAG、语义向量召回或向量型检索时，才需要配置 embedding model。
 
 ```bash
-go get github.com/liliang-cn/agent-go/v2
+go get github.com/liliang-cn/agent-go/v3
 ```
 
 ---

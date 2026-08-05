@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/pool"
+	"github.com/liliang-cn/agent-go/v3/pkg/pool"
 )
 
 // EmbeddingProvider represents a persisted embedding provider.

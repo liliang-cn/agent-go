@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	taskpkg "github.com/liliang-cn/agent-go/v2/pkg/task"
+	taskpkg "github.com/liliang-cn/agent-go/v3/pkg/task"
 )
 
 // PlanItemStatus describes the lifecycle of a planned work item.

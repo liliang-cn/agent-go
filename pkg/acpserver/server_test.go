@@ -8,8 +8,8 @@ import (
 	"time"
 
 	acp "github.com/coder/acp-go-sdk"
-	"github.com/liliang-cn/agent-go/v2/pkg/agent"
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/agent"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 )
 
 type fakeRuntime struct {

@@ -10,9 +10,9 @@ import (
 
 	"sync"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/prompt"
+	"github.com/liliang-cn/agent-go/v3/pkg/prompt"
 )
 
 // Manager manages multiple routers for different routing contexts

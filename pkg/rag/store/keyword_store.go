@@ -8,7 +8,7 @@ import (
 	"sync"
 
 	"github.com/blevesearch/bleve/v2"
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 )
 
 type BleveStore struct {

@@ -62,12 +62,12 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/agent"
-	"github.com/liliang-cn/agent-go/v2/pkg/config"
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
-	"github.com/liliang-cn/agent-go/v2/pkg/otelobserver"
-	"github.com/liliang-cn/agent-go/v2/pkg/providers"
-	"github.com/liliang-cn/agent-go/v2/pkg/sandbox"
+	"github.com/liliang-cn/agent-go/v3/pkg/agent"
+	"github.com/liliang-cn/agent-go/v3/pkg/config"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/otelobserver"
+	"github.com/liliang-cn/agent-go/v3/pkg/providers"
+	"github.com/liliang-cn/agent-go/v3/pkg/sandbox"
 )
 
 // sessionTaskIDKey mirrors the unexported runtime key the framework uses to

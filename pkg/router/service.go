@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 )
 
 // Service provides high-level semantic routing with intent-to-tool mapping

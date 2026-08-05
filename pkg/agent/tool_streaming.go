@@ -5,7 +5,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 )
 
 // StreamingToolExecutor handles concurrent tool execution with progress tracking,

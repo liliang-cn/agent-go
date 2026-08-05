@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
-	"github.com/liliang-cn/agent-go/v2/pkg/providers"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/providers"
 )
 
 // NewOpenAI builds a ready-to-use LLM Service against any OpenAI-compatible

@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/browser"
-	"github.com/liliang-cn/agent-go/v2/pkg/sandbox"
+	"github.com/liliang-cn/agent-go/v3/pkg/browser"
+	"github.com/liliang-cn/agent-go/v3/pkg/sandbox"
 )
 
 func TestRegisterDeliverableToolsAndScan(t *testing.T) {

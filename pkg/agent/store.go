@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
-	"github.com/liliang-cn/agent-go/v2/pkg/store"
-	taskpkg "github.com/liliang-cn/agent-go/v2/pkg/task"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/store"
+	taskpkg "github.com/liliang-cn/agent-go/v3/pkg/task"
 )
 
 // Store provides persistent storage for agent plans and sessions by wrapping AgentGoDB

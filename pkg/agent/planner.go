@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
-	"github.com/liliang-cn/agent-go/v2/pkg/prompt"
-	"github.com/liliang-cn/agent-go/v2/pkg/router"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/prompt"
+	"github.com/liliang-cn/agent-go/v3/pkg/router"
 )
 
 // RouterService is the interface for semantic routing

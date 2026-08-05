@@ -40,12 +40,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/agent"
-	"github.com/liliang-cn/agent-go/v2/pkg/config"
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
-	"github.com/liliang-cn/agent-go/v2/pkg/sandbox"
-	"github.com/liliang-cn/agent-go/v2/pkg/scheduler"
-	"github.com/liliang-cn/agent-go/v2/pkg/worktree"
+	"github.com/liliang-cn/agent-go/v3/pkg/agent"
+	"github.com/liliang-cn/agent-go/v3/pkg/config"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/sandbox"
+	"github.com/liliang-cn/agent-go/v3/pkg/scheduler"
+	"github.com/liliang-cn/agent-go/v3/pkg/worktree"
 )
 
 // requiredToken is the verification condition: the deliverable file must

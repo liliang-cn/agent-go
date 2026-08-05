@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/sandbox"
+	"github.com/liliang-cn/agent-go/v3/pkg/sandbox"
 )
 
 // TestWorkspaceArchiveRoundtrip exercises the full path used by checkpoint

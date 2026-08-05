@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
-	memorypkg "github.com/liliang-cn/agent-go/v2/pkg/memory"
-	"github.com/liliang-cn/agent-go/v2/pkg/usage"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	memorypkg "github.com/liliang-cn/agent-go/v3/pkg/memory"
+	"github.com/liliang-cn/agent-go/v3/pkg/usage"
 )
 
 type backgroundMemoryWriter interface {

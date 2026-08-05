@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 )
 
 // Turning a PTC run into an answer for the user.

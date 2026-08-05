@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
-	taskpkg "github.com/liliang-cn/agent-go/v2/pkg/task"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	taskpkg "github.com/liliang-cn/agent-go/v3/pkg/task"
 )
 
 type taskRunStateOptions struct {

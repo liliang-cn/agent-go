@@ -5,14 +5,14 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/agent"
-	"github.com/liliang-cn/agent-go/v2/pkg/config"
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
-	"github.com/liliang-cn/agent-go/v2/pkg/mcp"
-	"github.com/liliang-cn/agent-go/v2/pkg/memory"
-	"github.com/liliang-cn/agent-go/v2/pkg/rag"
-	"github.com/liliang-cn/agent-go/v2/pkg/services"
-	"github.com/liliang-cn/agent-go/v2/pkg/skills"
+	"github.com/liliang-cn/agent-go/v3/pkg/agent"
+	"github.com/liliang-cn/agent-go/v3/pkg/config"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/mcp"
+	"github.com/liliang-cn/agent-go/v3/pkg/memory"
+	"github.com/liliang-cn/agent-go/v3/pkg/rag"
+	"github.com/liliang-cn/agent-go/v3/pkg/services"
+	"github.com/liliang-cn/agent-go/v3/pkg/skills"
 )
 
 // Handler holds all services

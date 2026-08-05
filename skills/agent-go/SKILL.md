@@ -1,13 +1,13 @@
 ---
 name: agent-go
-description: Use AgentGo (github.com/liliang-cn/agent-go/v2) as a Go library to build AI agents, RAG pipelines, and multi-agent teams. Use when the user is writing Go code that imports github.com/liliang-cn/agent-go/v2 and needs help with agent.New() / TeamManager / Tasks / TaskPlan / output lints / task checkpoints / memory / MCP / PTC, or when configuring providers in agentgo.toml or via the agentgo CLI.
+description: Use AgentGo (github.com/liliang-cn/agent-go/v3) as a Go library to build AI agents, RAG pipelines, and multi-agent teams. Use when the user is writing Go code that imports github.com/liliang-cn/agent-go/v3 and needs help with agent.New() / TeamManager / Tasks / TaskPlan / output lints / task checkpoints / memory / MCP / PTC, or when configuring providers in agentgo.toml or via the agentgo CLI.
 license: MIT
-compatibility: Go 1.21+ project that imports github.com/liliang-cn/agent-go/v2. SQLite via go-sqlite3 (CGO). Optional Goja for PTC. Optional embedding model for RAG.
+compatibility: Go 1.21+ project that imports github.com/liliang-cn/agent-go/v3. SQLite via go-sqlite3 (CGO). Optional Goja for PTC. Optional embedding model for RAG.
 metadata:
   project: agent-go
   version: "2.0"
   homepage: https://github.com/liliang-cn/agent-go
-  import: github.com/liliang-cn/agent-go/v2
+  import: github.com/liliang-cn/agent-go/v3
 ---
 
 # AgentGo — Go library for AI agents
@@ -17,7 +17,7 @@ Use this skill when the user wants to **embed AgentGo in their Go project** — 
 ## Install
 
 ```bash
-go get github.com/liliang-cn/agent-go/v2
+go get github.com/liliang-cn/agent-go/v3
 ```
 
 Pulls SQLite via `mattn/go-sqlite3` (needs CGO).
@@ -35,7 +35,7 @@ Pulls SQLite via `mattn/go-sqlite3` (needs CGO).
 ## Minimal one-shot agent
 
 ```go
-import "github.com/liliang-cn/agent-go/v2/pkg/agent"
+import "github.com/liliang-cn/agent-go/v3/pkg/agent"
 
 svc, err := agent.New("assistant").
     WithPrompt("You are a concise Go assistant.").
@@ -117,7 +117,7 @@ Snapshot persistence is auto-wired when TeamManager builds a service. For `agent
 If your project ships its own scenarios:
 
 ```go
-import evalrunner "github.com/liliang-cn/agent-go/v2/eval/runner"
+import evalrunner "github.com/liliang-cn/agent-go/v3/eval/runner"
 
 scenarios, _ := evalrunner.LoadScenariosFromDir("eval/scenarios")
 results, _ := evalrunner.RunAll(ctx, "eval/scenarios", evalrunner.RunOptions{

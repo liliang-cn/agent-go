@@ -25,9 +25,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/agent"
-	"github.com/liliang-cn/agent-go/v2/pkg/cortexbridge"
-	"github.com/liliang-cn/agent-go/v2/pkg/pool"
+	"github.com/liliang-cn/agent-go/v3/pkg/agent"
+	"github.com/liliang-cn/agent-go/v3/pkg/cortexbridge"
+	"github.com/liliang-cn/agent-go/v3/pkg/pool"
 	"github.com/liliang-cn/cortexdb/v2/pkg/cortexdb"
 )
 

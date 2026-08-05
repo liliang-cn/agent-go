@@ -3,7 +3,7 @@ package agent
 import (
 	"strings"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 )
 
 // sanitizeToolPairing returns a message slice in which every tool-result message

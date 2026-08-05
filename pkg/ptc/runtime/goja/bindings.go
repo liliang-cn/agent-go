@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 
 	"github.com/dop251/goja"
-	"github.com/liliang-cn/agent-go/v2/pkg/ptc"
+	"github.com/liliang-cn/agent-go/v3/pkg/ptc"
 )
 
 // Bindings provides additional JavaScript bindings for the Goja runtime

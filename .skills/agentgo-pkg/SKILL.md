@@ -50,7 +50,7 @@ go build -o agentgo-cli ./cmd/agentgo-cli
 ### Quick Start
 
 ```go
-import "github.com/liliang-cn/agent-go/v2/pkg/agent"
+import "github.com/liliang-cn/agent-go/v3/pkg/agent"
 
 svc, err := agent.New("my-agent").
     WithRAG().
@@ -221,7 +221,7 @@ longrun.Stop()
 ## Go API: RAG Pipeline
 
 ```go
-import "github.com/liliang-cn/agent-go/v2/pkg/rag"
+import "github.com/liliang-cn/agent-go/v3/pkg/rag"
 
 // Create client
 client := rag.NewClient(cfg)
@@ -243,7 +243,7 @@ fmt.Println(resp.Answer)
 ## Go API: MCP Tools
 
 ```go
-import "github.com/liliang-cn/agent-go/v2/pkg/mcp"
+import "github.com/liliang-cn/agent-go/v3/pkg/mcp"
 
 // Create service
 svc, err := mcp.NewService(cfg, llm)
@@ -265,7 +265,7 @@ result, err := svc.CallTool(ctx, "filesystem.read_file", map[string]any{
 ## Go API: Skills System
 
 ```go
-import "github.com/liliang-cn/agent-go/v2/pkg/skills"
+import "github.com/liliang-cn/agent-go/v3/pkg/skills"
 
 // Create service
 svc, err := skills.NewService(cfg)
@@ -285,7 +285,7 @@ result, _ := svc.RunSkill(ctx, "skill-id", map[string]any{
 ## Go API: Memory
 
 ```go
-import "github.com/liliang-cn/agent-go/v2/pkg/memory"
+import "github.com/liliang-cn/agent-go/v3/pkg/memory"
 
 // Create service (requires MemoryStore + LLM + Embedder)
 svc := memory.NewService(memStore, llm, embedder, cfg)
@@ -299,7 +299,7 @@ ctxText, memories, err := svc.RetrieveAndInject(ctx, query, sessionID)
 ## Go API: Pool (LLM Provider)
 
 ```go
-import "github.com/liliang-cn/agent-go/v2/pkg/pool"
+import "github.com/liliang-cn/agent-go/v3/pkg/pool"
 
 // Create pool
 p, _ := pool.NewPool(pool.PoolConfig{
@@ -321,7 +321,7 @@ result, _ := client.Generate(ctx, prompt, nil)
 ## Go API: Router (Semantic Routing)
 
 ```go
-import "github.com/liliang-cn/agent-go/v2/pkg/router"
+import "github.com/liliang-cn/agent-go/v3/pkg/router"
 
 // Create router
 svc, _ := router.NewService(embedder, cfg)
@@ -344,7 +344,7 @@ svc.RegisterDefaultIntents()  // RAG, file, web, memory, code
 ## Go API: PTC (Programmatic Tool Calling)
 
 ```go
-import "github.com/liliang-cn/agent-go/v2/pkg/ptc"
+import "github.com/liliang-cn/agent-go/v3/pkg/ptc"
 
 // Create router
 router := ptc.NewAgentGoRouter(
@@ -371,7 +371,7 @@ result, _ := router.Route(ctx, "my_tool", map[string]any{"arg": "value"})
 ## Go API: A2A (Agent-to-Agent)
 
 ```go
-import "github.com/liliang-cn/agent-go/v2/pkg/a2a"
+import "github.com/liliang-cn/agent-go/v3/pkg/a2a"
 
 // Server (expose agent via A2A)
 server, _ := a2a.NewServer(catalog, cfg)

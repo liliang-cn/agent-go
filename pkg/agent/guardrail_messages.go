@@ -3,7 +3,7 @@ package agent
 import (
 	"context"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 )
 
 // redactTextFn rewrites one text value, reporting (text, blocked, reason).

@@ -3,8 +3,8 @@ package agent
 import (
 	"context"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/browser"
-	"github.com/liliang-cn/agent-go/v2/pkg/sandbox"
+	"github.com/liliang-cn/agent-go/v3/pkg/browser"
+	"github.com/liliang-cn/agent-go/v3/pkg/sandbox"
 )
 
 // AutonomyProfile configures long-horizon autonomous execution. Zero value =

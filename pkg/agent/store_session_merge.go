@@ -3,7 +3,7 @@ package agent
 import (
 	"sync"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 )
 
 // Concurrent runs on one session.

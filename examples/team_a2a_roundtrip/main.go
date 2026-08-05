@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/liliang-cn/agent-go/v2/examples/internal/teamdemo"
-	agenta2a "github.com/liliang-cn/agent-go/v2/pkg/a2a"
+	"github.com/liliang-cn/agent-go/v3/examples/internal/teamdemo"
+	agenta2a "github.com/liliang-cn/agent-go/v3/pkg/a2a"
 )
 
 func main() {

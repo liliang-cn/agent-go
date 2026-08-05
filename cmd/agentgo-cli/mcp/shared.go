@@ -1,7 +1,7 @@
 package mcp
 
 import (
-	"github.com/liliang-cn/agent-go/v2/pkg/config"
+	"github.com/liliang-cn/agent-go/v3/pkg/config"
 )
 
 // Variables exported from parent package

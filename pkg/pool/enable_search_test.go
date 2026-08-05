@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 )
 
 func TestPoolRequestEnableSearch(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/config"
+	"github.com/liliang-cn/agent-go/v3/pkg/config"
 )
 
 const defaultLLMTurnTimeout = 180 * time.Second

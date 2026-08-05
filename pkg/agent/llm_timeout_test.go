@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/config"
+	"github.com/liliang-cn/agent-go/v3/pkg/config"
 )
 
 func TestResolveLLMTurnTimeoutUsesConfigOverride(t *testing.T) {

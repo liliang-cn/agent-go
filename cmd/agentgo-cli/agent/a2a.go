@@ -8,8 +8,8 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	agenta2a "github.com/liliang-cn/agent-go/v2/pkg/a2a"
-	"github.com/liliang-cn/agent-go/v2/pkg/agent"
+	agenta2a "github.com/liliang-cn/agent-go/v3/pkg/a2a"
+	"github.com/liliang-cn/agent-go/v3/pkg/agent"
 	"github.com/spf13/cobra"
 )
 

@@ -5,7 +5,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/sandbox"
+	"github.com/liliang-cn/agent-go/v3/pkg/sandbox"
 )
 
 // Built-in deliverables tooling: at (or near) the end of a long task, scan the

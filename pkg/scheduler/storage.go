@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	storepkg "github.com/liliang-cn/agent-go/v2/pkg/store"
-	taskpkg "github.com/liliang-cn/agent-go/v2/pkg/task"
+	storepkg "github.com/liliang-cn/agent-go/v3/pkg/store"
+	taskpkg "github.com/liliang-cn/agent-go/v3/pkg/task"
 	_ "modernc.org/sqlite"
 )
 

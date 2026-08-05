@@ -3,7 +3,7 @@ package processor
 import (
 	"testing"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 )
 
 func TestReciprocalRankFusion(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 )
 
 // RunTyped runs the agent on goal with a structured-output constraint derived

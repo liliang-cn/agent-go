@@ -3,7 +3,7 @@ package agent
 import (
 	"context"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/skills"
+	"github.com/liliang-cn/agent-go/v3/pkg/skills"
 )
 
 // Skill-installation detection. WithSkills() loads skills from the configured

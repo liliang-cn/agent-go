@@ -3,7 +3,7 @@ package agent
 import (
 	"testing"
 
-	"github.com/liliang-cn/agent-go/v2/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 )
 
 // searchCall builds a single-tool-call generation result for a tool search.
