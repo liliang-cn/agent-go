@@ -2,15 +2,12 @@ package agent
 
 import (
 	"context"
-	"fmt"
-	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
-	"github.com/liliang-cn/agent-go/v3/pkg/prompt"
 )
 
 // TestHookData_UserPromptSubmitMutation pins the contract that handlers for
@@ -159,74 +156,5 @@ func TestRuntime_UserPromptSubmit_RewritesPromptAndInjectsContext(t *testing.T) 
 	}
 	if !foundRewritten {
 		t.Errorf("expected rewritten goal in first-round messages; got %+v", first)
-	}
-}
-
-// TestService_StopHookGoCallbackBlocksLoop verifies that registering a stop
-// hook as a plain Go callback (no shell command) is enough to stop the loop —
-// proving Stop now flows through the unified HookRegistry.
-func TestService_StopHookGoCallbackBlocksLoop(t *testing.T) {
-	llm := &serviceExecutionStateTestLLM{
-		results: []*domain.GenerationResult{
-			{
-				Content: "calling tool",
-				ToolCalls: []domain.ToolCall{
-					{
-						ID:   "call-1",
-						Type: "function",
-						Function: domain.FunctionCall{
-							Name:      "echo_tool",
-							Arguments: map[string]interface{}{"msg": "hi"},
-						},
-					},
-				},
-			},
-			{Content: "should-not-run"},
-		},
-	}
-
-	agent := NewAgent("Responder")
-	agent.AddToolWithMetadata(
-		"echo_tool",
-		"Echo input",
-		map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"msg": map[string]interface{}{"type": "string"},
-			},
-		},
-		func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-			return fmt.Sprintf("echo:%v", args["msg"]), nil
-		},
-		ToolMetadata{ReadOnly: true, ConcurrencySafe: true},
-	)
-
-	svc := &Service{
-		llmService:      llm,
-		agent:           agent,
-		registry:        NewRegistry(),
-		logger:          slog.Default(),
-		promptManager:   prompt.NewManager(),
-		toolRegistry:    NewToolRegistry(),
-		inProgressTools: make(map[string]int),
-		hooks:           NewHookRegistry(),
-	}
-	svc.registry.Register(agent)
-
-	svc.RegisterHook(HookEventStop, func(ctx context.Context, _ HookEvent, data HookData) (interface{}, error) {
-		data.PreventContinuation = true
-		data.StopReason = "go callback blocked the loop"
-		return data, nil
-	})
-
-	result, _, err := svc.executeWithLLM(context.Background(), "inspect repo", nil, NewSession(agent.ID()), "", "", DefaultRunConfig())
-	if err != nil {
-		t.Fatalf("executeWithLLM error: %v", err)
-	}
-	if result != "go callback blocked the loop" {
-		t.Fatalf("result = %q, want %q", result, "go callback blocked the loop")
-	}
-	if llm.generateCalls != 1 {
-		t.Fatalf("GenerateWithTools calls = %d, want 1", llm.generateCalls)
 	}
 }

@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 
-	"github.com/liliang-cn/agent-go/v3/pkg/browser"
 	"github.com/liliang-cn/agent-go/v3/pkg/sandbox"
 )
 
@@ -37,23 +36,6 @@ func (b *Builder) WithSandbox(sb sandbox.Sandbox) *Builder {
 	return b
 }
 
-// WithBrowser attaches a browser (pkg/browser) and registers the browser_*
-// tools. If a sandbox is also configured, browser_download writes into the
-// sandbox workspace. The caller owns the browser lifecycle (br.Close()).
-func (b *Builder) WithBrowser(br browser.Browser) *Builder {
-	b.browser = br
-	return b
-}
-
-// WithVision enables multimodal image feedback: tool results that carry image
-// data (browser_screenshot, image fs_read) are surfaced to the model as image
-// content parts when the model supports vision. Safe to enable on text-only
-// models (it is a no-op there).
-func (b *Builder) WithVision(on bool) *Builder {
-	b.enableVision = on
-	return b
-}
-
 // WithDeliverables registers the list_deliverables tool, which scans the
 // sandbox workspace for produced artifacts. Requires WithSandbox.
 func (b *Builder) WithDeliverables(on bool) *Builder {
@@ -70,12 +52,6 @@ func (b *Builder) WithAutonomy(p AutonomyProfile) *Builder {
 
 // Sandbox returns the configured execution sandbox, or nil if none.
 func (s *Service) Sandbox() sandbox.Sandbox { return s.execSandbox }
-
-// Browser returns the configured browser, or nil if none.
-func (s *Service) Browser() browser.Browser { return s.execBrowser }
-
-// VisionEnabled reports whether multimodal image feedback is active.
-func (s *Service) VisionEnabled() bool { return s.visionEnabled }
 
 // Deliverables scans the configured sandbox workspace for produced artifacts.
 // Returns an empty slice (no error) when no sandbox is configured.

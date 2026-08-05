@@ -147,13 +147,14 @@ func MarshalResults(results []*RunResult, profile string) ([]byte, error) {
 
 // singleRun is the per-iteration outcome (not exported).
 type singleRun struct {
-	Pass           bool
-	Reason         string
-	Status         string
-	FinalText      string
-	LLMCalls       int
-	LintViolations map[string]int
-	duration       time.Duration
+	Pass            bool
+	Reason          string
+	Status          string
+	FinalText       string
+	LLMCalls        int
+	MaxToolsOffered int
+	LintViolations  map[string]int
+	duration        time.Duration
 }
 
 func runOnce(ctx context.Context, sc *Scenario, opts RunOptions) (*singleRun, error) {
@@ -213,6 +214,7 @@ func runOnce(ctx context.Context, sc *Scenario, opts RunOptions) (*singleRun, er
 	final, blocked, sawError := collectEvents(events, res.LintViolations)
 	if mock != nil {
 		res.LLMCalls = mock.CallCount()
+		res.MaxToolsOffered = mock.MaxToolsOffered()
 	}
 	res.duration = time.Since(start)
 
@@ -286,10 +288,10 @@ func registerLints(svc *agent.Service, names []string) error {
 			continue
 		case "default":
 			agent.RegisterDefaultOutputLints(svc)
-		case "dispatcher_no_bounce_back":
-			svc.RegisterOutputLint(agent.DispatcherNoBounceBack(), agent.BuiltInDispatcherAgentName)
-		case "archivist_no_relative_time":
-			svc.RegisterOutputLint(agent.ArchivistNoRelativeTime(), "Archivist")
+		case "non_empty_final_answer":
+			svc.RegisterOutputLint(agent.NonEmptyFinalAnswer())
+		case "task_delivery_contract":
+			svc.RegisterOutputLint(agent.TaskDeliveryContract())
 		case "no_planning_only_finish":
 			svc.RegisterOutputLint(agent.NoPlanningOnlyFinish())
 		default:
@@ -333,6 +335,10 @@ func assertExpectations(sc *Scenario, res *singleRun) string {
 
 	if want.LLMCalls > 0 && want.LLMCalls != res.LLMCalls {
 		return fmt.Sprintf("llm_calls mismatch: want %d got %d", want.LLMCalls, res.LLMCalls)
+	}
+
+	if want.MaxToolsOffered != nil && res.MaxToolsOffered > *want.MaxToolsOffered {
+		return fmt.Sprintf("max_tools_offered exceeded: cap %d, runtime offered %d", *want.MaxToolsOffered, res.MaxToolsOffered)
 	}
 
 	if msg := matchTextConstraint(res.FinalText, want.FinalTextMatch, true); msg != "" {

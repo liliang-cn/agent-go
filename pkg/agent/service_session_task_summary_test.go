@@ -23,7 +23,11 @@ func (c *compactSessionTestLLM) GenerateWithTools(ctx context.Context, messages 
 }
 
 func (c *compactSessionTestLLM) StreamWithTools(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions, callback domain.ToolCallCallback) error {
-	return nil
+	result, err := c.GenerateWithTools(ctx, messages, tools, opts)
+	if err != nil {
+		return err
+	}
+	return callback(result)
 }
 
 func (c *compactSessionTestLLM) GenerateStructured(ctx context.Context, prompt string, schema interface{}, opts *domain.GenerationOptions) (*domain.StructuredResult, error) {

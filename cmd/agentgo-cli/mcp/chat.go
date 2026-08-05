@@ -9,7 +9,7 @@ import (
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 	mcppkg "github.com/liliang-cn/agent-go/v3/pkg/mcp"
-	"github.com/liliang-cn/agent-go/v3/pkg/services"
+	"github.com/liliang-cn/agent-go/v3/pkg/poolsvc"
 	"github.com/spf13/cobra"
 )
 
@@ -44,7 +44,7 @@ Examples:
 		defer cancel()
 
 		// Get LLM service from pool
-		llmSvc, err := services.GetGlobalLLM()
+		llmSvc, err := poolsvc.GetGlobalLLM()
 		if err != nil {
 			return fmt.Errorf("failed to get LLM service: %w", err)
 		}

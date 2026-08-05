@@ -13,7 +13,7 @@ import (
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 	"github.com/liliang-cn/agent-go/v3/pkg/mcp"
 	"github.com/liliang-cn/agent-go/v3/pkg/pool"
-	"github.com/liliang-cn/agent-go/v3/pkg/services"
+	"github.com/liliang-cn/agent-go/v3/pkg/poolsvc"
 	"github.com/liliang-cn/agent-go/v3/pkg/store"
 )
 
@@ -83,7 +83,7 @@ func (h *Handler) handleDirectLLMChat(w http.ResponseWriter, r *http.Request, ra
 		return
 	}
 
-	poolService := services.GetGlobalPoolService()
+	poolService := poolsvc.Global()
 	messageID := externalID
 	if messageID == "" {
 		messageID = uuid.New().String()
@@ -265,7 +265,7 @@ func (h *Handler) handleDirectLLMChat(w http.ResponseWriter, r *http.Request, ra
 		return
 	}
 
-	opts := services.ChatOptions{
+	opts := poolsvc.ChatOptions{
 		SessionID:    sessionID,
 		Provider:     provider,
 		Model:        model,
@@ -326,7 +326,7 @@ func (h *Handler) handleDirectLLMChat(w http.ResponseWriter, r *http.Request, ra
 	})
 }
 
-func acquireDirectChatLLM(poolService *services.GlobalPoolService, provider, model string) (directChatToolLLM, func(), error) {
+func acquireDirectChatLLM(poolService *poolsvc.Service, provider, model string) (directChatToolLLM, func(), error) {
 	var (
 		llmClient *pool.Client
 		err       error
@@ -602,7 +602,7 @@ func (h *Handler) HandleChatSessions(w http.ResponseWriter, r *http.Request) {
 
 	sessionType := r.URL.Query().Get("type")
 
-	poolService := services.GetGlobalPoolService()
+	poolService := poolsvc.Global()
 	db := poolService.GetAgentGoDB()
 	if db == nil {
 		JSONError(w, "Unified database unavailable", http.StatusServiceUnavailable)
@@ -657,7 +657,7 @@ func (h *Handler) HandleChatSessionMessages(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	poolService := services.GetGlobalPoolService()
+	poolService := poolsvc.Global()
 	db := poolService.GetAgentGoDB()
 	if db == nil {
 		JSONError(w, "Unified database unavailable", http.StatusServiceUnavailable)

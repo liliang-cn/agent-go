@@ -601,18 +601,15 @@ func (c *Client) Chat(ctx context.Context, sessionID string, message string, opt
 
 // AgentOptions configures agent behavior
 type AgentOptions struct {
-	EnableHandoffs   bool                  // Enable agent handoffs
-	EnableGuardrails bool                  // Enable input/output guardrails
-	EnableTracing    bool                  // Enable execution tracing
-	Guardrails       []*agent.Guardrail    // Custom guardrails
-	Handoffs         []agent.HandoffOption // Handoff configurations
-	SessionID        string                // Resume existing session
+	EnableGuardrails bool               // Enable input/output guardrails
+	EnableTracing    bool               // Enable execution tracing
+	Guardrails       []*agent.Guardrail // Custom guardrails
+	SessionID        string             // Resume existing session
 }
 
 // DefaultAgentOptions returns default agent options
 func DefaultAgentOptions() *AgentOptions {
 	return &AgentOptions{
-		EnableHandoffs:   false,
 		EnableGuardrails: true,
 		EnableTracing:    false,
 		Guardrails: []*agent.Guardrail{
@@ -718,25 +715,6 @@ func (c *Client) RunAgent(ctx context.Context, goal string, opts *AgentOptions) 
 	return c.agentService.Run(ctx, goal)
 }
 
-// PlanAgent creates a plan for the given goal without executing
-func (c *Client) PlanAgent(ctx context.Context, goal string) (*agent.Plan, error) {
-	if err := c.initAgentService(ctx); err != nil {
-		return nil, err
-	}
-
-	return c.agentService.Plan(ctx, goal)
-}
-
-// ExecuteAgentPlan executes an existing plan
-func (c *Client) ExecuteAgentPlan(ctx context.Context, plan *agent.Plan) error {
-	if err := c.initAgentService(ctx); err != nil {
-		return err
-	}
-
-	_, err := c.agentService.ExecutePlan(ctx, plan)
-	return err
-}
-
 // GetAgentSession retrieves an agent session by ID
 func (c *Client) GetAgentSession(sessionID string) (*agent.Session, error) {
 	if c.agentService == nil {
@@ -753,15 +731,6 @@ func (c *Client) ListAgentSessions(limit int) ([]*agent.Session, error) {
 	}
 
 	return c.agentService.ListSessions(limit)
-}
-
-// GetAgentPlan retrieves a plan by ID
-func (c *Client) GetAgentPlan(planID string) (*agent.Plan, error) {
-	if c.agentService == nil {
-		return nil, fmt.Errorf("agent service not initialized")
-	}
-
-	return c.agentService.GetPlan(planID)
 }
 
 // GetAgentTracer returns the agent tracer for exporting traces
@@ -784,19 +753,6 @@ func (c *Client) CreateAgent(name, instructions string) (*agent.Agent, error) {
 	// Create agent with custom configuration
 	a := agent.NewAgentWithConfig(name, instructions, nil)
 	return a, nil
-}
-
-// AgentWithHandoffs creates an agent with handoff capabilities
-func (c *Client) AgentWithHandoffs(name, instructions string, handoffs []*agent.Agent) (*agent.Agent, []*agent.Handoff) {
-	primaryAgent := agent.NewAgentWithConfig(name, instructions, nil)
-
-	// Create handoffs from other agents
-	agentHandoffs := make([]*agent.Handoff, len(handoffs))
-	for i, target := range handoffs {
-		agentHandoffs[i] = agent.NewHandoff(target)
-	}
-
-	return primaryAgent, agentHandoffs
 }
 
 // ============================================================================

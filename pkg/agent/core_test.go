@@ -288,10 +288,8 @@ func TestPartitionToolCalls_GroupsConcurrencySafeBatches(t *testing.T) {
 }
 
 func TestQueryLoopState_TracksBudgetAndToolTotals(t *testing.T) {
-	state := newQueryLoopState("inspect repo", []domain.Message{{Role: "user", Content: "inspect repo"}}, &IntentRecognitionResult{
-		IntentType: "code",
-		Transition: "tool_first",
-	}, 3)
+	state := newQueryLoopState("inspect repo", []domain.Message{{Role: "user", Content: "inspect repo"}}, 3)
+	state.Transition = "tool_first"
 
 	state.setStage(TurnStagePreparingContext, "starting", 0)
 	if state.Stage != TurnStagePreparingContext {

@@ -11,7 +11,7 @@ import (
 	evalrunner "github.com/liliang-cn/agent-go/v3/eval/runner"
 	"github.com/liliang-cn/agent-go/v3/pkg/agent"
 	"github.com/liliang-cn/agent-go/v3/pkg/config"
-	"github.com/liliang-cn/agent-go/v3/pkg/services"
+	"github.com/liliang-cn/agent-go/v3/pkg/poolsvc"
 	"github.com/spf13/cobra"
 )
 
@@ -170,10 +170,10 @@ func buildLiveBuilder() (evalrunner.LiveBuilder, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("no config found; set up an LLM provider first (`agentgo llm add ...`)")
 	}
-	if err := services.GetGlobalPoolService().Initialize(context.Background(), cfg); err != nil {
+	if err := poolsvc.Global().Initialize(context.Background(), cfg); err != nil {
 		return nil, fmt.Errorf("initialize provider pool: %w", err)
 	}
-	llm, err := services.GetGlobalPoolService().GetLLMService()
+	llm, err := poolsvc.Global().GetLLMService()
 	if err != nil {
 		return nil, fmt.Errorf("get LLM service: %w", err)
 	}
@@ -203,13 +203,13 @@ func buildLiveBuilder() (evalrunner.LiveBuilder, error) {
 		if err != nil {
 			return nil, fmt.Errorf("build eval store: %w", err)
 		}
-		mgr := agent.NewTeamManager(store)
+		mgr := agent.NewManager(store)
 		mgr.SetConfig(evalCfg)
 		mgr.SetLLM(llm)
-		if err := mgr.SeedDefaultMembers(); err != nil {
+		if err := mgr.SeedDefaultAgent(); err != nil {
 			return nil, fmt.Errorf("seed default members: %w", err)
 		}
-		svc, err := mgr.GetAgentService(agentName)
+		svc, err := mgr.Service(agentName)
 		if err != nil {
 			return nil, fmt.Errorf("get agent service %q: %w", agentName, err)
 		}

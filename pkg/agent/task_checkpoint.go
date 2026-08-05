@@ -60,7 +60,7 @@ const MaxCheckpointsPerTask = 32
 var errCheckpointMissing = errors.New("checkpoint not found")
 
 // SaveTaskCheckpoint inserts a new checkpoint row. Callers should use
-// (TeamManager).WriteCheckpoint instead, which assigns Seq and prunes.
+// (Manager).WriteCheckpoint instead, which assigns Seq and prunes.
 func (s *Store) SaveTaskCheckpoint(cp *TaskCheckpoint) error {
 	if s == nil || s.agentGoDB == nil || cp == nil {
 		return nil
@@ -227,7 +227,7 @@ func (w *checkpointWriter) Write(cp *TaskCheckpoint) error {
 }
 
 // SeedFromStore primes the in-memory seq counter for a task by querying
-// the latest persisted seq. Used on TeamManager startup so resumed
+// the latest persisted seq. Used on Manager startup so resumed
 // processes don't reset Seq numbering.
 func (w *checkpointWriter) SeedFromStore(taskID string) {
 	if w == nil || w.store == nil {
@@ -245,14 +245,14 @@ func (w *checkpointWriter) SeedFromStore(taskID string) {
 }
 
 // CheckpointSink is the runtime-facing surface for writing checkpoints.
-// Implementations are typically backed by a TeamManager so seq
+// Implementations are typically backed by a Manager so seq
 // assignment and pruning stay coherent across resumes. Services without
 // a sink simply skip persistence.
 type CheckpointSink interface {
 	WriteCheckpoint(taskID string, reason CheckpointReason, round int, sessionID, agentName, finalText, afterTool string, messages []domain.Message, workspace []byte) error
 }
 
-// SetCheckpointSink wires a sink into the service. TeamManager calls
+// SetCheckpointSink wires a sink into the service. Manager calls
 // this after constructing each per-agent service.
 func (s *Service) SetCheckpointSink(sink CheckpointSink) {
 	if s == nil {

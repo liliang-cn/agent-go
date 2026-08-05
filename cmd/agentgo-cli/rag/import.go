@@ -7,8 +7,8 @@ import (
 	"os"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/poolsvc"
 	"github.com/liliang-cn/agent-go/v3/pkg/rag/store"
-	"github.com/liliang-cn/agent-go/v3/pkg/services"
 	"github.com/spf13/cobra"
 )
 
@@ -102,7 +102,7 @@ var importCmd = &cobra.Command{
 		var embedService domain.Embedder
 		if recomputeVectors || (len(exportData.Chunks) > 0 && len(exportData.Chunks[0].Vector) == 0) {
 			// Get global embedder service
-			embedService, err = services.GetGlobalEmbeddingService(ctx)
+			embedService, err = poolsvc.GetGlobalEmbeddingService(ctx)
 			if err != nil {
 				return fmt.Errorf("failed to get global embedder service: %w", err)
 			}

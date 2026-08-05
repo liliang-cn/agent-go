@@ -8,7 +8,6 @@ import (
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 	"github.com/liliang-cn/agent-go/v3/pkg/mcp"
 	"github.com/liliang-cn/agent-go/v3/pkg/ptc"
-	"github.com/liliang-cn/agent-go/v3/pkg/router"
 	"github.com/liliang-cn/agent-go/v3/pkg/skills"
 )
 
@@ -110,13 +109,6 @@ func (s *Service) registerSkillsInRegistry(skillsService *skills.Service) {
 			return res.Output, nil
 		}, CategorySkill, ToolMetadata{InterruptBehavior: InterruptBehaviorBlock})
 	}
-}
-
-// SetRouter sets the semantic router for improved intent recognition
-func (s *Service) SetRouter(routerService *router.Service) {
-	s.routerService = routerService
-	s.Router = routerService
-	s.planner.SetRouter(routerService)
 }
 
 // SetPTC sets the PTC integration for programmatic tool calling
@@ -293,13 +285,6 @@ func (s *Service) SetSkillsService(skillsService *skills.Service) {
 			s.agent.Instructions(),
 			tools,
 		)
-		s.planner = NewPlanner(s, s.llmService, tools)
-		// Restore router if it was set
-		if s.routerService != nil {
-			s.planner.SetRouter(s.routerService)
-		}
-		// Set skills service on executor for tool execution
-		s.executor.SetSkillsService(skillsService)
 	}
 }
 

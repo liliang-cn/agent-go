@@ -1,0 +1,20 @@
+name: gate_empty_final_answer_is_rejected
+description: >
+  v3 acceptance gate ① — "empty-handed" runs. A model that terminates
+  with no text at all must not be able to end the run: non_empty_final_answer
+  rejects the empty draft and the runtime re-prompts. The second reply
+  carries an actual answer and the run completes.
+agent: Assistant
+register_lints:
+  - non_empty_final_answer
+input: "what did you find?"
+llm_replies:
+  - ""
+  - "I could not find a matching tool, so here is what I know directly: nothing was scheduled."
+expect:
+  status: completed
+  final_text_match: "nothing was scheduled"
+  llm_calls: 2
+  lint_violations:
+    - lint: non_empty_final_answer
+      count: 1

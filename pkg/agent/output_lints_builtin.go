@@ -36,29 +36,6 @@ var dispatcherBounceBackPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?:接下来|下一步)?(?:将|由)[^。\n]{1,20}(?:负责|完成|处理|来做|来执行)`),
 }
 
-// DispatcherNoBounceBack rejects Dispatcher responses that narrate routing
-// intent without actually returning a routed result. Register against the
-// Dispatcher agent only.
-func DispatcherNoBounceBack() OutputLint {
-	return LintFunc{
-		NameValue: "dispatcher_no_bounce_back",
-		Fn: func(text string, ctx LintContext) (bool, string) {
-			trimmed := strings.TrimSpace(text)
-			if trimmed == "" {
-				return true, ""
-			}
-			for _, pat := range dispatcherBounceBackPatterns {
-				if pat.MatchString(trimmed) {
-					return false, "response narrates routing/delegation instead of returning a concrete result. " +
-						"Either call route_builtin_request and inline its result, or answer the user directly. " +
-						"Do not announce that you are about to dispatch."
-				}
-			}
-			return true, ""
-		},
-	}
-}
-
 // --- 2. archivist_no_relative_time ---------------------------------------------
 //
 // Archivist must resolve relative time references (明天 / 后天 / 下周 /
@@ -86,39 +63,6 @@ var (
 		regexp.MustCompile(`(?i)\b(?:january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2}(?:,\s*\d{4})?\b`),
 	}
 )
-
-// ArchivistNoRelativeTime rejects Archivist responses that mention a
-// relative time reference (明天 / tomorrow / next Monday / ...) without an
-// absolute date in the same response. Register against the Archivist agent.
-func ArchivistNoRelativeTime() OutputLint {
-	return LintFunc{
-		NameValue: "archivist_no_relative_time",
-		Fn: func(text string, ctx LintContext) (bool, string) {
-			trimmed := strings.TrimSpace(text)
-			if trimmed == "" {
-				return true, ""
-			}
-			hasRelative := false
-			for _, pat := range archivistRelativeTimePatterns {
-				if pat.MatchString(trimmed) {
-					hasRelative = true
-					break
-				}
-			}
-			if !hasRelative {
-				return true, ""
-			}
-			for _, pat := range absoluteDatePatterns {
-				if pat.MatchString(trimmed) {
-					return true, ""
-				}
-			}
-			return false, "response contains a relative time reference (明天 / tomorrow / next ... ) " +
-				"but no absolute date (YYYY-MM-DD or equivalent). Resolve the relative reference using the " +
-				"current date in your runtime context, then re-emit the answer with the absolute date."
-		},
-	}
-}
 
 // --- 3. no_planning_only_finish ------------------------------------------------
 //
@@ -389,30 +333,6 @@ func RegisterDefaultOutputLints(svc *Service) {
 	svc.RegisterOutputLint(NoPlanningOnlyFinish())
 	svc.RegisterOutputLint(FileTaskMustWrite())
 	svc.RegisterOutputLint(NoRawPTCCode())
-	svc.RegisterOutputLint(DispatcherNoBounceBack(), BuiltInDispatcherAgentName)
-	svc.RegisterOutputLint(ArchivistNoRelativeTime(), defaultArchivistAgentName)
-}
-
-// applyBuiltInOutputLints attaches the matching agent-specific lint when
-// TeamManager builds a service for a known built-in agent. This is what
-// turns the lint registry from an opt-in primitive into actual enforcement
-// for the framework's own agents — the corresponding instruction-string
-// rules can then be cut from the agent's system prompt because the runtime
-// is doing the enforcement.
-//
-// The agent-agnostic no_planning_only_finish lint is registered for ALL
-// services in builder.build() (including custom agent.New(...).Build()
-// ones). This helper only layers on the agent-specific lints for the
-// framework's own built-in agents.
-func applyBuiltInOutputLints(svc *Service, model *AgentModel) {
-	if svc == nil || model == nil {
-		return
-	}
-	name := strings.TrimSpace(model.Name)
-	switch {
-	case strings.EqualFold(name, defaultDispatcherAgentName):
-		svc.RegisterOutputLint(DispatcherNoBounceBack(), defaultDispatcherAgentName)
-	case strings.EqualFold(name, defaultArchivistAgentName):
-		svc.RegisterOutputLint(ArchivistNoRelativeTime(), defaultArchivistAgentName)
-	}
+	svc.RegisterOutputLint(NonEmptyFinalAnswer())
+	svc.RegisterOutputLint(TaskDeliveryContract())
 }

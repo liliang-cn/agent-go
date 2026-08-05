@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/google/uuid"
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
@@ -15,7 +14,6 @@ type Agent struct {
 	name         string
 	instructions string
 	tools        []domain.ToolDefinition
-	handoffs     []*Handoff
 	mcpTools     []string // Specific MCP tools allowed for this agent (names). Use ["*"] for all.
 	skills       []string // Specific Skills allowed (IDs). Use ["*"] for all.
 	handlers     map[string]func(context.Context, map[string]interface{}) (interface{}, error)
@@ -31,7 +29,6 @@ func NewAgent(name string) *Agent {
 		name:         name,
 		instructions: "You are a helpful assistant.",
 		tools:        []domain.ToolDefinition{},
-		handoffs:     []*Handoff{},
 		mcpTools:     []string{"*"}, // Default to all
 		skills:       []string{"*"}, // Default to all
 		handlers:     make(map[string]func(context.Context, map[string]interface{}) (interface{}, error)),
@@ -134,7 +131,6 @@ func NewAgentWithConfig(name, instructions string, tools []domain.ToolDefinition
 		name:         name,
 		instructions: instructions,
 		tools:        tools,
-		handoffs:     []*Handoff{},
 		mcpTools:     []string{"*"}, // Default to all
 		skills:       []string{"*"}, // Default to all
 		handlers:     make(map[string]func(context.Context, map[string]interface{}) (interface{}, error)),
@@ -162,16 +158,6 @@ func (a *Agent) Instructions() string {
 // Tools returns the agent's available tools
 func (a *Agent) Tools() []domain.ToolDefinition {
 	return a.tools
-}
-
-// Handoffs returns the agent's available handoffs
-func (a *Agent) Handoffs() []*Handoff {
-	return a.handoffs
-}
-
-// AddHandoff adds a handoff to the agent
-func (a *Agent) AddHandoff(h *Handoff) {
-	a.handoffs = append(a.handoffs, h)
 }
 
 // Model returns the model name
@@ -226,110 +212,4 @@ func (a *Agent) HasTool(toolName string) bool {
 		}
 	}
 	return false
-}
-
-// AgentRunner runs an agent with a session
-type AgentRunner struct {
-	agent      *Agent
-	planner    *Planner
-	executor   *Executor
-	sessionMgr *SessionManager
-	store      *Store
-}
-
-// NewAgentRunner creates a new agent runner
-func NewAgentRunner(
-	agent *Agent,
-	planner *Planner,
-	executor *Executor,
-	store *Store,
-) *AgentRunner {
-	return &AgentRunner{
-		agent:      agent,
-		planner:    planner,
-		executor:   executor,
-		sessionMgr: NewSessionManager(),
-		store:      store,
-	}
-}
-
-// Run runs the agent with a goal
-func (r *AgentRunner) Run(ctx context.Context, goal string) (*ExecutionResult, error) {
-	// Create or get session
-	session := r.sessionMgr.CreateSession(r.agent.id)
-
-	// Generate plan
-	plan, err := r.planner.Plan(ctx, goal, session)
-	if err != nil {
-		return nil, fmt.Errorf("planning failed: %w", err)
-	}
-
-	// Save plan
-	if err := r.store.SavePlan(plan); err != nil {
-		return nil, fmt.Errorf("failed to save plan: %w", err)
-	}
-
-	// Execute plan
-	result, err := r.executor.ExecutePlan(ctx, plan, session)
-	if err != nil {
-		return nil, fmt.Errorf("execution failed: %w", err)
-	}
-
-	// Save updated plan
-	if err := r.store.SavePlan(plan); err != nil {
-		return nil, fmt.Errorf("failed to save plan: %w", err)
-	}
-
-	// Save session
-	if err := r.store.SaveSession(session); err != nil {
-		return nil, fmt.Errorf("failed to save session: %w", err)
-	}
-
-	return result, nil
-}
-
-// RunWithSession runs the agent with a goal and existing session
-func (r *AgentRunner) RunWithSession(ctx context.Context, goal string, sessionID string) (*ExecutionResult, error) {
-	// Get or create session
-	session, ok := r.sessionMgr.GetSession(sessionID)
-	if !ok {
-		// Try to load from store
-		loadedSession, err := r.store.GetSession(sessionID)
-		if err != nil {
-			// Create new session
-			session = NewSessionWithID(sessionID, r.agent.id)
-		} else {
-			session = loadedSession
-		}
-		r.sessionMgr.sessions[sessionID] = session
-	}
-
-	// Generate plan
-	plan, err := r.planner.Plan(ctx, goal, session)
-	if err != nil {
-		return nil, fmt.Errorf("planning failed: %w", err)
-	}
-
-	// Save plan
-	if err := r.store.SavePlan(plan); err != nil {
-		return nil, fmt.Errorf("failed to save plan: %w", err)
-	}
-
-	// Execute plan
-	result, err := r.executor.ExecutePlan(ctx, plan, session)
-	if err != nil {
-		return nil, fmt.Errorf("execution failed: %w", err)
-	}
-
-	// Save updated plan
-	if err := r.store.SavePlan(plan); err != nil {
-		return nil, fmt.Errorf("failed to save plan: %w", err)
-	}
-
-	// Save session
-	if err := r.store.SaveSession(session); err != nil {
-		return nil, fmt.Errorf("failed to save session: %w", err)
-	}
-
-	return result, nil
 }

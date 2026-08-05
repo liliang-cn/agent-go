@@ -16,8 +16,8 @@ import (
 	agentgolog "github.com/liliang-cn/agent-go/v3/pkg/log"
 	"github.com/liliang-cn/agent-go/v3/pkg/mcp"
 	"github.com/liliang-cn/agent-go/v3/pkg/memory"
+	"github.com/liliang-cn/agent-go/v3/pkg/poolsvc"
 	"github.com/liliang-cn/agent-go/v3/pkg/rag"
-	"github.com/liliang-cn/agent-go/v3/pkg/services"
 	"github.com/liliang-cn/agent-go/v3/pkg/skills"
 	"github.com/liliang-cn/agent-go/v3/pkg/store"
 	"github.com/spf13/cobra"
@@ -50,7 +50,7 @@ func Execute() error {
 			}
 
 			// Initialize global pool service
-			globalPoolService := services.GetGlobalPoolService()
+			globalPoolService := poolsvc.Global()
 			ctx := context.Background()
 			if err := globalPoolService.Initialize(ctx, cfg); err != nil {
 				return fmt.Errorf("failed to initialize global pool service: %w", err)
@@ -75,7 +75,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get pool service
-	poolService := services.GetGlobalPoolService()
+	poolService := poolsvc.Global()
 
 	// Get LLM from pool
 	llm, err := poolService.GetLLMService()
@@ -177,7 +177,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 		memoryService = memory.NewService(memoryStore, llm, embedder, memory.DefaultConfig())
 	}
 
-	var teamManager *agent.TeamManager
+	var teamManager *agent.Manager
 
 	// Create Agent service using Builder
 	agentgolog.Infof("Creating agent service with Builder...")
@@ -207,19 +207,16 @@ func runServer(cmd *cobra.Command, args []string) error {
 		if storeErr != nil {
 			agentgolog.Warn("Failed to create agent store: %v", storeErr)
 		} else {
-			teamManager = agent.NewTeamManager(agentStore)
+			teamManager = agent.NewManager(agentStore)
 			teamManager.SetConfig(cfg)
-			if err := teamManager.SeedDefaultMembers(); err != nil {
-				agentgolog.Warn("Failed to seed default team members: %v", err)
+			if err := teamManager.SeedDefaultAgent(); err != nil {
+				agentgolog.Warn("Failed to seed default agent: %v", err)
 			}
-			teamManager.RegisterOrchestratorTools(agentService)
-			// Wire the same checkpoint sink that TeamManager auto-uses
-			// for its built-in services. Without this the agentService
-			// runs but its terminal checkpoints never land in the store,
-			// so /api/tasks/:id/checkpoints comes back empty and replay
-			// can't find anything to resume.
+			// Wire the checkpoint sink so the agent's terminal
+			// checkpoints land in the store and /api/tasks/:id/checkpoints
+			// (plus replay) have something to work with.
 			agentService.SetCheckpointSink(teamManager)
-			agentgolog.Infof("Team manager and orchestrator-agent tools initialized")
+			agentgolog.Infof("Agent manager initialized")
 		}
 	}
 
@@ -238,11 +235,8 @@ func runServer(cmd *cobra.Command, args []string) error {
 	mux.HandleFunc("/api/chat", h.HandleChat)
 	mux.HandleFunc("/api/chat/sessions", h.HandleChatSessions)
 	mux.HandleFunc("/api/chat/session/", h.HandleChatSessionMessages)
-	mux.HandleFunc("/api/chat/multi", h.HandleMultiAgentChat)
 	mux.HandleFunc("/api/tasks", h.HandleTasks)
 	mux.HandleFunc("/api/tasks/", h.HandleTaskOperation)
-	mux.HandleFunc("/api/teams/tasks", h.HandleTeamTasks)
-	mux.HandleFunc("/api/teams", h.HandleTeams)
 	mux.HandleFunc("/api/ingest", h.HandleIngest)
 
 	// Skills endpoints

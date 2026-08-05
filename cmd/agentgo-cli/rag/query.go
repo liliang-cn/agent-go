@@ -9,10 +9,10 @@ import (
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 	"github.com/liliang-cn/agent-go/v3/pkg/mcp"
+	"github.com/liliang-cn/agent-go/v3/pkg/poolsvc"
 	"github.com/liliang-cn/agent-go/v3/pkg/rag/chunker"
 	"github.com/liliang-cn/agent-go/v3/pkg/rag/processor"
 	"github.com/liliang-cn/agent-go/v3/pkg/rag/store"
-	"github.com/liliang-cn/agent-go/v3/pkg/services"
 	"github.com/spf13/cobra"
 )
 
@@ -87,12 +87,12 @@ MCP tools provide enhanced functionality for file operations, database queries, 
 
 		// Initialize services using global LLM service
 		ctx := context.Background()
-		llmService, err := services.GetGlobalLLM()
+		llmService, err := poolsvc.GetGlobalLLM()
 		if err != nil {
 			return fmt.Errorf("failed to get global LLM service: %w", err)
 		}
 
-		embedService, err := services.GetGlobalEmbeddingService(ctx)
+		embedService, err := poolsvc.GetGlobalEmbeddingService(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to get global embedder service: %w", err)
 		}
@@ -442,12 +442,12 @@ func processMCPQuery(cmd *cobra.Command, args []string) error {
 	docStore := store.NewDocumentStore(vectorStore.GetCortexdbStore())
 
 	// Initialize services using global LLM service
-	llmService, err := services.GetGlobalLLM()
+	llmService, err := poolsvc.GetGlobalLLM()
 	if err != nil {
 		return fmt.Errorf("failed to get global LLM service: %w", err)
 	}
 
-	embedService, err := services.GetGlobalEmbeddingService(ctx)
+	embedService, err := poolsvc.GetGlobalEmbeddingService(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get global embedder service: %w", err)
 	}

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/liliang-cn/agent-go/v3/pkg/services"
+	"github.com/liliang-cn/agent-go/v3/pkg/poolsvc"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -29,7 +29,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println()
 
-	poolService := services.GetGlobalPoolService()
+	poolService := poolsvc.Global()
 	if !poolService.IsInitialized() {
 		return fmt.Errorf("pool service not initialized")
 	}

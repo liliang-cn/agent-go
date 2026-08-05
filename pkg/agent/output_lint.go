@@ -32,9 +32,13 @@ type LintContext struct {
 	// final answer against what was actually asked.
 	Goal string
 	// ToolCalls is the set of tool names invoked during the run.
-	ToolCalls  []string
-	IsRetry    bool
-	RetryCount int
+	ToolCalls []string
+	// AvailableTools is the set of tool names the run could have called.
+	// Lints that enforce "you had the capability and did not use it" must
+	// consult this — an agent with no matching tool cannot be at fault.
+	AvailableTools []string
+	IsRetry        bool
+	RetryCount     int
 }
 
 // LintFunc adapts a plain function into an OutputLint. Useful for inline

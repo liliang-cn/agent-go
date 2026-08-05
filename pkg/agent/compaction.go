@@ -42,7 +42,7 @@ func (s *Service) shouldCompactByTokens(msgs []domain.Message, model string, thr
 	if s == nil || s.tokenCounter == nil {
 		return false
 	}
-	tokens := s.tokenCounter.EstimateConversationTokens(toUsageMessages(msgs), model)
+	tokens := s.tokenCounter.EstimateConversationTokens(msgs, model)
 	return tokens >= threshold
 }
 

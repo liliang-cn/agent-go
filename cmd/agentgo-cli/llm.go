@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/liliang-cn/agent-go/v3/cmd/agentgo-cli/internal/rank"
 	"github.com/liliang-cn/agent-go/v3/pkg/pool"
-	"github.com/liliang-cn/agent-go/v3/pkg/services"
+	"github.com/liliang-cn/agent-go/v3/pkg/poolsvc"
 	"github.com/liliang-cn/agent-go/v3/pkg/store"
 	"github.com/spf13/cobra"
 )
@@ -48,12 +49,12 @@ var llmChatCmd = &cobra.Command{
 		message := strings.Join(args, " ")
 		ctx := context.Background()
 
-		svc := services.GetGlobalPoolService()
+		svc := poolsvc.Global()
 		if !svc.IsInitialized() {
 			return fmt.Errorf("pool service not initialized")
 		}
 
-		chatOpts := services.ChatOptions{
+		chatOpts := poolsvc.ChatOptions{
 			Provider:  strings.TrimSpace(llmProvider),
 			Model:     strings.TrimSpace(llmChatModel),
 			MaxTokens: 30000,
@@ -84,7 +85,7 @@ var llmListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all LLM providers",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		svc := services.GetGlobalPoolService()
+		svc := poolsvc.Global()
 		if !svc.IsInitialized() {
 			return fmt.Errorf("pool service not initialized")
 		}
@@ -158,7 +159,7 @@ var llmAddCmd = &cobra.Command{
 			return fmt.Errorf("--name, --url, and either --model or --models are required")
 		}
 
-		svc := services.GetGlobalPoolService()
+		svc := poolsvc.Global()
 		if !svc.IsInitialized() {
 			return fmt.Errorf("pool service not initialized")
 		}
@@ -200,7 +201,7 @@ var llmUpdateCmd = &cobra.Command{
 			return fmt.Errorf("--name is required")
 		}
 
-		svc := services.GetGlobalPoolService()
+		svc := poolsvc.Global()
 		if !svc.IsInitialized() {
 			return fmt.Errorf("pool service not initialized")
 		}
@@ -249,7 +250,7 @@ var llmDeleteCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
 
-		svc := services.GetGlobalPoolService()
+		svc := poolsvc.Global()
 		if !svc.IsInitialized() {
 			return fmt.Errorf("pool service not initialized")
 		}
@@ -272,7 +273,7 @@ var llmConfigShowCmd = &cobra.Command{
 	Use:   "show",
 	Short: "Show current LLM pool configuration",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		svc := services.GetGlobalPoolService()
+		svc := poolsvc.Global()
 		if !svc.IsInitialized() {
 			return fmt.Errorf("pool service not initialized")
 		}
@@ -301,7 +302,7 @@ Valid strategies: round_robin, random, least_load, capability, failover
 embedding-model is used as the fallback embedding model when no dedicated
 embedding providers are configured.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		svc := services.GetGlobalPoolService()
+		svc := poolsvc.Global()
 		if !svc.IsInitialized() {
 			return fmt.Errorf("pool service not initialized")
 		}
@@ -350,7 +351,7 @@ Use --save to persist the computed CAP to the database.`,
 		ctx := context.Background()
 		save, _ := cmd.Flags().GetBool("save")
 
-		svc := services.GetGlobalPoolService()
+		svc := poolsvc.Global()
 		if !svc.IsInitialized() {
 			return fmt.Errorf("pool service not initialized")
 		}
@@ -387,10 +388,10 @@ Use --save to persist the computed CAP to the database.`,
 	},
 }
 
-func runRank(ctx context.Context, svc *services.GlobalPoolService, providerName string, save bool) error {
+func runRank(ctx context.Context, svc *poolsvc.Service, providerName string, save bool) error {
 	fmt.Printf("=== %s ===\n", providerName)
 
-	result, err := svc.RankProvider(ctx, providerName)
+	result, err := rank.RankProvider(ctx, svc, providerName)
 	if err != nil {
 		return fmt.Errorf("rank failed: %w", err)
 	}
@@ -463,13 +464,13 @@ var llmTestCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
 
-		svc := services.GetGlobalPoolService()
+		svc := poolsvc.Global()
 		if !svc.IsInitialized() {
 			return fmt.Errorf("pool service not initialized")
 		}
 
 		testMsg := "Reply with only the word 'ok'."
-		opts := services.ChatOptions{MaxTokens: 10}
+		opts := poolsvc.ChatOptions{MaxTokens: 10}
 
 		if len(args) == 1 {
 			opts.Provider = args[0]

@@ -2,20 +2,21 @@ name: lint_blocks_when_budget_exhausted
 description: >
   When a lint always rejects the model's response, the runtime should
   exhaust its retry budget and emit a Blocked event naming the lint,
-  rather than looping forever.
-agent: Dispatcher
+  rather than looping forever. Uses the agent-agnostic
+  no_planning_only_finish lint (v3 has no role-scoped lints).
+agent: Assistant
 register_lints:
-  - dispatcher_no_bounce_back
+  - no_planning_only_finish
 input: "do the thing"
 llm_replies:
-  - "Routing the task to Operator."
-  - "Routing the task to Operator again."
-  - "Routing the task to Operator one more time."
-  - "Routing the task to Operator forever."
+  - "Next steps: I will call the tool and report back."
+  - "Next steps: I will call the tool and report back."
+  - "Next steps: I will call the tool and report back."
+  - "Next steps: I will call the tool and report back."
 expect:
   status: blocked
-  final_text_match: "dispatcher_no_bounce_back"
+  final_text_match: "no_planning_only_finish"
   llm_calls: 3
   lint_violations:
-    - lint: dispatcher_no_bounce_back
+    - lint: no_planning_only_finish
       count: 3

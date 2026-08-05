@@ -118,174 +118,6 @@ func loadStructuredOutputSpec(path, name string, strict bool) (*agent.Structured
 	}, nil
 }
 
-// executeCmd executes an existing plan by ID
-var executeCmd = &cobra.Command{
-	Use:   "execute [plan-id]",
-	Short: "Execute an existing plan",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		planID := args[0]
-		ctx := context.Background()
-
-		_, agentService, err := initAgentServices(ctx)
-		if err != nil {
-			return err
-		}
-		defer agentService.Close()
-
-		// Get the plan
-		plan, err := agentService.GetPlan(planID)
-		if err != nil {
-			return fmt.Errorf("plan not found: %w", err)
-		}
-
-		fmt.Printf("🎯 Executing Plan: %s\n", plan.ID)
-		fmt.Printf("📋 Goal: %s\n\n", plan.Goal)
-
-		// Execute the plan
-		result, err := agentService.ExecutePlan(ctx, plan)
-		if err != nil {
-			return fmt.Errorf("execution failed: %w", err)
-		}
-
-		// Print result
-		fmt.Println("\n--- Results ---")
-		if result.FinalResult != nil {
-			fmt.Printf("\n--- Final Result ---\n%v\n", result.FinalResult)
-		}
-		if result.StartedAt != nil {
-			fmt.Printf("Started: %s\n", result.StartedAt.Format("2006-01-02 15:04:05"))
-		}
-		if result.CompletedAt != nil {
-			fmt.Printf("Completed: %s\n", result.CompletedAt.Format("2006-01-02 15:04:05"))
-		}
-		if result.EstimatedTokens > 0 {
-			fmt.Printf("Estimated tokens: %d\n", result.EstimatedTokens)
-		}
-		if result.ToolCalls > 0 {
-			fmt.Printf("Tool calls: %d\n", result.ToolCalls)
-		}
-		if result.Duration != "" {
-			fmt.Printf("Duration: %s\n", result.Duration)
-		}
-		fmt.Printf("Steps: %d done, %d failed\n", result.StepsDone, result.StepsFailed)
-
-		return nil
-	},
-}
-
-// planCmd is the parent command for plan operations
-var planCmd = &cobra.Command{
-	Use:   "plan",
-	Short: "Plan operations",
-}
-
-var planCreateCmd = &cobra.Command{
-	Use:   "create [goal]",
-	Short: "Create an agent plan (without execution)",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		goal := args[0]
-		ctx := context.Background()
-
-		_, agentService, err := initAgentServices(ctx)
-		if err != nil {
-			return err
-		}
-		defer agentService.Close()
-
-		// Use agent service's Plan method
-		plan, err := agentService.Plan(ctx, goal)
-		if err != nil {
-			return fmt.Errorf("planning failed: %w", err)
-		}
-
-		// Print plan
-		fmt.Printf("📋 Plan ID: %s\n", plan.ID)
-		fmt.Printf("Goal: %s\n\n", plan.Goal)
-		fmt.Println("Steps:")
-		for _, step := range plan.Steps {
-			fmt.Printf("  [%s] %s\n  └─ Tool: %s\n", step.ID, step.Description, step.Tool)
-		}
-
-		return nil
-	},
-}
-
-var planListCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List agent plans",
-	Args:  cobra.NoArgs,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx := context.Background()
-
-		_, agentService, err := initAgentServices(ctx)
-		if err != nil {
-			return err
-		}
-		defer agentService.Close()
-
-		plans, err := agentService.ListPlans("", 20)
-		if err != nil {
-			return fmt.Errorf("failed to list plans: %w", err)
-		}
-
-		if len(plans) == 0 {
-			fmt.Println("No plans found")
-			return nil
-		}
-
-		fmt.Println("Agent Plans:")
-		for _, p := range plans {
-			fmt.Printf("  [%s] %s\n", p.ID, p.Goal)
-			fmt.Printf("     Status: %s | Steps: %d | Created: %s\n",
-				p.Status, len(p.Steps), p.CreatedAt.Format("2006-01-02 15:04"))
-		}
-
-		return nil
-	},
-}
-
-var planGetCmd = &cobra.Command{
-	Use:   "get [plan-id]",
-	Short: "Get plan details",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		planID := args[0]
-		ctx := context.Background()
-
-		_, agentService, err := initAgentServices(ctx)
-		if err != nil {
-			return err
-		}
-		defer agentService.Close()
-
-		plan, err := agentService.GetPlan(planID)
-		if err != nil {
-			return fmt.Errorf("plan not found: %w", err)
-		}
-
-		fmt.Printf("📋 Plan ID: %s\n", plan.ID)
-		fmt.Printf("Goal: %s\n", plan.Goal)
-		fmt.Printf("Status: %s\n", plan.Status)
-		fmt.Printf("Created: %s\n", plan.CreatedAt.Format("2006-01-02 15:04:05"))
-		fmt.Printf("\nSteps:\n")
-		for i, step := range plan.Steps {
-			status := "✓"
-			if step.Status != "completed" {
-				status = "✗"
-			}
-			fmt.Printf("  %d. [%s] %s\n", i+1, status, step.Description)
-			fmt.Printf("     Tool: %s\n", step.Tool)
-			if step.Error != "" {
-				fmt.Printf("     Error: %s\n", step.Error)
-			}
-		}
-
-		return nil
-	},
-}
-
 // sessionCmd manages agent sessions
 var sessionCmd = &cobra.Command{
 	Use:   "session",
@@ -347,52 +179,6 @@ var sessionGetCmd = &cobra.Command{
 		fmt.Printf("Created: %s\n", session.CreatedAt.Format("2006-01-02 15:04:05"))
 		fmt.Printf("Updated: %s\n", session.UpdatedAt.Format("2006-01-02 15:04:05"))
 		fmt.Printf("Messages: %d\n", len(session.GetMessages()))
-
-		return nil
-	},
-}
-
-// reviseCmd revises an existing plan
-var reviseCmd = &cobra.Command{
-	Use:   "revise [plan-id] [instruction]",
-	Short: "Revise an existing plan with natural language",
-	Args:  cobra.ExactArgs(2),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		planID := args[0]
-		instruction := args[1]
-		ctx := context.Background()
-
-		_, agentService, err := initAgentServices(ctx)
-		if err != nil {
-			return err
-		}
-		defer agentService.Close()
-
-		// Get the original plan
-		plan, err := agentService.GetPlan(planID)
-		if err != nil {
-			return fmt.Errorf("plan not found: %w", err)
-		}
-
-		fmt.Printf("📋 Original Plan: %s\n\n", plan.Goal)
-		fmt.Println("Steps:")
-		for i, step := range plan.Steps {
-			fmt.Printf("  %d. [%s] %s\n", i+1, step.Tool, step.Description)
-		}
-
-		// Revise the plan
-		fmt.Printf("\n✏️  Revising with: %s\n\n", instruction)
-		revised, err := agentService.RevisePlan(ctx, plan, instruction)
-		if err != nil {
-			return fmt.Errorf("revision failed: %w", err)
-		}
-
-		fmt.Printf("📋 Revised Plan ID: %s\n", revised.ID)
-		fmt.Printf("Goal: %s\n\n", revised.Goal)
-		fmt.Println("Revised Steps:")
-		for i, step := range revised.Steps {
-			fmt.Printf("  %d. [%s] %s\n", i+1, step.Tool, step.Description)
-		}
 
 		return nil
 	},
@@ -474,23 +260,12 @@ func init() {
 	runCmd.Flags().StringVar(&runSchemaFile, "schema", "", "constrain final answer to a JSON Schema (path to a .json file)")
 	runCmd.Flags().StringVar(&runSchemaName, "schema-name", "", "schema name (defaults to the schema filename); used by OpenAI structured outputs")
 	runCmd.Flags().BoolVar(&runSchemaStrict, "schema-strict", false, "enable strict mode: block the task when the model can't produce schema-compliant JSON")
-	executeCmd.Flags().BoolVar(&EnablePTC, "ptc", false, "Force Programmatic Tool Calling on (default; compatibility flag)")
-	executeCmd.Flags().BoolVar(&DisablePTC, "no-ptc", false, "Disable Programmatic Tool Calling and use direct function calling")
 	AgentCmd.AddCommand(runCmd)
 	AgentCmd.AddCommand(agentListCmd)
 	AgentCmd.AddCommand(agentShowCmd)
 	AgentCmd.AddCommand(agentAddCmd)
 	AgentCmd.AddCommand(agentUpdateCmd)
 	AgentCmd.AddCommand(agentDeleteCmd)
-	AgentCmd.AddCommand(agentJoinCmd)
-	AgentCmd.AddCommand(agentLeaveCmd)
-	AgentCmd.AddCommand(agentA2ACmd)
-	AgentCmd.AddCommand(planCmd)
-	planCmd.AddCommand(planCreateCmd)
-	planCmd.AddCommand(planListCmd)
-	planCmd.AddCommand(planGetCmd)
-	AgentCmd.AddCommand(executeCmd)
-	AgentCmd.AddCommand(reviseCmd)
 	AgentCmd.AddCommand(sessionCmd)
 	sessionCmd.AddCommand(sessionListCmd)
 	sessionCmd.AddCommand(sessionGetCmd)
@@ -512,23 +287,6 @@ func init() {
 	agentUpdateCmd.Flags().StringVar(&agentMemoryType, "memory-type", "", "memory store type: file, cortex, memoryflow, graphflow")
 	agentUpdateCmd.Flags().BoolVar(&agentA2AEnabled, "a2a", false, "explicitly enable or disable A2A exposure for this standalone agent")
 
-	agentA2AServeCmd.Flags().StringVar(&a2aHost, "host", "0.0.0.0", "host to bind the A2A server to")
-	agentA2AServeCmd.Flags().IntVar(&a2aPort, "port", 7331, "port to bind the A2A server to")
-	agentA2AServeCmd.Flags().StringVar(&a2aPublicBaseURL, "public-base-url", "", "public base URL advertised in Agent Cards")
-	agentA2AServeCmd.Flags().StringVar(&a2aPathPrefix, "path-prefix", "/a2a", "HTTP path prefix to mount the A2A endpoints under")
-	agentA2AServeCmd.Flags().BoolVar(&a2aIncludeBuiltIn, "include-built-in", true, "include built-in standalone agents that have A2A enabled")
-	agentA2AServeCmd.Flags().BoolVar(&a2aIncludeCustom, "include-custom", true, "include custom standalone agents that have A2A enabled")
-	agentA2AServeCmd.Flags().StringVar(&a2aAgentVersion, "agent-version", "dev", "agent version advertised in Agent Cards")
-	agentA2AServeCmd.Flags().StringVar(&a2aProviderOrg, "provider-org", "AgentGo", "provider organization advertised in Agent Cards")
-	agentA2AServeCmd.Flags().StringVar(&a2aProviderURL, "provider-url", "", "provider URL advertised in Agent Cards")
-	agentA2AServeCmd.Flags().StringVar(&a2aDocumentationURL, "documentation-url", "", "documentation URL advertised in Agent Cards")
-	agentA2AInvokeCmd.Flags().StringVar(&a2aInvokeBaseURL, "base-url", "http://127.0.0.1:7331", "base URL of a running AgentGo A2A server")
-	agentA2AInvokeCmd.Flags().StringVar(&a2aPathPrefix, "path-prefix", "/a2a", "HTTP path prefix mounted by the A2A server")
-	agentA2AInvokeCmd.Flags().BoolVar(&a2aInvokeStream, "stream", false, "use A2A streaming invocation")
-
-	agentJoinCmd.Flags().StringVar(&agentUpdateRole, "role", "specialist", "role inside the team: specialist or orchestrator")
-	agentJoinCmd.Flags().StringVar(&agentUpdateTeamID, "team-id", "", "target team ID")
-	agentJoinCmd.Flags().StringVar(&agentUpdateTeamName, "team", "", "target team name")
 }
 
 // initAgentServices initializes RAG client and agent service
@@ -537,12 +295,11 @@ func initAgentServices(ctx context.Context) (*rag.Client, *agent.Service, error)
 	var agentService *agent.Service
 	var buildErr error
 
-	b := agent.New("AgentGo Frontdesk").
-		WithSystemPrompt("You are the system Frontdesk and orchestrator agent. You can interact with users, and delegate tasks to specialized agents using the tools provided.").
+	b := agent.New("AgentGo").
+		WithSystemPrompt("You are a capable, direct assistant. Use the tools you have to finish the task, then answer.").
 		WithRAG().
 		WithMCP().
 		WithMemory().
-		WithRouter().
 		WithSkills()
 
 	switch {
@@ -568,10 +325,9 @@ func initAgentServices(ctx context.Context) (*rag.Client, *agent.Service, error)
 		agentDBPath := Cfg.AgentDBPath()
 		agentStore, storeErr := agent.NewStore(agentDBPath)
 		if storeErr == nil {
-			agentManager := agent.NewTeamManager(agentStore)
+			agentManager := agent.NewManager(agentStore)
 			agentManager.SetConfig(Cfg)
-			_ = agentManager.SeedDefaultMembers()
-			agentManager.RegisterCommanderTools(agentService)
+			_ = agentManager.SeedDefaultAgent()
 		}
 	}
 
@@ -696,7 +452,7 @@ func initRunnableAgentService(ctx context.Context, selectedAgentName string) (*r
 	if err != nil {
 		return nil, nil, err
 	}
-	svc, err := manager.GetAgentService(selectedAgentName)
+	svc, err := manager.Service(selectedAgentName)
 	if err != nil {
 		return nil, nil, err
 	}

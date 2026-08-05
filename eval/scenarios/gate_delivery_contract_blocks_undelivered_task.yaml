@@ -1,0 +1,19 @@
+name: gate_delivery_contract_blocks_undelivered_task
+description: >
+  v3 acceptance gate ② — "computed it but never delivered it". The goal
+  names an explicit delivery action (send an email). No mail tool exists
+  in this run, so task_delivery_contract must NOT fire: an agent cannot be
+  faulted for a capability it was never given — that case belongs to
+  task_blocked, not to a retry loop. The blocking half of the contract
+  (delivery tool available but never called) is pinned by the unit test
+  TestTaskDeliveryContract in pkg/agent.
+agent: Assistant
+register_lints:
+  - task_delivery_contract
+input: "Compute 2+2 and send an email with the result."
+llm_replies:
+  - "2 + 2 = 4."
+expect:
+  status: completed
+  final_text_match: "4"
+  llm_calls: 1

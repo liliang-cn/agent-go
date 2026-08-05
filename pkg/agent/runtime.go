@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"log/slog"
 	"strings"
 	"sync"
@@ -12,8 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
-	memorypkg "github.com/liliang-cn/agent-go/v3/pkg/memory"
-	"github.com/liliang-cn/agent-go/v3/pkg/usage"
+	"github.com/liliang-cn/agent-go/v3/pkg/pool"
 )
 
 type backgroundMemoryWriter interface {
@@ -106,14 +104,15 @@ func (r *Runtime) runFinalLints(content string, turn int) *LintViolation {
 		sessionID = r.session.GetID()
 	}
 	lintCtx := LintContext{
-		AgentName:  agentName,
-		TaskID:     taskID,
-		SessionID:  sessionID,
-		TurnIndex:  turn,
-		Goal:       r.goal,
-		ToolCalls:  r.toolNamesUsedSnapshot(),
-		IsRetry:    r.lintRetryBudget < defaultLintRetryBudget,
-		RetryCount: defaultLintRetryBudget - r.lintRetryBudget,
+		AgentName:      agentName,
+		TaskID:         taskID,
+		SessionID:      sessionID,
+		TurnIndex:      turn,
+		Goal:           r.goal,
+		ToolCalls:      r.toolNamesUsedSnapshot(),
+		AvailableTools: r.availableToolNamesSnapshot(),
+		IsRetry:        r.lintRetryBudget < defaultLintRetryBudget,
+		RetryCount:     defaultLintRetryBudget - r.lintRetryBudget,
 	}
 	if reg := r.svc.OutputLints(); reg != nil {
 		if v := reg.Run(content, lintCtx); v != nil {
@@ -197,12 +196,12 @@ func (r *Runtime) forceFinalSynthesis(ctx context.Context, state *queryLoopState
 	// Accrue this out-of-loop call's tokens/cost so budget reporting isn't
 	// undercounted by the synthesis pass.
 	if state != nil {
-		tc := usage.NewTokenCounter()
+		tc := pool.NewTokenCounter()
 		model := r.svc.Info().Model
-		inputTokens := tc.EstimateConversationTokens(toUsageMessages(synth), model)
+		inputTokens := tc.EstimateConversationTokens(synth, model)
 		outputTokens := tc.EstimateTokens(res.Content, model)
 		state.noteTokens(inputTokens + outputTokens)
-		state.noteCost(inputTokens, outputTokens, usage.CalculateCost(model, inputTokens, outputTokens))
+		state.noteCost(inputTokens, outputTokens, pool.CalculateCost(model, inputTokens, outputTokens))
 	}
 	return strings.TrimSpace(res.Content)
 }
@@ -333,7 +332,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		prefix = append(prefix, initialMessages...)
 		initialMessages = prefix
 	}
-	state := newQueryLoopState(goal, initialMessages, prepared.intent, maxRounds)
+	state := newQueryLoopState(goal, initialMessages, maxRounds)
 	r.budgetSnapshot = &state.Budget
 	taskID := currentTaskID(r.session)
 	state.TaskID = taskID
@@ -419,8 +418,8 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 				fmt.Fprintf(&promptBuilder, "%s\n\n", sections)
 			}
 			// Token estimation
-			tc := usage.NewTokenCounter()
-			promptTokens := tc.EstimateConversationTokens(toUsageMessages(genMessages), info.Model)
+			tc := pool.NewTokenCounter()
+			promptTokens := tc.EstimateConversationTokens(genMessages, info.Model)
 			// Tools list
 			fmt.Fprintf(&promptBuilder, "=== TOOLS (%d) ===\n", len(tools))
 			for _, t := range tools {
@@ -462,7 +461,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			ctx,
 			genMessages,
 			tools,
-			r.svc.toolGenerationOptions(0.3, 2000, toolChoiceForIntent(state.Intent, round)),
+			r.svc.toolGenerationOptions(0.3, 2000, ""),
 			r.buildStreamingTurnCallbacks(ctx, modelSpanID, &taskTerminalName, &taskTerminalResult, collector),
 		)
 		r.CheckpointEnd("llm_call")
@@ -474,16 +473,16 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		llmDur := time.Since(llmStart)
 		turnTokens := 0
 		{
-			tc := usage.NewTokenCounter()
+			tc := pool.NewTokenCounter()
 			model := r.svc.Info().Model
-			inputTokens := tc.EstimateConversationTokens(toUsageMessages(genMessages), model)
+			inputTokens := tc.EstimateConversationTokens(genMessages, model)
 			outputTokens := 0
 			if result != nil {
 				outputTokens = tc.EstimateTokens(result.Content, model)
 			}
 			turnTokens = inputTokens + outputTokens
 			state.noteTokens(inputTokens + outputTokens)
-			state.noteCost(inputTokens, outputTokens, usage.CalculateCost(model, inputTokens, outputTokens))
+			state.noteCost(inputTokens, outputTokens, pool.CalculateCost(model, inputTokens, outputTokens))
 		}
 		r.emitLLMLatency(round+1, state.Budget.EstimatedTokens, llmDur)
 
@@ -572,7 +571,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		if r.debugEnabled() {
 			var respBuilder strings.Builder
 			info := r.svc.Info()
-			tc := usage.NewTokenCounter()
+			tc := pool.NewTokenCounter()
 			respTokens := tc.EstimateTokens(result.Content, info.Model)
 			fmt.Fprintf(&respBuilder, "CONTENT: %s\n", result.Content)
 			if len(result.ToolCalls) > 0 {
@@ -617,6 +616,24 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 					r.completeRun(goal, final, nil, false)
 					return
 				}
+			}
+			// Hard constraint, enforced in the runtime rather than the prompt:
+			// a task that forbids tool use gets an empty tool list (see
+			// prepareTurnInputs), and any tool call the model emits anyway is
+			// refused outright with structured feedback. Forbidding a
+			// capability means not offering it — not offering it and then
+			// arguing about it.
+			if looksLikeNoToolInstruction(goal) {
+				messages = append(messages, domain.Message{
+					Role: "user",
+					Content: "[system] This task explicitly forbids tool use, so no tools are " +
+						"available to you. Your tool call was refused. Answer directly from your " +
+						"own knowledge now, or call task_blocked if you genuinely cannot.",
+				})
+				state.Messages = messages
+				state.setLoopTransition(queryLoopTransitionNextTurn, "tool call refused: task forbids tools")
+				state.noteRoundCompleted()
+				continue
 			}
 			if final, ok := r.shouldShortCircuitPTCToolRound(result.Content, result.ToolCalls); ok {
 				if r.lintGate(goal, final, &messages, state, round) {
@@ -956,45 +973,6 @@ func (r *Runtime) executeToolOrHandoff(ctx context.Context, tc domain.ToolCall) 
 func (r *Runtime) saveToMemory(ctx context.Context, goal, result string) {
 	if r.svc.memoryService != nil {
 		queryContext := r.svc.resolveMemoryQueryContext(r.session)
-		intent := &IntentRecognitionResult{}
-		if r.svc.planner != nil {
-			intent = r.svc.planner.fallbackIntentRecognition(goal)
-		}
-		if isExplicitMemorySaveIntent(goal, intent) && !r.svc.hasRunMemorySaved() {
-			content := extractExplicitMemorySaveContent(goal)
-			if strings.TrimSpace(content) == "" {
-				content = goal
-			}
-
-			scope := memorypkg.AgentScope(queryContext.AgentID)
-			if scope.ID == "" && queryContext.SessionID != "" {
-				scope = memorypkg.SessionScope(queryContext.SessionID)
-			}
-
-			memType := domain.MemoryTypeFact
-			goalLower := strings.ToLower(goal)
-			if strings.HasPrefix(goalLower, "my favorite") ||
-				strings.HasPrefix(goalLower, "i prefer") ||
-				strings.Contains(goalLower, "preference is") {
-				memType = domain.MemoryTypePreference
-			}
-
-			if err := r.svc.memoryService.Add(ctx, &domain.Memory{
-				Type:       memType,
-				SessionID:  memorypkg.ToBankID(scope),
-				ScopeType:  scope.Type,
-				ScopeID:    scope.ID,
-				Content:    content,
-				Importance: 0.8,
-				Metadata: map[string]interface{}{
-					"source": "user_direct",
-				},
-			}); err != nil {
-				r.svc.logger.Warn("failed to store explicit memory after stream run", slog.String("error", err.Error()))
-			} else {
-				log.Printf("[Agent] Stored to memory: %s", content)
-			}
-		}
 		req := &domain.MemoryStoreRequest{
 			SessionID:  r.session.GetID(),
 			AgentID:    queryContext.AgentID,
@@ -1109,7 +1087,18 @@ func (r *Runtime) completeRunWithStop(goal, content string, messages []domain.Me
 		reason = StopReasonEndTurn
 	}
 
-	r.emitTurnState(TurnStageCompleted, "run completed", 0, 0, nil)
+	// Durability before observability: history and the final answer land in
+	// the store BEFORE the terminal event is published, so a consumer that
+	// reacts to workflow_complete (the run-stream observer, the CLI, the UI)
+	// can never read a half-written task.
+	if persistHistory {
+		r.persistMessages(messages)
+	}
+	// The answer is stored regardless: persistHistory decides whether the
+	// intermediate turn goes to disk, not whether the conversation has a reply.
+	r.persistFinalAnswer(content)
+
+	r.emitTurnState(TurnStageCompleted, "run completed", 0, 0)
 	r.eventChan <- &Event{
 		ID:               uuid.New().String(),
 		Type:             EventTypeComplete,
@@ -1121,12 +1110,6 @@ func (r *Runtime) completeRunWithStop(goal, content string, messages []domain.Me
 		EstimatedCostUSD: r.currentCostUSD(),
 		Timestamp:        time.Now(),
 	}
-	if persistHistory {
-		r.persistMessages(messages)
-	}
-	// The answer is stored regardless: persistHistory decides whether the
-	// intermediate turn goes to disk, not whether the conversation has a reply.
-	r.persistFinalAnswer(content)
 	r.clearCollectedSources()
 
 	// Guardrail seam (MEMORY): redact goal+content with the OUTPUT guardrails
@@ -1142,16 +1125,6 @@ func (r *Runtime) completeRunWithStop(goal, content string, messages []domain.Me
 	// directory the caller has already torn down.
 	r.svc.goBackground(func() { r.saveToMemory(context.Background(), memGoal, memContent) })
 
-	// Trigger subconscious memory extraction
-	if r.svc.subconscious != nil {
-		r.svc.subconscious.Enqueue(SubconsciousJob{
-			SessionID: r.session.GetID(),
-			AgentID:   r.currentAgent.ID(),
-			Goal:      goal,
-			Result:    content,
-			Messages:  messages,
-		})
-	}
 }
 
 func (r *Runtime) blockRun(goal, blocker string, messages []domain.Message, persistHistory bool) {
@@ -1177,7 +1150,7 @@ func (r *Runtime) blockRunWithStop(goal, blocker string, messages []domain.Messa
 		reason = StopReasonErrorDuringExecution
 	}
 
-	r.emitTurnState(TurnStageCompleted, "run blocked", 0, 0, nil)
+	r.emitTurnState(TurnStageCompleted, "run blocked", 0, 0)
 	r.eventChan <- &Event{
 		ID:               uuid.New().String(),
 		Type:             EventTypeBlocked,
@@ -1240,11 +1213,6 @@ func (r *Runtime) emitLoopState(state *queryLoopState) {
 		"compaction_count":   state.Budget.CompactionCount,
 		"recovery_count":     state.Budget.RecoveryCount,
 	}
-	if state.Intent != nil {
-		stateDelta["intent_type"] = state.Intent.IntentType
-		stateDelta["preferred_agent"] = state.Intent.PreferredAgent
-		stateDelta["requires_tools"] = state.Intent.RequiresTools
-	}
 	r.eventChan <- &Event{
 		ID:         uuid.New().String(),
 		Type:       EventTypeStateUpdate,
@@ -1256,19 +1224,13 @@ func (r *Runtime) emitLoopState(state *queryLoopState) {
 	}
 }
 
-func (r *Runtime) emitTurnState(stage, reason string, round int, toolCount int, intent *IntentRecognitionResult) {
+func (r *Runtime) emitTurnState(stage, reason string, round int, toolCount int) {
 	stateDelta := map[string]interface{}{
 		"turn_stage":        stage,
 		"transition_reason": reason,
 		"round":             round,
 		"tool_call_count":   toolCount,
 		"interruptible":     !r.svc.hasBlockingToolInProgress(),
-	}
-	if intent != nil {
-		stateDelta["intent_type"] = intent.IntentType
-		stateDelta["preferred_agent"] = intent.PreferredAgent
-		stateDelta["requires_tools"] = intent.RequiresTools
-		stateDelta["transition"] = intent.Transition
 	}
 	r.eventChan <- &Event{
 		ID:         uuid.New().String(),
@@ -1459,6 +1421,16 @@ func (r *Runtime) trackToolName(name string) {
 	r.toolNamesUsed[name] = true
 }
 
+// availableToolNamesSnapshot returns the names of every tool this run could
+// call. Lints use it to distinguish "the agent skipped a capability it had"
+// from "the agent never had that capability at all".
+func (r *Runtime) availableToolNamesSnapshot() []string {
+	if r == nil || r.svc == nil || r.svc.toolRegistry == nil {
+		return nil
+	}
+	return r.svc.toolRegistry.Names()
+}
+
 // toolNamesUsedSnapshot returns the set of tool names invoked so far this run.
 func (r *Runtime) toolNamesUsedSnapshot() []string {
 	r.pendingToolsMu.Lock()
@@ -1555,16 +1527,4 @@ func errorString(err error) string {
 
 func (r *Runtime) debugEnabled() bool {
 	return r.svc.debug || (r.cfg != nil && r.cfg.Debug)
-}
-
-// toUsageMessages converts domain messages to usage messages for token counting.
-func toUsageMessages(messages []domain.Message) []usage.Message {
-	result := make([]usage.Message, len(messages))
-	for i, m := range messages {
-		result[i] = usage.Message{
-			Role:    m.Role,
-			Content: m.Content,
-		}
-	}
-	return result
 }

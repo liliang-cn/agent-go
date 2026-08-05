@@ -52,24 +52,13 @@ var agentListCmd = &cobra.Command{
 			return nil
 		}
 
-		teams, err := manager.ListTeams()
-		if err != nil {
-			return err
-		}
-		teamNames := make(map[string]string, len(teams))
-		for _, team := range teams {
-			teamNames[team.ID] = team.Name
-		}
-
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-		fmt.Fprintln(w, "NAME\tKIND\tTEAMS\tMODEL\tBUILT-IN\tA2A")
+		fmt.Fprintln(w, "NAME\tKIND\tMODEL\tA2A")
 		for _, model := range agents {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
 				model.Name,
 				kindDisplay(model.Kind),
-				teamMembershipDisplay(model, teamNames),
 				effectiveModelDisplay(model, displayCfg),
-				boolFlag(isBuiltInAgent(model, teamNames)),
 				boolFlag(model.EnableA2A),
 			)
 		}
@@ -94,14 +83,6 @@ var agentShowCmd = &cobra.Command{
 				displayCfg = loaded
 			}
 		}
-		teams, err := manager.ListTeams()
-		if err != nil {
-			return err
-		}
-		teamNames := make(map[string]string, len(teams))
-		for _, team := range teams {
-			teamNames[team.ID] = team.Name
-		}
 		model, err := manager.GetAgentByName(args[0])
 		if err != nil {
 			return err
@@ -109,11 +90,9 @@ var agentShowCmd = &cobra.Command{
 
 		fmt.Printf("Name: %s\n", model.Name)
 		fmt.Printf("Base Kind: %s\n", kindDisplay(model.Kind))
-		fmt.Printf("Teams: %s\n", teamMembershipDisplay(model, teamNames))
 		fmt.Printf("Model: %s\n", effectiveModelDisplay(model, displayCfg))
 		fmt.Printf("Preferred Provider: %s\n", valueOrDash(strings.TrimSpace(model.PreferredProvider)))
 		fmt.Printf("Preferred Model: %s\n", valueOrDash(strings.TrimSpace(model.PreferredModel)))
-		fmt.Printf("Built-in: %s\n", boolFlag(isBuiltInAgent(model, teamNames)))
 		fmt.Printf("Description: %s\n", valueOrDash(model.Description))
 		fmt.Printf("RAG: %s\n", enabledState(model.EnableRAG))
 		fmt.Printf("Memory: %s\n", enabledState(model.EnableMemory))
@@ -236,7 +215,7 @@ var agentUpdateCmd = &cobra.Command{
 		if cmd.Flags().Changed("a2a") {
 			updated.EnableA2A = agentA2AEnabled
 		}
-		model, err := manager.UpdateAgent(context.Background(), updated)
+		model, err := manager.SaveAgent(context.Background(), updated)
 		if err != nil {
 			return err
 		}
@@ -263,54 +242,7 @@ var agentDeleteCmd = &cobra.Command{
 	},
 }
 
-var agentJoinCmd = &cobra.Command{
-	Use:   "join [name]",
-	Short: "Join an agent to a team",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		manager, err := getManager()
-		if err != nil {
-			return err
-		}
-		teamID, err := resolveAgentTeamID(manager, strings.TrimSpace(agentUpdateTeamID), strings.TrimSpace(agentUpdateTeamName))
-		if err != nil {
-			return err
-		}
-		if teamID == "" {
-			return fmt.Errorf("use --team or --team-id")
-		}
-		role, err := normalizeAgentRole(strings.TrimSpace(agentUpdateRole))
-		if err != nil {
-			return err
-		}
-		model, err := manager.JoinTeam(context.Background(), args[0], teamID, role)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("Agent '%s' joined team '%s' as %s.\n", model.Name, teamID, kindDisplay(model.Kind))
-		return nil
-	},
-}
-
-var agentLeaveCmd = &cobra.Command{
-	Use:   "leave [name]",
-	Short: "Remove an agent from its team",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		manager, err := getManager()
-		if err != nil {
-			return err
-		}
-		model, err := manager.LeaveTeam(context.Background(), args[0])
-		if err != nil {
-			return err
-		}
-		fmt.Printf("Agent '%s' left its team.\n", model.Name)
-		return nil
-	},
-}
-
-func getManager() (*agent.TeamManager, error) {
+func getManager() (*agent.Manager, error) {
 	cfg := Cfg
 	if cfg == nil {
 		loaded, err := config.Load()
@@ -323,34 +255,12 @@ func getManager() (*agent.TeamManager, error) {
 	if err != nil {
 		return nil, err
 	}
-	manager := agent.NewTeamManager(store)
+	manager := agent.NewManager(store)
 	manager.SetConfig(cfg)
-	if err := manager.SeedDefaultMembers(); err != nil {
+	if err := manager.SeedDefaultAgent(); err != nil {
 		return nil, err
 	}
 	return manager, nil
-}
-
-func resolveAgentTeamID(manager *agent.TeamManager, teamID, teamName string) (string, error) {
-	if teamID != "" && teamName != "" {
-		return "", fmt.Errorf("use either --team-id or --team, not both")
-	}
-	if teamID != "" {
-		return teamID, nil
-	}
-	if teamName == "" {
-		return "", nil
-	}
-	teams, err := manager.ListTeams()
-	if err != nil {
-		return "", err
-	}
-	for _, team := range teams {
-		if strings.EqualFold(strings.TrimSpace(team.Name), teamName) {
-			return team.ID, nil
-		}
-	}
-	return "", fmt.Errorf("unknown team: %s", teamName)
 }
 
 func formatTimestamp(ts time.Time) string {
@@ -379,40 +289,6 @@ func enabledState(v bool) string {
 		return "enabled"
 	}
 	return "disabled"
-}
-
-func teamDisplay(teamID string, teamNames map[string]string) string {
-	teamID = strings.TrimSpace(teamID)
-	if teamID == "" {
-		return "-"
-	}
-	if teamName := strings.TrimSpace(teamNames[teamID]); teamName != "" {
-		return teamName + " (" + teamID + ")"
-	}
-	return teamID
-}
-
-func teamMembershipDisplay(model *agent.AgentModel, teamNames map[string]string) string {
-	if model == nil || len(model.Teams) == 0 {
-		return "-"
-	}
-	items := make([]string, 0, len(model.Teams))
-	for _, membership := range model.Teams {
-		teamID := strings.TrimSpace(membership.TeamID)
-		if teamID == "" {
-			continue
-		}
-		teamName := strings.TrimSpace(teamNames[teamID])
-		if teamName == "" {
-			teamName = teamID
-		}
-		role := kindDisplay(membership.Role)
-		items = append(items, fmt.Sprintf("%s (%s, %s)", teamName, teamID, role))
-	}
-	if len(items) == 0 {
-		return "-"
-	}
-	return strings.Join(items, "; ")
 }
 
 func boolFlag(v bool) string {
@@ -445,40 +321,6 @@ func effectiveModelDisplay(model *agent.AgentModel, cfg *config.Config) string {
 		return "-"
 	}
 	return defaultProvider.ModelName + " (default)"
-}
-
-func isBuiltInAgent(model *agent.AgentModel, teamNames map[string]string) bool {
-	if model == nil {
-		return false
-	}
-	switch strings.TrimSpace(model.ID) {
-	case "agent-dispatcher-001", "agent-assistant-001", "agent-operator-001", "agent-orchestrator-001", "agent-evaluator-001", "agent-archivist-001", "agent-verifier-001":
-		return true
-	}
-	if strings.EqualFold(model.Name, "Dispatcher") && len(model.Teams) == 0 {
-		return true
-	}
-	if strings.EqualFold(model.Name, "Responder") && len(model.Teams) == 0 {
-		return true
-	}
-	if strings.EqualFold(model.Name, "Operator") && len(model.Teams) == 0 {
-		return true
-	}
-	if strings.EqualFold(model.Name, "Evaluator") && len(model.Teams) == 0 {
-		return true
-	}
-	if strings.EqualFold(model.Name, "Archivist") && len(model.Teams) == 0 {
-		return true
-	}
-	if strings.EqualFold(model.Name, "Verifier") && len(model.Teams) == 0 {
-		return true
-	}
-	for _, membership := range model.Teams {
-		if membership.Role == agent.AgentKindOrchestrator && strings.EqualFold(model.Name, "Orchestrator") && strings.TrimSpace(membership.TeamID) == "team-default-001" {
-			return true
-		}
-	}
-	return false
 }
 
 func normalizeAgentRole(input string) (agent.AgentKind, error) {

@@ -17,6 +17,11 @@ type MockLLM struct {
 	mu      sync.Mutex
 	replies []string
 	calls   int32
+
+	// toolsOffered records, per call, how many tool definitions the runtime
+	// attached to the request. Scenarios assert on it to pin runtime-level
+	// tool policy (e.g. "a task that forbids tools must be offered none").
+	toolsOffered []int
 }
 
 // NewMockLLM constructs a MockLLM with the given scripted replies. The
@@ -31,6 +36,26 @@ func NewMockLLM(replies []string) *MockLLM {
 // CallCount returns how many times the model was invoked across the
 // scripted surfaces (Generate / GenerateWithTools / StreamWithTools).
 func (m *MockLLM) CallCount() int { return int(atomic.LoadInt32(&m.calls)) }
+
+// MaxToolsOffered returns the largest number of tools the runtime attached to
+// any single model call during the run.
+func (m *MockLLM) MaxToolsOffered() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	max := 0
+	for _, n := range m.toolsOffered {
+		if n > max {
+			max = n
+		}
+	}
+	return max
+}
+
+func (m *MockLLM) noteTools(tools []domain.ToolDefinition) {
+	m.mu.Lock()
+	m.toolsOffered = append(m.toolsOffered, len(tools))
+	m.mu.Unlock()
+}
 
 func (m *MockLLM) nextReply() string {
 	m.mu.Lock()
@@ -54,10 +79,12 @@ func (m *MockLLM) Stream(ctx context.Context, prompt string, opts *domain.Genera
 }
 
 func (m *MockLLM) GenerateWithTools(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions) (*domain.GenerationResult, error) {
+	m.noteTools(tools)
 	return &domain.GenerationResult{Content: m.nextReply()}, nil
 }
 
 func (m *MockLLM) StreamWithTools(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions, callback domain.ToolCallCallback) error {
+	m.noteTools(tools)
 	return callback(&domain.GenerationResult{Content: m.nextReply()})
 }
 

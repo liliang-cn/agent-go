@@ -14,12 +14,12 @@ import (
 )
 
 type chatTaskFollower struct {
-	manager *agent.TeamManager
+	manager *agent.Manager
 	mu      sync.Mutex
 	seen    map[string]struct{}
 }
 
-func newChatTaskFollower(manager *agent.TeamManager) *chatTaskFollower {
+func newChatTaskFollower(manager *agent.Manager) *chatTaskFollower {
 	if manager == nil {
 		return nil
 	}
@@ -103,7 +103,7 @@ func (f *chatTaskFollower) StartTaskIDs(ctx context.Context, taskIDs []string) {
 	}
 }
 
-func waitForChatSessionTasks(ctx context.Context, manager *agent.TeamManager, sessionID string, since time.Time) {
+func waitForChatSessionTasks(ctx context.Context, manager *agent.Manager, sessionID string, since time.Time) {
 	if manager == nil {
 		return
 	}
@@ -127,8 +127,7 @@ func waitForChatSessionTasks(ctx context.Context, manager *agent.TeamManager, se
 			printChatTaskSnapshot(task)
 			continue
 		}
-		_, err := waitForCanonicalTask(ctx, manager, task.ID, true)
-		if err != nil {
+		if _, err := manager.AwaitTask(ctx, task.ID); err != nil {
 			printChatTaskBlock(fmt.Sprintf("%s Task wait failed for %s: %v", cliui.Error, shortTaskID(task.ID), err))
 		}
 	}
@@ -421,25 +420,13 @@ func renderFollowUpSupplement(agentName, text string) bool {
 		return true
 	}
 	if !strings.HasPrefix(text, "Supplement:") {
-		if !strings.EqualFold(agentName, agent.ArchivistAgentName) {
-			return false
-		}
+		return false
 	}
 	printChatTaskBlock(fmt.Sprintf("@%s: %s", agentName, text))
 	return true
 }
 
-func isFollowUpAgentEvent(agentName string) bool {
-	agentName = strings.TrimSpace(agentName)
-	switch {
-	case strings.EqualFold(agentName, agent.ArchivistAgentName):
-		return true
-	case strings.EqualFold(agentName, agent.VerifierAgentName):
-		return true
-	default:
-		return false
-	}
-}
+func isFollowUpAgentEvent(_ string) bool { return false }
 
 func printChatTaskLine(format string, args ...interface{}) {
 	printChatTaskBlock(fmt.Sprintf(format, args...))

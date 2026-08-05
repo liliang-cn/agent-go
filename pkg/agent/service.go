@@ -10,20 +10,17 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
-	"github.com/liliang-cn/agent-go/v3/pkg/browser"
 	"github.com/liliang-cn/agent-go/v3/pkg/config"
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 	agentgolog "github.com/liliang-cn/agent-go/v3/pkg/log"
 	"github.com/liliang-cn/agent-go/v3/pkg/mcp"
 	memorypkg "github.com/liliang-cn/agent-go/v3/pkg/memory"
+	"github.com/liliang-cn/agent-go/v3/pkg/pool"
 	"github.com/liliang-cn/agent-go/v3/pkg/prompt"
 	"github.com/liliang-cn/agent-go/v3/pkg/ptc"
-	"github.com/liliang-cn/agent-go/v3/pkg/router"
 	"github.com/liliang-cn/agent-go/v3/pkg/sandbox"
 	"github.com/liliang-cn/agent-go/v3/pkg/skills"
 	taskpkg "github.com/liliang-cn/agent-go/v3/pkg/task"
-	"github.com/liliang-cn/agent-go/v3/pkg/usage"
 )
 
 // ProgressEvent 进度事件
@@ -51,10 +48,7 @@ type Service struct {
 	ragProcessor          domain.Processor
 	memoryService         domain.MemoryService
 	skillsService         *skills.Service
-	routerService         *router.Service // Semantic Router for fast intent recognition
 	promptManager         *prompt.Manager // Central prompt management
-	planner               *Planner
-	executor              *Executor
 	store                 *Store
 	agent                 *Agent
 	registry              *Registry
@@ -92,9 +86,6 @@ type Service struct {
 
 	// Hook system for lifecycle events
 	hooks *HookRegistry
-
-	// Subconscious background worker pool
-	subconscious *SubconsciousWorkerPool
 
 	// Async sub-agent coordinator
 	asyncTasks *SubAgentCoordinator
@@ -137,7 +128,7 @@ type Service struct {
 
 	// checkpointSink, when non-nil, is called by the runtime at every
 	// round boundary so the message history can be persisted for
-	// Tasks().Resume. TeamManager.buildServiceForModel wires this up;
+	// Tasks().Resume. Manager.buildServiceForModel wires this up;
 	// services built directly via agent.New(...).Build() leave it nil
 	// and skip persistence.
 	checkpointSink CheckpointSink
@@ -160,21 +151,17 @@ type Service struct {
 	MCP     *mcp.Service // Full access to MCP service (Chat, StartServers, etc.)
 	RAG     domain.Processor
 	Memory  domain.MemoryService
-	Router  *router.Service
 	Skills  *skills.Service
 	Prompts *prompt.Manager
 	PTC     *PTCIntegration
 
-	tokenCounter *usage.TokenCounter
+	tokenCounter *pool.TokenCounter
 	cfg          *config.Config
 
-	// Optional execution sandbox + browser handles, wired by
-	// WithSandbox/WithBrowser. Caller owns their lifecycle (Close); the
-	// service keeps the handles for accessors (Sandbox/Browser) and for
-	// deliverable scanning. nil when not configured.
-	execSandbox   sandbox.Sandbox
-	execBrowser   browser.Browser
-	visionEnabled bool
+	// Optional execution sandbox handle, wired by WithSandbox. Caller owns
+	// its lifecycle (Close); the service keeps the handle for the Sandbox()
+	// accessor and for deliverable scanning. nil when not configured.
+	execSandbox sandbox.Sandbox
 
 	// defaultMaxTurns, when > 0, is the fallback tool-round budget used when a
 	// run doesn't set RunConfig.MaxTurns. Set via WithAutonomy for long-horizon
@@ -243,7 +230,7 @@ func NewService(
 		hooks:                 NewHookRegistry(),
 		asyncTasks:            NewSubAgentCoordinator(),
 		toolRegistry:          NewToolRegistry(),
-		tokenCounter:          usage.NewTokenCounter(),
+		tokenCounter:          pool.NewTokenCounter(),
 		inProgressTools:       make(map[string]int),
 		sessionRelevantSkills: make(map[string][]string),
 		taskSkillSatisfied:    make(map[string]bool),
@@ -254,24 +241,12 @@ func NewService(
 		Prompts: promptMgr,
 	}
 
-	// Create the subconscious pool but DO NOT start it by default — no
-	// framework-default background task. Opt in with Builder.WithSubconscious()
-	// or Service.StartSubconscious(). While unstarted, Enqueue is a no-op.
-	s.subconscious = NewSubconsciousWorkerPool(s)
-
 	// Inject prompt manager into memory service if it supports it
 	if memoryService != nil {
 		if m, ok := memoryService.(interface{ SetPromptManager(*prompt.Manager) }); ok {
 			m.SetPromptManager(promptMgr)
 		}
 	}
-
-	// Create planner with service reference
-	s.planner = NewPlanner(s, llmService, tools)
-	s.planner.SetPromptManager(promptMgr)
-
-	// Create executor with service reference
-	s.executor = NewExecutor(s, llmService, nil, mcpService, ragProcessor, memoryService)
 
 	// Register built-in tools in registry
 	s.registerBuiltInTools()
@@ -339,11 +314,11 @@ func (s *Service) registerBuiltInTools() {
 		return s.executeDelegateAsync(ctx, s.agent, args)
 	}, CategoryCustom, ToolMetadata{InterruptBehavior: InterruptBehaviorCancel})
 
-	// 1.6. send_message
+	// 1.6. subagent_send_message
 	sendMessageDef := domain.ToolDefinition{
 		Type: "function",
 		Function: domain.ToolFunction{
-			Name:        "send_message",
+			Name:        "subagent_send_message",
 			Description: "Send a message to an already running or paused sub-agent using its task ID. This is the only way to follow up on a completed async task or interact with an active sub-agent. Do not fabricate their responses.",
 			Parameters: map[string]interface{}{
 				"type": "object",
@@ -410,117 +385,6 @@ func (s *Service) registerBuiltInTools() {
 	}, CategoryCustom, ToolMetadata{ReadOnly: true, ConcurrencySafe: true, InterruptBehavior: InterruptBehaviorCancel})
 }
 
-// Plan generates an execution plan for the given goal
-// This matches the CLI expectation: agentService.Plan(ctx, goal)
-func (s *Service) Plan(ctx context.Context, goal string) (*Plan, error) {
-	session := NewSession(s.agent.ID())
-	plan, err := s.planner.PlanWithFallback(ctx, goal, session)
-	if err != nil {
-		return nil, err
-	}
-	// Save plan to database
-	if err := s.store.SavePlan(plan); err != nil {
-		return nil, fmt.Errorf("failed to save plan: %w", err)
-	}
-	return plan, nil
-}
-
-// RevisePlan revises an existing plan based on user feedback.
-// The user can modify the plan through natural language chat
-func (s *Service) RevisePlan(ctx context.Context, plan *Plan, instruction string) (*Plan, error) {
-	data := map[string]interface{}{
-		"Goal":        plan.Goal,
-		"Status":      plan.Status,
-		"Steps":       plan.Steps,
-		"Instruction": instruction,
-	}
-
-	rendered, err := s.promptManager.Render(prompt.AgentRevisePlan, data)
-	if err != nil {
-		return nil, fmt.Errorf("failed to render revision prompt: %w", err)
-	}
-
-	// Call LLM to get revised plan
-	response, err := s.llmService.Generate(ctx, rendered, &domain.GenerationOptions{
-		Temperature: 0.3,
-		MaxTokens:   2000,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("LLM call failed: %w", err)
-	}
-
-	// Parse the response
-	var revisedPlan struct {
-		Reasoning string `json:"reasoning"`
-		Steps     []struct {
-			Tool        string                 `json:"tool"`
-			Description string                 `json:"description"`
-			Arguments   map[string]interface{} `json:"arguments"`
-		} `json:"steps"`
-	}
-
-	// Extract JSON from response
-	jsonStart := strings.Index(response, "{")
-	jsonEnd := strings.LastIndex(response, "}")
-	if jsonStart == -1 || jsonEnd == -1 {
-		return nil, fmt.Errorf("no valid JSON in LLM response")
-	}
-	jsonStr := response[jsonStart : jsonEnd+1]
-
-	if err := json.Unmarshal([]byte(jsonStr), &revisedPlan); err != nil {
-		return nil, fmt.Errorf("failed to parse revised plan: %w", err)
-	}
-
-	// Create new plan with revisions
-	newPlan := &Plan{
-		ID:        uuid.New().String(),
-		SessionID: plan.SessionID,
-		Goal:      plan.Goal,
-		Status:    PlanStatusPending,
-		Reasoning: revisedPlan.Reasoning,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
-
-	// Convert steps
-	for i, step := range revisedPlan.Steps {
-		newPlan.Steps = append(newPlan.Steps, Step{
-			ID:          fmt.Sprintf("step-%d", i+1),
-			Tool:        step.Tool,
-			Description: step.Description,
-			Arguments:   step.Arguments,
-			Status:      StepStatusPending,
-		})
-	}
-
-	// Save revised plan
-	if err := s.store.SavePlan(newPlan); err != nil {
-		return nil, fmt.Errorf("failed to save revised plan: %w", err)
-	}
-
-	return newPlan, nil
-}
-
-// ExecutePlan executes the given plan
-// This matches the CLI expectation: agentService.ExecutePlan(ctx, plan)
-func (s *Service) ExecutePlan(ctx context.Context, plan *Plan) (*ExecutionResult, error) {
-	result, err := s.executor.ExecutePlan(ctx, plan, nil)
-	if err != nil {
-		return nil, fmt.Errorf("execution failed: %w", err)
-	}
-
-	// Save the plan state
-	if err := s.store.SavePlan(plan); err != nil {
-		return nil, fmt.Errorf("failed to save plan: %w", err)
-	}
-
-	if !result.Success {
-		return result, fmt.Errorf("plan execution completed with errors: %s", result.Error)
-	}
-
-	return result, nil
-}
-
 // OutputLints returns the post-output lint registry for this service. The
 // registry is lazily created on first access. Lints registered here are
 // consulted by the runtime before emitting a final completion event.
@@ -574,29 +438,6 @@ func (s *Service) DisableOutputLint(names ...string) {
 	}
 }
 
-// StopSubconscious halts the background subconscious memory-extraction worker
-// pool. After it stops, the per-turn extraction job is dropped (Enqueue becomes
-// a no-op), so no extra LLM call is made after each run. Useful for agents that
-// only produce text and don't need durable episodic memory — it removes both
-// the background token cost and its log noise.
-func (s *Service) StopSubconscious() {
-	if s == nil || s.subconscious == nil {
-		return
-	}
-	s.subconscious.Stop()
-}
-
-// StartSubconscious enables the background subconscious memory-extraction worker.
-// It is OFF by default (no framework-default background task); opt in here or via
-// Builder.WithSubconscious(). Costs one extra background LLM call after each run
-// (only when a memory service is configured). Safe to call more than once.
-func (s *Service) StartSubconscious() {
-	if s == nil || s.subconscious == nil {
-		return
-	}
-	s.subconscious.Start(1)
-}
-
 // RunStream executes a goal and returns a stream of events
 // This is the preferred method for reactive applications.
 func (s *Service) RunStream(ctx context.Context, goal string) (<-chan *Event, error) {
@@ -608,6 +449,17 @@ func (s *Service) RunStreamWithOptions(ctx context.Context, goal string, opts ..
 	cfg := DefaultRunConfig()
 	for _, opt := range opts {
 		opt(cfg)
+	}
+	_, events, err := s.startRun(ctx, goal, cfg)
+	return events, err
+}
+
+// startRun is the single entry point into the agent loop. Both the streaming
+// (RunStreamWithOptions) and the collecting (Run) surfaces go through it — v3
+// has exactly one execution path, and Run is RunStream plus an event collector.
+func (s *Service) startRun(ctx context.Context, goal string, cfg *RunConfig) (*Session, <-chan *Event, error) {
+	if cfg == nil {
+		cfg = DefaultRunConfig()
 	}
 
 	sessionID := strings.TrimSpace(cfg.SessionID)
@@ -644,12 +496,8 @@ func (s *Service) RunStreamWithOptions(ctx context.Context, goal string, opts ..
 		createdAt: startedAt,
 	})
 
-	if routedEvents, ok, err := s.streamDirectDispatcherRoute(ctx, session, goal); ok {
-		return s.observeRunStream(session, taskID, goal, startedAt, routedEvents), err
-	}
-
 	runtime := NewRuntime(s, session, cfg)
-	return s.observeRunStream(session, taskID, goal, startedAt, runtime.RunStream(ctx, goal)), nil
+	return session, s.observeRunStream(session, taskID, goal, startedAt, runtime.RunStream(ctx, goal)), nil
 }
 
 // Run executes a goal with optional configuration.
@@ -674,292 +522,70 @@ func (s *Service) Run(ctx context.Context, goal string, opts ...RunOption) (*Exe
 	return s.runWithConfig(ctx, goal, cfg)
 }
 
-// runWithConfig is the internal implementation
-func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig) (_ *ExecutionResult, runErr error) {
-	if cfg == nil {
-		cfg = DefaultRunConfig()
-	}
-	startTime := time.Now()
+// runWithConfig runs the loop and collects its event stream into an
+// ExecutionResult. There is no separate non-streaming implementation.
+func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig) (*ExecutionResult, error) {
+	startedAt := time.Now()
 	s.resetRunMemorySaved()
 	s.setRunning(true)
 	defer s.setRunning(false)
 
-	// Create cancellable context for this run
-	runCtx, cancel := context.WithCancel(ctx)
-	// Bound tool discovery for this run. Needed here as well as in
-	// Runtime.Run: this is the non-streaming entry point, and it is the one
-	// that reaches runPTCExecution, whose sandbox searches would otherwise be
-	// unbounded.
-	runCtx = ensureDiscoveryBudget(runCtx)
-
-	// Store cancel function for external cancellation
-	s.cancelMu.Lock()
-	s.cancelFunc = cancel
-	s.cancelMu.Unlock()
-
-	defer func() {
-		s.cancelMu.Lock()
-		s.cancelFunc = nil
-		s.cancelMu.Unlock()
-	}()
-
-	// Load or create session based on SessionID
-	var session *Session
-	if cfg.SessionID != "" {
-		var err error
-		session, err = s.store.GetSession(cfg.SessionID)
-		if err != nil {
-			session = NewSessionWithID(cfg.SessionID, s.agent.ID())
-		}
-	} else {
-		session = NewSession(s.agent.ID())
-	}
-	taskID := ensureTaskID(session, cfg)
-	s.persistRunTaskState(session, taskID, taskRunStateOptions{
-		status:    taskpkg.StatusRunning,
-		input:     goal,
-		createdAt: startTime,
-	})
-	s.persistRunTaskEvent(session, taskID, &Event{
-		Type:      EventTypeStart,
-		AgentName: s.agent.Name(),
-		Content:   goal,
-		Timestamp: startTime,
-	})
-	defer func() {
-		if runErr == nil {
-			return
-		}
-		s.persistRunTaskState(session, taskID, taskRunStateOptions{
-			status:      taskpkg.StatusFailed,
-			input:       goal,
-			output:      "",
-			errorText:   runErr.Error(),
-			createdAt:   startTime,
-			finishedAt:  time.Now(),
-			appendError: true,
-		})
-	}()
-	if inherited := strings.TrimSpace(cfg.InheritedMemoryAgentID); inherited != "" {
-		session.SetContext(sessionContextMemoryAgentScope, inherited)
-	}
-	if inherited := strings.TrimSpace(cfg.InheritedMemoryTeamID); inherited != "" {
-		session.SetContext(sessionContextMemoryTeamScope, inherited)
-	}
-	if inherited := strings.TrimSpace(cfg.InheritedMemoryUserID); inherited != "" {
-		session.SetContext(sessionContextMemoryUserScope, inherited)
-	}
-	s.rememberMemoryQueryContext(session, s.resolveMemoryQueryContext(session))
-
-	if routedResult, ok, err := s.executeDirectDispatcherRoute(runCtx, session, goal); ok {
-		if err != nil {
-			runErr = err
-			return nil, runErr
-		}
-		completedAt := time.Now()
-		s.persistRunTaskEvent(session, taskID, &Event{
-			Type:      EventTypeToolCall,
-			AgentName: s.agent.Name(),
-			ToolName:  "route_builtin_request",
-			ToolArgs:  map[string]interface{}{"prompt": normalizeTaskPrompt(goal)},
-			Timestamp: time.Now(),
-		})
-		s.persistRunTaskEvent(session, taskID, &Event{
-			Type:       EventTypeToolResult,
-			AgentName:  s.agent.Name(),
-			ToolName:   "route_builtin_request",
-			ToolResult: routedResult.Metadata["route_builtin_result"],
-			Content:    fmt.Sprintf("%v", routedResult.FinalResult),
-			Timestamp:  completedAt,
-		})
-		routedResult.StartedAt = &startTime
-		routedResult.CompletedAt = &completedAt
-		routedResult.EstimatedTokens = s.estimateRunTokens(goal, routedResult.FinalResult)
-		session.AddMessage(withTaskID(domain.Message{
-			Role:    "user",
-			Content: goal,
-		}, taskID))
-		session.AddMessage(withTaskID(domain.Message{
-			Role:    "assistant",
-			Content: fmt.Sprintf("%v", routedResult.FinalResult),
-		}, taskID))
-		_ = s.store.SaveSession(session)
-		routedResult.TaskID = taskID
-		status := taskpkg.StatusCompleted
-		if blocked, ok := routedResult.Metadata["dispatch_blocked"].(bool); ok && blocked {
-			status = taskpkg.StatusBlocked
-		}
-		s.persistRunTaskState(session, taskID, taskRunStateOptions{
-			status:     status,
-			input:      goal,
-			output:     fmt.Sprintf("%v", routedResult.FinalResult),
-			createdAt:  startTime,
-			finishedAt: completedAt,
-		})
-		return routedResult, nil
-	}
-	prepared := s.prepareConversationContext(runCtx, goal, session, prepareConversationOptions{
-		includeIntent: true,
-		emitProgress:  true,
-	})
-	intent := prepared.intent
-	ragContext := prepared.ragContext
-	memoryContext := prepared.memoryContext
-	memoryMemories := prepared.memoryMemories
-	memoryLogic := prepared.memoryLogic
-
-	// Execute: PTC is just a transport mode — branch internally, same public API.
-	var finalResult interface{}
-	var ptcRes *PTCResult
-	var execMetrics *executionMetrics
-
-	if cfg.DisableMemoryRecallShortcut {
-		// Action-taking agent opted out: skip the recall short-circuit so
-		// tool turns aren't hijacked by an answer-from-memory response.
-	} else if recalledAnswer, ok, err := s.answerExplicitMemoryRecall(runCtx, goal, intent, memoryContext, memoryMemories, cfg); err != nil {
-		s.logger.Warn("Explicit memory recall shortcut failed", slog.Any("error", err))
-	} else if ok {
-		finalResult = recalledAnswer
-		execMetrics = &executionMetrics{}
-	}
-
-	if finalResult != nil {
-		// Shortcut path already produced the answer.
-	} else if s.isPTCEnabled() && !cfg.DisablePTC && !isMemoryToolIntent(intent) && len(memoryMemories) == 0 {
-		var err error
-		finalResult, ptcRes, err = s.runPTCExecution(runCtx, goal, session, cfg)
-		if err != nil {
-			runErr = err
-			return nil, runErr
-		}
-		// PTCResult.Output is FormatForLLM's execution report, not an answer.
-		// Overwriting the model's reply with it is what made PTC turns come back
-		// as raw JSON; see ptcFinalAnswer.
-		if ptcRes != nil && ptcRes.Output != "" {
-			modelSaid := ""
-			if finalResult != nil {
-				modelSaid = fmt.Sprintf("%v", finalResult)
-			}
-			finalResult = s.ptcFinalAnswer(runCtx, goal, session, modelSaid, ptcRes.Output)
-		}
-	} else {
-		var err error
-		finalResult, execMetrics, err = s.executeWithLLM(runCtx, goal, intent, session, memoryContext, ragContext, cfg)
-		if err != nil {
-			runErr = err
-			return nil, runErr
-		}
-	}
-
-	// Skip verification for faster response
-	currentResult := finalResult
-	blockedResult := false
-	if terminal, ok := finalResult.(terminalRunResult); ok {
-		currentResult = terminal.Text
-		blockedResult = terminal.Blocked
-	}
-
-	// Add messages to session before saving
-	session.AddMessage(withTaskID(domain.Message{
-		Role:    "user",
-		Content: goal,
-	}, taskID))
-	if currentResult != nil {
-		session.AddMessage(withTaskID(domain.Message{
-			Role:    "assistant",
-			Content: fmt.Sprintf("%v", currentResult),
-		}, taskID))
-	}
-
-	// Create a simple plan to track this execution
-	now := time.Now()
-	planStatus := StatusCompleted
-	if blockedResult {
-		planStatus = StatusFailed
-	}
-	plan := &Plan{
-		ID:        uuid.New().String(),
-		SessionID: session.GetID(),
-		Goal:      goal,
-		Status:    planStatus,
-		CreatedAt: now,
-		UpdatedAt: now,
-		Steps: []Step{
-			{
-				ID:          uuid.New().String(),
-				Description: goal,
-				Tool:        "llm",
-				Status:      StepCompleted,
-				Result:      currentResult,
-			},
-		},
-	}
-	if err := s.store.SavePlan(plan); err != nil {
-		log.Printf("[Agent] Failed to save plan: %v", err)
-	}
-
-	// Persist session history
-	if err := s.store.SaveSession(session); err != nil {
-		log.Printf("[Agent] Failed to save session: %v", err)
-	}
-
-	result, err := s.finalizeExecution(runCtx, session, goal, intent, memoryMemories, memoryLogic, "", currentResult)
+	session, events, err := s.startRun(ctx, goal, cfg)
 	if err != nil {
-		runErr = err
-		return nil, runErr
+		return nil, err
 	}
-	result.TaskID = taskID
-	completedAt := time.Now()
-	result.StartedAt = &startTime
-	result.CompletedAt = &completedAt
-	result.EstimatedTokens = s.estimateRunTokens(goal, currentResult)
-	if execMetrics != nil {
-		result.ToolCalls = execMetrics.toolCalls
-		result.ToolsUsed = uniqueStrings(execMetrics.toolsUsed)
-		result.EstimatedTokens += execMetrics.estimatedTokens
-	}
-	if ptcRes != nil {
-		result.PTCResult = ptcRes
-		if ptcRes.ExecutionResult != nil {
-			result.ToolCalls = len(ptcRes.ExecutionResult.ToolCalls)
-		}
-		result.ToolsUsed = uniqueStrings(toolNamesFromPTC(ptcRes))
-		result.EstimatedTokens = s.estimateRunTokens(goal, currentResult) + s.estimatePTCTokens(ptcRes)
-	}
-	finalStatus := taskpkg.StatusCompleted
-	if blockedResult {
-		finalStatus = taskpkg.StatusBlocked
-	}
-	s.persistRunTaskState(session, taskID, taskRunStateOptions{
-		status:     finalStatus,
-		input:      goal,
-		output:     result.Text(),
-		createdAt:  startTime,
-		finishedAt: completedAt,
-	})
-	// Synthesize metrics from PTC path when execMetrics is nil.
-	if execMetrics == nil {
-		execMetrics = &executionMetrics{
-			estimatedTokens: result.EstimatedTokens,
-			toolCalls:       result.ToolCalls,
-			toolsUsed:       result.ToolsUsed,
-			totalDurationMs: completedAt.Sub(startTime).Milliseconds(),
-		}
-	}
-	s.persistRunTaskStats(session, taskID, execMetrics)
-	return result, nil
-}
 
-func isMemoryToolIntent(intent *IntentRecognitionResult) bool {
-	if intent == nil {
-		return false
+	result := &ExecutionResult{
+		SessionID: session.GetID(),
+		TaskID:    currentTaskID(session),
+		StartedAt: &startedAt,
 	}
-	switch strings.TrimSpace(intent.IntentType) {
-	case "memory_save", "memory_recall", "memory_update", "memory_delete":
-		return true
-	default:
-		return false
+	toolSeen := map[string]struct{}{}
+	var lastError string
+
+	for evt := range events {
+		if evt == nil {
+			continue
+		}
+		if evt.TokensUsed > 0 {
+			result.EstimatedTokens += evt.TokensUsed
+		}
+		switch evt.Type {
+		case EventTypeToolCall:
+			if evt.ToolName != "" {
+				result.ToolCalls++
+				if _, seen := toolSeen[evt.ToolName]; !seen {
+					toolSeen[evt.ToolName] = struct{}{}
+					result.ToolsUsed = append(result.ToolsUsed, evt.ToolName)
+				}
+			}
+		case EventTypeComplete:
+			result.Success = true
+			result.FinalResult = evt.Content
+			result.Sources = evt.Sources
+			result.StepsDone++
+			result.StepsTotal++
+		case EventTypeBlocked:
+			result.Success = false
+			result.FinalResult = evt.Content
+			result.Error = evt.Content
+			result.StepsFailed++
+			result.StepsTotal++
+		case EventTypeError:
+			lastError = evt.Content
+		}
 	}
+
+	if !result.Success && result.Error == "" {
+		result.Error = lastError
+	}
+	completedAt := time.Now()
+	result.CompletedAt = &completedAt
+	result.Duration = completedAt.Sub(startedAt).String()
+	if result.EstimatedTokens == 0 {
+		result.EstimatedTokens = s.estimateRunTokens(goal, result.FinalResult)
+	}
+	return result, nil
 }
 
 // Cancel forcefully stops the current agent execution
@@ -1162,7 +788,7 @@ func (s *Service) estimateTextTokens(text string) int {
 		return 0
 	}
 	if s.tokenCounter == nil {
-		s.tokenCounter = usage.NewTokenCounter()
+		s.tokenCounter = pool.NewTokenCounter()
 	}
 	model := s.modelName
 	if model == "" {

@@ -13,7 +13,7 @@ import (
 	"github.com/liliang-cn/agent-go/v3/pkg/config"
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 	"github.com/liliang-cn/agent-go/v3/pkg/mcp"
-	"github.com/liliang-cn/agent-go/v3/pkg/services"
+	"github.com/liliang-cn/agent-go/v3/pkg/poolsvc"
 	"github.com/spf13/cobra"
 )
 
@@ -132,7 +132,7 @@ func runMCPChat(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
 	// Get global LLM service
-	llmService, err := services.GetGlobalLLM()
+	llmService, err := poolsvc.GetGlobalLLM()
 	if err != nil {
 		return fmt.Errorf("failed to get global LLM service: %w", err)
 	}

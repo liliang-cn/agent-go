@@ -12,7 +12,7 @@ func TestRegisterAgentToolAttachesClosureAndRebuilds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStore() error = %v", err)
 	}
-	manager := NewTeamManager(store)
+	manager := NewManager(store)
 	manager.SetConfig(testAgentConfig(t.TempDir()))
 	manager.SetLLM(&serviceExecutionStateTestLLM{})
 
@@ -32,7 +32,7 @@ func TestRegisterAgentToolAttachesClosureAndRebuilds(t *testing.T) {
 	}
 
 	// Before registration: tool absent.
-	svc1, err := manager.GetAgentService(model.Name)
+	svc1, err := manager.Service(model.Name)
 	if err != nil {
 		t.Fatalf("GetAgentService() error = %v", err)
 	}
@@ -66,7 +66,7 @@ func TestRegisterAgentToolAttachesClosureAndRebuilds(t *testing.T) {
 	}
 
 	// After registration + rebuild: tool present and callable.
-	svc2, err := manager.GetAgentService(model.Name)
+	svc2, err := manager.Service(model.Name)
 	if err != nil {
 		t.Fatalf("GetAgentService() rebuild error = %v", err)
 	}
@@ -88,7 +88,7 @@ func TestRegisterAgentToolAttachesClosureAndRebuilds(t *testing.T) {
 
 func TestRegisterAgentToolValidation(t *testing.T) {
 	store, _ := NewStore(filepath.Join(t.TempDir(), "agent.db"))
-	manager := NewTeamManager(store)
+	manager := NewManager(store)
 	if err := manager.RegisterAgentTool("", "t", "d", nil, func(context.Context, map[string]interface{}) (interface{}, error) { return nil, nil }, ToolMetadata{}); err == nil {
 		t.Fatal("expected error for empty agent name")
 	}

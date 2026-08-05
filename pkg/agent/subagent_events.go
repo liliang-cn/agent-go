@@ -104,12 +104,6 @@ func (sa *SubAgent) emitLoopState(state *queryLoopState) {
 		"round":             state.CurrentRound,
 		"tool_call_count":   state.PendingToolCount,
 	}
-	if state.Intent != nil {
-		stateDelta["intent_type"] = state.Intent.IntentType
-		stateDelta["preferred_agent"] = state.Intent.PreferredAgent
-		stateDelta["requires_tools"] = state.Intent.RequiresTools
-		stateDelta["transition"] = state.Intent.Transition
-	}
 	sa.emitEvent(&Event{
 		ID:         uuid.NewString(),
 		Type:       EventTypeStateUpdate,

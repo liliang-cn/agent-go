@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/pool"
-	"github.com/liliang-cn/agent-go/v3/pkg/services"
+	"github.com/liliang-cn/agent-go/v3/pkg/poolsvc"
 	"github.com/liliang-cn/agent-go/v3/pkg/store"
 	"github.com/spf13/cobra"
 )
@@ -31,7 +31,7 @@ var embeddingListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all embedding providers",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		svc := services.GetGlobalPoolService()
+		svc := poolsvc.Global()
 		if !svc.IsInitialized() {
 			return fmt.Errorf("pool service not initialized")
 		}
@@ -69,7 +69,7 @@ var embeddingAddCmd = &cobra.Command{
 			return fmt.Errorf("--name, --url, and --model are required")
 		}
 
-		svc := services.GetGlobalPoolService()
+		svc := poolsvc.Global()
 		if !svc.IsInitialized() {
 			return fmt.Errorf("pool service not initialized")
 		}
@@ -109,7 +109,7 @@ var embeddingUpdateCmd = &cobra.Command{
 			return fmt.Errorf("--name is required")
 		}
 
-		svc := services.GetGlobalPoolService()
+		svc := poolsvc.Global()
 		if !svc.IsInitialized() {
 			return fmt.Errorf("pool service not initialized")
 		}
@@ -151,7 +151,7 @@ var embeddingDeleteCmd = &cobra.Command{
 	Short: "Delete an embedding provider",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		svc := services.GetGlobalPoolService()
+		svc := poolsvc.Global()
 		if !svc.IsInitialized() {
 			return fmt.Errorf("pool service not initialized")
 		}
@@ -172,7 +172,7 @@ var embeddingConfigShowCmd = &cobra.Command{
 	Use:   "show",
 	Short: "Show current embedding pool configuration",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		svc := services.GetGlobalPoolService()
+		svc := poolsvc.Global()
 		if !svc.IsInitialized() {
 			return fmt.Errorf("pool service not initialized")
 		}
@@ -193,7 +193,7 @@ Changes take effect on the next restart.
 
 Valid strategies: round_robin, random, least_load, capability, failover`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		svc := services.GetGlobalPoolService()
+		svc := poolsvc.Global()
 		if !svc.IsInitialized() {
 			return fmt.Errorf("pool service not initialized")
 		}

@@ -605,14 +605,14 @@ func listUnifiedTasks() ([]*agentpkg.UnifiedTask, error) {
 	return unified, nil
 }
 
-func taskManager() (*agentpkg.TeamManager, error) {
+func taskManager() (*agentpkg.Manager, error) {
 	agentStore, err := agentpkg.NewStore(Cfg.AgentDBPath())
 	if err != nil {
 		return nil, err
 	}
-	manager := agentpkg.NewTeamManager(agentStore)
+	manager := agentpkg.NewManager(agentStore)
 	manager.SetConfig(Cfg)
-	_ = manager.SeedDefaultMembers()
+	_ = manager.SeedDefaultAgent()
 	return manager, nil
 }
 

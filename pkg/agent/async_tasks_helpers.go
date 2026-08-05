@@ -8,91 +8,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	taskpkg "github.com/liliang-cn/agent-go/v3/pkg/task"
 )
 
-func (m *TeamManager) ensureAsyncTaskForSharedTask(task *SharedTask, sessionID, teamName string) *AsyncTask {
-	if task == nil {
-		return nil
-	}
-
-	m.taskMu.RLock()
-	existing := m.asyncTasks[task.ID]
-	m.taskMu.RUnlock()
-	if existing != nil {
-		updated := false
-		sharedTaskUpdated := false
-		taskCopy := m.updateAsyncTask(task.ID, func(current *AsyncTask) {
-			if strings.TrimSpace(sessionID) != "" && strings.TrimSpace(current.SessionID) == "" {
-				current.SessionID = strings.TrimSpace(sessionID)
-				updated = true
-			}
-			if strings.TrimSpace(teamName) != "" && strings.TrimSpace(current.TeamName) == "" {
-				current.TeamName = strings.TrimSpace(teamName)
-				updated = true
-			}
-		})
-		m.queueMu.Lock()
-		stored := m.sharedTasks[task.ID]
-		if stored != nil {
-			if strings.TrimSpace(sessionID) != "" && strings.TrimSpace(stored.SessionID) == "" {
-				stored.SessionID = strings.TrimSpace(sessionID)
-				sharedTaskUpdated = true
-			}
-			if strings.TrimSpace(teamName) != "" && strings.TrimSpace(stored.TeamName) == "" {
-				stored.TeamName = strings.TrimSpace(teamName)
-				sharedTaskUpdated = true
-			}
-			if sharedTaskUpdated {
-				_ = m.store.SaveSharedTask(stored)
-			}
-		}
-		m.queueMu.Unlock()
-		if updated && strings.TrimSpace(taskCopy.SessionID) != "" {
-			m.indexTaskSession(taskCopy.SessionID, taskCopy.ID)
-		}
-		return taskCopy
-	}
-
-	if strings.TrimSpace(teamName) == "" {
-		if team, err := m.store.GetTeam(task.TeamID); err == nil {
-			teamName = team.Name
-		}
-	}
-
-	asyncTask := &AsyncTask{
-		ID:               task.ID,
-		TaskID:           strings.TrimSpace(task.ID),
-		SessionID:        strings.TrimSpace(sessionID),
-		Kind:             AsyncTaskKindTeam,
-		Status:           asyncStatusFromSharedTask(task.Status),
-		TeamID:           task.TeamID,
-		TeamName:         strings.TrimSpace(teamName),
-		OrchestratorName: task.OrchestratorName,
-		AgentNames:       append([]string(nil), task.AgentNames...),
-		Prompt:           task.Prompt,
-		AckMessage:       task.AckMessage,
-		ResultText:       task.ResultText,
-		CreatedAt:        task.CreatedAt,
-		StartedAt:        cloneTimePtr(task.StartedAt),
-		FinishedAt:       cloneTimePtr(task.FinishedAt),
-	}
-	m.upsertAsyncTask(asyncTask)
-	m.queueMu.Lock()
-	if stored := m.sharedTasks[task.ID]; stored != nil {
-		if asyncTask.SessionID != "" {
-			stored.SessionID = asyncTask.SessionID
-		}
-		if asyncTask.TeamName != "" {
-			stored.TeamName = asyncTask.TeamName
-		}
-		_ = m.store.SaveSharedTask(stored)
-	}
-	m.queueMu.Unlock()
-	return asyncTask
-}
-
-func (m *TeamManager) upsertAsyncTask(task *AsyncTask) {
+func (m *Manager) upsertAsyncTask(task *AsyncTask) {
 	if task == nil {
 		return
 	}
@@ -106,7 +24,7 @@ func (m *TeamManager) upsertAsyncTask(task *AsyncTask) {
 	m.persistUnifiedTask(task.ID)
 }
 
-func (m *TeamManager) updateAsyncTask(taskID string, mutate func(*AsyncTask)) *AsyncTask {
+func (m *Manager) updateAsyncTask(taskID string, mutate func(*AsyncTask)) *AsyncTask {
 	m.taskMu.Lock()
 	defer m.taskMu.Unlock()
 
@@ -124,7 +42,7 @@ func (m *TeamManager) updateAsyncTask(taskID string, mutate func(*AsyncTask)) *A
 	return cloned
 }
 
-func (m *TeamManager) emitTaskEvent(taskID string, evt *TaskEvent, terminal bool) {
+func (m *Manager) emitTaskEvent(taskID string, evt *TaskEvent, terminal bool) {
 	if evt == nil {
 		return
 	}
@@ -165,25 +83,25 @@ func (m *TeamManager) emitTaskEvent(taskID string, evt *TaskEvent, terminal bool
 	m.persistUnifiedTask(taskID)
 }
 
-func (m *TeamManager) setTaskCancel(taskID string, cancel context.CancelFunc) {
+func (m *Manager) setTaskCancel(taskID string, cancel context.CancelFunc) {
 	m.taskMu.Lock()
 	defer m.taskMu.Unlock()
 	m.taskCancels[taskID] = cancel
 }
 
-func (m *TeamManager) clearTaskCancel(taskID string) {
+func (m *Manager) clearTaskCancel(taskID string) {
 	m.taskMu.Lock()
 	defer m.taskMu.Unlock()
 	delete(m.taskCancels, taskID)
 }
 
-func (m *TeamManager) indexTaskSession(sessionID, taskID string) {
+func (m *Manager) indexTaskSession(sessionID, taskID string) {
 	m.taskMu.Lock()
 	defer m.taskMu.Unlock()
 	m.indexTaskSessionLocked(sessionID, taskID)
 }
 
-func (m *TeamManager) indexTaskSessionLocked(sessionID, taskID string) {
+func (m *Manager) indexTaskSessionLocked(sessionID, taskID string) {
 	for _, existing := range m.sessionTasks[sessionID] {
 		if existing == taskID {
 			return
@@ -206,28 +124,6 @@ func sharedTaskChildID(parentTaskID string, index int, agentName string) string 
 		segment = "member"
 	}
 	return fmt.Sprintf("%s:member:%02d:%s", parentTaskID, index+1, segment)
-}
-
-func (m *TeamManager) persistTeamChildTaskPlaceholder(taskID string, parent *AsyncTask, sessionID, agentName, prompt string) {
-	if m == nil || m.store == nil || strings.TrimSpace(taskID) == "" {
-		return
-	}
-	task := &taskpkg.Task{
-		ID:               strings.TrimSpace(taskID),
-		Kind:             taskpkg.KindAgent,
-		Status:           taskpkg.StatusRunning,
-		SessionID:        strings.TrimSpace(sessionID),
-		RuntimeSessionID: strings.TrimSpace(sessionID),
-		ParentTaskID:     firstNonEmptyTaskString(firstNonEmptyTaskID(parent), parentTaskIDFromAsync(parent)),
-		TeamID:           strings.TrimSpace(firstTaskTeamID(parent)),
-		TeamName:         strings.TrimSpace(firstTaskTeamName(parent)),
-		AgentName:        strings.TrimSpace(agentName),
-		Input:            strings.TrimSpace(prompt),
-		CreatedAt:        firstNonZeroTime(parentCreatedAt(parent), time.Now()),
-		Source:           "team_child",
-		SourceID:         firstNonEmptyTaskString(firstNonEmptyTaskID(parent)),
-	}
-	_ = m.store.SaveTask(task)
 }
 
 func firstTaskTeamID(task *AsyncTask) string {
@@ -256,19 +152,6 @@ func parentCreatedAt(task *AsyncTask) time.Time {
 		return time.Time{}
 	}
 	return task.CreatedAt
-}
-
-func asyncStatusFromSharedTask(status SharedTaskStatus) AsyncTaskStatus {
-	switch status {
-	case SharedTaskStatusRunning:
-		return AsyncTaskStatusRunning
-	case SharedTaskStatusCompleted:
-		return AsyncTaskStatusCompleted
-	case SharedTaskStatusFailed:
-		return AsyncTaskStatusFailed
-	default:
-		return AsyncTaskStatusQueued
-	}
 }
 
 func isPausedAsyncTaskStatus(status AsyncTaskStatus) bool {

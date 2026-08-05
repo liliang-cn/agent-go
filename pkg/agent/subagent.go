@@ -486,11 +486,7 @@ func (sa *SubAgent) execute(ctx context.Context) (interface{}, error) {
 
 	sa.emitProgress("Starting execution")
 
-	var subIntent *IntentRecognitionResult
-	if sa.config.Service != nil && sa.config.Service.planner != nil {
-		subIntent = sa.config.Service.planner.ruleBasedIntentRecognition(sa.config.Goal)
-	}
-	state := newServiceExecutionLoopState(sa.config.Goal, sa.buildInitialMessages(tools), subIntent, sa.config.MaxTurns, currentAgent)
+	state := newServiceExecutionLoopState(sa.config.Goal, sa.buildInitialMessages(tools), sa.config.MaxTurns, currentAgent)
 	state.TaskID = currentTaskID(sa.session)
 	state.setStage(TurnStagePreparingContext, "starting subagent execution", 0)
 	sa.emitLoopState(state.queryLoopState)
@@ -535,7 +531,7 @@ func (sa *SubAgent) execute(ctx context.Context) (interface{}, error) {
 		// After a nudge or once tools have been used, let the model choose freely
 		// ("auto") — forcing "required" beyond Turn 1 can cause some proxies to
 		// return non-standard binary responses.
-		genOpts := sa.config.Service.toolGenerationOptions(0.3, 2000, toolChoiceForIntent(subIntent, round))
+		genOpts := sa.config.Service.toolGenerationOptions(0.3, 2000, "")
 		if genOpts.ToolChoice == "" && len(tools) > 0 && !state.ToolUsed && !state.Nudged {
 			genOpts.ToolChoice = "required"
 		}

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -97,14 +96,14 @@ type TaskEvent struct {
 //
 // Deprecated: library users should prefer manager.Tasks().Submit(...), which
 // returns the canonical *task.Task.
-func (m *TeamManager) SubmitAgentTask(ctx context.Context, sessionID, agentName, prompt string) (*AsyncTask, error) {
+func (m *Manager) SubmitAgentTask(ctx context.Context, sessionID, agentName, prompt string) (*AsyncTask, error) {
 	return m.submitAgentTaskWithSchema(ctx, sessionID, agentName, prompt, nil)
 }
 
 // submitAgentTaskWithSchema is SubmitAgentTask plus an optional per-task output
 // schema. When schema != nil the agent is forced to emit a schema-validated
 // structured result (validate + retry), so ResultText is guaranteed valid JSON.
-func (m *TeamManager) submitAgentTaskWithSchema(ctx context.Context, sessionID, agentName, prompt string, schema *StructuredOutputSpec) (*AsyncTask, error) {
+func (m *Manager) submitAgentTaskWithSchema(ctx context.Context, sessionID, agentName, prompt string, schema *StructuredOutputSpec) (*AsyncTask, error) {
 	agentName = strings.TrimSpace(agentName)
 	prompt = strings.TrimSpace(prompt)
 	if agentName == "" {
@@ -151,61 +150,10 @@ func (m *TeamManager) submitAgentTaskWithSchema(ctx context.Context, sessionID, 
 	return m.GetTask(task.ID)
 }
 
-// SubmitTeamTask submits a legacy async team task.
-//
-// Deprecated: library users should prefer manager.Tasks().Submit(...), which
-// returns the canonical *task.Task.
-func (m *TeamManager) SubmitTeamTask(ctx context.Context, sessionID, teamID, prompt string, agentNames []string) (*AsyncTask, error) {
-	return m.submitTeamTaskWithSchema(ctx, sessionID, teamID, prompt, agentNames, nil)
-}
-
-// submitTeamTaskWithSchema is SubmitTeamTask plus an optional output schema
-// applied to each dispatched team member's run (force StructuredOutput tool +
-// validate + retry), so every member returns schema-valid JSON.
-func (m *TeamManager) submitTeamTaskWithSchema(ctx context.Context, sessionID, teamID, prompt string, agentNames []string, schema *StructuredOutputSpec) (*AsyncTask, error) {
-	team, err := m.resolveTeamRef(strings.TrimSpace(teamID), "")
-	if err != nil {
-		return nil, err
-	}
-	lead, err := m.GetLeadAgentForTeam(team.ID)
-	if err != nil {
-		return nil, err
-	}
-
-	sharedTask, err := m.EnqueueSharedTaskForTeam(ctx, team.ID, lead.Name, agentNames, prompt)
-	if err != nil {
-		return nil, err
-	}
-
-	task := m.ensureAsyncTaskForSharedTask(sharedTask, strings.TrimSpace(sessionID), team.Name)
-	if schema != nil {
-		// Attach before members are dispatched; reads go through taskMu and the
-		// member loop reads it well into the async runner, so it is in place.
-		m.updateAsyncTask(task.ID, func(existing *AsyncTask) {
-			existing.outputSchema = schema
-		})
-	}
-	m.emitTaskEvent(task.ID, &TaskEvent{
-		TaskID:           task.ID,
-		SessionID:        task.SessionID,
-		Kind:             task.Kind,
-		Status:           task.Status,
-		Type:             TaskEventTypeCreated,
-		TeamID:           task.TeamID,
-		TeamName:         task.TeamName,
-		OrchestratorName: task.OrchestratorName,
-		AgentName:        task.OrchestratorName,
-		Message:          task.AckMessage,
-		Timestamp:        task.CreatedAt,
-	}, false)
-
-	return m.GetTask(task.ID)
-}
-
 // GetTask returns a legacy AsyncTask view.
 //
 // Deprecated: use manager.Tasks().Get(...) for the canonical task.Task.
-func (m *TeamManager) GetTask(taskID string) (*AsyncTask, error) {
+func (m *Manager) GetTask(taskID string) (*AsyncTask, error) {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
 		return nil, fmt.Errorf("task id is required")
@@ -223,7 +171,7 @@ func (m *TeamManager) GetTask(taskID string) (*AsyncTask, error) {
 // ListSessionTasks returns legacy AsyncTask views for a session.
 //
 // Deprecated: use manager.Tasks().List(...) and filter by SessionID.
-func (m *TeamManager) ListSessionTasks(sessionID string, limit int) []*AsyncTask {
+func (m *Manager) ListSessionTasks(sessionID string, limit int) []*AsyncTask {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
 		return nil
@@ -249,7 +197,7 @@ func (m *TeamManager) ListSessionTasks(sessionID string, limit int) []*AsyncTask
 	return out
 }
 
-func (m *TeamManager) SubscribeTask(taskID string) (<-chan *TaskEvent, func(), error) {
+func (m *Manager) SubscribeTask(taskID string) (<-chan *TaskEvent, func(), error) {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
 		return nil, nil, fmt.Errorf("task id is required")
@@ -300,7 +248,7 @@ func (m *TeamManager) SubscribeTask(taskID string) (<-chan *TaskEvent, func(), e
 	return ch, unsubscribe, nil
 }
 
-func (m *TeamManager) runAsyncAgentTask(ctx context.Context, taskID string) {
+func (m *Manager) runAsyncAgentTask(ctx context.Context, taskID string) {
 	task, err := m.GetTask(taskID)
 	if err != nil {
 		return
@@ -333,7 +281,8 @@ func (m *TeamManager) runAsyncAgentTask(ctx context.Context, taskID string) {
 	if task.outputSchema != nil {
 		runOpts = append(runOpts, WithStructuredOutput(task.outputSchema))
 	}
-	events, err := m.ChatWithMemberStreamWithOptions(runCtx, task.SessionID, task.AgentName, task.Prompt, runOpts...)
+	runOpts = append(runOpts, WithSessionID(m.sessionIDFor(task.SessionID, task.AgentName)))
+	events, err := m.RunStream(runCtx, task.AgentName, task.Prompt, runOpts...)
 	if err != nil {
 		m.failAsyncTask(task.ID, task.AgentName, err)
 		return
@@ -351,129 +300,7 @@ func (m *TeamManager) runAsyncAgentTask(ctx context.Context, taskID string) {
 	m.completeAsyncTask(task.ID, finalText, task.AgentName)
 }
 
-func (m *TeamManager) executeSharedTaskStream(ctx context.Context, task *SharedTask) {
-	type dispatchResult struct {
-		AgentName string
-		Text      string
-		Err       error
-	}
-
-	asyncTask := m.ensureAsyncTaskForSharedTask(task, "", "")
-	startedAt := time.Now()
-	asyncTask = m.updateAsyncTask(asyncTask.ID, func(existing *AsyncTask) {
-		existing.Status = AsyncTaskStatusRunning
-		existing.StartedAt = &startedAt
-	})
-	m.emitTaskEvent(asyncTask.ID, &TaskEvent{
-		TaskID:           asyncTask.ID,
-		SessionID:        asyncTask.SessionID,
-		Kind:             asyncTask.Kind,
-		Status:           asyncTask.Status,
-		Type:             TaskEventTypeStarted,
-		TeamID:           asyncTask.TeamID,
-		TeamName:         asyncTask.TeamName,
-		OrchestratorName: asyncTask.OrchestratorName,
-		AgentName:        asyncTask.OrchestratorName,
-		Message:          fmt.Sprintf("%s started team task.", asyncTask.OrchestratorName),
-		Timestamp:        startedAt,
-	}, false)
-
-	results := make([]SharedTaskResult, 0, len(task.AgentNames))
-	resultTextParts := make([]string, 0, len(task.AgentNames))
-	resultCh := make(chan dispatchResult, len(task.AgentNames))
-	var wg sync.WaitGroup
-
-	for idx, agentName := range task.AgentNames {
-		agentName := agentName
-		childTaskID := sharedTaskChildID(firstNonEmptyTaskID(asyncTask), idx, agentName)
-		sessionID := m.conversationSessionID(task.ID, agentName)
-		m.persistTeamChildTaskPlaceholder(childTaskID, asyncTask, sessionID, agentName, task.Prompt)
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			instruction := task.Prompt
-			if strings.TrimSpace(agentName) != "" {
-				instruction = strings.TrimSpace(
-					"Assigned team member: " + agentName + "\n" +
-						"You are responsible only for the work that fits your own role and the target agent label above.\n" +
-						"Do not complete work that belongs to other listed team members.\n\n" +
-						task.Prompt,
-				)
-			}
-			memberOpts := []RunOption{
-				WithTaskID(childTaskID),
-				WithParentTaskID(firstNonEmptyTaskID(asyncTask)),
-			}
-			if asyncTask.outputSchema != nil {
-				memberOpts = append(memberOpts, WithStructuredOutput(asyncTask.outputSchema))
-			}
-			events, err := m.ChatWithMemberStreamWithOptions(ctx, task.ID, agentName, instruction, memberOpts...)
-			if err != nil {
-				resultCh <- dispatchResult{AgentName: agentName, Err: err}
-				return
-			}
-			text, blocked, runErr := m.forwardRuntimeEvents(childTaskID, events)
-			if blocked && runErr == nil {
-				runErr = fmt.Errorf("blocked: %s", strings.TrimSpace(text))
-			}
-			resultCh <- dispatchResult{AgentName: agentName, Text: strings.TrimSpace(text), Err: runErr}
-		}()
-	}
-
-	go func() {
-		wg.Wait()
-		close(resultCh)
-	}()
-
-	failed := false
-	ordered := make(map[string]dispatchResult, len(task.AgentNames))
-	for result := range resultCh {
-		ordered[result.AgentName] = result
-		if result.Err != nil {
-			failed = true
-		}
-	}
-
-	for _, agentName := range task.AgentNames {
-		result := ordered[agentName]
-		item := SharedTaskResult{AgentName: agentName, Text: result.Text}
-		if result.Err != nil {
-			item.Error = result.Err.Error()
-			resultTextParts = append(resultTextParts, fmt.Sprintf("## %s\nError: %s", agentName, result.Err))
-		} else {
-			text := result.Text
-			if text == "" {
-				text = "No response returned."
-			}
-			resultTextParts = append(resultTextParts, fmt.Sprintf("## %s\n%s", agentName, text))
-		}
-		results = append(results, item)
-	}
-
-	now := time.Now()
-	m.queueMu.Lock()
-	stored := m.sharedTasks[task.ID]
-	if stored != nil {
-		stored.Results = results
-		stored.ResultText = strings.Join(resultTextParts, "\n\n")
-		stored.FinishedAt = &now
-		if failed {
-			stored.Status = SharedTaskStatusFailed
-		} else {
-			stored.Status = SharedTaskStatusCompleted
-		}
-		_ = m.store.SaveSharedTask(stored)
-	}
-	m.queueMu.Unlock()
-
-	if failed {
-		m.failAsyncTask(task.ID, task.OrchestratorName, errors.New(strings.Join(resultTextParts, "\n\n")))
-		return
-	}
-	m.completeAsyncTask(task.ID, strings.Join(resultTextParts, "\n\n"), task.OrchestratorName)
-}
-
-func (m *TeamManager) forwardRuntimeEvents(taskID string, events <-chan *Event) (string, bool, error) {
+func (m *Manager) forwardRuntimeEvents(taskID string, events <-chan *Event) (string, bool, error) {
 	var finalText string
 	blocked := false
 	for evt := range events {
@@ -503,15 +330,7 @@ func (m *TeamManager) forwardRuntimeEvents(taskID string, events <-chan *Event) 
 	return finalText, blocked, nil
 }
 
-func (m *TeamManager) completeAsyncTask(taskID, finalText, agentName string) {
-	if strings.EqualFold(strings.TrimSpace(agentName), ArchivistAgentName) {
-		if displayText, verifierPrompt, ok := parseArchivistVerifierEscalation(finalText); ok {
-			finalText = displayText
-			if strings.TrimSpace(verifierPrompt) != "" {
-				_, _ = m.SubmitAgentTask(context.Background(), m.taskSessionID(taskID), VerifierAgentName, verifierPrompt)
-			}
-		}
-	}
+func (m *Manager) completeAsyncTask(taskID, finalText, agentName string) {
 	finishedAt := time.Now()
 	task := m.updateAsyncTask(taskID, func(existing *AsyncTask) {
 		existing.Status = AsyncTaskStatusCompleted
@@ -531,10 +350,9 @@ func (m *TeamManager) completeAsyncTask(taskID, finalText, agentName string) {
 		Message:   task.ResultText,
 		Timestamp: finishedAt,
 	}, true)
-	m.updateTaskPlanItemForExecutionTask(taskID, PlanItemStatusCompleted, task.ResultText, "")
 }
 
-func (m *TeamManager) blockAsyncTask(taskID, blocker, agentName string) {
+func (m *Manager) blockAsyncTask(taskID, blocker, agentName string) {
 	finishedAt := time.Now()
 	task := m.updateAsyncTask(taskID, func(existing *AsyncTask) {
 		existing.Status = AsyncTaskStatusBlocked
@@ -554,10 +372,9 @@ func (m *TeamManager) blockAsyncTask(taskID, blocker, agentName string) {
 		Message:   task.ResultText,
 		Timestamp: finishedAt,
 	}, true)
-	m.updateTaskPlanItemForExecutionTask(taskID, PlanItemStatusBlocked, task.ResultText, task.Error)
 }
 
-func (m *TeamManager) taskSessionID(taskID string) string {
+func (m *Manager) taskSessionID(taskID string) string {
 	m.taskMu.RLock()
 	defer m.taskMu.RUnlock()
 	if task := m.asyncTasks[taskID]; task != nil {
@@ -566,7 +383,7 @@ func (m *TeamManager) taskSessionID(taskID string) string {
 	return ""
 }
 
-func (m *TeamManager) failAsyncTask(taskID, agentName string, err error) {
+func (m *Manager) failAsyncTask(taskID, agentName string, err error) {
 	finishedAt := time.Now()
 	transitioned := false
 	task := m.updateAsyncTask(taskID, func(existing *AsyncTask) {
@@ -595,5 +412,4 @@ func (m *TeamManager) failAsyncTask(taskID, agentName string, err error) {
 		Message:   task.Error,
 		Timestamp: finishedAt,
 	}, true)
-	m.updateTaskPlanItemForExecutionTask(taskID, PlanItemStatusFailed, "", task.Error)
 }

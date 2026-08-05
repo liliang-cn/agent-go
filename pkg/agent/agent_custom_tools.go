@@ -6,9 +6,9 @@ import (
 	"strings"
 )
 
-// registeredAgentTool is a Go closure tool attached to a TeamManager-managed
+// registeredAgentTool is a Go closure tool attached to a Manager-managed
 // agent by name. Closures can't be persisted to SQLite, so they live in memory
-// on the TeamManager and are re-applied every time the agent's Service is
+// on the Manager and are re-applied every time the agent's Service is
 // (re)built in buildServiceForModel.
 type registeredAgentTool struct {
 	name        string
@@ -29,7 +29,7 @@ type registeredAgentTool struct {
 //	        "query": map[string]any{"type":"string"}}},
 //	    func(ctx context.Context, a map[string]any) (any, error) { return kb.Search(a["query"]) },
 //	    agent.ToolMetadata{ReadOnly: true, ConcurrencySafe: true})
-func (m *TeamManager) RegisterAgentTool(
+func (m *Manager) RegisterAgentTool(
 	agentName, name, description string,
 	parameters map[string]interface{},
 	handler func(context.Context, map[string]interface{}) (interface{}, error),
@@ -83,7 +83,7 @@ func (m *TeamManager) RegisterAgentTool(
 // onto the freshly-built service. Called from buildServiceForModel (which holds
 // no lock on m.services at that point); it takes its own short read lock to copy
 // the slice.
-func (m *TeamManager) applyRegisteredAgentTools(svc *Service, agentName string) {
+func (m *Manager) applyRegisteredAgentTools(svc *Service, agentName string) {
 	if svc == nil {
 		return
 	}

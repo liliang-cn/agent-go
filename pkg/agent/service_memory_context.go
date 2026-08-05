@@ -64,7 +64,7 @@ func (s *Service) resolveMemoryQueryContextFromContext(ctx context.Context) doma
 			// Keep inherited query context as-is.
 		case queryContext.AgentID == "":
 			queryContext.AgentID = currentAgentID
-		case !isBuiltInStandaloneAgentName(currentAgentID):
+		default:
 			// Custom or primary agents should own their memory scope.
 			queryContext.AgentID = currentAgentID
 		}

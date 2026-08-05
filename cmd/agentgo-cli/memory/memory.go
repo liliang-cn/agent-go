@@ -12,7 +12,7 @@ import (
 	"github.com/liliang-cn/agent-go/v3/pkg/config"
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 	"github.com/liliang-cn/agent-go/v3/pkg/memory"
-	"github.com/liliang-cn/agent-go/v3/pkg/services"
+	"github.com/liliang-cn/agent-go/v3/pkg/poolsvc"
 	"github.com/liliang-cn/agent-go/v3/pkg/store"
 	"github.com/spf13/cobra"
 )
@@ -383,7 +383,7 @@ func createMemoryService(opts *CommandOptions) (*memory.Service, error) {
 	var embedder domain.Embedder
 	var llm domain.Generator
 	if Cfg != nil {
-		poolService := services.GetGlobalPoolService()
+		poolService := poolsvc.Global()
 		if !poolService.IsInitialized() {
 			if initErr := poolService.Initialize(context.Background(), Cfg); initErr != nil {
 				return nil, fmt.Errorf("failed to initialize pool service: %w", initErr)

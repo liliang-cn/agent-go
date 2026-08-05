@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 	"time"
@@ -25,22 +26,6 @@ func TestRunOptionWithPTCEnabledCanDisablePTCForRun(t *testing.T) {
 	WithPTCEnabled(true)(cfg)
 	if cfg.DisablePTC {
 		t.Fatal("expected PTC to be enabled for this run")
-	}
-}
-
-func TestPrepareDispatchRequestIncludesTaskID(t *testing.T) {
-	manager := &TeamManager{}
-	_, opts := manager.prepareDispatchRequest("Responder", "hello", "session-1", "task-42", nil)
-
-	cfg := DefaultRunConfig()
-	for _, opt := range opts {
-		opt(cfg)
-	}
-	if cfg.SessionID != "session-1" {
-		t.Fatalf("expected session id, got %q", cfg.SessionID)
-	}
-	if cfg.TaskID != "task-42" {
-		t.Fatalf("expected task id, got %q", cfg.TaskID)
 	}
 }
 
@@ -100,7 +85,7 @@ func TestUnifiedTaskHydratesMessagesForTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStore() error = %v", err)
 	}
-	manager := NewTeamManager(store)
+	manager := NewManager(store)
 
 	task := &AsyncTask{
 		ID:        "async-1",
@@ -152,7 +137,7 @@ func TestTaskYieldResumePersistsFutureState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStore() error = %v", err)
 	}
-	manager := NewTeamManager(store)
+	manager := NewManager(store)
 	task := &AsyncTask{
 		ID:        "future-1",
 		TaskID:    "future-1",
@@ -201,7 +186,7 @@ func TestTaskServiceFacade(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStore() error = %v", err)
 	}
-	manager := NewTeamManager(store)
+	manager := NewManager(store)
 	manager.upsertAsyncTask(&AsyncTask{
 		ID:        "task-service-1",
 		TaskID:    "task-service-1",
@@ -285,14 +270,14 @@ func TestTaskServiceSubmitReturnsCanonicalTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStore() error = %v", err)
 	}
-	manager := NewTeamManager(store)
-	if err := manager.SeedDefaultMembers(); err != nil {
-		t.Fatalf("SeedDefaultMembers() error = %v", err)
+	manager := NewManager(store)
+	if err := manager.SeedDefaultAgent(); err != nil {
+		t.Fatalf("SeedDefaultAgent() error = %v", err)
 	}
 
 	submitted, err := manager.Tasks().Submit(t.Context(), TaskSubmitOptions{
 		SessionID: "session-submit",
-		AgentName: defaultResponderAgentName,
+		AgentName: DefaultAgentName,
 		Input:     "say hello",
 	})
 	if err != nil {
@@ -324,5 +309,17 @@ func TestPersistRunTaskStateSetsParentTaskID(t *testing.T) {
 	}
 	if task.ParentTaskID != "parent-123" {
 		t.Fatalf("expected parent task id to persist, got %q", task.ParentTaskID)
+	}
+}
+
+func newTaskTestManager() *Manager {
+	return &Manager{
+		services:      make(map[string]*Service),
+		agentSessions: make(map[string]string),
+		asyncTasks:    make(map[string]*AsyncTask),
+		sessionTasks:  make(map[string][]string),
+		taskSubs:      make(map[string]map[chan *TaskEvent]struct{}),
+		taskCancels:   make(map[string]context.CancelFunc),
+		agentTools:    make(map[string][]registeredAgentTool),
 	}
 }

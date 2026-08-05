@@ -238,12 +238,7 @@ func TestRuntimeEmitTurnState_IncludesStageAndReason(t *testing.T) {
 		eventChan:    make(chan *Event, 2),
 	}
 
-	runtime.emitTurnState(TurnStageAwaitingModel, "requesting model output", 2, 3, &IntentRecognitionResult{
-		IntentType:     "web_search",
-		PreferredAgent: defaultOperatorAgentName,
-		RequiresTools:  true,
-		Transition:     "tool_first",
-	})
+	runtime.emitTurnState(TurnStageAwaitingModel, "requesting model output", 2, 3)
 	evt := <-runtime.eventChan
 	if evt.Type != EventTypeStateUpdate {
 		t.Fatalf("event = %+v, want state update", evt)
@@ -259,9 +254,6 @@ func TestRuntimeEmitTurnState_IncludesStageAndReason(t *testing.T) {
 	}
 	if got := evt.StateDelta["tool_call_count"]; got != 3 {
 		t.Fatalf("tool_call_count = %#v, want 3", got)
-	}
-	if got := evt.StateDelta["intent_type"]; got != "web_search" {
-		t.Fatalf("intent_type = %#v, want web_search", got)
 	}
 }
 
@@ -290,17 +282,5 @@ func TestRuntimeEmitToolState_IncludesQueuedExecutingCompleted(t *testing.T) {
 		if got := evt.StateDelta["tool_state"]; got != want {
 			t.Fatalf("tool_state = %#v, want %q", got, want)
 		}
-	}
-}
-
-func TestShouldAutoContinueAfterTextResponse(t *testing.T) {
-	if !shouldAutoContinueAfterTextResponse("") {
-		t.Fatal("expected empty text to trigger auto-continue")
-	}
-	if !shouldAutoContinueAfterTextResponse("   ") {
-		t.Fatal("expected whitespace-only text to trigger auto-continue")
-	}
-	if shouldAutoContinueAfterTextResponse("EXACT_SKILL_SECRET_789") {
-		t.Fatal("expected concrete text response to stop auto-continue")
 	}
 }

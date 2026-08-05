@@ -108,9 +108,9 @@ func TestCheckpointWriterAssignsMonotonicSeq(t *testing.T) {
 	}
 }
 
-func TestTeamManagerWriteCheckpointPrunesAtCap(t *testing.T) {
+func TestManagerWriteCheckpointPrunesAtCap(t *testing.T) {
 	store := newCheckpointTestStore(t)
-	manager := NewTeamManager(store)
+	manager := NewManager(store)
 	taskID := "task-cap"
 	for i := 0; i < MaxCheckpointsPerTask+5; i++ {
 		if err := manager.WriteCheckpoint(taskID, CheckpointReasonRoundEnd, i, "session", "Operator", "", "", []domain.Message{
@@ -153,9 +153,9 @@ func TestTaskServiceResumeFromCheckpointReplaysMessages(t *testing.T) {
 	// Reuse svc's underlying store so checkpoint writes/reads see the
 	// same DB.
 	store := svc.store
-	manager := NewTeamManager(store)
+	manager := NewManager(store)
 	manager.SetConfig(testAgentConfig(t.TempDir()))
-	if err := manager.SeedDefaultMembers(); err != nil {
+	if err := manager.SeedDefaultAgent(); err != nil {
 		t.Fatalf("seed default members: %v", err)
 	}
 	svc.SetCheckpointSink(manager)
@@ -192,7 +192,7 @@ func TestTaskServiceResumeFromCheckpointReplaysMessages(t *testing.T) {
 	// the resumed run through a real Service. For this test the
 	// dispatch path uses the manager's stream override — simplest is
 	// to plug in a stream override that just returns a Complete event.
-	manager.builtInStreamDispatchOverride = func(ctx context.Context, agentName, instruction string, runOptions []RunOption) (<-chan *Event, error) {
+	manager.SetStreamOverride(func(ctx context.Context, agentName, instruction string, runOptions []RunOption) (<-chan *Event, error) {
 		// Verify the resume option was threaded through.
 		cfg := DefaultRunConfig()
 		for _, opt := range runOptions {
@@ -205,7 +205,7 @@ func TestTaskServiceResumeFromCheckpointReplaysMessages(t *testing.T) {
 		ch <- &Event{Type: EventTypeComplete, AgentName: agentName, Content: "final: 42", Timestamp: time.Now()}
 		close(ch)
 		return ch, nil
-	}
+	})
 
 	resumed, err := manager.Tasks().ResumeFromCheckpoint(context.Background(), taskID, CheckpointResumeOptions{})
 	if err != nil {

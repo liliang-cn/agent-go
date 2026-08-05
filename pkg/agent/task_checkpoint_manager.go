@@ -15,8 +15,8 @@ import (
 // WriteCheckpoint persists a snapshot of the given task and prunes older
 // entries beyond the per-task cap. Errors are returned but never block
 // the runtime; callers typically log and continue.
-func (m *TeamManager) WriteCheckpoint(taskID string, reason CheckpointReason, round int, sessionID, agentName, finalText, afterTool string, messages []domain.Message, workspace []byte) error {
-	if m == nil || m.checkpointWriter == nil {
+func (m *Manager) WriteCheckpoint(taskID string, reason CheckpointReason, round int, sessionID, agentName, finalText, afterTool string, messages []domain.Message, workspace []byte) error {
+	if m == nil || m.checkpointWr == nil {
 		return nil
 	}
 	if strings.TrimSpace(taskID) == "" {
@@ -33,12 +33,12 @@ func (m *TeamManager) WriteCheckpoint(taskID string, reason CheckpointReason, ro
 		Workspace: workspace,
 		CreatedAt: time.Now(),
 	}
-	return m.checkpointWriter.Write(cp)
+	return m.checkpointWr.Write(cp)
 }
 
 // ListCheckpoints returns up to limit checkpoints for taskID, newest
 // first. Pass limit=0 for unlimited.
-func (m *TeamManager) ListCheckpoints(taskID string, limit int) ([]*TaskCheckpoint, error) {
+func (m *Manager) ListCheckpoints(taskID string, limit int) ([]*TaskCheckpoint, error) {
 	if m == nil || m.store == nil {
 		return nil, nil
 	}
@@ -47,7 +47,7 @@ func (m *TeamManager) ListCheckpoints(taskID string, limit int) ([]*TaskCheckpoi
 
 // LatestCheckpoint returns the most recent checkpoint for a task, or
 // errCheckpointMissing if none exist.
-func (m *TeamManager) LatestCheckpoint(taskID string) (*TaskCheckpoint, error) {
+func (m *Manager) LatestCheckpoint(taskID string) (*TaskCheckpoint, error) {
 	if m == nil || m.store == nil {
 		return nil, errCheckpointMissing
 	}
@@ -58,7 +58,7 @@ func (m *TeamManager) LatestCheckpoint(taskID string) (*TaskCheckpoint, error) {
 // snapshot, plus the raw gzip-tar archive (for extraction). Returns an empty
 // list (no error) when the task has no checkpoint or its checkpoints carry no
 // workspace snapshot (e.g. the run had no sandbox configured).
-func (m *TeamManager) TaskArtifacts(taskID string) ([]ArchiveEntry, []byte, error) {
+func (m *Manager) TaskArtifacts(taskID string) ([]ArchiveEntry, []byte, error) {
 	if m == nil || m.store == nil {
 		return nil, nil, nil
 	}
@@ -221,7 +221,7 @@ func (s *TaskService) ResumeFromCheckpoint(ctx context.Context, taskID string, o
 	// existing subscriber/event-forwarding plumbing keeps working.
 	go func() {
 		runCtx := context.WithoutCancel(ctx)
-		events, runErr := m.ChatWithMemberStreamWithOptions(runCtx, sessionID, agentName, "", WithTaskID(taskID), WithResumeMessages(resumeMessages))
+		events, runErr := m.RunStream(runCtx, agentName, "", WithSessionID(sessionID), WithTaskID(taskID), WithResumeMessages(resumeMessages))
 		if runErr != nil {
 			m.failAsyncTask(taskID, agentName, runErr)
 			return

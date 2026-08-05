@@ -204,11 +204,6 @@ func (s *Service) prepareTurnInputs(ctx context.Context, currentAgent *Agent, me
 			return isTaskTerminalToolName(tool.Function.Name)
 		})
 	}
-	if looksLikeInformationSeekingQuery(goal) {
-		tools = filterToolDefinitions(tools, func(tool domain.ToolDefinition) bool {
-			return tool.Function.Name != "memory_save"
-		})
-	}
 
 	systemMsg := s.buildSystemPrompt(ctx, currentAgent)
 	genMessages := append([]domain.Message{{Role: "system", Content: systemMsg}}, messages...)
@@ -288,15 +283,7 @@ func (s *Service) collectAllAvailableToolsWithPolicy(ctx context.Context, curren
 		}
 	}
 
-	// Agent Handoffs — always visible so the LLM can route between agents.
 	if currentAgent != nil {
-		for _, handoff := range currentAgent.Handoffs() {
-			if policy.ForceSkillFirst {
-				continue
-			}
-			tool := handoff.ToToolDefinition().ToDomainTool()
-			toolsMap[tool.Function.Name] = tool
-		}
 		// Per-agent custom tools (e.g. tools added directly to an Agent in multi-agent
 		// scenarios) — hidden when PTC is enabled.
 		if !ptcEnabled {
@@ -842,10 +829,6 @@ func markRelevantSkillsSent(session *Session, names []string) {
 }
 
 func (s *Service) buildWebSearchPromptNote(currentAgent *Agent) string {
-	if isDispatchOnlyAgent(currentAgent) || (currentAgent == nil && isDispatchOnlyAgent(s.agent)) {
-		return ""
-	}
-
 	switch s.webSearchMode() {
 	case domain.WebSearchModeNative:
 		return "Web search capability:\n- Up-to-date web lookups are available through the model's native web search capability.\n- Do not search the tool catalog for mcp_websearch tools when you need current web information."

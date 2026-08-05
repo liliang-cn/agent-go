@@ -9,6 +9,19 @@ import (
 	"github.com/liliang-cn/agent-go/v3/pkg/ptc"
 )
 
+// MCPToolExecutor defines the interface for MCP tool execution.
+type MCPToolExecutor interface {
+	CallTool(ctx context.Context, toolName string, args map[string]interface{}) (interface{}, error)
+	ListTools() []domain.ToolDefinition
+	AddServer(ctx context.Context, name string, command string, args []string) error
+}
+
+// MCPToolMetadataProvider is implemented by MCP executors that can report
+// per-tool execution metadata (read-only / concurrency-safe / destructive).
+type MCPToolMetadataProvider interface {
+	ToolMetadata(toolName string) (ToolMetadata, bool)
+}
+
 // mcpToolAdapter wraps mcp.Service to implement MCPToolExecutor
 type mcpToolAdapter struct {
 	service *mcp.Service

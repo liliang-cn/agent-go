@@ -116,33 +116,6 @@ func (s *Session) Clear() {
 	s.UpdatedAt = time.Now()
 }
 
-// AddHandoffMessage adds a handoff message to the session
-// Converts HandoffMessage to domain.Message
-func (s *Session) AddHandoffMessage(msg HandoffMessage) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// Convert tool calls
-	toolCalls := make([]domain.ToolCall, len(msg.ToolCalls))
-	for i, tc := range msg.ToolCalls {
-		toolCalls[i] = domain.ToolCall{
-			ID:   tc.ID,
-			Type: "function",
-			Function: domain.FunctionCall{
-				Name:      tc.Name,
-				Arguments: tc.Arguments,
-			},
-		}
-	}
-
-	s.Messages = append(s.Messages, domain.Message{
-		Role:      msg.Role,
-		Content:   msg.Content,
-		ToolCalls: toolCalls,
-	})
-	s.UpdatedAt = time.Now()
-}
-
 // SetContext sets a context value
 func (s *Session) SetContext(key string, value interface{}) {
 	s.mu.Lock()

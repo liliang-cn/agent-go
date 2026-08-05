@@ -1,0 +1,1054 @@
+package poolsvc
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"strings"
+	"sync"
+
+	"github.com/liliang-cn/agent-go/v3/pkg/config"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/pool"
+	"github.com/liliang-cn/agent-go/v3/pkg/store"
+)
+
+var (
+	globalPoolService *Service
+	globalPoolMu      sync.RWMutex
+)
+
+// Service 管理全局LLM和Embedding Pools
+type Service struct {
+	config        *config.Config
+	llmPool       *pool.Pool
+	embeddingPool *pool.Pool
+	db            *store.AgentGoDB
+	initialized   bool
+	mu            sync.RWMutex
+}
+
+// Global 获取进程级全局 pool 服务
+func Global() *Service {
+	globalPoolMu.RLock()
+	if globalPoolService != nil {
+		globalPoolMu.RUnlock()
+		return globalPoolService
+	}
+	globalPoolMu.RUnlock()
+
+	globalPoolMu.Lock()
+	defer globalPoolMu.Unlock()
+
+	if globalPoolService != nil {
+		return globalPoolService
+	}
+
+	globalPoolService = &Service{}
+	return globalPoolService
+}
+
+// SetGlobal installs or replaces the process-global pool service.
+// Passing nil clears the installed singleton; the next Global()
+// call will lazily create a fresh empty instance.
+//
+// The caller owns lifecycle management for both the previous and replacement
+// services. This function does not automatically Close or Shutdown either one.
+func SetGlobal(service *Service) (previous *Service) {
+	globalPoolMu.Lock()
+	defer globalPoolMu.Unlock()
+
+	previous = globalPoolService
+	globalPoolService = service
+	return previous
+}
+
+// Initialize 初始化pool
+func (s *Service) Initialize(ctx context.Context, cfg *config.Config) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.initialized {
+		return nil
+	}
+
+	s.config = cfg
+
+	// 1. Initialize Unified Database
+	db, err := store.NewAgentGoDB(cfg.AgentDBPath())
+	if err != nil {
+		return fmt.Errorf("failed to initialize agentgo db: %w", err)
+	}
+	s.db = db
+
+	// 2. Load DB-backed runtime state into the in-memory config. TOML is not a source of truth here.
+	if err := cfg.LoadDBBackedRuntimeFrom(db); err != nil {
+		return fmt.Errorf("failed to load db-backed pool config: %w", err)
+	}
+	llmProviders := append([]pool.Provider(nil), cfg.LLM.Providers...)
+	llmStrategy := cfg.LLM.Strategy
+	if llmStrategy == "" {
+		llmStrategy = pool.StrategyRoundRobin
+	}
+	llmEnabled := len(llmProviders) > 0
+
+	llmPool, err := pool.NewPool(pool.PoolConfig{
+		Enabled:   llmEnabled,
+		Strategy:  llmStrategy,
+		Providers: llmProviders,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create LLM pool: %w", err)
+	}
+	s.llmPool = llmPool
+
+	embStrategy := cfg.RAG.Embedding.Strategy
+	if embStrategy == "" {
+		embStrategy = pool.StrategyRoundRobin
+	}
+
+	// 3. Build embedding pool from DB providers.
+	//    Only DEDICATED embedding providers are used. We deliberately do NOT
+	//    fall back to the LLM/chat providers for embeddings: most chat gateways
+	//    don't serve /embeddings, so the old fallback produced a hard 404 on
+	//    every memory/RAG write. With no embedding provider, embedding is simply
+	//    disabled (vector memory/RAG degrade gracefully) and we hint once.
+	embeddingModel := cfg.RAG.EmbeddingModel
+	var embeddingProviders []pool.Provider
+	if len(cfg.RAG.Embedding.Providers) > 0 {
+		embeddingProviders = append(embeddingProviders, cfg.RAG.Embedding.Providers...)
+	} else {
+		hintNoEmbeddingProvider()
+	}
+	embEnabled := strings.TrimSpace(embeddingModel) != "" && len(embeddingProviders) > 0
+
+	embeddingPool, err := pool.NewPool(pool.PoolConfig{
+		Enabled:   embEnabled,
+		Strategy:  embStrategy,
+		Providers: embeddingProviders,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create embedding pool: %w", err)
+	}
+	s.embeddingPool = embeddingPool
+
+	s.initialized = true
+	return nil
+}
+
+var noEmbeddingHintOnce sync.Once
+
+// hintNoEmbeddingProvider prints a one-time, non-fatal nudge when no dedicated
+// embedding provider is configured. Vector memory / RAG are disabled until one
+// is added; everything else works. Kept to stderr so it never pollutes command
+// output that gets parsed.
+func hintNoEmbeddingProvider() {
+	noEmbeddingHintOnce.Do(func() {
+		fmt.Fprintln(os.Stderr, "ℹ️  No embedding provider configured — vector memory/RAG are disabled "+
+			"(text chat, tools, and skills all work). To enable them, add one, e.g.:\n"+
+			"    agentgo embedding add --name ollama --url http://localhost:11434/v1 --model nomic-embed-text")
+	})
+}
+
+// GetLLM 获取LLM client（自动选择）
+func (s *Service) GetLLM() (*pool.Client, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if !s.initialized {
+		return nil, fmt.Errorf("pool service not initialized")
+	}
+
+	return s.llmPool.Get()
+}
+
+// GetLLMByName 按名称获取LLM client，兼容旧调用；名称指 provider 名称。
+func (s *Service) GetLLMByName(name string) (*pool.Client, error) {
+	return s.GetLLMByProvider(name)
+}
+
+// GetLLMByProvider 按 provider 名称获取LLM client。
+func (s *Service) GetLLMByProvider(name string) (*pool.Client, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if !s.initialized {
+		return nil, fmt.Errorf("pool service not initialized")
+	}
+
+	return s.llmPool.GetByProvider(name)
+}
+
+// GetLLMByProviderAndModel returns a client for an exact provider/model pair.
+func (s *Service) GetLLMByProviderAndModel(name, modelName string) (*pool.Client, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if !s.initialized {
+		return nil, fmt.Errorf("pool service not initialized")
+	}
+
+	return s.llmPool.GetByProviderAndModel(name, modelName)
+}
+
+// GetLLMByModel 按模型名获取LLM client。
+func (s *Service) GetLLMByModel(modelName string) (*pool.Client, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if !s.initialized {
+		return nil, fmt.Errorf("pool service not initialized")
+	}
+
+	return s.llmPool.GetByModel(modelName)
+}
+
+// GetLLMByCapability 按能力等级获取LLM client
+func (s *Service) GetLLMByCapability(minCapability int) (*pool.Client, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if !s.initialized {
+		return nil, fmt.Errorf("pool service not initialized")
+	}
+
+	return s.llmPool.GetByCapability(minCapability)
+}
+
+// ReleaseLLM 释放LLM client
+func (s *Service) ReleaseLLM(client *pool.Client) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.initialized {
+		s.llmPool.Release(client)
+	}
+}
+
+// GetEmbedding 获取Embedding client（自动选择）
+func (s *Service) GetEmbedding() (*pool.Client, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if !s.initialized {
+		return nil, fmt.Errorf("pool service not initialized")
+	}
+
+	return s.embeddingPool.Get()
+}
+
+// GetEmbeddingByName 按名称获取Embedding client
+func (s *Service) GetEmbeddingByName(name string) (*pool.Client, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if !s.initialized {
+		return nil, fmt.Errorf("pool service not initialized")
+	}
+
+	return s.embeddingPool.GetByName(name)
+}
+
+// GetEmbeddingByCapability 按能力等级获取Embedding client
+func (s *Service) GetEmbeddingByCapability(minCapability int) (*pool.Client, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if !s.initialized {
+		return nil, fmt.Errorf("pool service not initialized")
+	}
+
+	return s.embeddingPool.GetByCapability(minCapability)
+}
+
+// ReleaseEmbedding 释放Embedding client
+func (s *Service) ReleaseEmbedding(client *pool.Client) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.initialized {
+		s.embeddingPool.Release(client)
+	}
+}
+
+// GetAgentGoDB returns the underlying unified database
+func (s *Service) GetAgentGoDB() *store.AgentGoDB {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.db
+}
+
+// ChatOptions 顶级Chat API配置选项
+type ChatOptions struct {
+	SessionID       string
+	Provider        string
+	Model           string
+	MaxTokens       int
+	Temperature     float64
+	SystemPrompt    string
+	HistoryLimit    int
+	SkipPersistence bool
+	Debug           bool
+}
+
+// Chat 顶级Chat API：支持Provider指定与历史自动持久化
+func (s *Service) Chat(ctx context.Context, message string, opts ChatOptions) (string, error) {
+	s.mu.RLock()
+	if !s.initialized {
+		s.mu.RUnlock()
+		return "", fmt.Errorf("pool service not initialized")
+	}
+	s.mu.RUnlock()
+
+	// 1. Resolve Provider and Model
+	hint := pool.SelectionHint{
+		PreferredProvider: opts.Provider,
+		PreferredModel:    opts.Model,
+	}
+	client, err := s.getChatClient(hint)
+	if err != nil {
+		return "", err
+	}
+	defer s.llmPool.Release(client)
+
+	// 2. Load History from Unified DB
+	var messages []domain.Message
+	if opts.SessionID != "" && s.db != nil {
+		history, _ := s.db.GetMessages(opts.SessionID, opts.HistoryLimit)
+		for _, m := range history {
+			messages = append(messages, domain.Message{Role: m.Role, Content: m.Content})
+		}
+	}
+
+	// 3. Prepare Current Context
+	if opts.SystemPrompt != "" {
+		messages = append([]domain.Message{{Role: "system", Content: opts.SystemPrompt}}, messages...)
+	}
+	messages = append(messages, domain.Message{Role: "user", Content: message})
+
+	// 4. Generate Response
+	genOpts := &domain.GenerationOptions{
+		MaxTokens:   opts.MaxTokens,
+		Temperature: opts.Temperature,
+	}
+
+	// Debug: print prompt
+	if opts.Debug {
+		tc := pool.NewTokenCounter()
+		model := client.GetModelName()
+		promptTokens := tc.EstimateConversationTokens(messages, model)
+		fmt.Println("\n============================================")
+		fmt.Println("🐛 DEBUG - PROVIDER/MODEL")
+		fmt.Printf("Provider: %s | Model: %s\n", client.GetProviderName(), client.GetModelName())
+		fmt.Println("\n🐛 DEBUG - PROMPT")
+		for i, m := range messages {
+			role := m.Role
+			content := m.Content
+			if len(content) > 200 {
+				content = content[:200] + "..."
+			}
+			fmt.Printf("[%d] %s: %s\n", i, role, content)
+		}
+		fmt.Printf("\n🐛 DEBUG - TOKENS")
+		fmt.Printf("Prompt tokens (est.): %d\n", promptTokens)
+		fmt.Println("============================================")
+	}
+
+	// Direct LLM chat doesn't use tools here, but we use the flexible GenerateWithTools
+	res, err := client.GenerateWithTools(ctx, messages, nil, genOpts)
+	if err != nil {
+		return "", err
+	}
+	answer := res.Content
+
+	// Debug: print response
+	if opts.Debug {
+		tc := pool.NewTokenCounter()
+		model := client.GetModelName()
+		promptTokens := tc.EstimateConversationTokens(messages, model)
+		respTokens := tc.EstimateTokens(answer, model)
+		fmt.Println("\n============================================")
+		fmt.Println("🐛 DEBUG - RESPONSE")
+		fmt.Println(answer)
+		fmt.Printf("\n🐛 DEBUG - TOKENS")
+		fmt.Printf("Prompt tokens (est.): %d | Response tokens (est.): %d | Total (est.): %d\n", promptTokens, respTokens, promptTokens+respTokens)
+		fmt.Println("============================================")
+	}
+
+	// 5. Automatic Persistence to agentgo.db
+	if !opts.SkipPersistence && opts.SessionID != "" && s.db != nil {
+		go func() {
+			_ = s.db.AddMessage(opts.SessionID, "user", message, nil)
+			_ = s.db.AddMessage(opts.SessionID, "assistant", answer, map[string]interface{}{
+				"provider": client.GetProviderName(),
+				"model":    client.GetModelName(),
+			})
+		}()
+	}
+
+	return answer, nil
+}
+
+// StreamChat 顶级流式Chat API：支持Provider指定与历史自动持久化
+func (s *Service) StreamChat(ctx context.Context, message string, opts ChatOptions, callback func(string)) error {
+	s.mu.RLock()
+	if !s.initialized {
+		s.mu.RUnlock()
+		return fmt.Errorf("pool service not initialized")
+	}
+	s.mu.RUnlock()
+
+	// 1. Resolve Provider and Model
+	hint := pool.SelectionHint{
+		PreferredProvider: opts.Provider,
+		PreferredModel:    opts.Model,
+	}
+	client, err := s.getChatClient(hint)
+	if err != nil {
+		return err
+	}
+	defer s.llmPool.Release(client)
+
+	// 2. Load History from Unified DB
+	var messages []domain.Message
+	if opts.SessionID != "" && s.db != nil {
+		history, _ := s.db.GetMessages(opts.SessionID, opts.HistoryLimit)
+		for _, m := range history {
+			messages = append(messages, domain.Message{Role: m.Role, Content: m.Content})
+		}
+	}
+
+	// 3. Prepare Current Context
+	if opts.SystemPrompt != "" {
+		messages = append([]domain.Message{{Role: "system", Content: opts.SystemPrompt}}, messages...)
+	}
+	messages = append(messages, domain.Message{Role: "user", Content: message})
+
+	// Debug: print prompt and tokens
+	if opts.Debug {
+		tc := pool.NewTokenCounter()
+		model := client.GetModelName()
+		promptTokens := tc.EstimateConversationTokens(messages, model)
+		fmt.Println("\n============================================")
+		fmt.Println("🐛 DEBUG - PROVIDER/MODEL")
+		fmt.Printf("Provider: %s | Model: %s\n", client.GetProviderName(), client.GetModelName())
+		fmt.Println("\n🐛 DEBUG - PROMPT")
+		for i, m := range messages {
+			role := m.Role
+			content := m.Content
+			if len(content) > 200 {
+				content = content[:200] + "..."
+			}
+			fmt.Printf("[%d] %s: %s\n", i, role, content)
+		}
+		fmt.Printf("\n🐛 DEBUG - TOKENS")
+		fmt.Printf("Prompt tokens (est.): %d\n", promptTokens)
+		fmt.Println("============================================")
+	}
+
+	// 4. Stream and Capture Answer
+	var fullAnswer strings.Builder
+	wrappedCallback := func(delta *domain.GenerationResult) error {
+		if delta.Content != "" {
+			fullAnswer.WriteString(delta.Content)
+			callback(delta.Content)
+		}
+		return nil
+	}
+
+	genOpts := &domain.GenerationOptions{
+		MaxTokens:   opts.MaxTokens,
+		Temperature: opts.Temperature,
+	}
+
+	err = client.StreamWithTools(ctx, messages, nil, genOpts, wrappedCallback)
+
+	// Debug: print response tokens
+	if opts.Debug && err == nil {
+		tc := pool.NewTokenCounter()
+		model := client.GetModelName()
+		respTokens := tc.EstimateTokens(fullAnswer.String(), model)
+		promptTokens := tc.EstimateConversationTokens(messages[:len(messages)-1], model)
+		fmt.Println("\n============================================")
+		fmt.Println("🐛 DEBUG - RESPONSE")
+		fmt.Printf("Response tokens (est.): %d | Total (est.): %d\n", respTokens, promptTokens+respTokens)
+		fmt.Println("============================================")
+	}
+
+	// 5. Automatic Persistence to agentgo.db once stream ends
+	if err == nil && !opts.SkipPersistence && opts.SessionID != "" && s.db != nil {
+		go func() {
+			_ = s.db.AddMessage(opts.SessionID, "user", message, nil)
+			_ = s.db.AddMessage(opts.SessionID, "assistant", fullAnswer.String(), map[string]interface{}{
+				"provider": client.GetProviderName(),
+				"model":    client.GetModelName(),
+				"stream":   true,
+			})
+		}()
+	}
+
+	return err
+}
+
+// Generate 使用pool生成文本（自动获取和释放）
+func (s *Service) Generate(ctx context.Context, prompt string, opts *domain.GenerationOptions) (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if !s.initialized {
+		return "", fmt.Errorf("pool service not initialized")
+	}
+
+	return s.llmPool.Generate(ctx, prompt, opts)
+}
+
+// GenerateWithTools 使用pool和工具生成
+func (s *Service) GenerateWithTools(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions) (*domain.GenerationResult, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if !s.initialized {
+		return nil, fmt.Errorf("pool service not initialized")
+	}
+
+	return s.llmPool.GenerateWithTools(ctx, messages, tools, opts)
+}
+
+// GenerateStructured 使用pool生成结构化输出
+func (s *Service) GenerateStructured(ctx context.Context, prompt string, schema interface{}, opts *domain.GenerationOptions) (*domain.StructuredResult, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if !s.initialized {
+		return nil, fmt.Errorf("pool service not initialized")
+	}
+
+	return s.llmPool.GenerateStructured(ctx, prompt, schema, opts)
+}
+
+// RecognizeIntent 使用pool识别意图
+func (s *Service) RecognizeIntent(ctx context.Context, request string) (*domain.IntentResult, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if !s.initialized {
+		return nil, fmt.Errorf("pool service not initialized")
+	}
+
+	return s.llmPool.RecognizeIntent(ctx, request)
+}
+
+// Stream 使用pool流式生成
+func (s *Service) Stream(ctx context.Context, prompt string, opts *domain.GenerationOptions, callback func(string)) error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if !s.initialized {
+		return fmt.Errorf("pool service not initialized")
+	}
+
+	return s.llmPool.Stream(ctx, prompt, opts, callback)
+}
+
+// StreamWithTools 使用pool和工具流式生成
+func (s *Service) StreamWithTools(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions, callback domain.ToolCallCallback) error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if !s.initialized {
+		return fmt.Errorf("pool service not initialized")
+	}
+
+	return s.llmPool.StreamWithTools(ctx, messages, tools, opts, callback)
+}
+
+// Embed 使用pool向量化
+func (s *Service) Embed(ctx context.Context, text string) ([]float64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if !s.initialized {
+		return nil, fmt.Errorf("pool service not initialized")
+	}
+
+	return s.embeddingPool.Embed(ctx, text)
+}
+
+// EmbedMultiple 使用pool向量化多个文本
+func (s *Service) EmbedMultiple(ctx context.Context, texts []string) ([][]float64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if !s.initialized {
+		return nil, fmt.Errorf("pool service not initialized")
+	}
+
+	return s.embeddingPool.EmbedMultiple(ctx, texts)
+}
+
+// EmbedBatch 使用pool批量向量化（实现 domain.Embedder 接口）
+func (s *Service) EmbedBatch(ctx context.Context, texts []string) ([][]float64, error) {
+	return s.EmbedMultiple(ctx, texts)
+}
+
+// GetLLMStatus 获取LLM pool状态
+func (s *Service) GetLLMStatus() map[string]pool.ClientStatus {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if !s.initialized {
+		return nil
+	}
+
+	return s.llmPool.GetStatus()
+}
+
+// GetEmbeddingStatus 获取Embedding pool状态
+func (s *Service) GetEmbeddingStatus() map[string]pool.ClientStatus {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if !s.initialized {
+		return nil
+	}
+
+	return s.embeddingPool.GetStatus()
+}
+
+// IsInitialized 是否已初始化
+func (s *Service) IsInitialized() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.initialized
+}
+
+// Close 关闭pool
+func (s *Service) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.initialized {
+		return nil
+	}
+
+	if s.llmPool != nil {
+		s.llmPool.Close()
+	}
+	if s.embeddingPool != nil {
+		s.embeddingPool.Close()
+	}
+
+	s.initialized = false
+	return nil
+}
+
+// Shutdown 关闭并清理全局pool
+func (s *Service) Shutdown() error {
+	globalPoolMu.Lock()
+	defer globalPoolMu.Unlock()
+
+	if err := s.Close(); err != nil {
+		return err
+	}
+
+	globalPoolService = nil
+	return nil
+}
+
+// mustGetConfig reads a config key from the DB, returning fallback on any error.
+func mustGetConfig(db *store.AgentGoDB, key, fallback string) string {
+	v, err := db.GetConfig(key)
+	if err != nil || v == "" {
+		return fallback
+	}
+	return v
+}
+
+// ===== LLM Pool Config =====
+
+// LLMPoolConfig holds the pool-level settings stored in the database.
+type LLMPoolConfig struct {
+	Strategy       pool.SelectionStrategy `json:"strategy"`
+	EmbeddingModel string                 `json:"embedding_model"`
+}
+
+// GetLLMPoolConfig returns the current pool-level settings from the database.
+func (s *Service) GetLLMPoolConfig() (*LLMPoolConfig, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if !s.initialized {
+		return nil, fmt.Errorf("pool service not initialized")
+	}
+	strategy := mustGetConfig(s.db, "llm.strategy", "round_robin")
+	embeddingModel := mustGetConfig(s.db, "rag.embedding_model", s.config.RAG.EmbeddingModel)
+	return &LLMPoolConfig{
+		Strategy:       pool.SelectionStrategy(strategy),
+		EmbeddingModel: embeddingModel,
+	}, nil
+}
+
+// SaveLLMPoolConfig persists pool-level settings to the database.
+// Changes take effect on next restart (pool strategy/enabled cannot be
+// hot-swapped without rebuilding the pool).
+func (s *Service) SaveLLMPoolConfig(cfg LLMPoolConfig) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.initialized {
+		return fmt.Errorf("pool service not initialized")
+	}
+	if err := s.db.SaveConfig("llm.strategy", string(cfg.Strategy)); err != nil {
+		return fmt.Errorf("save llm.strategy: %w", err)
+	}
+	if err := s.db.SaveConfig("rag.embedding_model", cfg.EmbeddingModel); err != nil {
+		return fmt.Errorf("save rag.embedding_model: %w", err)
+	}
+	return nil
+}
+
+// ===== Provider CRUD =====
+
+// ListProviders returns all persisted providers from the database.
+func (s *Service) ListProviders() ([]*store.LLMProvider, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if !s.initialized {
+		return nil, fmt.Errorf("pool service not initialized")
+	}
+	return s.db.ListProviders()
+}
+
+// SaveProvider persists a provider to the database and syncs the live pool.
+// Creates a new provider if it doesn't exist; updates it otherwise.
+func (s *Service) SaveProvider(p *store.LLMProvider) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.initialized {
+		return fmt.Errorf("pool service not initialized")
+	}
+	if err := s.db.SaveProvider(p); err != nil {
+		return err
+	}
+	return s.syncProviderToPool(p)
+}
+
+// DeleteProvider removes a provider from the database and the live pool.
+func (s *Service) DeleteProvider(name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.initialized {
+		return fmt.Errorf("pool service not initialized")
+	}
+	if err := s.db.DeleteProvider(name); err != nil {
+		return err
+	}
+	_ = s.llmPool.RemoveProvider(name) // ignore "not found" — already gone
+	return nil
+}
+
+// GetProvider returns a single provider by name from the database.
+func (s *Service) GetProvider(name string) (*store.LLMProvider, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if !s.initialized {
+		return nil, fmt.Errorf("pool service not initialized")
+	}
+	return s.db.GetProvider(name)
+}
+
+// syncProviderToPool updates (or adds/removes) a provider in the live pool
+// based on its Enabled flag. Must be called with s.mu held for writing.
+func (s *Service) syncProviderToPool(p *store.LLMProvider) error {
+	prov := store.ToPoolProvider(p)
+	if !p.Enabled {
+		_ = s.llmPool.RemoveProvider(p.Name)
+		return nil
+	}
+	if err := s.llmPool.UpdateProvider(prov); err != nil {
+		if !errors.Is(err, pool.ErrProviderNotFound) {
+			return err
+		}
+		// Provider not in pool yet — add it.
+		return s.llmPool.AddProvider(prov)
+	}
+	return nil
+}
+
+// ===== Embedding Provider CRUD =====
+
+// ListEmbeddingProviders returns all persisted embedding providers from the database.
+func (s *Service) ListEmbeddingProviders() ([]*store.EmbeddingProvider, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if !s.initialized {
+		return nil, fmt.Errorf("pool service not initialized")
+	}
+	return s.db.ListEmbeddingProviders()
+}
+
+// SaveEmbeddingProvider persists an embedding provider and syncs the live pool.
+func (s *Service) SaveEmbeddingProvider(p *store.EmbeddingProvider) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.initialized {
+		return fmt.Errorf("pool service not initialized")
+	}
+	if err := s.db.SaveEmbeddingProvider(p); err != nil {
+		return err
+	}
+	prov := store.ToPoolEmbeddingProvider(p)
+	if !p.Enabled {
+		_ = s.embeddingPool.RemoveProvider(p.Name)
+		return nil
+	}
+	if err := s.embeddingPool.UpdateProvider(prov); err != nil {
+		if !errors.Is(err, pool.ErrProviderNotFound) {
+			return err
+		}
+		return s.embeddingPool.AddProvider(prov)
+	}
+	return nil
+}
+
+// DeleteEmbeddingProvider removes an embedding provider from DB and live pool.
+func (s *Service) DeleteEmbeddingProvider(name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.initialized {
+		return fmt.Errorf("pool service not initialized")
+	}
+	if err := s.db.DeleteEmbeddingProvider(name); err != nil {
+		return err
+	}
+	_ = s.embeddingPool.RemoveProvider(name)
+	return nil
+}
+
+// GetEmbeddingProvider returns a single embedding provider by name.
+func (s *Service) GetEmbeddingProvider(name string) (*store.EmbeddingProvider, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if !s.initialized {
+		return nil, fmt.Errorf("pool service not initialized")
+	}
+	return s.db.GetEmbeddingProvider(name)
+}
+
+// EmbeddingPoolConfig holds pool-level settings for the embedding pool.
+type EmbeddingPoolConfig struct {
+	Strategy pool.SelectionStrategy `json:"strategy"`
+}
+
+// GetEmbeddingPoolConfig returns current embedding pool settings from the database.
+func (s *Service) GetEmbeddingPoolConfig() (*EmbeddingPoolConfig, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if !s.initialized {
+		return nil, fmt.Errorf("pool service not initialized")
+	}
+	strategy := mustGetConfig(s.db, "embedding.strategy", "round_robin")
+	return &EmbeddingPoolConfig{
+		Strategy: pool.SelectionStrategy(strategy),
+	}, nil
+}
+
+// SaveEmbeddingPoolConfig persists embedding pool-level settings.
+// Changes take effect on next restart.
+func (s *Service) SaveEmbeddingPoolConfig(cfg EmbeddingPoolConfig) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.initialized {
+		return fmt.Errorf("pool service not initialized")
+	}
+	if err := s.db.SaveConfig("embedding.strategy", string(cfg.Strategy)); err != nil {
+		return fmt.Errorf("save embedding.strategy: %w", err)
+	}
+	return nil
+}
+
+// ===== 兼容层 - 让旧代码继续工作 =====
+
+// llmServiceWrapper 包装Pool为domain.Generator
+type llmServiceWrapper struct {
+	pool *pool.Pool
+	hint pool.SelectionHint
+}
+
+func (w *llmServiceWrapper) GetModelName() string {
+	client, err := w.pool.GetWithHint(w.hint)
+	if err != nil {
+		return w.hint.PreferredModel
+	}
+	defer w.pool.Release(client)
+	return client.GetModelName()
+}
+
+func (w *llmServiceWrapper) GetBaseURL() string {
+	client, err := w.pool.GetWithHint(w.hint)
+	if err != nil {
+		return ""
+	}
+	defer w.pool.Release(client)
+	return client.GetBaseURL()
+}
+
+func (w *llmServiceWrapper) IsFastModel() bool {
+	client, err := w.pool.GetWithHint(w.hint)
+	if err != nil {
+		return domain.IsFastModelName(w.hint.PreferredModel)
+	}
+	defer w.pool.Release(client)
+	return client.IsFastModel()
+}
+
+func (w *llmServiceWrapper) Generate(ctx context.Context, prompt string, opts *domain.GenerationOptions) (string, error) {
+	client, err := w.pool.GetWithHint(w.hint)
+	if err != nil {
+		return "", err
+	}
+	defer w.pool.Release(client)
+	return client.Generate(ctx, prompt, opts)
+}
+
+func (w *llmServiceWrapper) Stream(ctx context.Context, prompt string, opts *domain.GenerationOptions, callback func(string)) error {
+	client, err := w.pool.GetWithHint(w.hint)
+	if err != nil {
+		return err
+	}
+	defer w.pool.Release(client)
+	return client.Stream(ctx, prompt, opts, callback)
+}
+
+func (w *llmServiceWrapper) GenerateWithTools(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions) (*domain.GenerationResult, error) {
+	client, err := w.pool.GetWithHint(w.hint)
+	if err != nil {
+		return nil, err
+	}
+	defer w.pool.Release(client)
+	return client.GenerateWithTools(ctx, messages, tools, opts)
+}
+
+func (w *llmServiceWrapper) StreamWithTools(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions, callback domain.ToolCallCallback) error {
+	client, err := w.pool.GetWithHint(w.hint)
+	if err != nil {
+		return err
+	}
+	defer w.pool.Release(client)
+	return client.StreamWithTools(ctx, messages, tools, opts, callback)
+}
+
+func (w *llmServiceWrapper) GenerateStructured(ctx context.Context, prompt string, schema interface{}, opts *domain.GenerationOptions) (*domain.StructuredResult, error) {
+	client, err := w.pool.GetWithHint(w.hint)
+	if err != nil {
+		return nil, err
+	}
+	defer w.pool.Release(client)
+	return client.GenerateStructured(ctx, prompt, schema, opts)
+}
+
+func (w *llmServiceWrapper) RecognizeIntent(ctx context.Context, request string) (*domain.IntentResult, error) {
+	client, err := w.pool.GetWithHint(w.hint)
+	if err != nil {
+		return nil, err
+	}
+	defer w.pool.Release(client)
+	return client.RecognizeIntent(ctx, request)
+}
+
+func (w *llmServiceWrapper) ExtractMetadata(ctx context.Context, content string, model string) (*domain.ExtractedMetadata, error) {
+	return w.pool.ExtractMetadataWithHint(ctx, w.hint, content, model)
+}
+
+// embeddingServiceWrapper 包装Pool为domain.Embedder
+type embeddingServiceWrapper struct {
+	pool *pool.Pool
+}
+
+func (w *embeddingServiceWrapper) Embed(ctx context.Context, text string) ([]float64, error) {
+	return w.pool.Embed(ctx, text)
+}
+
+func (w *embeddingServiceWrapper) EmbedBatch(ctx context.Context, texts []string) ([][]float64, error) {
+	return w.pool.EmbedMultiple(ctx, texts)
+}
+
+// GetGlobalLLM 获取全局LLM服务（兼容旧代码）
+func GetGlobalLLM() (domain.Generator, error) {
+	service := Global()
+	if !service.IsInitialized() {
+		return nil, fmt.Errorf("pool service not initialized")
+	}
+	return &llmServiceWrapper{pool: service.llmPool}, nil
+}
+
+// GetGlobalEmbeddingService 获取全局Embedding服务（兼容旧代码）
+func GetGlobalEmbeddingService(ctx context.Context) (domain.Embedder, error) {
+	service := Global()
+	if !service.IsInitialized() {
+		return nil, fmt.Errorf("pool service not initialized")
+	}
+	return &embeddingServiceWrapper{pool: service.embeddingPool}, nil
+}
+
+// GetGlobalLLMService 获取全局LLM Service（兼容旧代码）
+// 这个函数返回Service，兼容旧的GetGlobalLLMService()调用
+func GetGlobalLLMService() *Service {
+	return Global()
+}
+
+// GetLLMService 获取LLM服务（兼容旧代码）
+func (s *Service) GetLLMService() (domain.Generator, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if !s.initialized {
+		return nil, fmt.Errorf("pool service not initialized")
+	}
+	return &llmServiceWrapper{pool: s.llmPool}, nil
+}
+
+func (s *Service) GetLLMServiceByProvider(name string) (domain.Generator, error) {
+	return s.GetLLMServiceWithHint(pool.SelectionHint{PreferredProvider: name})
+}
+
+func (s *Service) GetLLMServiceByProviderAndModel(name, modelName string) (domain.Generator, error) {
+	return s.GetLLMServiceWithHint(pool.SelectionHint{PreferredProvider: name, PreferredModel: modelName})
+}
+
+func (s *Service) GetLLMServiceByModel(modelName string) (domain.Generator, error) {
+	return s.GetLLMServiceWithHint(pool.SelectionHint{PreferredModel: modelName})
+}
+
+func (s *Service) GetLLMServiceWithHint(hint pool.SelectionHint) (domain.Generator, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if !s.initialized {
+		return nil, fmt.Errorf("pool service not initialized")
+	}
+	return &llmServiceWrapper{pool: s.llmPool, hint: hint}, nil
+}
+
+// GetEmbeddingService 获取Embedding服务（兼容旧代码）
+func (s *Service) GetEmbeddingService(ctx context.Context) (domain.Embedder, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if !s.initialized {
+		return nil, fmt.Errorf("pool service not initialized")
+	}
+	return &embeddingServiceWrapper{pool: s.embeddingPool}, nil
+}
+
+func (s *Service) getChatClient(hint pool.SelectionHint) (*pool.Client, error) {
+	if hint.PreferredProvider != "" && hint.PreferredModel != "" {
+		return s.llmPool.GetByProviderAndModel(hint.PreferredProvider, hint.PreferredModel)
+	}
+	return s.llmPool.GetWithHint(hint)
+}

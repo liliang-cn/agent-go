@@ -1,0 +1,16 @@
+name: gate_no_tools_when_task_forbids_them
+description: >
+  v3 acceptance gate ③ — an explicit "without using any tools" is honoured
+  by construction: the runtime attaches ZERO tool definitions to the model
+  call (no PTC execute_javascript, no search_available_tools, not even the
+  terminal signals), so the model cannot call a tool even if it wants to.
+  Forbidding a capability means not offering it, not arguing about it.
+agent: Assistant
+input: "Without using any tools, name the largest planet in the solar system."
+llm_replies:
+  - "Jupiter is the largest planet in the solar system."
+expect:
+  status: completed
+  final_text_match: "Jupiter"
+  llm_calls: 1
+  max_tools_offered: 2

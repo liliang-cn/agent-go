@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/liliang-cn/agent-go/v3/cmd/agentgo-cli/acp"
 	"github.com/liliang-cn/agent-go/v3/cmd/agentgo-cli/agent"
 	cachecmd "github.com/liliang-cn/agent-go/v3/cmd/agentgo-cli/cache"
 	evalcmd "github.com/liliang-cn/agent-go/v3/cmd/agentgo-cli/eval"
@@ -15,10 +14,9 @@ import (
 	"github.com/liliang-cn/agent-go/v3/cmd/agentgo-cli/ptc"
 	"github.com/liliang-cn/agent-go/v3/cmd/agentgo-cli/rag"
 	"github.com/liliang-cn/agent-go/v3/cmd/agentgo-cli/skills"
-	"github.com/liliang-cn/agent-go/v3/cmd/agentgo-cli/team"
 	"github.com/liliang-cn/agent-go/v3/pkg/config"
 	agentgolog "github.com/liliang-cn/agent-go/v3/pkg/log"
-	"github.com/liliang-cn/agent-go/v3/pkg/services"
+	"github.com/liliang-cn/agent-go/v3/pkg/poolsvc"
 	"github.com/spf13/cobra"
 )
 
@@ -65,7 +63,7 @@ var RootCmd = &cobra.Command{
 		}
 
 		if commandNeedsGlobalPool(cmd) {
-			globalPoolService := services.GetGlobalPoolService()
+			globalPoolService := poolsvc.Global()
 			ctx := context.Background()
 			if err := globalPoolService.Initialize(ctx, Cfg); err != nil {
 				return fmt.Errorf("failed to initialize global pool service: %w", err)
@@ -78,7 +76,6 @@ var RootCmd = &cobra.Command{
 		agent.SetSharedVariables(Cfg, verbose)
 		memory.SetSharedVariables(Cfg, verbose)
 		ptc.SetSharedVariables(Cfg, verbose)
-		acp.SetSharedVariables(Cfg, verbose)
 		cachecmd.SetSharedVariables(Cfg, verbose)
 
 		return nil
@@ -130,10 +127,8 @@ func init() {
 	RootCmd.AddCommand(agent.AgentCmd)
 
 	// Add agent registry command
-	RootCmd.AddCommand(team.TeamCmd)
 
 	// Add ACP command
-	RootCmd.AddCommand(acp.Cmd)
 
 	// Add Skills command
 	RootCmd.AddCommand(skills.Cmd)
@@ -152,7 +147,6 @@ func init() {
 	RootCmd.AddCommand(statusCmd)
 	RootCmd.AddCommand(tasksCmd)
 	RootCmd.AddCommand(configCmd)
-	RootCmd.AddCommand(explainRoutingCmd)
 	RootCmd.AddCommand(sessionCmd)
 	RootCmd.AddCommand(resourcesCmd)
 

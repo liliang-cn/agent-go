@@ -10,8 +10,8 @@ import (
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 	"github.com/liliang-cn/agent-go/v3/pkg/mcp"
 	"github.com/liliang-cn/agent-go/v3/pkg/memory"
+	"github.com/liliang-cn/agent-go/v3/pkg/poolsvc"
 	"github.com/liliang-cn/agent-go/v3/pkg/rag"
-	"github.com/liliang-cn/agent-go/v3/pkg/services"
 	"github.com/liliang-cn/agent-go/v3/pkg/skills"
 )
 
@@ -23,7 +23,7 @@ type Handler struct {
 	mcpService     *mcp.Service
 	memoryService  *memory.Service
 	agentService   *agent.Service
-	teamManager    *agent.TeamManager
+	teamManager    *agent.Manager
 	llm            domain.Generator
 	embedder       domain.Embedder
 	ConfigHandler  *ConfigHandler
@@ -37,7 +37,7 @@ type Handler struct {
 // New creates a new handler
 func New(cfg *config.Config, ragClient *rag.Client, skillsService *skills.Service,
 	mcpService *mcp.Service, memoryService *memory.Service,
-	agentService *agent.Service, teamManager *agent.TeamManager, llm domain.Generator, embedder domain.Embedder) *Handler {
+	agentService *agent.Service, teamManager *agent.Manager, llm domain.Generator, embedder domain.Embedder) *Handler {
 	configHandler := NewConfigHandler(cfg)
 	setupHandler := NewSetupHandler(cfg)
 
@@ -179,7 +179,7 @@ func (h *Handler) HandleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build providers list with detailed info from pool service
-	poolService := services.GetGlobalPoolService()
+	poolService := poolsvc.Global()
 	providers := []map[string]interface{}{}
 
 	// Get LLM pool status

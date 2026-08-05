@@ -18,7 +18,7 @@ const (
 	TaskKindScheduler = taskpkg.KindScheduler
 )
 
-func (m *TeamManager) GetUnifiedTask(taskID string) (*UnifiedTask, error) {
+func (m *Manager) GetUnifiedTask(taskID string) (*UnifiedTask, error) {
 	if m != nil && m.store != nil {
 		if task, err := m.store.GetTask(taskID); err == nil && task != nil {
 			m.hydrateUnifiedTask(task)
@@ -42,7 +42,7 @@ func (m *TeamManager) GetUnifiedTask(taskID string) (*UnifiedTask, error) {
 // only the detail endpoint (GetUnifiedTask) hydrates them. We deliberately skip
 // hydrateUnifiedTask here; hydrating frames for every task is an N+1 query that
 // made this endpoint hang with a few hundred tasks.
-func (m *TeamManager) ListUnifiedTasks(limit int) []*UnifiedTask {
+func (m *Manager) ListUnifiedTasks(limit int) []*UnifiedTask {
 	tasks, _ := m.ListUnifiedTasksPaged(store.TaskListFilter{Limit: limit})
 	// Paged results are newest-first; reverse to the historical oldest-first.
 	for i, j := 0, len(tasks)-1; i < j; i, j = i+1, j-1 {
@@ -53,7 +53,7 @@ func (m *TeamManager) ListUnifiedTasks(limit int) []*UnifiedTask {
 
 // ListUnifiedTasksPaged returns one newest-first page of tasks plus the total
 // count matching the filter (ignoring limit/offset), for SQL-level pagination.
-func (m *TeamManager) ListUnifiedTasksPaged(f store.TaskListFilter) ([]*UnifiedTask, int) {
+func (m *Manager) ListUnifiedTasksPaged(f store.TaskListFilter) ([]*UnifiedTask, int) {
 	if m != nil && m.store != nil {
 		if tasks, total, err := m.store.ListTasksPaged(f); err == nil && total > 0 {
 			return tasks, total
@@ -111,7 +111,7 @@ func matchesTaskFilter(t *UnifiedTask, f store.TaskListFilter) bool {
 	return true
 }
 
-func (m *TeamManager) persistUnifiedTask(taskID string) {
+func (m *Manager) persistUnifiedTask(taskID string) {
 	if m == nil || m.store == nil || strings.TrimSpace(taskID) == "" {
 		return
 	}
@@ -185,7 +185,7 @@ func awaitingStateFromAsync(task *AsyncTask) *taskpkg.AwaitingState {
 	}
 }
 
-func (m *TeamManager) hydrateUnifiedTask(task *UnifiedTask) {
+func (m *Manager) hydrateUnifiedTask(task *UnifiedTask) {
 	if m == nil || task == nil || m.store == nil {
 		return
 	}

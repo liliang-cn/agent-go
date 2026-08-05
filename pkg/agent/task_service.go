@@ -11,11 +11,9 @@ type TaskListOptions struct {
 }
 
 type TaskSubmitOptions struct {
-	SessionID  string
-	AgentName  string
-	TeamID     string
-	AgentNames []string
-	Input      string
+	SessionID string
+	AgentName string
+	Input     string
 
 	// OutputSchema, when set, forces the agent to produce a schema-validated
 	// structured result instead of free-text (StructuredOutput tool + validate
@@ -35,21 +33,14 @@ type TaskResumeOptions struct {
 
 // TaskService is the library-facing facade for first-class AgentGo tasks.
 type TaskService struct {
-	manager *TeamManager
+	manager *Manager
 }
 
-func (m *TeamManager) Tasks() *TaskService {
+func (m *Manager) Tasks() *TaskService {
 	return &TaskService{manager: m}
 }
 
 func (s *TaskService) Submit(ctx context.Context, opts TaskSubmitOptions) (*taskpkg.Task, error) {
-	if opts.TeamID != "" || len(opts.AgentNames) > 0 {
-		task, err := s.manager.submitTeamTaskWithSchema(ctx, opts.SessionID, opts.TeamID, opts.Input, opts.AgentNames, opts.OutputSchema)
-		if err != nil {
-			return nil, err
-		}
-		return s.manager.GetUnifiedTask(task.ID)
-	}
 	task, err := s.manager.submitAgentTaskWithSchema(ctx, opts.SessionID, opts.AgentName, opts.Input, opts.OutputSchema)
 	if err != nil {
 		return nil, err

@@ -10,7 +10,7 @@ import (
 // ListTasks returns recent async tasks across all sessions.
 //
 // Deprecated: use manager.Tasks().List(...) for canonical task.Task values.
-func (m *TeamManager) ListTasks(limit int) []*AsyncTask {
+func (m *Manager) ListTasks(limit int) []*AsyncTask {
 	m.taskMu.RLock()
 	out := make([]*AsyncTask, 0, len(m.asyncTasks))
 	for _, task := range m.asyncTasks {
@@ -30,7 +30,7 @@ func (m *TeamManager) ListTasks(limit int) []*AsyncTask {
 	return out
 }
 
-func (m *TeamManager) AwaitTask(ctx context.Context, taskID string) (*UnifiedTask, error) {
+func (m *Manager) AwaitTask(ctx context.Context, taskID string) (*UnifiedTask, error) {
 	events, unsubscribe, err := m.SubscribeTask(taskID)
 	if err != nil {
 		return nil, err
@@ -55,7 +55,7 @@ func (m *TeamManager) AwaitTask(ctx context.Context, taskID string) (*UnifiedTas
 	}
 }
 
-func (m *TeamManager) YieldTask(_ context.Context, taskID, reason string) (*UnifiedTask, error) {
+func (m *Manager) YieldTask(_ context.Context, taskID, reason string) (*UnifiedTask, error) {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
 		return nil, fmt.Errorf("task id is required")
@@ -90,7 +90,7 @@ func (m *TeamManager) YieldTask(_ context.Context, taskID, reason string) (*Unif
 	return m.GetUnifiedTask(taskID)
 }
 
-func (m *TeamManager) ResumeTask(_ context.Context, taskID string, input any) (*UnifiedTask, error) {
+func (m *Manager) ResumeTask(_ context.Context, taskID string, input any) (*UnifiedTask, error) {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
 		return nil, fmt.Errorf("task id is required")
@@ -130,39 +130,13 @@ func (m *TeamManager) ResumeTask(_ context.Context, taskID string, input any) (*
 	if err != nil {
 		return nil, err
 	}
-	switch resumed.Kind {
-	case AsyncTaskKindTeam:
-		shared := &SharedTask{
-			ID:               resumed.ID,
-			SessionID:        resumed.SessionID,
-			TeamID:           resumed.TeamID,
-			TeamName:         resumed.TeamName,
-			OrchestratorName: resumed.OrchestratorName,
-			AgentNames:       append([]string(nil), resumed.AgentNames...),
-			Prompt:           resumed.Prompt,
-			Status:           SharedTaskStatusQueued,
-			CreatedAt:        resumed.CreatedAt,
-		}
-		m.queueMu.Lock()
-		m.sharedTasks[shared.ID] = shared
-		m.microtaskQueues[shared.TeamID] = append(m.microtaskQueues[shared.TeamID], shared.ID)
-		shouldStart := !m.queueRunning[shared.TeamID]
-		if shouldStart {
-			m.queueRunning[shared.TeamID] = true
-		}
-		m.queueMu.Unlock()
-		_ = m.store.SaveSharedTask(shared)
-		if shouldStart {
-			go m.runSharedTaskQueue(context.Background(), shared.TeamID)
-		}
-	default:
-		go m.runAsyncAgentTask(context.Background(), taskID)
-	}
+	_ = resumed
+	go m.runAsyncAgentTask(context.Background(), taskID)
 	return m.GetUnifiedTask(taskID)
 }
 
 // CancelTask cancels a running or queued async task.
-func (m *TeamManager) CancelTask(_ context.Context, taskID string) (*AsyncTask, error) {
+func (m *Manager) CancelTask(_ context.Context, taskID string) (*AsyncTask, error) {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
 		return nil, fmt.Errorf("task id is required")

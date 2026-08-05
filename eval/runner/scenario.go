@@ -99,6 +99,13 @@ type ExpectSpec struct {
 	// not to fire. Mostly useful in mock mode where the model is scripted.
 	LintViolations []LintViolationExpectation `yaml:"lint_violations"`
 
+	// MaxToolsOffered caps how many tool definitions the runtime may attach
+	// to any single model call. Set it to 0 to assert that a run was offered
+	// no tools at all (the "task forbids tool use" contract). Negative means
+	// "do not check"; the zero value of the field is treated as unset unless
+	// CheckMaxToolsOffered is true.
+	MaxToolsOffered *int `yaml:"max_tools_offered"`
+
 	// MaxLintViolations is the live-mode equivalent: a cap on how many
 	// times a given lint may fire. Useful when the real model is allowed
 	// to self-heal a couple of times but should not loop forever. If

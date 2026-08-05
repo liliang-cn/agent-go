@@ -34,15 +34,15 @@ func testConfig(t *testing.T) *config.Config {
 	return cfg
 }
 
-func newTestManager(t *testing.T) *agent.TeamManager {
+func newTestManager(t *testing.T) *agent.Manager {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "agent.db")
 	store, err := agent.NewStore(dbPath)
 	if err != nil {
 		t.Fatalf("new store failed: %v", err)
 	}
-	manager := agent.NewTeamManager(store)
-	if err := manager.SeedDefaultMembers(); err != nil {
+	manager := agent.NewManager(store)
+	if err := manager.SeedDefaultAgent(); err != nil {
 		t.Fatalf("seed agents failed: %v", err)
 	}
 	return manager

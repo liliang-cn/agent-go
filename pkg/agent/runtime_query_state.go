@@ -60,7 +60,6 @@ type queryLoopState struct {
 	TaskID           string
 	Messages         []domain.Message
 	PrevToolCalls    map[string]int
-	Intent           *IntentRecognitionResult
 	Transition       string
 	LoopTransition   string
 	TransitionReason string
@@ -72,19 +71,15 @@ type queryLoopState struct {
 	Budget           queryLoopBudget
 }
 
-func newQueryLoopState(goal string, messages []domain.Message, intent *IntentRecognitionResult, maxRounds int) *queryLoopState {
+func newQueryLoopState(goal string, messages []domain.Message, maxRounds int) *queryLoopState {
 	state := &queryLoopState{
 		Goal:          goal,
 		Messages:      append([]domain.Message(nil), messages...),
 		PrevToolCalls: make(map[string]int),
-		Intent:        intent,
 		Budget: queryLoopBudget{
 			MaxRounds:       maxRounds,
 			RemainingRounds: maxRounds,
 		},
-	}
-	if intent != nil {
-		state.Transition = intent.Transition
 	}
 	return state
 }
@@ -231,9 +226,9 @@ type serviceExecutionLoopState struct {
 	execStartedAt  time.Time    // overall execution start
 }
 
-func newServiceExecutionLoopState(goal string, messages []domain.Message, intent *IntentRecognitionResult, maxRounds int, currentAgent *Agent) *serviceExecutionLoopState {
+func newServiceExecutionLoopState(goal string, messages []domain.Message, maxRounds int, currentAgent *Agent) *serviceExecutionLoopState {
 	return &serviceExecutionLoopState{
-		queryLoopState: newQueryLoopState(goal, messages, intent, maxRounds),
+		queryLoopState: newQueryLoopState(goal, messages, maxRounds),
 		CurrentAgent:   currentAgent,
 		execStartedAt:  time.Now(),
 	}

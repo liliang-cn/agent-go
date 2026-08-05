@@ -14,38 +14,16 @@ type textRoundDecision struct {
 	Transition string
 }
 
-func decideTextRound(loopState *queryLoopState, toolsAvailable bool, toolUsed bool, nudged bool, content string, allowToolUseNudge bool) textRoundDecision {
-	if loopState == nil {
-		return textRoundDecision{
-			Kind:       textRoundDecisionComplete,
-			Reason:     "text response completed",
-			Transition: queryLoopTransitionTextResponse,
-		}
-	}
-
-	if shouldAutoContinueAfterTextResponse(content) {
-		loopState.incrementContinuation()
-		if prompt, ok := buildAutoContinuePrompt(loopState); ok {
-			return textRoundDecision{
-				Kind:       textRoundDecisionContinue,
-				Reason:     "empty text response; auto-continuing next turn",
-				Prompt:     prompt,
-				Transition: queryLoopTransitionNextTurn,
-			}
-		}
-	} else {
+// decideTextRound resolves what to do after a text-only model turn.
+//
+// v3 deliberately has no auto-continue nudge and no tool-avoidance heuristic:
+// a text turn ends the run, and any behavioural requirement on that final text
+// (non-empty, delivered, no planning-only) is enforced by the output lint
+// registry, not by a prompt nudge. See lint.go / output_lints_builtin.go.
+func decideTextRound(loopState *queryLoopState, _ bool, _ bool, _ bool, _ string, _ bool) textRoundDecision {
+	if loopState != nil {
 		loopState.resetContinuation()
 	}
-
-	if allowToolUseNudge && shouldNudgeForMissingToolUse(toolsAvailable, toolUsed, nudged, content) {
-		return textRoundDecision{
-			Kind:       textRoundDecisionContinue,
-			Reason:     "nudged model to use available tools",
-			Prompt:     toolUseNudgePrompt,
-			Transition: queryLoopTransitionNextTurn,
-		}
-	}
-
 	return textRoundDecision{
 		Kind:       textRoundDecisionComplete,
 		Reason:     "text response completed",

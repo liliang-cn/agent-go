@@ -72,28 +72,28 @@ func (s *Service) executeSendMessage(ctx context.Context, currentAgent *Agent, a
 	message, _ := args["message"].(string)
 
 	if taskID == "" || message == "" {
-		return nil, fmt.Errorf("send_message: 'to' and 'message' arguments are required")
+		return nil, fmt.Errorf("subagent_send_message: 'to' and 'message' arguments are required")
 	}
 	if s.store == nil {
-		return nil, fmt.Errorf("send_message: persistent store is not configured")
+		return nil, fmt.Errorf("subagent_send_message: persistent store is not configured")
 	}
 
 	task, err := s.loadPersistedAsyncTask(taskID)
 	if err != nil {
-		return nil, fmt.Errorf("send_message: %w", err)
+		return nil, fmt.Errorf("subagent_send_message: %w", err)
 	}
 	if task.AgentName != "" {
 		currentName := s.persistedAsyncAgentName(currentAgent)
 		if currentName != "" && !strings.EqualFold(strings.TrimSpace(task.AgentName), currentName) {
-			return nil, fmt.Errorf("send_message: task '%s' belongs to agent '%s', current agent is '%s'", taskID, strings.TrimSpace(task.AgentName), currentName)
+			return nil, fmt.Errorf("subagent_send_message: task '%s' belongs to agent '%s', current agent is '%s'", taskID, strings.TrimSpace(task.AgentName), currentName)
 		}
 	}
 	switch task.Status {
 	case taskpkg.StatusQueued, taskpkg.StatusRunning, taskpkg.StatusResuming:
-		return nil, fmt.Errorf("send_message: task '%s' is currently in status '%s', cannot send message right now", taskID, task.Status)
+		return nil, fmt.Errorf("subagent_send_message: task '%s' is currently in status '%s', cannot send message right now", taskID, task.Status)
 	}
 
-	s.emitProgress("tool_call", fmt.Sprintf("→ Sending message to SubAgent %s", taskID[:8]), 0, "send_message")
+	s.emitProgress("tool_call", fmt.Sprintf("→ Sending message to SubAgent %s", taskID[:8]), 0, "subagent_send_message")
 
 	session := getCurrentSession(ctx)
 	task.Status = taskpkg.StatusResuming
@@ -102,12 +102,12 @@ func (s *Service) executeSendMessage(ctx context.Context, currentAgent *Agent, a
 	task.Error = ""
 	task.FinishedAt = nil
 	if err := s.store.SaveTask(task); err != nil {
-		return nil, fmt.Errorf("send_message: save task: %w", err)
+		return nil, fmt.Errorf("subagent_send_message: save task: %w", err)
 	}
 
 	runtimeSessionID := firstNonEmptyTaskString(task.RuntimeSessionID, task.SessionID)
 	if runtimeSessionID == "" {
-		return nil, fmt.Errorf("send_message: task '%s' is missing a runtime session", taskID)
+		return nil, fmt.Errorf("subagent_send_message: task '%s' is missing a runtime session", taskID)
 	}
 
 	s.runPersistedAsyncTask(task.ID, runtimeSessionID, task.ParentTaskID, message)

@@ -52,29 +52,6 @@ func TestRememberMemoryQueryContext(t *testing.T) {
 	}
 }
 
-func TestResolveMemoryQueryContextFromContextPreservesInheritedScopeForBuiltInAgent(t *testing.T) {
-	svc := &Service{
-		agent:              NewAgent("Dispatcher"),
-		memoryScopeAgentID: "Dispatcher",
-		memoryScopeTeamID:  "team-alpha",
-	}
-
-	session := NewSession("session-1")
-	session.SetContext(sessionContextMemoryAgentScope, "Dispatcher")
-	session.SetContext(sessionContextMemoryTeamScope, "team-alpha")
-
-	ctx := withCurrentSession(context.Background(), session)
-	ctx = withCurrentAgent(ctx, NewAgent("Archivist"))
-
-	queryContext := svc.resolveMemoryQueryContextFromContext(ctx)
-	if queryContext.AgentID != "Dispatcher" {
-		t.Fatalf("expected inherited agent scope Dispatcher, got %q", queryContext.AgentID)
-	}
-	if queryContext.TeamID != "team-alpha" {
-		t.Fatalf("expected inherited team scope team-alpha, got %q", queryContext.TeamID)
-	}
-}
-
 func TestResolveMemoryQueryContextFromContextUsesCurrentScopeForCustomAgent(t *testing.T) {
 	svc := &Service{
 		agent:              NewAgent("Dispatcher"),

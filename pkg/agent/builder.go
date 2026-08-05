@@ -7,19 +7,17 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/liliang-cn/agent-go/v3/pkg/browser"
 	"github.com/liliang-cn/agent-go/v3/pkg/config"
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 	agentgolog "github.com/liliang-cn/agent-go/v3/pkg/log"
 	"github.com/liliang-cn/agent-go/v3/pkg/mcp"
 	"github.com/liliang-cn/agent-go/v3/pkg/memory"
+	"github.com/liliang-cn/agent-go/v3/pkg/poolsvc"
 	"github.com/liliang-cn/agent-go/v3/pkg/ptc"
 	"github.com/liliang-cn/agent-go/v3/pkg/rag/chunker"
 	ragprocessor "github.com/liliang-cn/agent-go/v3/pkg/rag/processor"
 	ragstore "github.com/liliang-cn/agent-go/v3/pkg/rag/store"
-	"github.com/liliang-cn/agent-go/v3/pkg/router"
 	"github.com/liliang-cn/agent-go/v3/pkg/sandbox"
-	"github.com/liliang-cn/agent-go/v3/pkg/services"
 	"github.com/liliang-cn/agent-go/v3/pkg/skills"
 	"github.com/liliang-cn/agent-go/v3/pkg/store"
 )
@@ -38,7 +36,6 @@ type Config struct {
 	RAG    *RAGConfig    `json:"rag,omitempty"`
 	MCP    *MCPConfig    `json:"mcp,omitempty"`
 	Memory *MemoryConfig `json:"memory,omitempty"`
-	Router *RouterConfig `json:"router,omitempty"`
 	Skills *SkillsConfig `json:"skills,omitempty"`
 	PTC    *PTCConfig    `json:"ptc,omitempty"`
 
@@ -71,12 +68,6 @@ type MemoryConfig struct {
 	Directives       []string `json:"directives,omitempty"`        // MemoryBank hard directives
 }
 
-// RouterConfig holds Router configuration
-type RouterConfig struct {
-	Enabled   bool    `json:"enabled"`
-	Threshold float64 `json:"threshold,omitempty"`
-}
-
 // SkillsConfig holds Skills configuration
 type SkillsConfig struct {
 	Enabled bool     `json:"enabled"`
@@ -102,10 +93,6 @@ type Builder struct {
 	permissionPolicy  PermissionPolicy
 	observers         []Observer
 	guardrails        []*Guardrail
-	// piiInput mirrors WithPIIRedaction's input-side options so Build can wrap
-	// the Generator, making the provider boundary the enforcement point.
-	piiInput *piiOptions
-
 	// Custom LLM service (optional - if not set, uses global pool)
 	llmService domain.Generator
 	// Custom Embedder service (optional - used with custom LLM for RAG/Memory)
@@ -118,8 +105,6 @@ type Builder struct {
 	enableMemory      bool
 	memoryCfg         MemoryConfig
 	registerGraphTool bool
-	enableRouter      bool
-	routerThreshold   float64
 	enableSkills      bool
 	skillsPaths       []string
 	requiredSkills    []string // Build() fails if any of these aren't installed
@@ -131,15 +116,9 @@ type Builder struct {
 	extraModules []Module
 
 	// Execution capabilities (all optional, zero-value = disabled)
-	sandbox            sandbox.Sandbox
-	browser            browser.Browser
-	enableVision       bool
-	enableDeliver      bool
-	enableFiles        bool
-	enableOCR          bool
-	ocrOpts            []OCROption
-	enableSubconscious bool
-	autonomy           AutonomyProfile
+	sandbox       sandbox.Sandbox
+	enableDeliver bool
+	autonomy      AutonomyProfile
 
 	// cached result
 	svc *Service
@@ -218,52 +197,6 @@ func (b *Builder) WithGraphMemory(opts ...MemoryOption) *Builder {
 	merged := append([]MemoryOption{WithMemoryGraphFlow()}, opts...)
 	b.WithMemory(merged...)
 	b.registerGraphTool = true
-	return b
-}
-
-// WithFileTools registers the built-in `read_document` tool so the agent can
-// read the content of Word/Excel/PowerPoint/PDF/image/text files. When a
-// sandbox is also attached (WithSandbox) reads are jailed to the workspace;
-// otherwise the tool reads host paths. CGO-free, no OCR.
-//
-//	svc, _ := agent.New("assistant").WithFileTools().Build()
-func (b *Builder) WithFileTools() *Builder {
-	b.enableFiles = true
-	return b
-}
-
-// WithOCR registers the built-in `ocr_image` tool so the agent can extract text
-// from images via a local ollama-compatible OCR model (glm-ocr by default).
-// Opt-in and network-dependent — the rest of AgentGo works without it. Configure
-// the endpoint/model/prompt with WithOCREndpoint / WithOCRModel / WithOCRPrompt.
-//
-//	svc, _ := agent.New("assistant").WithOCR(agent.WithOCRModel("glm-ocr")).Build()
-func (b *Builder) WithOCR(opts ...OCROption) *Builder {
-	b.enableOCR = true
-	b.ocrOpts = append(b.ocrOpts, opts...)
-	return b
-}
-
-// WithSubconscious enables the background "subconscious" memory-extraction
-// worker: after each completed run it spends one extra background LLM call
-// distilling the conversation into durable memory (only when a memory service
-// is configured). OFF by default — the framework starts no background task on
-// its own. Pass false to be explicit.
-//
-//	svc, _ := agent.New("assistant").WithMemory().WithSubconscious().Build()
-func (b *Builder) WithSubconscious(on ...bool) *Builder {
-	b.enableSubconscious = len(on) == 0 || on[0]
-	return b
-}
-
-// WithRouter enables semantic router
-func (b *Builder) WithRouter(opts ...RouterOption) *Builder {
-	b.enableRouter = true
-	cfg := RouterConfig{}
-	for _, opt := range opts {
-		opt(&cfg)
-	}
-	b.routerThreshold = cfg.Threshold
 	return b
 }
 
@@ -412,45 +345,6 @@ func (b *Builder) WithGuardrails(gs ...*Guardrail) *Builder {
 	return b
 }
 
-// WithPIIRedaction is a convenience that wires PII redaction guardrails.
-// By default it adds an INPUT guardrail (so PII is stripped before it ever
-// reaches the LLM — the key "don't leak to the cloud" use) and an OUTPUT
-// guardrail (so PII never lands in the final answer or durable memory).
-// Defaults: RedactPartial mode, all PII kinds, both directions. Tune with
-// PIIOptions. Default OFF — nothing happens unless you call this.
-//
-//	svc, _ := agent.New("assistant").WithPIIRedaction().Build()
-//	svc, _ := agent.New("assistant").
-//		WithPIIRedaction(agent.WithPIIMode(agent.RedactBlock)).Build()
-func (b *Builder) WithPIIRedaction(opts ...PIIOption) *Builder {
-	o := piiOptions{mode: RedactPartial}
-	for _, opt := range opts {
-		opt(&o)
-	}
-	// Kept for Build, which wraps the Generator itself: the guardrails below
-	// only cover the conversation turn, while helper calls (intent
-	// classification, MCP, memory) reach the provider through other paths.
-	if !o.outputOnly {
-		pii := o
-		b.piiInput = &pii
-	}
-	if !o.outputOnly {
-		b.guardrails = append(b.guardrails, NewPIIGuardrail(PIIConfig{
-			Kinds: o.kinds,
-			Mode:  o.mode,
-			Kind:  GuardrailKindInput,
-		}))
-	}
-	if !o.inputOnly {
-		b.guardrails = append(b.guardrails, NewPIIGuardrail(PIIConfig{
-			Kinds: o.kinds,
-			Mode:  o.mode,
-			Kind:  GuardrailKindOutput,
-		}))
-	}
-	return b
-}
-
 // WithPermissionHandler installs a runtime permission handler for tool execution.
 func (b *Builder) WithPermissionHandler(handler PermissionHandler) *Builder {
 	b.permissionHandler = handler
@@ -466,17 +360,6 @@ func (b *Builder) WithPermissionPolicy(policy PermissionPolicy) *Builder {
 // WithConfig sets agentgo config
 func (b *Builder) WithConfig(cfg *config.Config) *Builder {
 	b.agentgoCfg = cfg
-	return b
-}
-
-// WithAgentName sets the global agent name used in built-in prompts and team names.
-// This overrides the agent.name field from runtime config or environment.
-// Must be called before Build() to take effect.
-func (b *Builder) WithAgentName(name string) *Builder {
-	if b.agentgoCfg == nil {
-		b.agentgoCfg = &config.Config{}
-	}
-	b.agentgoCfg.Agent.Name = name
 	return b
 }
 
@@ -555,16 +438,6 @@ func (b *Builder) Build() (*Service, error) {
 	return b.svc, b.err
 }
 
-// Unpack allows direct assignment to (*Service, error)
-func (b *Builder) Unpack() (*Service, error) {
-	return b.Build()
-}
-
-// Get builds and returns the Service (alias for Build)
-func (b *Builder) Get() (*Service, error) {
-	return b.Build()
-}
-
 func (b *Builder) build() (*Service, error) {
 	if b.name == "" {
 		return nil, fmt.Errorf("agent name is required")
@@ -585,7 +458,7 @@ func (b *Builder) build() (*Service, error) {
 		llmSvc = b.llmService
 	} else {
 		// Initialize global pool for LLM
-		globalPool := services.GetGlobalPoolService()
+		globalPool := poolsvc.Global()
 		if err := globalPool.Initialize(context.Background(), agentgoCfg); err != nil {
 			return nil, fmt.Errorf("failed to initialize pool: %w", err)
 		}
@@ -595,20 +468,13 @@ func (b *Builder) build() (*Service, error) {
 		}
 	}
 
-	// PII redaction at the provider boundary. Everything constructed below
-	// (planner, MCP service, memory service) gets this wrapper, so a helper
-	// call cannot leak what the conversation turn scrubs.
-	if b.piiInput != nil {
-		llmSvc = newPIIRedactingGenerator(llmSvc, b.piiInput.kinds, b.piiInput.mode)
-	}
-
 	// Determine Embedder service: use custom if provided, otherwise try global pool
 	var embedSvc domain.Embedder
 	if b.embedService != nil {
 		embedSvc = b.embedService
 	} else {
 		// Try to get embedder from global pool (may not be available)
-		globalPool := services.GetGlobalPoolService()
+		globalPool := poolsvc.Global()
 		// Only initialize if not already initialized (when custom LLM was provided)
 		if err := globalPool.Initialize(context.Background(), agentgoCfg); err != nil {
 			log.Printf("[INFO] Embedding service not available: %v", err)
@@ -660,19 +526,6 @@ func (b *Builder) build() (*Service, error) {
 			if err != nil {
 				return nil, fmt.Errorf("failed to create RAG processor: %w", err)
 			}
-		}
-	}
-
-	// Build Router
-	var routerSvc *router.Service
-	if b.enableRouter {
-		routerCfg := router.DefaultConfig()
-		if b.routerThreshold > 0 {
-			routerCfg.Threshold = b.routerThreshold
-		}
-		routerSvc, err = router.NewService(embedSvc, routerCfg)
-		if err == nil {
-			_ = routerSvc.RegisterDefaultIntents()
 		}
 	}
 
@@ -853,9 +706,6 @@ func (b *Builder) build() (*Service, error) {
 		svc.SetPTC(ptcInteg)
 	}
 
-	if routerSvc != nil {
-		svc.SetRouter(routerSvc)
-	}
 	if skillsSvc != nil {
 		svc.SetSkillsService(skillsSvc)
 	}
@@ -874,12 +724,16 @@ func (b *Builder) build() (*Service, error) {
 	// agent-agnostic completion lints so the runtime rejects + re-prompts when
 	// a model finishes on a plan ("now let me use the X skill...") or finishes
 	// a file-producing task without ever writing the file. Both the UI's
-	// agentService and every TeamManager agent route through here; agent-specific
+	// agentService and every Manager agent route through here; agent-specific
 	// lints are layered on top by applyBuiltInOutputLints. Registration is
 	// idempotent.
 	svc.RegisterOutputLint(NoPlanningOnlyFinish())
 	svc.RegisterOutputLint(FileTaskMustWrite())
 	svc.RegisterOutputLint(NoRawPTCCode()) // reject leaked PTC sandbox code in final answers
+	// v3 acceptance gates (plan §4.5): no empty terminal answers, and a task
+	// that asked for a delivery action cannot complete without evidence of it.
+	svc.RegisterOutputLint(NonEmptyFinalAnswer())
+	svc.RegisterOutputLint(TaskDeliveryContract())
 
 	// Graph-aware mode: expose the graph_recall tool so the loop can query the
 	// knowledge graph. Registered when WithGraphMemory() opted in.
@@ -887,8 +741,8 @@ func (b *Builder) build() (*Service, error) {
 		RegisterGraphRecallTool(svc)
 	}
 
-	// Wire the optional sandbox / browser / autonomy / deliverable execution
-	// capabilities. Each is opt-in via WithSandbox/WithBrowser/etc.; tool sets
+	// Wire the optional sandbox / autonomy / deliverable execution
+	// capabilities. Each is opt-in via WithSandbox/WithAutonomy/etc.; tool sets
 	// are registered on the unified registry so they're reachable by both the
 	// LLM loop and PTC's callTool(). After registering, re-sync the PTC router
 	// so the new tools are callable from sandboxed JS too.
@@ -896,23 +750,6 @@ func (b *Builder) build() (*Service, error) {
 	if b.sandbox != nil {
 		svc.execSandbox = b.sandbox
 		RegisterSandboxTools(svc, b.sandbox)
-		execToolsRegistered = true
-	}
-	if b.browser != nil {
-		svc.execBrowser = b.browser
-		RegisterBrowserTools(svc, b.browser, b.sandbox) // sandbox may be nil
-		execToolsRegistered = true
-	}
-	svc.visionEnabled = b.enableVision
-	if b.enableSubconscious {
-		svc.StartSubconscious()
-	}
-	if b.enableFiles {
-		RegisterFileTools(svc)
-		execToolsRegistered = true
-	}
-	if b.enableOCR {
-		RegisterOCRTool(svc, b.ocrOpts...)
 		execToolsRegistered = true
 	}
 	if b.enableDeliver && b.sandbox != nil {
@@ -1169,14 +1006,6 @@ func WithMemoryBank(mission string, directives []string) MemoryOption {
 	}
 }
 
-// RouterOption modifies RouterConfig
-type RouterOption func(*RouterConfig)
-
-// WithRouterThreshold sets router threshold
-func WithRouterThreshold(threshold float64) RouterOption {
-	return func(c *RouterConfig) { c.Threshold = threshold }
-}
-
 // SkillsOption modifies SkillsConfig
 type SkillsOption func(*SkillsConfig)
 
@@ -1195,137 +1024,3 @@ func WithPTCMaxToolCalls(n int) PTCOption { return func(c *PTCConfig) { c.MaxToo
 func WithPTCTimeout(d time.Duration) PTCOption { return func(c *PTCConfig) { c.Timeout = d } }
 
 // ============================================================
-// TeamBuilder - chainable builder for TeamManager
-// ============================================================
-
-// TeamBuilder allows chainable TeamManager configuration.
-type TeamBuilder struct {
-	store       *Store
-	dbPath      string
-	agentName   string
-	teamName    string
-	cfg         *config.Config
-	skipSeeding bool
-
-	svc      *TeamManager
-	buildErr error
-}
-
-// NewTeam creates a new team builder.
-// Assign to (*TeamManager, error) to build - no explicit Build() needed!
-//
-// Example:
-//
-//	// Simple team manager
-//	mgr, err := agent.NewTeam("~/.agentgo/data/agentgo.db")
-//
-//	// Chainable configuration
-//	mgr, err := agent.NewTeam("~/.agentgo/data/agentgo.db").
-//		WithAgentName("MyApp").
-//		WithTeamName("My Team")
-func NewTeam(dbPathOrStore interface{}) *TeamBuilder {
-	b := &TeamBuilder{}
-	switch v := dbPathOrStore.(type) {
-	case string:
-		b.dbPath = v
-	case *Store:
-		b.store = v
-	default:
-		b.buildErr = fmt.Errorf("dbPathOrStore must be a string path or *Store, got %T", v)
-	}
-	return b
-}
-
-// WithAgentName sets the global agent name used in built-in prompts and team names.
-// This overrides the agent.name field from runtime config or environment.
-// Must be called before Build() to take effect during initialization.
-func (b *TeamBuilder) WithAgentName(name string) *TeamBuilder {
-	b.agentName = name
-	return b
-}
-
-// WithTeamName sets the default team name.
-// If not set, defaults to "<AgentName> Team".
-func (b *TeamBuilder) WithTeamName(name string) *TeamBuilder {
-	b.teamName = name
-	return b
-}
-
-// WithConfig sets the agentgo config.
-func (b *TeamBuilder) WithConfig(cfg *config.Config) *TeamBuilder {
-	b.cfg = cfg
-	return b
-}
-
-// SkipSeeding skips seeding default built-in agents and team.
-func (b *TeamBuilder) SkipSeeding() *TeamBuilder {
-	b.skipSeeding = true
-	return b
-}
-
-// Build creates the TeamManager.
-func (b *TeamBuilder) Build() (*TeamManager, error) {
-	if b.buildErr != nil {
-		return nil, b.buildErr
-	}
-	if b.svc != nil {
-		return b.svc, b.buildErr
-	}
-
-	if b.store == nil && b.dbPath == "" {
-		b.buildErr = fmt.Errorf("dbPath or store is required")
-		return nil, b.buildErr
-	}
-
-	if b.store == nil {
-		var err error
-		b.store, err = NewStore(b.dbPath)
-		if err != nil {
-			b.buildErr = fmt.Errorf("failed to create store: %w", err)
-			return nil, b.buildErr
-		}
-	}
-
-	mgr := NewTeamManager(b.store)
-
-	// Apply config
-	if b.cfg != nil {
-		mgr.SetConfig(b.cfg)
-	}
-
-	// Apply agent name override
-	if b.agentName != "" {
-		mgr.SetAgentName(b.agentName)
-	}
-
-	// Apply team name override if set
-	if b.teamName != "" {
-		mgr.mu.Lock()
-		if mgr.cfg == nil {
-			mgr.cfg = &config.Config{}
-		}
-		mgr.cfg.Team.Name = b.teamName
-		mgr.mu.Unlock()
-	}
-
-	// Seed default members
-	if !b.skipSeeding {
-		if err := mgr.SeedDefaultMembers(); err != nil {
-			b.buildErr = err
-			return nil, b.buildErr
-		}
-	}
-
-	b.svc = mgr
-	return b.svc, b.buildErr
-}
-
-// Unpack allows direct assignment to (*TeamManager, error)
-func (b *TeamBuilder) Unpack() (*TeamManager, error) {
-	return b.Build()
-}
-
-// Get builds and returns the TeamManager (alias for Build)
-func (b *TeamBuilder) Get() (*TeamManager, error) {
-	return b.Build()
-}

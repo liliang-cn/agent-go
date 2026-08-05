@@ -7,9 +7,6 @@ import (
 )
 
 func buildStandaloneAgentPrompt(cfg *config.Config, model *AgentModel) string {
-	if isEvaluatorAgentModel(model) {
-		return buildEvaluatorAgentPrompt(model)
-	}
 
 	lines := []string{
 		strings.TrimSpace(model.Instructions),
@@ -38,21 +35,5 @@ func buildEvaluatorAgentPrompt(model *AgentModel) string {
 }
 
 func shouldIncludeTaskCompleteHint(model *AgentModel) bool {
-	if model == nil {
-		return false
-	}
-
-	switch strings.TrimSpace(strings.ToLower(model.Name)) {
-	case strings.ToLower(BuiltInDispatcherAgentName):
-		return false
-	default:
-		return true
-	}
-}
-
-func isEvaluatorAgentModel(model *AgentModel) bool {
-	if model == nil {
-		return false
-	}
-	return strings.EqualFold(strings.TrimSpace(model.Name), defaultEvaluatorAgentName)
+	return model != nil
 }

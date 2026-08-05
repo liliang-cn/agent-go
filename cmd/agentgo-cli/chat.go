@@ -17,7 +17,7 @@ import (
 	"github.com/liliang-cn/agent-go/v3/pkg/agent"
 	"github.com/liliang-cn/agent-go/v3/pkg/config"
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
-	"github.com/liliang-cn/agent-go/v3/pkg/services"
+	"github.com/liliang-cn/agent-go/v3/pkg/poolsvc"
 	"github.com/spf13/cobra"
 )
 
@@ -96,12 +96,12 @@ func runChat(cmd *cobra.Command, args []string) error {
 
 	agentDBPath := chatCfg.AgentDBPath()
 
-	var agentManager *agent.TeamManager
+	var agentManager *agent.Manager
 	agentStore, storeErr := agent.NewStore(agentDBPath)
 	if storeErr == nil {
-		agentManager = agent.NewTeamManager(agentStore)
+		agentManager = agent.NewManager(agentStore)
 		agentManager.SetConfig(chatCfg)
-		if err := agentManager.SeedDefaultMembers(); err != nil {
+		if err := agentManager.SeedDefaultAgent(); err != nil {
 			agentManager = nil
 		}
 	}
@@ -110,7 +110,7 @@ func runChat(cmd *cobra.Command, args []string) error {
 		agentManager.SetDisableMemory(true)
 	}
 
-	svc, err := buildChatDispatcherService(chatCfg, agentDBPath, agentManager)
+	svc, err := buildChatAgentService(chatCfg, agentDBPath, agentManager)
 	if err != nil {
 		return fmt.Errorf("failed to build dispatcher service: %w", err)
 	}
@@ -136,19 +136,6 @@ func runChat(cmd *cobra.Command, args []string) error {
 	message := strings.Join(args, " ")
 	fmt.Printf("\n%s%s\n", cliui.UserPrompt, message)
 
-	if agentManager != nil {
-		tasks, parseErr := parseDelegatedTasks(message, func(name string) bool {
-			_, err := agentManager.GetAgentByName(name)
-			return err == nil
-		})
-		if parseErr != nil {
-			return parseErr
-		}
-		if len(tasks) > 0 {
-			return runDelegatedTaskChainAsync(context.Background(), agentManager, svc.CurrentSessionID(), tasks, nil, false)
-		}
-	}
-
 	turnStartedAt := time.Now()
 	result, err := svc.Chat(ctx, message)
 	if err != nil {
@@ -160,7 +147,6 @@ func runChat(cmd *cobra.Command, args []string) error {
 		follower.StartTaskIDs(ctx, executionResultAsyncTaskIDs(result))
 	}
 	waitForChatSessionTasks(ctx, agentManager, svc.CurrentSessionID(), turnStartedAt)
-	printChatPlanList(ctx, agentManager, svc.CurrentSessionID(), 10)
 
 	// Show session ID after first message
 	if currentSessionID == "" {
@@ -171,31 +157,34 @@ func runChat(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func buildChatDispatcherService(chatCfg *config.Config, agentDBPath string, manager *agent.TeamManager) (*agent.Service, error) {
+func buildChatAgentService(chatCfg *config.Config, agentDBPath string, manager *agent.Manager) (*agent.Service, error) {
 	if chatWithPTC && chatNoPTC {
 		return nil, fmt.Errorf("use either --with-ptc or --no-ptc, not both")
 	}
 
+	agentName := agent.DefaultAgentName
+	systemPrompt := "You are a capable, direct assistant. Use the tools you have to finish the task, then answer."
+	if manager != nil {
+		if models, err := manager.ListAgents(); err == nil && len(models) > 0 {
+			agentName = models[0].Name
+			if strings.TrimSpace(models[0].Instructions) != "" {
+				systemPrompt = strings.TrimSpace(models[0].Instructions)
+			}
+		}
+	}
+
 	if manager != nil && !chatWithPTC {
-		if svc, err := manager.GetAgentService(agent.BuiltInDispatcherAgentName); err == nil {
+		if svc, err := manager.Service(agentName); err == nil {
 			svc.SetDebug(debug)
 			svc.SetProgressCallback(progressCallback)
 			if chatNoPTC {
 				svc.SetPTC(nil)
 			}
-			manager.RegisterDispatcherTools(svc)
 			return svc, nil
 		}
 	}
 
-	systemPrompt := "You are Dispatcher, the always-on dispatch agent for AgentGo. Your only job is intake, routing, status inspection, and task dispatch. Do not do substantive work yourself unless the user is asking for dispatch metadata, agent or team status, or task status. For almost every substantive user request, call route_builtin_request with the user's request. That tool runs PromptOptimizer and IntentRouter in parallel, then dispatches to the correct specialist and returns the inline result. Do not use submit_agent_task or submit_team_task for ordinary user requests; only use those async submission tools when the user explicitly asks for background, queued, or asynchronous work. Do not manually claim that something was saved, recalled, verified, or executed unless a routing or status tool has already confirmed it. Keep replies concise, acknowledge queued work clearly, and never pretend background work is already finished."
-	if manager != nil {
-		if model, err := manager.GetAgentByName(agent.BuiltInDispatcherAgentName); err == nil && strings.TrimSpace(model.Instructions) != "" {
-			systemPrompt = strings.TrimSpace(model.Instructions)
-		}
-	}
-
-	builder := agent.New(agent.BuiltInDispatcherAgentName).
+	builder := agent.New(agentName).
 		WithConfig(chatCfg).
 		WithSystemPrompt(systemPrompt).
 		WithDBPath(agentDBPath).
@@ -213,7 +202,7 @@ func buildChatDispatcherService(chatCfg *config.Config, agentDBPath string, mana
 		builder.WithPTC()
 	}
 
-	globalPool := services.GetGlobalPoolService()
+	globalPool := poolsvc.Global()
 	if err := globalPool.Initialize(context.Background(), chatCfg); err == nil {
 		if llmSvc, llmErr := globalPool.GetLLMService(); llmErr == nil {
 			builder.WithLLM(llmSvc)
@@ -223,14 +212,7 @@ func buildChatDispatcherService(chatCfg *config.Config, agentDBPath string, mana
 		}
 	}
 
-	svc, err := builder.Build()
-	if err != nil {
-		return nil, err
-	}
-	if manager != nil {
-		manager.RegisterDispatcherTools(svc)
-	}
-	return svc, nil
+	return builder.Build()
 }
 
 func displayResult(result *agent.ExecutionResult) {
@@ -429,7 +411,7 @@ func progressCallback(event agent.ProgressEvent) {
 	}
 }
 
-func runInteractiveChat(ctx context.Context, svc *agent.Service, manager *agent.TeamManager) error {
+func runInteractiveChat(ctx context.Context, svc *agent.Service, manager *agent.Manager) error {
 	chatCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -483,7 +465,6 @@ func runInteractiveChat(ctx context.Context, svc *agent.Service, manager *agent.
 					if taskFollower != nil {
 						taskFollower.StartSessionTasks(chatCtx, svc.CurrentSessionID())
 					}
-					printChatPlanList(chatCtx, manager, svc.CurrentSessionID(), 10)
 					fmt.Println()
 				}
 				if req.Done != nil {
@@ -531,32 +512,6 @@ func runInteractiveChat(ctx context.Context, svc *agent.Service, manager *agent.
 				svc.ResetSession()
 				fmt.Printf("✓ Session reset (new: %s)\n", svc.CurrentSessionID())
 				continue
-			}
-
-			if handled, planErr := handleChatPlanCommand(chatCtx, manager, svc.CurrentSessionID(), input, taskFollower); handled {
-				if planErr != nil {
-					fmt.Printf("%s %v\n\n", cliui.Error, planErr)
-				}
-				continue
-			}
-
-			if manager != nil {
-				tasks, parseErr := parseDelegatedTasks(input, func(name string) bool {
-					_, err := manager.GetAgentByName(name)
-					return err == nil
-				})
-				if parseErr != nil {
-					fmt.Printf("%s %v\n\n", cliui.Error, parseErr)
-					continue
-				}
-				if len(tasks) > 0 {
-					fmt.Printf("\n🚀 Delegating %d task(s) in background...\n", len(tasks))
-					if err := runDelegatedTaskChainAsync(chatCtx, manager, svc.CurrentSessionID(), tasks, taskFollower, true); err != nil {
-						fmt.Printf("\n%s %v\n\n", cliui.Error, err)
-					}
-
-					continue
-				}
 			}
 
 			// Process message normally (Dispatcher handling)

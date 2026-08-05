@@ -72,54 +72,6 @@ func (promptTestMemoryService) AddMentalModel(ctx context.Context, model *domain
 	return nil
 }
 
-func TestBuildSystemPromptOmitsOperationalNotesForDispatcher(t *testing.T) {
-	dispatcher := NewAgentWithConfig(BuiltInDispatcherAgentName, "dispatcher instructions", nil)
-	svc := &Service{
-		agent:         dispatcher,
-		promptManager: prompt.NewManager(),
-		cfg: &config.Config{
-			Tooling: config.ToolingConfig{
-				WebSearch: config.WebSearchConfig{Mode: "auto"},
-			},
-		},
-	}
-
-	got := svc.buildSystemPrompt(context.Background(), dispatcher)
-	if strings.Contains(got, "\nRules:\n") {
-		t.Fatalf("expected dispatcher prompt to omit rules, got %q", got)
-	}
-	if strings.Contains(got, "Web search capability:") {
-		t.Fatalf("expected dispatcher prompt to omit web search note, got %q", got)
-	}
-	if !strings.Contains(got, "dispatcher instructions") {
-		t.Fatalf("expected dispatcher instructions in prompt, got %q", got)
-	}
-}
-
-func TestBuildSystemPromptOmitsOperationalNotesForIntentRouter(t *testing.T) {
-	routerAgent := NewAgentWithConfig(BuiltInIntentRouterAgentName, "intent router instructions", nil)
-	svc := &Service{
-		agent:         routerAgent,
-		promptManager: prompt.NewManager(),
-		cfg: &config.Config{
-			Tooling: config.ToolingConfig{
-				WebSearch: config.WebSearchConfig{Mode: "auto"},
-			},
-		},
-	}
-
-	got := svc.buildSystemPrompt(context.Background(), routerAgent)
-	if strings.Contains(got, "\nRules:\n") {
-		t.Fatalf("expected intent router prompt to omit rules, got %q", got)
-	}
-	if strings.Contains(got, "Web search capability:") {
-		t.Fatalf("expected intent router prompt to omit web search note, got %q", got)
-	}
-	if !strings.Contains(got, "intent router instructions") {
-		t.Fatalf("expected intent router instructions in prompt, got %q", got)
-	}
-}
-
 func TestBuildSystemPromptKeepsOperationalNotesForResponder(t *testing.T) {
 	assistant := NewAgentWithConfig("Responder", "assistant instructions", nil)
 	svc := &Service{
@@ -254,9 +206,6 @@ func TestBuildSystemPromptIncludesAgentMessagingGuidanceWhenMessagingToolsCallab
 	}
 	if !strings.Contains(got, "`send_agent_message`") || !strings.Contains(got, "`get_agent_messages`") {
 		t.Fatalf("expected prompt to mention messaging tools explicitly, got %q", got)
-	}
-	if !strings.Contains(got, "request, response, event, error, cancel, progress") {
-		t.Fatalf("expected prompt to enumerate structured message types, got %q", got)
 	}
 }
 

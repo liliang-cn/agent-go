@@ -238,15 +238,6 @@ func (s *Service) CompactSession(ctx context.Context, sessionID string) (string,
 	return resolveConversationSummary(session), nil
 }
 
-// Execute executes a plan by ID and returns the result
-func (s *Service) Execute(ctx context.Context, planID string) (*ExecutionResult, error) {
-	plan, err := s.GetPlan(planID)
-	if err != nil {
-		return nil, fmt.Errorf("plan not found: %w", err)
-	}
-	return s.ExecutePlan(ctx, plan)
-}
-
 // RunRealtime starts a bidirectional realtime session with the agent's capabilities.
 func (s *Service) RunRealtime(ctx context.Context, opts *domain.GenerationOptions) (domain.RealtimeSession, error) {
 	// 1. Check if provider supports realtime
@@ -270,9 +261,6 @@ func (s *Service) RunRealtime(ctx context.Context, opts *domain.GenerationOption
 
 // Close closes the service and releases resources
 func (s *Service) Close() error {
-	if s.subconscious != nil {
-		s.subconscious.Stop()
-	}
 	// Wait for work a run left running (memory extraction) before closing the
 	// store underneath it.
 	s.waitBackground()

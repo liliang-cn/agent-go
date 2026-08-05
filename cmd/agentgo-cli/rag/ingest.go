@@ -10,10 +10,10 @@ import (
 	"sync"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/poolsvc"
 	"github.com/liliang-cn/agent-go/v3/pkg/rag/chunker"
 	"github.com/liliang-cn/agent-go/v3/pkg/rag/processor"
 	"github.com/liliang-cn/agent-go/v3/pkg/rag/store"
-	"github.com/liliang-cn/agent-go/v3/pkg/services"
 	"github.com/spf13/cobra"
 )
 
@@ -80,7 +80,7 @@ You can also use --text flag to ingest text directly.`,
 
 		// Initialize services using global LLM service
 		ctx := context.Background()
-		embedService, err := services.GetGlobalEmbeddingService(ctx)
+		embedService, err := poolsvc.GetGlobalEmbeddingService(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to get global embedder service: %w", err)
 		}

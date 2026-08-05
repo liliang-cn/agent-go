@@ -15,7 +15,6 @@ type prepareConversationOptions struct {
 }
 
 type preparedConversationContext struct {
-	intent         *IntentRecognitionResult
 	ragContext     string
 	memoryContext  string
 	skillReminder  *skillReminder
@@ -36,17 +35,6 @@ func (s *Service) prepareConversationContext(ctx context.Context, goal string, s
 	}
 
 	g, groupCtx := errgroup.WithContext(ctx)
-
-	if opts.includeIntent {
-		g.Go(func() error {
-			intent, err := s.recognizeIntent(groupCtx, goal, session)
-			if err != nil {
-				return err
-			}
-			prepared.intent = intent
-			return nil
-		})
-	}
 
 	// Skip pre-injected RAG context in PTC mode so the runtime keeps explicit
 	// `rag_query` capability reachable via callTool()/execute_javascript.

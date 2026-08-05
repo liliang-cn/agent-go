@@ -33,7 +33,11 @@ func (t *testModelInfoLLM) GenerateWithTools(ctx context.Context, messages []dom
 }
 
 func (t *testModelInfoLLM) StreamWithTools(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions, callback domain.ToolCallCallback) error {
-	return nil
+	result, err := t.GenerateWithTools(ctx, messages, tools, opts)
+	if err != nil {
+		return err
+	}
+	return callback(result)
 }
 
 func (t *testModelInfoLLM) GenerateStructured(ctx context.Context, prompt string, schema interface{}, opts *domain.GenerationOptions) (*domain.StructuredResult, error) {
@@ -65,7 +69,11 @@ func (t *testModelIdentityOnlyLLM) GenerateWithTools(ctx context.Context, messag
 }
 
 func (t *testModelIdentityOnlyLLM) StreamWithTools(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions, callback domain.ToolCallCallback) error {
-	return nil
+	result, err := t.GenerateWithTools(ctx, messages, tools, opts)
+	if err != nil {
+		return err
+	}
+	return callback(result)
 }
 
 func (t *testModelIdentityOnlyLLM) GenerateStructured(ctx context.Context, prompt string, schema interface{}, opts *domain.GenerationOptions) (*domain.StructuredResult, error) {

@@ -239,6 +239,20 @@ func (r *ToolRegistry) Unregister(name string) {
 }
 
 // Has reports whether a tool is registered.
+// Names returns every registered tool name.
+func (r *ToolRegistry) Names() []string {
+	if r == nil {
+		return nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	names := make([]string, 0, len(r.tools))
+	for name := range r.tools {
+		names = append(names, name)
+	}
+	return names
+}
+
 func (r *ToolRegistry) Has(name string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

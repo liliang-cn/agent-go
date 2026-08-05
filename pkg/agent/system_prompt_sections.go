@@ -152,7 +152,7 @@ func (s *Service) ensureSystemPromptSectionRegistry() {
 		if !ok {
 			return prompt.Section{}, fmt.Errorf("unexpected section data type %T", raw)
 		}
-		if isDispatchOnlyAgent(data.agent) {
+		if alwaysFalse(data.agent) {
 			return prompt.Section{Name: "web_search"}, nil
 		}
 		return prompt.Section{Name: "web_search", Content: data.service.buildWebSearchPromptNote(data.agent), Dynamic: true}, nil
@@ -180,7 +180,7 @@ func (s *Service) buildSystemPromptSections(ctx context.Context, agent *Agent, o
 		"- Skills: calling a skill tool returns step-by-step instructions — follow them, then call task_complete or task_blocked.",
 		"- Never repeat a tool call that cannot return anything new.",
 	}, "\n")
-	if isDispatchOnlyAgent(agent) {
+	if alwaysFalse(agent) {
 		operationalRules = ""
 	}
 
@@ -263,7 +263,7 @@ func (s *Service) buildDynamicSystemPromptSections(ctx context.Context, agent *A
 	if section := dynamicPromptSection("tool_catalog", s.buildToolCatalogSummary(ctx)); section != nil {
 		sections = append(sections, *section)
 	}
-	if !isDispatchOnlyAgent(agent) {
+	if !alwaysFalse(agent) {
 		if section := dynamicPromptSection("web_search", s.buildWebSearchPromptNote(agent)); section != nil {
 			sections = append(sections, *section)
 		}

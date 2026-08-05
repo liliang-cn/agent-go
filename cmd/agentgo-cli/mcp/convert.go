@@ -9,7 +9,7 @@ import (
 
 	"github.com/liliang-cn/agent-go/v3/pkg/config"
 	agentgomcp "github.com/liliang-cn/agent-go/v3/pkg/mcp"
-	"github.com/liliang-cn/agent-go/v3/pkg/services"
+	"github.com/liliang-cn/agent-go/v3/pkg/poolsvc"
 	"github.com/liliang-cn/agent-go/v3/pkg/store"
 	skillsmcp "github.com/liliang-cn/skills-go/mcp"
 	"github.com/spf13/cobra"
@@ -84,7 +84,7 @@ func runMCPConvert(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
 	// Get global LLM service (needed for MCP service)
-	poolService := services.GetGlobalPoolService()
+	poolService := poolsvc.Global()
 	gen, err := poolService.GetLLMService()
 	if err != nil {
 		return fmt.Errorf("failed to get LLM generator: %w", err)
@@ -218,7 +218,7 @@ func runMCPDiscover(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
 	// Get global LLM service
-	poolService := services.GetGlobalPoolService()
+	poolService := poolsvc.Global()
 	gen, err := poolService.GetLLMService()
 	if err != nil {
 		return fmt.Errorf("failed to get LLM generator: %w", err)

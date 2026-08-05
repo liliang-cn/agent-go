@@ -8,10 +8,10 @@ import (
 
 	"github.com/liliang-cn/agent-go/v3/cmd/agentgo-cli/rag"
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/poolsvc"
 	"github.com/liliang-cn/agent-go/v3/pkg/rag/chunker"
 	"github.com/liliang-cn/agent-go/v3/pkg/rag/processor"
 	ragstore "github.com/liliang-cn/agent-go/v3/pkg/rag/store"
-	"github.com/liliang-cn/agent-go/v3/pkg/services"
 	"github.com/liliang-cn/agent-go/v3/pkg/skills"
 	"github.com/spf13/cobra"
 )
@@ -73,7 +73,7 @@ func initializeSkills(cmd *cobra.Command) error {
 			docStore := ragstore.NewDocumentStore(vectorStore.GetCortexdbStore())
 
 			// Get embedder service
-			embedService, err := services.GetGlobalEmbeddingService(ctx)
+			embedService, err := poolsvc.GetGlobalEmbeddingService(ctx)
 			if err != nil {
 				initErr = fmt.Errorf("failed to get embedder service: %w", err)
 				return
@@ -81,7 +81,7 @@ func initializeSkills(cmd *cobra.Command) error {
 
 			// Get LLM service (optional, for full RAG)
 			var generator domain.Generator = nil
-			poolService := services.GetGlobalPoolService()
+			poolService := poolsvc.Global()
 			if poolService != nil && poolService.IsInitialized() {
 				llmService, err := poolService.GetLLMService()
 				if err == nil {

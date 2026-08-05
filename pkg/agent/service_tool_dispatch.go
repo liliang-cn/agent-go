@@ -58,23 +58,6 @@ func (s *Service) executeDirectToolCall(ctx context.Context, currentAgent *Agent
 		}
 	}
 
-	if strings.HasPrefix(tc.Function.Name, "transfer_to_") {
-		for _, h := range currentAgent.Handoffs() {
-			if h.ToolName() != tc.Function.Name {
-				continue
-			}
-			targetAgent := h.TargetAgent()
-			reason := tc.Function.Arguments["reason"]
-			if session != nil {
-				session.AgentID = targetAgent.ID()
-			}
-			if opts.OnHandoff != nil {
-				opts.OnHandoff(targetAgent, reason)
-			}
-			return nil, nil, true
-		}
-	}
-
 	metadata := s.lookupToolMetadataForAgent(resolvedToolName, currentAgent)
 	if err := s.authorizeTool(ctx, PermissionRequest{
 		ToolName:        resolvedToolName,
