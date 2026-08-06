@@ -59,10 +59,9 @@ type HTTPTransportConfig struct {
 
 // SwaggerServer wraps an mcp-swagger-server instance
 type SwaggerServer struct {
-	config    *SwaggerConfig
-	server    *mcpswagger.Server
-	transport mcp.Transport
-	running   bool
+	config  *SwaggerConfig
+	server  *mcpswagger.Server
+	running bool
 }
 
 // NewSwaggerServer creates a new Swagger-based MCP server

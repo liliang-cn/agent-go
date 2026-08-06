@@ -908,8 +908,6 @@ func (s *DocumentStore) Update(ctx context.Context, doc domain.Document) error {
 	return nil
 }
 
-
-
 // Reset removes all documents from the document store
 func (s *DocumentStore) Reset(ctx context.Context) error {
 	// Since documents are stored in the same cortexdb database,

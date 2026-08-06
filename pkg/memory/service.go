@@ -39,8 +39,6 @@ type Service struct {
 	navigator        *IndexNavigator
 	reflectThreshold int // auto-reflect after this many new facts
 
-	mu sync.RWMutex
-
 	backgroundOnce sync.Once
 	closeOnce      sync.Once
 	durableQueue   chan *domain.MemoryStoreRequest

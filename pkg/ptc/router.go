@@ -293,19 +293,8 @@ func (r *AgentGoRouter) ragQueryHandler(ctx context.Context, args map[string]int
 		topK = tk
 	}
 
-	// Use duck-typed Query interface to avoid importing domain package.
-	type queryRequest struct {
-		Query string
-		TopK  int
-	}
-	type queryResponse interface{}
-
-	type queryer interface {
-		Query(ctx context.Context, req interface{}) (interface{}, error)
-	}
-
-	// The real domain.Processor.Query signature doesn't match queryer directly.
-	// Use a more specific interface that matches the actual domain.Processor.
+	// Duck-typed against the real domain.Processor so this package does not
+	// have to import domain.
 	type domainQueryer interface {
 		QueryRaw(ctx context.Context, query string, topK int) (string, error)
 	}
@@ -363,72 +352,17 @@ func (r *AgentGoRouter) ragListHandler(ctx context.Context, args map[string]inte
 // It duck-types against ListTools() []T where T has Function.Name, Function.Description,
 // Function.Parameters — which is how agent.MCPToolExecutor works.
 func (r *AgentGoRouter) getMCPTools(ctx context.Context) []ToolInfo {
-	type domainTool struct {
-		Function struct {
-			Name        string
-			Description string
-			Parameters  map[string]interface{}
-		}
-	}
-	type lister interface {
-		ListTools() interface{}
-	}
-
-	// The concrete type stored is agent.MCPToolExecutor which has:
-	//   ListTools() []domain.ToolDefinition
-	// domain.ToolDefinition has a Function field of type domain.ToolFunction.
-	// We use reflection-free duck typing via a small adapter interface.
-	type mcpLister interface {
-		ListTools() []struct {
-			Type     string
-			Function struct {
-				Name        string
-				Description string
-				Parameters  map[string]interface{}
-			}
-		}
-	}
-
-	// Use the same interface shape as in agent package via anonymous struct matching.
-	// In practice Go doesn't allow this directly, so we use encoding/json round-trip
-	// approach or a more practical helper.
-	// Instead: accept that the stored value is the agent.MCPToolExecutor interface,
-	// which wraps mcp.Service. We call ListTools via a simpler interface.
-	type simpleListTools interface {
-		ListTools() []interface{}
-	}
-
-	// The most robust approach: define an interface that matches agent.MCPToolExecutor.ListTools exactly.
-	// Since domain.ToolDefinition is a concrete struct, we need an exact-match interface.
-	// We define it here to match — if the concrete type changes, this will compile-fail loudly.
-	type toolDefIface interface {
-		GetFunctionName() string
-		GetFunctionDesc() string
-		GetFunctionParams() map[string]interface{}
-	}
-
-	// Practical solution: use fmt.Sprintf / JSON encoding is too heavy.
-	// Best option: a named interface matching domain.ToolDefinition layout via
-	// a concrete assertion against a known minimal interface we control.
-	//
-	// We define a small bridge interface in types.go that callers satisfy.
-	// For now use the ToolLister defined below.
-
+	// Structural subtyping does not reach across packages for concrete structs,
+	// so there is no way to duck-type domain.ToolDefinition here without
+	// importing domain. Two supported shapes instead: an MCP service that can
+	// hand back ToolInfo itself, or infos registered up front via
+	// WithMCPToolInfos().
 	type toolLister interface {
 		ListToolInfos(ctx context.Context) []ToolInfo
 	}
 	if tl, ok := r.mcpService.(toolLister); ok {
 		return tl.ListToolInfos(ctx)
 	}
-
-	// Fallback: directly call the ListTools() method that returns domain.ToolDefinition
-	// by asserting against a custom interface matching the method signature.
-	// We define it here; this will match any type that has ListTools() returning
-	// a slice of values with a Function field (structural subtyping in Go does NOT
-	// work across packages for concrete structs — only interfaces).
-	//
-	// The only reliable way without importing domain: use an adapter registered at
-	// router construction time. We provide WithMCPToolInfos() for that purpose.
 	return r.mcpToolInfos
 }
 

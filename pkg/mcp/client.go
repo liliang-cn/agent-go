@@ -17,9 +17,8 @@ import (
 
 // Command availability cache
 var (
-	commandCache     = make(map[string]bool)
-	commandCacheMu   sync.RWMutex
-	commandCheckOnce sync.Once
+	commandCache   = make(map[string]bool)
+	commandCacheMu sync.RWMutex
 )
 
 // CheckCommandAvailable checks if a command is available in PATH
