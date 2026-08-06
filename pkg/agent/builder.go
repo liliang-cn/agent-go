@@ -668,6 +668,7 @@ func (b *Builder) build() (*Service, error) {
 	// that asked for a delivery action cannot complete without evidence of it.
 	svc.RegisterOutputLint(NonEmptyFinalAnswer())
 	svc.RegisterOutputLint(TaskDeliveryContract())
+	svc.RegisterOutputLint(NoToolScaffoldingAnswer())
 
 	// Graph-aware mode: expose the graph_recall tool so the loop can query the
 	// knowledge graph. Registered when WithGraphMemory() opted in.

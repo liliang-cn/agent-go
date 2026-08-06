@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 )
@@ -49,50 +50,78 @@ func (c RunConstraints) Empty() bool {
 	return !c.ForbidTools && len(c.Deliverables) == 0
 }
 
-// constraintExtractionSchema is the JSON schema handed to the model. It is
-// deliberately small: two fields, closed enum, no free-form reasoning. A bigger
-// schema costs tokens on every run and gives the model room to editorialise.
-var constraintExtractionSchema = map[string]interface{}{
-	"type": "object",
-	"properties": map[string]interface{}{
-		"forbid_tools": map[string]interface{}{
-			"type": "boolean",
-			"description": "true only if the user explicitly forbade using tools " +
-				"(in any language). false otherwise.",
-		},
-		"deliverables": map[string]interface{}{
-			"type": "array",
-			"description": "Concrete side effects the user explicitly asked for. " +
-				"Empty when the user only asked a question.",
-			"items": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"kind": map[string]interface{}{
-						"type": "string",
-						"enum": []string{"email", "file", "message", "other"},
+// newConstraintExtractionSchema builds the JSON schema handed to the model. It
+// is deliberately small: two fields, a closed enum, no free-form reasoning. A
+// bigger schema costs tokens on every run and gives the model room to
+// editorialise.
+//
+// It is built per call rather than kept in a package-level var because
+// providers receive it as an `interface{}` and are free to write through it —
+// pkg/providers/openai.go hands it straight to json.Unmarshal. That particular
+// call happens to be a no-op for a map (Unmarshal rejects a non-pointer map),
+// but sharing one mutable map across concurrent runs is a race waiting for the
+// next provider that does something slightly different.
+func newConstraintExtractionSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"forbid_tools": map[string]interface{}{
+				"type": "boolean",
+				"description": "true only if the user explicitly forbade using tools " +
+					"(in any language). false otherwise.",
+			},
+			"deliverables": map[string]interface{}{
+				"type": "array",
+				"description": "Concrete side effects the user explicitly asked for. " +
+					"Empty when the user only asked a question.",
+				"items": map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"kind": map[string]interface{}{
+							"type": "string",
+							"enum": []string{"email", "file", "message", "other"},
+						},
+						"description": map[string]interface{}{"type": "string"},
+						"path":        map[string]interface{}{"type": "string"},
 					},
-					"description": map[string]interface{}{"type": "string"},
-					"path":        map[string]interface{}{"type": "string"},
+					"required": []string{"kind", "description"},
 				},
-				"required": []string{"kind", "description"},
 			},
 		},
-	},
-	"required": []string{"forbid_tools", "deliverables"},
+		"required": []string{"forbid_tools", "deliverables"},
+	}
 }
 
 // constraintExtractionPrompt is language-agnostic on purpose: it names no
 // phrases and no keywords, so it works for whatever the user actually wrote.
+//
+// The bias is deliberately toward reporting nothing. A missed constraint costs
+// one unenforced instruction; a hallucinated one puts an ordinary request under
+// a contract it can never satisfy, and burns the lint retry budget doing it.
 const constraintExtractionPrompt = `Read the user request below and report ONLY the constraints the user stated explicitly.
 
+Output a single JSON object and nothing else. No prose, no markdown, no code fence.
+
 Rules:
-- Report a constraint only if the user actually said it. Never infer, never guess at intent.
-- forbid_tools: true only when the user explicitly refused the use of tools. A request that merely does not need tools is NOT a refusal.
-- deliverables: list only side effects the user explicitly asked to be performed (send an email, write a file, post a message, ...). Asking a question is not a deliverable. Producing an answer in the reply is not a deliverable.
+- Report a constraint only if the user actually said it. Never infer, never guess at intent. When unsure, report nothing.
+- forbid_tools: true ONLY when the user explicitly refused the use of tools. A request that simply does not need tools is NOT a refusal.
+- deliverables: ONLY side effects the user explicitly asked to be performed on something outside the conversation — sending a message somewhere, writing a file, posting to a service.
+  - Asking a question is NOT a deliverable.
+  - Asking for a calculation, a translation, a lookup, or an explanation is NOT a deliverable — the answer belongs in the reply.
+  - Setting a reminder, adding a calendar entry, or recording a note is NOT a deliverable for this purpose.
+  - If the request only asks you to find something out and tell the user, deliverables MUST be empty.
 - Work in whatever language the request is written in.
 
 User request:
 `
+
+// constraintExtractionTimeout bounds the whole extraction (both attempts).
+// It is short on purpose: the extraction guards a minority of runs, so it must
+// never be the reason an ordinary task runs out of time.
+const constraintExtractionTimeout = 20 * time.Second
+
+// constraintRetryInstruction is appended when the first reply was not parsable.
+const constraintRetryInstruction = "\n\nYour previous reply was not valid JSON. Output ONLY the JSON object, with no other text."
 
 // resolveRunConstraints returns the constraints for one run. It is called once
 // per run from the loop, so every entry point (Run, RunStream, Ask, Chat, the
@@ -118,28 +147,61 @@ func (s *Service) resolveRunConstraints(ctx context.Context, goal string, cfg *R
 	return s.extractRunConstraints(ctx, goal)
 }
 
-// extractRunConstraints makes the single structured call. Any failure degrades
-// to "no constraints" — a provider that cannot do structured output must not be
-// able to block an otherwise ordinary run.
+// extractRunConstraints makes the structured call, leniently parses whatever
+// comes back, and retries once with explicit feedback before giving up. Any
+// final failure degrades to "no constraints" — a provider that cannot do
+// structured output must not be able to block an otherwise ordinary run.
 func (s *Service) extractRunConstraints(ctx context.Context, goal string) RunConstraints {
+	// The extraction is a precondition check, not the work. Bound it so a slow
+	// or rate-limited gateway cannot spend the run's deadline before the first
+	// real turn — the caller's budget belongs to the task, not to this.
+	ctx, cancel := context.WithTimeout(ctx, constraintExtractionTimeout)
+	defer cancel()
+
+	prompt := constraintExtractionPrompt + goal
+
+	for attempt := 0; attempt < 2; attempt++ {
+		if ctx.Err() != nil {
+			s.logger.Warn("constraint extraction timed out; running without constraints")
+			return RunConstraints{}
+		}
+		if attempt > 0 {
+			prompt += constraintRetryInstruction
+		}
+		raw, err := s.callConstraintExtraction(ctx, prompt)
+		if err != nil {
+			s.logger.Warn("constraint extraction call failed",
+				slog.Int("attempt", attempt+1),
+				slog.String("error", err.Error()))
+			continue
+		}
+		parsed, perr := parseRunConstraints(raw)
+		if perr == nil {
+			return parsed
+		}
+		s.logger.Warn("constraint extraction reply was not parsable JSON",
+			slog.Int("attempt", attempt+1),
+			slog.String("error", perr.Error()))
+	}
+
+	s.logger.Warn("constraint extraction gave up; running without constraints")
+	return RunConstraints{}
+}
+
+// callConstraintExtraction issues one extraction request and returns the raw
+// reply text.
+func (s *Service) callConstraintExtraction(ctx context.Context, prompt string) (string, error) {
 	res, err := s.llmService.GenerateStructured(
 		ctx,
-		constraintExtractionPrompt+goal,
-		constraintExtractionSchema,
+		prompt,
+		newConstraintExtractionSchema(),
 		&domain.GenerationOptions{Temperature: 0, MaxTokens: 400},
 	)
 	if err != nil {
-		s.logger.Warn("constraint extraction failed; running without constraints",
-			slog.String("error", err.Error()))
-		return RunConstraints{}
+		return "", err
 	}
 	if res == nil {
-		return RunConstraints{}
-	}
-
-	var payload struct {
-		ForbidTools  bool                     `json:"forbid_tools"`
-		Deliverables []DeliverableRequirement `json:"deliverables"`
+		return "", errNoJSONObject
 	}
 	raw := strings.TrimSpace(res.Raw)
 	if raw == "" && res.Data != nil {
@@ -147,13 +209,26 @@ func (s *Service) extractRunConstraints(ctx context.Context, goal string) RunCon
 			raw = string(encoded)
 		}
 	}
-	if raw == "" {
-		return RunConstraints{}
+	return raw, nil
+}
+
+// parseRunConstraints turns a model reply into constraints, tolerating code
+// fences and prose around the object.
+func parseRunConstraints(raw string) (RunConstraints, error) {
+	if strings.TrimSpace(raw) == "" {
+		return RunConstraints{}, errNoJSONObject
 	}
-	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
-		s.logger.Warn("constraint extraction returned unparsable JSON; running without constraints",
-			slog.String("error", err.Error()))
-		return RunConstraints{}
+	body, err := extractJSONObject(raw)
+	if err != nil {
+		return RunConstraints{}, err
+	}
+
+	var payload struct {
+		ForbidTools  bool                     `json:"forbid_tools"`
+		Deliverables []DeliverableRequirement `json:"deliverables"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return RunConstraints{}, err
 	}
 
 	out := RunConstraints{ForbidTools: payload.ForbidTools}
@@ -172,5 +247,5 @@ func (s *Service) extractRunConstraints(ctx context.Context, goal string) RunCon
 			Path:        strings.TrimSpace(d.Path),
 		})
 	}
-	return out
+	return out, nil
 }

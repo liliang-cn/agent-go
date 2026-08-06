@@ -2,6 +2,7 @@ package agent
 
 import (
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -155,3 +156,55 @@ func fileArtifactExists(path string) bool {
 	}
 	return info.Size() > 0
 }
+
+// --- no_tool_scaffolding_answer -------------------------------------------------
+
+// NoToolScaffoldingAnswer rejects a final answer that is really tool-search
+// plumbing echoed back at the user.
+//
+// The benchmark's home-order-pizza run finished with the literal text "No tools
+// found matching the query." — a string this framework generates to tell the
+// MODEL that a search came up empty. It reached the user because a PTC round
+// can promote its return value straight to the terminal answer, and that value
+// was the search result.
+//
+// The strings matched here are our own constants, not user text: this is the
+// runtime recognising its own scaffolding, which is exactly the kind of thing a
+// lint should catch.
+func NoToolScaffoldingAnswer() OutputLint {
+	return LintFunc{
+		NameValue: "no_tool_scaffolding_answer",
+		Fn: func(text string, _ LintContext) (bool, string) {
+			trimmed := strings.TrimSpace(text)
+			if trimmed == "" {
+				// non_empty_final_answer owns the empty case.
+				return true, ""
+			}
+			for _, scaffold := range toolScaffoldingStrings {
+				if !strings.Contains(trimmed, scaffold) {
+					continue
+				}
+				// Only a violation when the scaffolding IS the answer, not when
+				// the agent quoted it inside a real explanation.
+				if len(trimmed) <= len(scaffold)+scaffoldingSlackChars {
+					return false, "your final answer was tool-search plumbing (" +
+						strconv.Quote(scaffold) + "), not an answer to the user. " +
+						"Answer the original request from what you already know, " +
+						"or call task_blocked naming the capability you are missing."
+				}
+			}
+			return true, ""
+		},
+	}
+}
+
+// toolScaffoldingStrings are framework-emitted messages addressed to the model.
+var toolScaffoldingStrings = []string{
+	toolSearchNoMatches,
+	toolSearchSummaryRequest,
+	toolSearchNoMappingPrefix,
+}
+
+// scaffoldingSlackChars allows a little surrounding punctuation or whitespace
+// before we stop calling the reply "just the scaffolding".
+const scaffoldingSlackChars = 40

@@ -1,0 +1,21 @@
+name: gate_constraints_survive_fenced_reply
+description: >
+  Constraint extraction has to survive a provider that ignores its own
+  structured-output contract. The gateway behind the 50-question benchmark
+  returned the object wrapped in a markdown fence (and sometimes behind a
+  "Based on the user request, ..." preamble), a strict json.Unmarshal failed
+  with `invalid character 'B'`, and the run silently degraded to no
+  constraints — so the forbid-tools gate never closed.
+
+  Here the extraction reply is fenced. The constraint must still be honoured:
+  zero tools offered, and the model answers from its own knowledge.
+agent: Assistant
+input: "Without using any tools, name the largest planet in the solar system."
+constraints: "```json\n{\"forbid_tools\":true,\"deliverables\":[]}\n```"
+llm_replies:
+  - "Jupiter is the largest planet in the solar system."
+expect:
+  status: completed
+  final_text_match: "Jupiter"
+  llm_calls: 1
+  max_tools_offered: 0

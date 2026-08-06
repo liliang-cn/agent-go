@@ -220,4 +220,5 @@ func RegisterDefaultOutputLints(svc *Service) {
 	svc.RegisterOutputLint(NoRawPTCCode())
 	svc.RegisterOutputLint(NonEmptyFinalAnswer())
 	svc.RegisterOutputLint(TaskDeliveryContract())
+	svc.RegisterOutputLint(NoToolScaffoldingAnswer())
 }

@@ -1,0 +1,22 @@
+name: gate_ordinary_request_has_no_constraints
+description: >
+  The counter-test for the constraint gates: an ordinary request that states no
+  constraints must come back with none, keep its full tool surface, and finish
+  without any lint firing.
+
+  This is the regression guard for over-extraction. A lookup or a calculation is
+  not a deliverable — if the extractor invents one, the delivery contract puts
+  the run under an obligation it can never discharge and burns the retry budget
+  doing it. Eight tasks in the 50-question benchmark turned from pass to fail
+  after the gates landed, and this scenario is what would have caught an
+  over-extraction cause.
+agent: Assistant
+input: "Look up the recommended daily dose of vitamin D."
+constraints: '{"forbid_tools":false,"deliverables":[]}'
+llm_replies:
+  - "The recommended daily dose of vitamin D is 600 IU for adults aged 1-70."
+expect:
+  status: completed
+  final_text_match: "600 IU"
+  llm_calls: 1
+  lint_violations: []

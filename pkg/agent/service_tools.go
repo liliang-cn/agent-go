@@ -12,6 +12,17 @@ import (
 	"github.com/liliang-cn/agent-go/v3/pkg/skills"
 )
 
+// Strings this framework emits as tool-search scaffolding. They are plumbing
+// addressed to the model, never an answer to the user — the
+// no_tool_scaffolding_answer lint rejects a final response that is just one of
+// these echoed back. They are named constants so the lint cannot drift out of
+// sync with the text it guards.
+const (
+	toolSearchNoMatches       = "No tools found matching the query."
+	toolSearchSummaryRequest  = "Please provide a final summary of these results to the user."
+	toolSearchNoMappingPrefix = "Found tools: "
+)
+
 // SearchAndExecute searches for tools matching the query and optionally executes them.
 // scope limits the search to a specific MCP server prefix or skill ID (empty = search all).
 func (s *Service) SearchAndExecute(ctx context.Context, query string, instruction string, scope string) (interface{}, error) {
@@ -111,7 +122,7 @@ func (s *Service) SearchAndExecute(ctx context.Context, query string, instructio
 		}
 
 		if len(result.ToolCalls) == 0 {
-			return "Found tools: " + fmt.Sprintf("%v", getToolNames(matches)) + ". But could not map instruction to any of them.", nil
+			return toolSearchNoMappingPrefix + fmt.Sprintf("%v", getToolNames(matches)) + ". But could not map instruction to any of them.", nil
 		}
 
 		execResults, err := s.executeToolCalls(ctx, s.agent, nil, result.ToolCalls)
@@ -123,12 +134,12 @@ func (s *Service) SearchAndExecute(ctx context.Context, query string, instructio
 		for _, r := range execResults {
 			finalResults = append(finalResults, fmt.Sprintf("Tool '%s' executed successfully. Result: %v", r.ToolName, r.Result))
 		}
-		return strings.Join(finalResults, "\n") + "\n\nPlease provide a final summary of these results to the user.", nil
+		return strings.Join(finalResults, "\n") + "\n\n" + toolSearchSummaryRequest, nil
 	}
 
 	// Just return found tools metadata
 	if len(matches) == 0 {
-		return "No tools found matching the query.", nil
+		return toolSearchNoMatches, nil
 	}
 
 	var result []map[string]interface{}
