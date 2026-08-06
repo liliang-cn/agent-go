@@ -157,7 +157,24 @@ Every service built with `agent.New(...).Build()` gets the built-ins automatical
 - `non_empty_final_answer` — a run cannot terminate with no text
 - `task_delivery_contract` — a goal naming a delivery action (send the mail, post the message, write the file) cannot complete unless a matching tool was actually called
 
-Related: a task that says "without using any tools" is given **zero** tools, and any tool call it makes anyway is refused. Hard constraints are enforced by the runtime, not requested in the prompt.
+Related: a request that refuses tool use is given **zero** tools, and any tool call it makes anyway is refused. Hard constraints are enforced by the runtime, not requested in the prompt.
+
+The runtime works out what the user asked for with one small structured call per run — not by matching phrases, so it behaves the same in every language:
+
+```go
+// Declare it yourself and the extraction call is skipped entirely.
+result, _ := svc.Run(ctx, "Name the largest planet.", agent.WithToolsDisabled())
+
+// Or state what the run must deliver, and the contract lint enforces it.
+result, _ = svc.Run(ctx, goal, agent.WithRequiredDeliverables(
+    agent.DeliverableRequirement{Kind: "email", Description: "the summary"},
+))
+
+// Off entirely: only what you declared is enforced.
+result, _ = svc.Run(ctx, goal, agent.WithConstraintExtraction(false))
+```
+
+A blocked run is an outcome, not an error: `result.Err()` stays nil and `result.Text()` carries the agent's explanation, so a caller checking `err` first can't silently discard it. Branch on `result.Blocked`.
 
 ## Storage
 

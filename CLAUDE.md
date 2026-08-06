@@ -110,7 +110,22 @@ The discipline: when a model keeps making the same mistake, **don't add another 
 
 ### Hard constraints live in the runtime, not the prompt
 
-An explicit "without using any tools" is satisfied by *withholding the tools* (`prepareTurnInputsWithConfig` filters the list to nothing, including PTC's `execute_javascript` and `search_available_tools`), and any tool call the model emits anyway is refused with structured feedback. Forbidding a capability means not offering it — not offering it and then arguing about it.
+A user who refuses tool use is obeyed by *withholding the tools* — `prepareTurnInputsWithConfig` empties the list, including PTC's `execute_javascript` and `search_available_tools` — and any tool call the model emits anyway is refused with structured feedback. Forbidding a capability means not offering it, not offering it and then arguing about it.
+
+**Never decide this by matching phrases in the goal.** `constraints.go` resolves each run's constraints once, in `Runtime.loop`, via one temperature-0 structured call with a keyword-free prompt:
+
+```go
+type RunConstraints struct {
+    ForbidTools  bool
+    Deliverables []DeliverableRequirement // kind: email|file|message|other
+}
+```
+
+`ForbidTools` empties the tool list; `Deliverables` reach `task_delivery_contract` and `file_task_must_write` through `LintContext`. Callers who already know skip the call entirely with `WithToolsDisabled()` / `WithRequiredDeliverables(...)`; `WithConstraintExtraction(false)` turns the pass off. Extraction failure degrades to "no constraints" and warns — it must never block an ordinary run.
+
+This replaced four hardcoded phrase tables (`noToolInstructionPhrases`, delivery `GoalMarkers`, `fileOutputIntentPatterns`, the auto-memory hook). They are the same disease as the deleted `isExplicitMemoryRecallQuery`: a list only enforces the languages someone thought to enumerate, and silently does nothing for everyone else. If you find yourself adding a phrase to a list to change runtime behavior, that is the signal to extract a constraint instead.
+
+Resolve constraints in the **loop**, never in a helper that only sees a goal string — that mistake is why the gate fired for `Run` but not `Ask`.
 
 ### Eval harness
 
