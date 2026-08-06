@@ -554,6 +554,7 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 			result.StepsTotal++
 		case EventTypeBlocked:
 			result.Success = false
+			result.Blocked = true
 			result.FinalResult = evt.Content
 			result.Error = evt.Content
 			result.StepsFailed++

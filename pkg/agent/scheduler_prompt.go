@@ -159,11 +159,16 @@ func (e *PromptExecutor) Execute(ctx context.Context, parameters map[string]stri
 		StartedAt: started,
 		Duration:  time.Since(started),
 	}
+	blocked := false
 	if result != nil {
-		run.Answer = strings.TrimSpace(fmt.Sprintf("%v", result.FinalResult))
-		// A run that reports failure without an error still failed; surface it
-		// rather than recording a success with an empty answer.
-		if err == nil && !result.Success && result.Error != "" {
+		run.Answer = strings.TrimSpace(result.Text())
+		blocked = result.Blocked
+		// A run that failed without an error still failed; surface it rather
+		// than recording a success with an empty answer. A *blocked* run is not
+		// that: the agent answered, and its answer is why it stopped — that
+		// text is exactly what the host needs to notify with, so it must not be
+		// demoted to an error and dropped.
+		if err == nil && !blocked && !result.Success && result.Error != "" {
 			err = fmt.Errorf("%s", result.Error)
 			run.Err = err
 		}
@@ -174,6 +179,14 @@ func (e *PromptExecutor) Execute(ctx context.Context, parameters map[string]stri
 
 	if err != nil {
 		return &scheduler.TaskResult{Success: false, Error: err.Error(), Duration: run.Duration}, err
+	}
+	if blocked {
+		return &scheduler.TaskResult{
+			Success:  false,
+			Output:   run.Answer,
+			Error:    run.Answer,
+			Duration: run.Duration,
+		}, nil
 	}
 	return &scheduler.TaskResult{Success: true, Output: run.Answer, Duration: run.Duration}, nil
 }

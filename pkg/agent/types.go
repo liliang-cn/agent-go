@@ -71,7 +71,12 @@ type ExecutionResult struct {
 	PlanID          string                    `json:"plan_id"`
 	SessionID       string                    `json:"session_id"`
 	TaskID          string                    `json:"task_id,omitempty"`
-	Success         bool                      `json:"success"`
+	Success bool `json:"success"`
+	// Blocked reports that the agent ran fine and concluded it could not
+	// proceed, explaining why in Text(). That is an outcome, not a failure:
+	// Err() stays nil so a caller doing `if err != nil { return }` cannot
+	// silently discard the explanation. Check Blocked (or Success) to branch.
+	Blocked         bool                      `json:"blocked,omitempty"`
 	StepsTotal      int                       `json:"steps_total"`
 	StepsDone       int                       `json:"steps_done"`
 	StepsFailed     int                       `json:"steps_failed"`
@@ -146,6 +151,13 @@ func (r *ExecutionResult) Text() string {
 //	}
 func (r *ExecutionResult) Err() error {
 	if r == nil || r.Error == "" {
+		return nil
+	}
+	// A blocked run is a considered answer ("I can't, because X"), not a
+	// failure to execute. Reporting it as an error made every caller that
+	// checks err first throw the explanation away — which is how 6 of 50
+	// benchmark tasks came back with nothing at all for the user to read.
+	if r.Blocked {
 		return nil
 	}
 	return fmt.Errorf("%s", r.Error)
