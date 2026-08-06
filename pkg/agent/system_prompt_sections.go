@@ -18,6 +18,9 @@ type systemPromptSection struct {
 
 type systemPromptOptions struct {
 	includePTC bool
+	// forbidTools drops every rule that teaches the model to reach for a tool.
+	// The run will be offered none, so mentioning them only invites refusals.
+	forbidTools bool
 }
 
 type systemPromptSectionData struct {
@@ -160,18 +163,29 @@ func (s *Service) ensureSystemPromptSectionRegistry() {
 func (s *Service) buildSystemPromptSections(ctx context.Context, agent *Agent, opts systemPromptOptions) []systemPromptSection {
 	s.ensureSystemPromptSectionRegistry()
 	systemCtx := s.buildSystemContext()
-	operationalRules := strings.Join([]string{
+	rules := []string{
 		"- " + strings.ReplaceAll(FinishOrBlockContract, "\n", "\n- "),
-		"- Call task_complete as soon as you have the final answer. Call task_blocked only when a concrete blocker prevents completion.",
-		"- For file operations use fs_* tools (fs_read/fs_write/fs_edit/fs_list/...); for web search use mcp_websearch_* tools.",
-		"- Treat the visible callable tool list as the authoritative source of what can actually be executed in this runtime.",
-		"- Do not invent hidden tool or API names such as generic run/status/start methods when concrete callable tool names are already exposed.",
-		"- If you are unsure which exact tool fits a request, call `search_available_tools` before claiming the capability is unavailable.",
-		"- Tool discovery is bounded to one search per task. If that search returns nothing usable, stop searching: answer directly from your own knowledge, or call task_blocked naming the missing capability. Rewording a failed search does not make it a new search — the tool catalog does not change mid-task.",
-		"- If the conversation context includes a 'Relevant Skills For This Task' section and one of those skills clearly matches the request, call the corresponding `skill_*` tool before doing the task manually.",
-		"- Skills: calling a skill tool returns step-by-step instructions — follow them, then call task_complete or task_blocked.",
-		"- Never repeat a tool call that cannot return anything new.",
-	}, "\n")
+	}
+	if opts.forbidTools {
+		// No tools will be attached to this run, so every tool rule below is
+		// noise at best and an invitation to a refused call at worst.
+		rules = append(rules,
+			"- No tools are available for this task. Answer directly from your own knowledge.",
+		)
+	} else {
+		rules = append(rules,
+			"- Call task_complete as soon as you have the final answer. Call task_blocked only when a concrete blocker prevents completion.",
+			"- For file operations use fs_* tools (fs_read/fs_write/fs_edit/fs_list/...); for web search use mcp_websearch_* tools.",
+			"- Treat the visible callable tool list as the authoritative source of what can actually be executed in this runtime.",
+			"- Do not invent hidden tool or API names such as generic run/status/start methods when concrete callable tool names are already exposed.",
+			"- If you are unsure which exact tool fits a request, call `search_available_tools` before claiming the capability is unavailable.",
+			"- Tool discovery is bounded to one search per task. If that search returns nothing usable, stop searching: answer directly from your own knowledge, or call task_blocked naming the missing capability. Rewording a failed search does not make it a new search — the tool catalog does not change mid-task.",
+			"- If the conversation context includes a 'Relevant Skills For This Task' section and one of those skills clearly matches the request, call the corresponding `skill_*` tool before doing the task manually.",
+			"- Skills: calling a skill tool returns step-by-step instructions — follow them, then call task_complete or task_blocked.",
+			"- Never repeat a tool call that cannot return anything new.",
+		)
+	}
+	operationalRules := strings.Join(rules, "\n")
 	if alwaysFalse(agent) {
 		operationalRules = ""
 	}

@@ -1,0 +1,25 @@
+name: gate_forbidden_run_refuses_ptc_code
+description: >
+  PTC is a SECOND tool channel. Instead of emitting a tool_call, the model
+  writes a <code> block in its reply and the runtime parses and executes it —
+  no tool definition involved, no tool_call produced. Emptying the tool list
+  therefore does not close it, and for a while a run that forbade tools still
+  executed execute_javascript through this path.
+
+  Here the model reaches for the code channel on its first turn. It must be
+  refused rather than executed, and the run must finish as plain text. The
+  scenario also pins max_tools_offered at 0, so the function-calling channel
+  stays shut at the same time.
+agent: Assistant
+ptc: true
+input: "Without using any tools, name the largest planet in the solar system."
+constraints: '{"forbid_tools":true,"deliverables":[]}'
+llm_replies:
+  - "<code>return callTool('mcp_websearch_basic', {query: 'largest planet'});</code>"
+  - "Jupiter is the largest planet in the solar system."
+expect:
+  status: completed
+  final_text_match: "Jupiter"
+  final_text_must_not_match: "callTool"
+  llm_calls: 2
+  max_tools_offered: 0

@@ -17,7 +17,7 @@ var (
 )
 
 func (r *Runtime) overridePTCToolCallsFromContent(round int, content string, toolCalls []domain.ToolCall) []domain.ToolCall {
-	if !r.svc.isPTCEnabled() {
+	if !r.ptcEnabled() {
 		return toolCalls
 	}
 
@@ -57,7 +57,7 @@ func (r *Runtime) overridePTCToolCallsFromContent(round int, content string, too
 }
 
 func (r *Runtime) handlePTCTextFallback(ctx context.Context, content string, messages []domain.Message) ([]domain.Message, bool) {
-	if !r.svc.isPTCEnabled() || !r.svc.ptcIntegration.IsCodeResponse(content) {
+	if !r.ptcEnabled() || !r.svc.ptcIntegration.IsCodeResponse(content) {
 		return messages, false
 	}
 
@@ -99,7 +99,7 @@ func (r *Runtime) handlePTCTextFallback(ctx context.Context, content string, mes
 }
 
 func (r *Runtime) shouldShortCircuitPTCToolRound(content string, toolCalls []domain.ToolCall) (string, bool) {
-	if !r.svc.isPTCEnabled() || r.svc.ptcIntegration == nil || len(toolCalls) == 0 {
+	if !r.ptcEnabled() || r.svc.ptcIntegration == nil || len(toolCalls) == 0 {
 		return "", false
 	}
 	for _, tc := range toolCalls {

@@ -199,7 +199,16 @@ func shouldKeepToolForSkillFirst(toolName string, relevantSkillNames []string) b
 // gets a restricted toolset without a separate execution path.
 func (s *Service) prepareTurnInputsWithConfig(ctx context.Context, currentAgent *Agent, messages []domain.Message, goal string, cfg *RunConfig) ([]domain.ToolDefinition, []domain.Message) {
 	s.syncDiscoveredToolsFromHistory(messages, "")
-	tools := s.collectAllAvailableToolsWithPolicy(ctx, currentAgent, s.buildToolPreparationPolicy(ctx))
+	policy := s.buildToolPreparationPolicy(ctx)
+	// A run that forbids tools must not even assemble the PTC tool catalogue:
+	// GetPTCTools embeds the callable list into execute_javascript's schema and
+	// into the prompt, which is one more place the model learns about a channel
+	// it is not allowed to use.
+	if cfg != nil && cfg.resolvedConstraints != nil && cfg.resolvedConstraints.ForbidTools {
+		policy.PTCEnabled = false
+		policy.ExposeSearchTools = false
+	}
+	tools := s.collectAllAvailableToolsWithPolicy(ctx, currentAgent, policy)
 	if cfg != nil && (len(cfg.ToolAllowlist) > 0 || len(cfg.ToolDenylist) > 0) {
 		tools = filterTools(tools, cfg.ToolAllowlist, cfg.ToolDenylist)
 	}
@@ -214,7 +223,7 @@ func (s *Service) prepareTurnInputsWithConfig(ctx context.Context, currentAgent 
 		tools = nil
 	}
 
-	systemMsg := s.buildSystemPrompt(ctx, currentAgent)
+	systemMsg := s.buildSystemPromptForRun(ctx, currentAgent, cfg)
 	if cfg != nil && strings.TrimSpace(cfg.SystemPromptOverride) != "" {
 		systemMsg = cfg.SystemPromptOverride
 	}

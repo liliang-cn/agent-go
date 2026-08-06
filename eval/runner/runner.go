@@ -244,7 +244,7 @@ func runOnce(ctx context.Context, sc *Scenario, opts RunOptions) (*singleRun, er
 func buildMockService(sc *Scenario, home string, mock *MockLLM) (*agent.Service, error) {
 	cfg := buildEvalConfig(home)
 	return agent.New(scenarioAgentName(sc)).
-		WithPTC(false).
+		WithPTC(sc.PTC).
 		WithConfig(cfg).
 		WithLLM(mock).
 		Build()

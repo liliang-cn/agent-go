@@ -65,6 +65,11 @@ type Scenario struct {
 	// empty for live (the real model decides).
 	LLMReplies []string `yaml:"llm_replies"`
 
+	// PTC enables Programmatic Tool Calling for this scenario. Off by default
+	// so scenarios stay deterministic; turn it on to exercise the <code>
+	// channel, which is a second way for a model to reach for tools.
+	PTC bool `yaml:"ptc"`
+
 	// Constraints scripts the reply to the runtime's constraint-extraction
 	// call, as a raw JSON body — e.g. `{"forbid_tools":true,"deliverables":[]}`.
 	// Empty means the run has no constraints. Mock mode only.

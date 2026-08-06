@@ -617,15 +617,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			// capability means not offering it — not offering it and then
 			// arguing about it.
 			if r.runConstraints().ForbidTools {
-				messages = append(messages, domain.Message{
-					Role: "user",
-					Content: "[system] This task explicitly forbids tool use, so no tools are " +
-						"available to you. Your tool call was refused. Answer directly from your " +
-						"own knowledge now.",
-				})
-				state.Messages = messages
-				state.setLoopTransition(queryLoopTransitionNextTurn, "tool call refused: task forbids tools")
-				state.noteRoundCompleted()
+				r.refuseForbiddenToolUse(&messages, state)
 				continue
 			}
 			if final, ok := r.shouldShortCircuitPTCToolRound(result.Content, result.ToolCalls); ok {
@@ -693,7 +685,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 				}
 			}
 
-			decision := r.svc.decidePostToolRound(messages, taskID, streamResult, duplicateToolResults, toolResults, r.svc.isPTCEnabled(), filteredToolCalls)
+			decision := r.svc.decidePostToolRound(messages, taskID, streamResult, duplicateToolResults, toolResults, r.ptcEnabled(), filteredToolCalls)
 			messages = decision.Messages
 			state.Messages = messages
 			state.recordToolResults(decision.ToolResults)
@@ -722,6 +714,16 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			}
 
 		} else {
+			// Second tool channel: with PTC the model does not emit a tool_call
+			// at all — it writes a <code> block in its reply and the runtime
+			// parses and executes it. Emptying the tool-definition list does
+			// nothing here, so a run that forbids tools has to refuse the code
+			// block explicitly, exactly as it refuses a tool_call.
+			if r.runConstraints().ForbidTools && r.svc.ptcIntegration != nil &&
+				r.svc.ptcIntegration.IsCodeResponse(result.Content) {
+				r.refuseForbiddenToolUse(&messages, state)
+				continue
+			}
 			if nextMessages, handled := r.handlePTCTextFallback(ctx, result.Content, messages); handled {
 				messages = nextMessages
 				state.Messages = messages
@@ -1552,4 +1554,31 @@ func (r *Runtime) runConstraints() RunConstraints {
 		return RunConstraints{}
 	}
 	return *r.cfg.resolvedConstraints
+}
+
+// ptcEnabled reports whether PTC may run for THIS run. PTC is a second tool
+// channel — the model writes a <code> block and the runtime executes it without
+// any tool_call ever existing — so it has to honour the run's constraints or a
+// tool refusal is enforced on one channel and ignored on the other.
+func (r *Runtime) ptcEnabled() bool {
+	if r == nil || r.svc == nil {
+		return false
+	}
+	return r.svc.ptcEnabledForRun(r.cfg)
+}
+
+// refuseForbiddenToolUse rejects an attempt to use tools in a run that forbids
+// them, and hands the model structured feedback instead. Both tool channels
+// (function calling and PTC's <code> block) funnel through here so the refusal
+// text and the loop transition cannot drift apart.
+func (r *Runtime) refuseForbiddenToolUse(messages *[]domain.Message, state *queryLoopState) {
+	*messages = append(*messages, domain.Message{
+		Role: "user",
+		Content: "[system] This task explicitly forbids tool use, so no tools are " +
+			"available to you — including running code. Your attempt was refused. " +
+			"Answer directly from your own knowledge now, in plain text.",
+	})
+	state.Messages = *messages
+	state.setLoopTransition(queryLoopTransitionNextTurn, "tool use refused: task forbids tools")
+	state.noteRoundCompleted()
 }

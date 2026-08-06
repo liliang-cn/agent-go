@@ -8,8 +8,19 @@ import (
 // buildSystemPrompt constructs the system prompt for the current agent.
 // ctx is required when PTC is enabled so available callTool() names can be listed dynamically.
 func (s *Service) buildSystemPrompt(ctx context.Context, agent *Agent) string {
+	return s.buildSystemPromptForRun(ctx, agent, nil)
+}
+
+// buildSystemPromptForRun builds the prompt for one run, so a run that forbids
+// tools is not still handed the PTC tutorial and the tool-search instructions.
+// A capability that will not be offered must not appear in the prompt either —
+// otherwise the model is taught to reach for a door the runtime has locked, and
+// every refusal costs a wasted round.
+func (s *Service) buildSystemPromptForRun(ctx context.Context, agent *Agent, cfg *RunConfig) string {
+	forbid := cfg != nil && cfg.resolvedConstraints != nil && cfg.resolvedConstraints.ForbidTools
 	return renderSystemPromptSections(s.buildSystemPromptSections(ctx, agent, systemPromptOptions{
-		includePTC: s.ptcIntegration != nil,
+		includePTC:  s.ptcIntegration != nil && s.ptcEnabledForRun(cfg),
+		forbidTools: forbid,
 	}))
 }
 

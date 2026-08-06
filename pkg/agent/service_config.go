@@ -140,6 +140,28 @@ func (s *Service) isPTCEnabled() bool {
 	return s.ptcIntegration != nil && s.ptcIntegration.config != nil && s.ptcIntegration.config.Enabled
 }
 
+// ptcEnabledForRun is the run-scoped answer, and the one every execution path
+// must ask. PTC is a SECOND tool channel: the model writes a <code> block in
+// its reply and the runtime parses and executes it, without ever emitting a
+// tool_call. Emptying the tool-definition list therefore does not close it —
+// a run whose constraints forbid tools has to turn PTC off outright, or the
+// refusal is enforced on one channel and wide open on the other.
+func (s *Service) ptcEnabledForRun(cfg *RunConfig) bool {
+	if !s.isPTCEnabled() {
+		return false
+	}
+	if cfg == nil {
+		return true
+	}
+	if cfg.DisablePTC {
+		return false
+	}
+	if cfg.resolvedConstraints != nil && cfg.resolvedConstraints.ForbidTools {
+		return false
+	}
+	return true
+}
+
 // RegisterAgent registers a new agent with the service
 func (s *Service) RegisterAgent(agent *Agent) {
 	if s.registry != nil {
