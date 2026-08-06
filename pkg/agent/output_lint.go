@@ -37,8 +37,12 @@ type LintContext struct {
 	// Lints that enforce "you had the capability and did not use it" must
 	// consult this — an agent with no matching tool cannot be at fault.
 	AvailableTools []string
-	IsRetry        bool
-	RetryCount     int
+	// Deliverables are the side effects this run owes the user, resolved once
+	// per run (see constraints.go). Lints read these instead of sniffing the
+	// goal text for verbs, which never worked outside the listed languages.
+	Deliverables []DeliverableRequirement
+	IsRetry      bool
+	RetryCount   int
 }
 
 // LintFunc adapts a plain function into an OutputLint. Useful for inline

@@ -1,8 +1,6 @@
 package agent
 
 import (
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -96,17 +94,6 @@ func NoPlanningOnlyFinish() OutputLint {
 // actually write the file. This relies on LintContext.Goal + LintContext.ToolCalls,
 // which the runtime populates in runFinalLints.
 
-var fileOutputIntentPatterns = []*regexp.Regexp{
-	// English: a write verb followed (closely) by a file/artifact noun.
-	regexp.MustCompile(`(?i)\b(?:write|save|create|generate|export|produce|build|make)\b[\s\S]{0,40}\b(?:file|files|ppt|pptx|powerpoint|slides?|deck|presentation|html|webpage|pdf|docx?|xlsx?|csv|markdown|report|document|spreadsheet)\b`),
-	// English: "save/write/export ... to <path>".
-	regexp.MustCompile(`(?i)\b(?:save|write|export)\b[\s\S]{0,24}\bto\b\s+[~/.][\w./~-]+`),
-	// Chinese: 写/保存/生成/创建/导出/做/输出/存 + 文件/ppt/幻灯片/...
-	regexp.MustCompile(`(写|保存|生成|创建|导出|做|输出|存)[^。\n]{0,20}(文件|ppt|pptx|幻灯片|演示文稿|文档|报告|表格|网页|页面|html|pdf|word|excel)`),
-	// Chinese: 保存/写/导出 ... 到/为/至 <path>.
-	regexp.MustCompile(`(保存|写|导出|存|输出)[^。\n]{0,12}(到|为|至)\s*[~/.][\w./~-]+`),
-}
-
 // filesystemWriteTools is the set of tool names that actually mutate a file on
 // disk. create_directory alone doesn't count (no content written). Coding-agent
 // delegation tools are included because the delegated CLI (codex/claude/agy/...)
@@ -132,19 +119,6 @@ var filesystemWriteTools = map[string]bool{
 	"send_pty_input":             true,
 }
 
-func goalWantsFileOutput(goal string) bool {
-	g := strings.TrimSpace(goal)
-	if g == "" {
-		return false
-	}
-	for _, p := range fileOutputIntentPatterns {
-		if p.MatchString(g) {
-			return true
-		}
-	}
-	return false
-}
-
 func usedFilesystemWriteTool(toolCalls []string) bool {
 	for _, name := range toolCalls {
 		if filesystemWriteTools[strings.TrimSpace(name)] {
@@ -154,76 +128,34 @@ func usedFilesystemWriteTool(toolCalls []string) bool {
 	return false
 }
 
-// goalFilePathPattern matches an absolute (/...) or home (~/...) filesystem
-// path with an extension. Relative paths are intentionally excluded — we can't
-// stat them reliably without the agent's cwd/workspace, and a wrong stat would
-// falsely block a legitimate completion. A preceding-byte check in
-// extractGoalFilePaths then drops URL paths (".../a.html") and source-file
-// references embedded in prose ("pkg/agent/x.go").
-var goalFilePathPattern = regexp.MustCompile(`[~/][\w./~-]*\.[A-Za-z0-9]{1,8}`)
-
-// extractGoalFilePaths pulls explicit absolute/home target file paths out of
-// the goal text, skipping matches that are really URL paths or substrings of a
-// larger token (RE2 has no lookbehind, so we filter on the preceding byte).
-func extractGoalFilePaths(goal string) []string {
-	locs := goalFilePathPattern.FindAllStringIndex(goal, -1)
-	seen := make(map[string]struct{}, len(locs))
-	out := make([]string, 0, len(locs))
-	for _, loc := range locs {
-		if loc[0] > 0 {
-			switch prev := goal[loc[0]-1]; {
-			// URL ("://x/a.html"), or a continuation of a longer token
-			// ("pkg/agent/x.go", "v1.2/x.json") — not a standalone path.
-			case prev == ':' || prev == '.' || prev == '/' || prev == '~' || prev == '-',
-				prev >= 'a' && prev <= 'z', prev >= 'A' && prev <= 'Z', prev >= '0' && prev <= '9':
-				continue
-			}
-		}
-		p := strings.TrimRight(strings.TrimSpace(goal[loc[0]:loc[1]]), ".,;:)")
-		if p == "" {
-			continue
-		}
-		if _, ok := seen[p]; ok {
-			continue
-		}
-		seen[p] = struct{}{}
-		out = append(out, p)
-	}
-	return out
-}
-
-// fileArtifactExists reports whether the path resolves to a regular,
-// non-empty file on disk (expanding a leading ~ via the package helper).
-func fileArtifactExists(path string) bool {
-	p := strings.TrimSpace(path)
-	if p == "" {
-		return false
-	}
-	if p == "~" || strings.HasPrefix(p, "~/") {
-		p = filepath.Join(getHomeDir(), strings.TrimPrefix(p, "~"))
-	}
-	info, err := os.Stat(p)
-	if err != nil {
-		return false
-	}
-	return info.Mode().IsRegular() && info.Size() > 0
-}
-
-// FileTaskMustWrite rejects a free-form completion when the goal asked for a
-// file/artifact that wasn't actually produced. When the goal names a concrete
+// FileTaskMustWrite rejects a free-form completion when the run owed the user a
+// file that wasn't actually produced. When the deliverable names a concrete
 // path it verifies the RESULT — the file must exist and be non-empty on disk
-// (a write tool call that got truncated by max_tokens does NOT count). When no
-// explicit path is given it falls back to checking a write tool was used.
-// Register globally; agent-agnostic.
+// (a write tool call truncated by max_tokens does NOT count). Otherwise it
+// falls back to checking that a write tool was used.
+//
+// Which runs owe a file comes from LintContext.Deliverables (constraints.go),
+// never from matching write-verbs against the goal text.
 func FileTaskMustWrite() OutputLint {
 	return LintFunc{
 		NameValue: "file_task_must_write",
 		Fn: func(text string, ctx LintContext) (bool, string) {
-			if !goalWantsFileOutput(ctx.Goal) {
+			var paths []string
+			wantsFile := false
+			for _, want := range ctx.Deliverables {
+				if !strings.EqualFold(strings.TrimSpace(want.Kind), "file") {
+					continue
+				}
+				wantsFile = true
+				if p := strings.TrimSpace(want.Path); p != "" {
+					paths = append(paths, p)
+				}
+			}
+			if !wantsFile {
 				return true, ""
 			}
 			// Prefer verifying the actual artifact (result, not attempt).
-			if paths := extractGoalFilePaths(ctx.Goal); len(paths) > 0 {
+			if len(paths) > 0 {
 				for _, p := range paths {
 					if fileArtifactExists(p) {
 						return true, ""

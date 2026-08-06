@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -22,6 +23,11 @@ type MockLLM struct {
 	// attached to the request. Scenarios assert on it to pin runtime-level
 	// tool policy (e.g. "a task that forbids tools must be offered none").
 	toolsOffered []int
+
+	// constraints is the scripted reply to the runtime's constraint-extraction
+	// call, so a scenario can exercise the forbid-tools / deliverables gates
+	// end to end instead of relying on the runtime guessing from the goal text.
+	constraints string
 }
 
 // NewMockLLM constructs a MockLLM with the given scripted replies. The
@@ -70,6 +76,15 @@ func (m *MockLLM) nextReply() string {
 	return m.replies[idx]
 }
 
+// SetConstraints scripts the reply to the runtime's constraint-extraction call.
+// raw is the JSON body the model would have returned, e.g.
+// `{"forbid_tools":true,"deliverables":[]}`. Empty means "no constraints".
+func (m *MockLLM) SetConstraints(raw string) {
+	m.mu.Lock()
+	m.constraints = raw
+	m.mu.Unlock()
+}
+
 func (m *MockLLM) Generate(ctx context.Context, prompt string, opts *domain.GenerationOptions) (string, error) {
 	return m.nextReply(), nil
 }
@@ -89,6 +104,15 @@ func (m *MockLLM) StreamWithTools(ctx context.Context, messages []domain.Message
 }
 
 func (m *MockLLM) GenerateStructured(ctx context.Context, prompt string, schema interface{}, opts *domain.GenerationOptions) (*domain.StructuredResult, error) {
+	if strings.Contains(prompt, "report ONLY the constraints") {
+		m.mu.Lock()
+		raw := m.constraints
+		m.mu.Unlock()
+		if raw == "" {
+			raw = `{"forbid_tools":false,"deliverables":[]}`
+		}
+		return &domain.StructuredResult{Raw: raw, Valid: true}, nil
+	}
 	return &domain.StructuredResult{Data: map[string]interface{}{}, Raw: "{}", Valid: true}, nil
 }
 

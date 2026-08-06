@@ -183,6 +183,7 @@ func runOnce(ctx context.Context, sc *Scenario, opts RunOptions) (*singleRun, er
 	switch sc.Mode {
 	case ModeMock, "":
 		mock = NewMockLLM(sc.LLMReplies)
+		mock.SetConstraints(sc.Constraints)
 		svc, buildErr = buildMockService(sc, home, mock)
 	case ModeLive:
 		if opts.Live == nil {

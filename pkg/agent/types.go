@@ -186,6 +186,26 @@ type RunConfig struct {
 	ToolAllowlist []string
 	ToolDenylist  []string
 
+	// ToolsDisabled attaches no tools at all to this run. Set it directly with
+	// WithToolsDisabled() when the caller already knows tools are off limits;
+	// the runtime also sets it from extracted constraints when the user's own
+	// request refused tool use.
+	ToolsDisabled bool
+
+	// RequiredDeliverables are side effects this run must actually perform
+	// before it may complete. Declaring them with WithRequiredDeliverables()
+	// skips constraint extraction entirely.
+	RequiredDeliverables []DeliverableRequirement
+
+	// DisableConstraintExtraction turns off the per-run structured pass that
+	// derives constraints from the goal. With it off, only constraints the
+	// caller declared outright are enforced.
+	DisableConstraintExtraction bool
+
+	// resolvedConstraints caches the outcome for the whole run so the loop
+	// pays for the extraction once, not once per round.
+	resolvedConstraints *RunConstraints
+
 	// SystemPromptOverride replaces the agent's instructions for this run.
 	SystemPromptOverride string
 
@@ -444,4 +464,33 @@ func WithToolAllowlist(names []string) RunOption {
 // WithToolDenylist removes the named tools from a run.
 func WithToolDenylist(names []string) RunOption {
 	return func(c *RunConfig) { c.ToolDenylist = names }
+}
+
+// WithToolsDisabled runs with no tools attached at all — not the terminal
+// signals, not PTC's execute_javascript, not search_available_tools. Any tool
+// call the model emits anyway is refused with structured feedback.
+//
+// Declaring this skips constraint extraction: the caller has already answered
+// the question the extraction would have asked.
+func WithToolsDisabled() RunOption {
+	return func(c *RunConfig) { c.ToolsDisabled = true }
+}
+
+// WithRequiredDeliverables declares the side effects this run must perform
+// before it may complete. The delivery-contract lint refuses to let the run
+// finish until each has a matching successful tool call.
+//
+// Declaring these skips constraint extraction.
+func WithRequiredDeliverables(deliverables ...DeliverableRequirement) RunOption {
+	return func(c *RunConfig) {
+		c.RequiredDeliverables = append(c.RequiredDeliverables, deliverables...)
+	}
+}
+
+// WithConstraintExtraction turns the per-run constraint extraction on or off.
+// It is on by default. Turning it off leaves only what the caller declared
+// through WithToolsDisabled / WithRequiredDeliverables in force, and saves one
+// small structured model call per run.
+func WithConstraintExtraction(enabled bool) RunOption {
+	return func(c *RunConfig) { c.DisableConstraintExtraction = !enabled }
 }

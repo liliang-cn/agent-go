@@ -203,13 +203,15 @@ func (s *Service) prepareTurnInputsWithConfig(ctx context.Context, currentAgent 
 	if cfg != nil && (len(cfg.ToolAllowlist) > 0 || len(cfg.ToolDenylist) > 0) {
 		tools = filterTools(tools, cfg.ToolAllowlist, cfg.ToolDenylist)
 	}
-	// An explicit "without using any tools" is satisfied by withholding them,
-	// not by asking the model to resist what is attached to its request. Only
-	// the terminal signals survive — the turn still has to end.
-	if looksLikeNoToolInstruction(goal) {
-		tools = filterToolDefinitions(tools, func(tool domain.ToolDefinition) bool {
-			return isTaskTerminalToolName(tool.Function.Name)
-		})
+	// A user who refused tool use is obeyed by withholding the tools, not by
+	// asking the model to resist what is attached to its request. Nothing
+	// survives — not the terminal signals, not PTC's execute_javascript, not
+	// search_available_tools; the loop still terminates on a plain text turn.
+	//
+	// The decision comes from the run's resolved constraints (see
+	// constraints.go), never from matching phrases in the goal.
+	if cfg != nil && cfg.resolvedConstraints != nil && cfg.resolvedConstraints.ForbidTools {
+		tools = nil
 	}
 
 	systemMsg := s.buildSystemPrompt(ctx, currentAgent)

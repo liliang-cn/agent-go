@@ -65,6 +65,11 @@ type Scenario struct {
 	// empty for live (the real model decides).
 	LLMReplies []string `yaml:"llm_replies"`
 
+	// Constraints scripts the reply to the runtime's constraint-extraction
+	// call, as a raw JSON body — e.g. `{"forbid_tools":true,"deliverables":[]}`.
+	// Empty means the run has no constraints. Mock mode only.
+	Constraints string `yaml:"constraints"`
+
 	// Runs is the number of times to execute the scenario. >1 is mainly
 	// useful in live mode to amortize model non-determinism into a pass
 	// rate. Defaults to 1.

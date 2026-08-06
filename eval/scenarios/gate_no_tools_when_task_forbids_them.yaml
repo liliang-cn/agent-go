@@ -1,16 +1,22 @@
 name: gate_no_tools_when_task_forbids_them
 description: >
-  v3 acceptance gate ③ — an explicit "without using any tools" is honoured
-  by construction: the runtime attaches ZERO tool definitions to the model
-  call (no PTC execute_javascript, no search_available_tools, not even the
-  terminal signals), so the model cannot call a tool even if it wants to.
-  Forbidding a capability means not offering it, not arguing about it.
+  v3 acceptance gate ③ — an explicit refusal of tool use is honoured by
+  construction: the runtime attaches ZERO tool definitions to the model call
+  (no PTC execute_javascript, no search_available_tools, not even the terminal
+  signals), so the model cannot call a tool even if it wants to. Forbidding a
+  capability means not offering it, not arguing about it.
+
+  The refusal reaches the runtime through constraint extraction, never a phrase
+  table — `constraints` below is what that extraction call returns. Which is why
+  the request is written in a language no phrase list ever covered: the gate
+  does not read the goal text at all.
 agent: Assistant
-input: "Without using any tools, name the largest planet in the solar system."
+input: "ツールを一切使わずに、太陽系で最大の惑星を答えてください。"
+constraints: '{"forbid_tools":true,"deliverables":[]}'
 llm_replies:
-  - "Jupiter is the largest planet in the solar system."
+  - "木星が太陽系で最大の惑星です。"
 expect:
   status: completed
-  final_text_match: "Jupiter"
+  final_text_match: "木星"
   llm_calls: 1
-  max_tools_offered: 2
+  max_tools_offered: 0

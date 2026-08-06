@@ -61,35 +61,6 @@ func TestNoPlanningOnlyFinish(t *testing.T) {
 	}
 }
 
-func TestExtractGoalFilePaths(t *testing.T) {
-	cases := []struct {
-		name string
-		goal string
-		want []string
-	}{
-		{"absolute", "保存到 /Users/me/.agentgo/workspace/dell.html 完成", []string{"/Users/me/.agentgo/workspace/dell.html"}},
-		{"home", "save it to ~/out/report.pdf please", []string{"~/out/report.pdf"}},
-		{"cjk_no_space", "保存到/tmp/a.html", []string{"/tmp/a.html"}},
-		{"url_excluded", "summarize https://example.com/report.html and write a doc", nil},
-		{"source_path_excluded", "explain pkg/agent/runtime.go for me", nil},
-		{"relative_excluded", "write to ./out/x.html", nil},
-		{"none", "just write a ppt about dell", nil},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := extractGoalFilePaths(tc.goal)
-			if len(got) != len(tc.want) {
-				t.Fatalf("goal %q → %v, want %v", tc.goal, got, tc.want)
-			}
-			for i := range got {
-				if got[i] != tc.want[i] {
-					t.Fatalf("goal %q → %v, want %v", tc.goal, got, tc.want)
-				}
-			}
-		})
-	}
-}
-
 func TestFileTaskMustWrite(t *testing.T) {
 	lint := FileTaskMustWrite()
 	write := []string{"mcp_websearch_search", "fs_write"}
@@ -107,35 +78,38 @@ func TestFileTaskMustWrite(t *testing.T) {
 	}
 	missing := filepath.Join(dir, "missing.html")
 
+	fileWant := func(path string) []DeliverableRequirement {
+		return []DeliverableRequirement{{Kind: "file", Description: "the deck", Path: path}}
+	}
+
 	cases := []struct {
 		name    string
-		goal    string
+		wants   []DeliverableRequirement
 		tools   []string
 		wantErr bool
 	}{
-		// Artifact verification: explicit path in the goal → the file must exist.
-		{"path_missing_even_with_write", "生成 HTML 保存到 " + missing, write, true},   // write "called" but truncated → no file → reject
-		{"path_empty_file", "Save the deck to " + emptyFile, write, true},         // exists but empty → reject
-		{"path_exists_nonempty", "Save the deck to " + existing, readonly, false}, // file is really there → pass
-		// No explicit path → fall back to "was a write tool used?".
-		{"zh_ppt_no_write", "dell的股价，写一个ppt", readonly, true},
-		{"en_create_html_no_write", "Create an HTML slide deck about Dell stock.", readonly, true},
-		{"zh_ppt_with_write", "dell的股价，写一个ppt", write, false},
-		{"en_create_with_write", "Create an HTML slide deck about Dell stock.", write, false},
-		// Passes: not a file-output task.
-		{"zh_read_summarize", "读取 README 并总结要点", readonly, false},
-		{"en_summarize_pdf", "Summarize the findings in report.pdf for me.", readonly, false},
-		{"zh_write_function", "帮我写个排序函数", nil, false},
-		{"empty_goal", "", nil, false},
+		// Artifact verification: a named path means the file must really exist.
+		{"path_missing_even_with_write", fileWant(missing), write, true},
+		{"path_empty_file", fileWant(emptyFile), write, true},
+		{"path_exists_nonempty", fileWant(existing), readonly, false},
+		// No path named → fall back to "was a write tool used?".
+		{"file_wanted_no_write", fileWant(""), readonly, true},
+		{"file_wanted_with_write", fileWant(""), write, false},
+		// Nothing owed → never a violation, whatever the goal said.
+		{"no_deliverables", nil, readonly, false},
+		{"non_file_deliverable", []DeliverableRequirement{{Kind: "email"}}, readonly, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			ok, reason := lint.Check("All done.", LintContext{Goal: tc.goal, ToolCalls: tc.tools})
+			ok, reason := lint.Check("All done.", LintContext{
+				Deliverables: tc.wants,
+				ToolCalls:    tc.tools,
+			})
 			if tc.wantErr && ok {
-				t.Fatalf("expected lint to fail for goal %q tools %v, but it passed", tc.goal, tc.tools)
+				t.Fatalf("expected lint to fail for %+v tools %v, but it passed", tc.wants, tc.tools)
 			}
 			if !tc.wantErr && !ok {
-				t.Fatalf("expected lint to pass for goal %q tools %v, but failed: %s", tc.goal, tc.tools, reason)
+				t.Fatalf("expected lint to pass for %+v tools %v, but failed: %s", tc.wants, tc.tools, reason)
 			}
 		})
 	}

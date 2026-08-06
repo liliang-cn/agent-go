@@ -111,6 +111,7 @@ func (r *Runtime) runFinalLints(content string, turn int) *LintViolation {
 		Goal:           r.goal,
 		ToolCalls:      r.toolNamesUsedSnapshot(),
 		AvailableTools: r.availableToolNamesSnapshot(),
+		Deliverables:   r.runConstraints().Deliverables,
 		IsRetry:        r.lintRetryBudget < defaultLintRetryBudget,
 		RetryCount:     defaultLintRetryBudget - r.lintRetryBudget,
 	}
@@ -309,6 +310,12 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			})
 		}
 	}
+
+	// 0. Resolve the run's constraints once, before any tool list is built.
+	// Every entry point (Run / RunStream / Ask / Chat / prompt scheduler /
+	// sub-agent) reaches the loop, so doing it here is what makes the
+	// enforcement uniform instead of dependent on which API the caller used.
+	r.resolveConstraints(ctx, goal)
 
 	// 1. Prepare context (Memory & RAG) — with a timeout so a slow embedding
 	// model or unreachable LLM doesn't block the entire run forever.
@@ -604,17 +611,17 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 				}
 			}
 			// Hard constraint, enforced in the runtime rather than the prompt:
-			// a task that forbids tool use gets an empty tool list (see
-			// prepareTurnInputs), and any tool call the model emits anyway is
-			// refused outright with structured feedback. Forbidding a
+			// a run whose constraints forbid tools gets an empty tool list (see
+			// prepareTurnInputsWithConfig), and any tool call the model emits
+			// anyway is refused outright with structured feedback. Forbidding a
 			// capability means not offering it — not offering it and then
 			// arguing about it.
-			if looksLikeNoToolInstruction(goal) {
+			if r.runConstraints().ForbidTools {
 				messages = append(messages, domain.Message{
 					Role: "user",
 					Content: "[system] This task explicitly forbids tool use, so no tools are " +
 						"available to you. Your tool call was refused. Answer directly from your " +
-						"own knowledge now, or call task_blocked if you genuinely cannot.",
+						"own knowledge now.",
 				})
 				state.Messages = messages
 				state.setLoopTransition(queryLoopTransitionNextTurn, "tool call refused: task forbids tools")
@@ -1520,3 +1527,29 @@ const (
 	defaultRunTemperature = 0.3
 	defaultRunMaxTokens   = 2000
 )
+
+// resolveConstraints computes the run's constraints once and caches them on the
+// RunConfig, so every later round (and prepareTurnInputsWithConfig) reads the
+// same answer without paying for a second extraction.
+func (r *Runtime) resolveConstraints(ctx context.Context, goal string) {
+	if r == nil || r.svc == nil {
+		return
+	}
+	if r.cfg == nil {
+		r.cfg = DefaultRunConfig()
+	}
+	if r.cfg.resolvedConstraints != nil {
+		return
+	}
+	resolved := r.svc.resolveRunConstraints(ctx, goal, r.cfg)
+	r.cfg.resolvedConstraints = &resolved
+}
+
+// runConstraints returns the resolved constraints, or the zero value when the
+// run never resolved any (a directly-constructed Runtime in a test, say).
+func (r *Runtime) runConstraints() RunConstraints {
+	if r == nil || r.cfg == nil || r.cfg.resolvedConstraints == nil {
+		return RunConstraints{}
+	}
+	return *r.cfg.resolvedConstraints
+}

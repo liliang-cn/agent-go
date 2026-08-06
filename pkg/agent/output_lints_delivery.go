@@ -1,15 +1,24 @@
 package agent
 
-import "strings"
+import (
+	"os"
+	"strings"
+)
 
-// This file holds the two v3 acceptance lints described in the v3 plan §4.5:
-// they replace prompt sentences with deterministic runtime rejection.
+// This file holds the two v3 acceptance lints from the v3 plan §4.5: they
+// replace prompt sentences with deterministic runtime rejection.
 //
 //  1. non_empty_final_answer — "empty-handed" runs (search tools → search
 //     tools → task_blocked with no text) must not be able to terminate.
-//  2. task_delivery_contract — a task whose goal contains an explicit delivery
-//     action (send the mail, write the file, post the message) cannot finish
-//     unless the trace shows a matching side-effect tool actually succeeded.
+//  2. task_delivery_contract — a run that owes the user a side effect (send
+//     the mail, write the file, post the message) cannot complete unless the
+//     trace shows a matching tool actually ran.
+//
+// What the run owes comes from LintContext.Deliverables, resolved once per run
+// by constraints.go — either declared outright by the embedder or extracted
+// from the user's own words. It is deliberately NOT matched out of the goal
+// text here: a phrase table only ever covers the languages and phrasings
+// somebody thought to list, and silently enforces nothing for everyone else.
 
 // --- non_empty_final_answer ---------------------------------------------------
 
@@ -37,64 +46,75 @@ const minimumFinalAnswerChars = 2
 
 // --- task_delivery_contract ---------------------------------------------------
 
-// deliveryAction pairs the phrases that mark an explicit delivery request in a
-// goal with the tool-name fragments that prove the delivery actually happened.
-type deliveryAction struct {
-	Name         string
-	GoalMarkers  []string
-	ToolMarkers  []string
-	FeedbackVerb string
+// deliveryToolMarkers maps a deliverable kind to the tool-name fragments that
+// prove it happened. These match TOOL NAMES, which this framework controls —
+// not user text, which it does not.
+var deliveryToolMarkers = map[string][]string{
+	"email":   {"send_mail", "send_email", "sendmail", "smtp", "gmail", "outlook", "mailer"},
+	"message": {"slack", "send_sms", "telegram", "wechat", "discord", "chat_post", "push_notification", "notify_user"},
+	"file":    {"fs_write", "fs_edit", "fs_multi_edit", "write_file", "create_file", "sandbox_write"},
 }
 
-var deliveryActions = []deliveryAction{
-	{
-		Name:         "email",
-		GoalMarkers:  []string{"send an email", "send email", "email it", "email the", "mail it to", "发邮件", "发送邮件", "寄邮件"},
-		ToolMarkers:  []string{"send_mail", "send_email", "smtp", "gmail", "outlook", "mailer"},
-		FeedbackVerb: "send the email",
-	},
-	{
-		Name:         "message",
-		GoalMarkers:  []string{"send a message", "send message", "post to slack", "send a slack", "notify", "发消息", "发送消息", "通知"},
-		ToolMarkers:  []string{"slack", "send_sms", "telegram", "wechat", "discord", "chat_post", "push_notification"},
-		FeedbackVerb: "send the message",
-	},
-	{
-		Name:         "file",
-		GoalMarkers:  []string{"write a file", "save it to", "save the file", "write to disk", "写文件", "保存到"},
-		ToolMarkers:  []string{"fs_write", "write_file", "create_file", "sandbox_write"},
-		FeedbackVerb: "write the file",
-	},
+// deliveryVerb renders a kind as something to say back to the model.
+var deliveryVerb = map[string]string{
+	"email":   "send the email",
+	"message": "send the message",
+	"file":    "write the file",
+	"other":   "perform the delivery you were asked for",
 }
 
-// TaskDeliveryContract enforces the v3 delivery contract: if the goal asked for
-// a concrete side effect, the run cannot be declared complete until the trace
-// shows a tool that performs that side effect was actually called.
+// TaskDeliveryContract enforces the v3 delivery contract: when the run owes a
+// side effect, it cannot be declared complete until the trace shows a tool that
+// performs that side effect was actually called.
 //
 // "Computed the right number but never sent the mail" was the single most
 // common silent failure in v2; this makes it a rejected terminal state instead.
+//
+// A deliverable whose tools were never available is NOT a violation — the agent
+// cannot be faulted for a capability it was never given, and burning the retry
+// budget on it just turns a clean task_blocked into a loop.
 func TaskDeliveryContract() OutputLint {
 	return LintFunc{
 		NameValue: "task_delivery_contract",
 		Fn: func(_ string, ctx LintContext) (bool, string) {
-			goal := strings.ToLower(ctx.Goal)
-			if strings.TrimSpace(goal) == "" {
-				return true, ""
-			}
-			for _, action := range deliveryActions {
-				if !containsAny(goal, action.GoalMarkers) {
+			for _, want := range ctx.Deliverables {
+				kind := strings.ToLower(strings.TrimSpace(want.Kind))
+
+				// A named target file is checkable directly: prefer the
+				// artifact over the attempt.
+				if kind == "file" && want.Path != "" {
+					if fileArtifactExists(want.Path) {
+						continue
+					}
+					return false, "the task asked you to produce " + want.Path +
+						", but no such file exists on disk yet (or it is empty — a write may have " +
+						"been truncated). Actually write the file, verify it exists, then finish; " +
+						"or call task_blocked with the concrete blocker."
+				}
+
+				markers, known := deliveryToolMarkers[kind]
+				if !known {
+					// "other": nothing specific to check for, so trust the run.
 					continue
 				}
-				if toolCallsMatchAny(ctx.ToolCalls, action.ToolMarkers) {
+				if toolCallsMatchAny(ctx.ToolCalls, markers) {
 					continue
 				}
-				// No tool in this run can perform the delivery. Rejecting here
-				// would just burn the retry budget on something the agent
-				// cannot do; that case belongs to task_blocked, not a lint.
-				if !toolCallsMatchAny(ctx.AvailableTools, action.ToolMarkers) {
+				if !toolCallsMatchAny(ctx.AvailableTools, markers) {
+					// No tool in this run can perform the delivery. Rejecting
+					// here would burn the retry budget on something the agent
+					// cannot do; that case belongs to task_blocked.
 					continue
 				}
-				return false, "the task explicitly asked you to " + action.FeedbackVerb +
+				verb := deliveryVerb[kind]
+				if verb == "" {
+					verb = deliveryVerb["other"]
+				}
+				detail := ""
+				if want.Description != "" {
+					detail = " (" + want.Description + ")"
+				}
+				return false, "the task explicitly asked you to " + verb + detail +
 					", but no tool that performs that action was called in this run. " +
 					"Actually perform the delivery now and report the confirmation, " +
 					"or call task_blocked with the concrete blocker that prevents it."
@@ -102,15 +122,6 @@ func TaskDeliveryContract() OutputLint {
 			return true, ""
 		},
 	}
-}
-
-func containsAny(haystack string, needles []string) bool {
-	for _, n := range needles {
-		if strings.Contains(haystack, n) {
-			return true
-		}
-	}
-	return false
 }
 
 func toolCallsMatchAny(toolCalls []string, markers []string) bool {
@@ -123,4 +134,24 @@ func toolCallsMatchAny(toolCalls []string, markers []string) bool {
 		}
 	}
 	return false
+}
+
+// fileArtifactExists reports whether path names a non-empty regular file.
+func fileArtifactExists(path string) bool {
+	expanded := strings.TrimSpace(path)
+	if expanded == "" {
+		return false
+	}
+	if strings.HasPrefix(expanded, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return false
+		}
+		expanded = home + expanded[1:]
+	}
+	info, err := os.Stat(expanded)
+	if err != nil || info.IsDir() {
+		return false
+	}
+	return info.Size() > 0
 }
