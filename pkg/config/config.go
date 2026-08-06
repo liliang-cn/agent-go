@@ -697,18 +697,6 @@ func (c *Config) MCPServersPath() string {
 	return filepath.Join(c.Home, "mcpServers.json")
 }
 
-func (c *Config) validateMCPConfig() error {
-	return nil // Simplified for now
-}
-
-func (c *Config) validateCacheConfig() error {
-	return nil // Simplified for now
-}
-
-func (c *Config) validateToolingConfig() error {
-	return nil // Simplified for now
-}
-
 // LoadMCPConfig loads MCP configuration from specific paths (supports multiple)
 func LoadMCPConfig(paths ...string) (*mcp.Config, error) {
 	cfg := mcp.DefaultConfig()

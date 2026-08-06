@@ -217,8 +217,3 @@ Return JSON with intent_type and confidence.`
 	// 13. Agent Dynamic Tool Selection
 	m.defaults[AgentDynamicToolSelection] = `You are a helpful assistant with access to tools. Use tools when appropriate to help the user.`
 }
-
-// add is a helper for templates
-func add(a, b int) int {
-	return a + b
-}

@@ -4,11 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"net/url"
 	"os"
-	"path/filepath"
 	"time"
 
 	mcpswagger "github.com/liliang-cn/mcp-swagger-server/mcp"
@@ -233,61 +229,6 @@ func (s *SwaggerServer) CallTool(ctx context.Context, name string, args json.Raw
 	}
 
 	return json.Marshal(result)
-}
-
-// fetchSwaggerSpec fetches a Swagger spec from a URL
-func fetchSwaggerSpec(specURL string, headers map[string]string, timeout time.Duration) ([]byte, error) {
-	// Parse and validate URL
-	u, err := url.Parse(specURL)
-	if err != nil {
-		return nil, fmt.Errorf("invalid URL: %w", err)
-	}
-
-	// Support file:// URLs for local files
-	if u.Scheme == "file" {
-		path := u.Path
-		if u.Host != "" && u.Host != "localhost" {
-			// On Windows, file://host/path is valid
-			path = filepath.Join(u.Host, path)
-		}
-		return os.ReadFile(path)
-	}
-
-	// Create HTTP client with timeout
-	client := &http.Client{
-		Timeout: timeout,
-	}
-
-	// Create request
-	req, err := http.NewRequest("GET", specURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	// Add headers
-	for key, value := range headers {
-		req.Header.Set(key, value)
-	}
-
-	// Make request
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch spec: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// Check status code
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-	}
-
-	// Read response body
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	return data, nil
 }
 
 // configureAuth is no longer needed as auth is configured during server creation

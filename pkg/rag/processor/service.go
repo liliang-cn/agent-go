@@ -252,41 +252,6 @@ func (s *Service) IngestBatch(ctx context.Context, reqs []domain.IngestRequest) 
 	return responses, nil
 }
 
-// mergeMetadata merges the extracted metadata into the request's metadata map.
-func (s *Service) mergeMetadata(base map[string]interface{}, extracted *domain.ExtractedMetadata) {
-	if extracted.Summary != "" {
-		base["summary"] = extracted.Summary
-	}
-	if len(extracted.Keywords) > 0 {
-		base["keywords"] = extracted.Keywords
-	}
-	if extracted.DocumentType != "" {
-		base["document_type"] = extracted.DocumentType
-	}
-	if extracted.CreationDate != "" {
-		base["creation_date"] = extracted.CreationDate
-	}
-	if extracted.Collection != "" {
-		base["collection"] = extracted.Collection
-	}
-
-	// Merge enhanced fields
-	if len(extracted.TemporalRefs) > 0 {
-		base["temporal_refs"] = extracted.TemporalRefs
-	}
-	if len(extracted.Entities) > 0 {
-		base["entities"] = extracted.Entities
-	}
-	if len(extracted.Events) > 0 {
-		base["events"] = extracted.Events
-	}
-	if len(extracted.CustomMeta) > 0 {
-		for k, v := range extracted.CustomMeta {
-			base[k] = v
-		}
-	}
-}
-
 // addFileCreationDate adds the file's modification time as a fallback creation date.
 func (s *Service) addFileCreationDate(filePath string, metadata map[string]interface{}) {
 	if filePath == "" {
@@ -391,12 +356,6 @@ func (s *Service) StreamQueryWithTools(ctx context.Context, req domain.QueryRequ
 	return s.StreamQuery(ctx, req, callback)
 }
 
-// getAvailableTools returns the list of available tools based on allowed list
-// getAvailableTools - deprecated
-func (s *Service) getAvailableTools(allowedTools []string) []interface{} {
-	return nil
-}
-
 // composePromptWithMemory builds a prompt with RAG context and memory
 func (s *Service) composePromptWithMemory(chunks []domain.Chunk, memoryContext, query string) string {
 	if len(chunks) == 0 && memoryContext == "" {
@@ -434,36 +393,6 @@ Context:
 User Question: %s
 
 Please provide a comprehensive answer using both the context and tools as appropriate.`, context, query)
-}
-
-// buildPromptWithContext builds a prompt with RAG context
-func (s *Service) buildPromptWithContext(query string, chunks []domain.Chunk) string {
-	if len(chunks) == 0 {
-		return fmt.Sprintf(`Please answer the user's question: %s
-
-If you need current information (like time, date, weather, file contents, web data, etc.), use the available tools to get accurate and up-to-date information.`, query)
-	}
-
-	var contextParts []string
-	for i, chunk := range chunks {
-		contextParts = append(contextParts, fmt.Sprintf("[Document %d]\n%s", i+1, chunk.Content))
-	}
-
-	context := strings.Join(contextParts, "\n\n")
-
-	return fmt.Sprintf(`Please answer the user's question using the following context AND any available tools when needed.
-
-IMPORTANT INSTRUCTIONS:
-1. For questions about current information (time, date, weather, file contents, web data, etc.), always use the appropriate tools to get accurate and up-to-date information.
-2. For questions about stored knowledge, use the provided context documents.
-3. If both context and tools are relevant, combine information from both sources.
-
-Context Documents:
-%s
-
-User Question: %s
-
-Please provide a comprehensive answer using both the context documents and tools as appropriate.`, context, query)
 }
 
 func (s *Service) StreamQuery(ctx context.Context, req domain.QueryRequest, callback func(string)) error {

@@ -908,32 +908,7 @@ func (s *DocumentStore) Update(ctx context.Context, doc domain.Document) error {
 	return nil
 }
 
-// ensureCollection ensures a collection exists, creating it if necessary
-func (s *DocumentStore) ensureCollection(ctx context.Context, name string) error {
-	// Check if collection already exists
-	collections, err := s.cortexdb.ListCollections(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to list collections: %w", err)
-	}
 
-	for _, col := range collections {
-		if col.Name == name {
-			return nil // Collection already exists
-		}
-	}
-
-	// Create the collection with auto-detect dimensions (0)
-	_, err = s.cortexdb.CreateCollection(ctx, name, 0)
-	if err != nil {
-		// Check if it's an "already exists" error - if so, ignore it
-		if strings.Contains(err.Error(), "already exists") {
-			return nil
-		}
-		return fmt.Errorf("failed to create collection %s: %w", name, err)
-	}
-
-	return nil
-}
 
 // Reset removes all documents from the document store
 func (s *DocumentStore) Reset(ctx context.Context) error {

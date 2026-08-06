@@ -1372,13 +1372,6 @@ func looseFloat(m map[string]interface{}, keys ...string) float64 {
 	return 0
 }
 
-func truncateForLog(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "..."
-}
-
 func mergeMetadataMaps(parts ...map[string]interface{}) map[string]interface{} {
 	result := make(map[string]interface{})
 	for _, part := range parts {

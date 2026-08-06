@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/JohannesKaufmann/html-to-markdown/v2"
+	htmltomarkdown "github.com/JohannesKaufmann/html-to-markdown/v2"
 	"github.com/chromedp/chromedp"
 	"github.com/go-shiori/go-readability"
 )

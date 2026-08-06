@@ -7,24 +7,6 @@ import (
 	"sync"
 )
 
-// mcpExecutor is the minimal interface required from an MCP service.
-// It matches mcp.Service / agent.MCPToolExecutor without creating an import cycle.
-type mcpExecutor interface {
-	// CallTool executes an MCP tool by name.
-	CallTool(ctx context.Context, toolName string, args map[string]interface{}) (interface{}, error)
-	// ListTools returns domain.ToolDefinition-like structs; we only need Name/Description/Parameters.
-	// We accept interface{} and cast via a helper to remain decoupled.
-	ListToolsRaw() []mcpToolInfo
-}
-
-// mcpToolInfo is a minimal representation of a tool descriptor.
-// Both mcp.Service (via adapter) and any future provider satisfy this.
-type mcpToolInfo struct {
-	Name        string
-	Description string
-	Parameters  map[string]interface{}
-}
-
 // MCPProvider is the real interface we accept — it matches what agent.MCPToolExecutor exposes.
 // We use a structural approach: accept interface{} and try the concrete methods.
 type MCPProvider interface {
@@ -42,21 +24,6 @@ type domainToolLike interface {
 	GetName() string
 	GetDescription() string
 	GetParameters() map[string]interface{}
-}
-
-// skillsProvider is the minimal interface required from a skills service.
-type skillsProvider interface {
-	// ListSkillsSimple returns simple skill descriptors.
-	ListSkillsSimple(ctx context.Context) ([]skillInfo, error)
-	// ExecuteSkill runs a skill by ID.
-	ExecuteSkill(ctx context.Context, id string, vars map[string]interface{}) (string, error)
-}
-
-// skillInfo is a minimal skill descriptor.
-type skillInfo struct {
-	ID          string
-	Name        string
-	Description string
 }
 
 // AgentGoRouter routes tool calls to existing AgentGo services.

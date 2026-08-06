@@ -240,18 +240,8 @@ func (n *IndexNavigator) cachedEntry(query string) (ids []string, reasoning stri
 	return entry.ids, entry.reasoning, true
 }
 
-// cachedIDs is kept for backward compatibility with existing callers.
-func (n *IndexNavigator) cachedIDs(query string) ([]string, bool) {
-	ids, _, ok := n.cachedEntry(query)
-	return ids, ok
-}
-
 func (n *IndexNavigator) setCachedEntry(query string, ids []string, reasoning string) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.cache[query] = cacheEntry{ids: ids, reasoning: reasoning, expiresAt: time.Now().Add(navigatorCacheTTL)}
-}
-
-func (n *IndexNavigator) setCachedIDs(query string, ids []string) {
-	n.setCachedEntry(query, ids, "")
 }
