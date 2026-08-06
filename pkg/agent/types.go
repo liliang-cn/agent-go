@@ -68,10 +68,10 @@ type Plan struct {
 
 // ExecutionResult represents the result of an agent execution
 type ExecutionResult struct {
-	PlanID          string                    `json:"plan_id"`
-	SessionID       string                    `json:"session_id"`
-	TaskID          string                    `json:"task_id,omitempty"`
-	Success bool `json:"success"`
+	PlanID    string `json:"plan_id"`
+	SessionID string `json:"session_id"`
+	TaskID    string `json:"task_id,omitempty"`
+	Success   bool   `json:"success"`
 	// Blocked reports that the agent ran fine and concluded it could not
 	// proceed, explaining why in Text(). That is an outcome, not a failure:
 	// Err() stays nil so a caller doing `if err != nil { return }` cannot
