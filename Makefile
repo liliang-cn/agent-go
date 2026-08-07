@@ -1,6 +1,6 @@
 .PHONY: help test check clean deps coverage-core eval eval-verbose eval-live
 
-CORE_COVERAGE_PKGS := ./pkg/config ./pkg/cache ./pkg/prompt ./pkg/ptc/runtime/goja ./pkg/ptc/store ./pkg/rag/embedder ./pkg/scheduler/executors
+CORE_COVERAGE_PKGS := ./pkg/config ./pkg/cache ./pkg/prompt ./pkg/rag/embedder ./pkg/scheduler/executors
 
 GIT_TAG := $(shell git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
 

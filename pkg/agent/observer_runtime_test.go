@@ -54,7 +54,6 @@ type pingParams struct {
 func buildObserverTestService(t *testing.T, obs ...Observer) *Service {
 	t.Helper()
 	b := New("observer-runtime-agent").
-		WithPTC(false).
 		WithConfig(testAgentConfig(t.TempDir())).
 		WithLLM(&observerToolLLM{}).
 		WithTool(NewTool("ping", "Ping back", func(_ context.Context, p *pingParams) (any, error) {

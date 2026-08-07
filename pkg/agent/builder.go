@@ -13,7 +13,6 @@ import (
 	"github.com/liliang-cn/agent-go/v3/pkg/mcp"
 	"github.com/liliang-cn/agent-go/v3/pkg/memory"
 	"github.com/liliang-cn/agent-go/v3/pkg/poolsvc"
-	"github.com/liliang-cn/agent-go/v3/pkg/ptc"
 	"github.com/liliang-cn/agent-go/v3/pkg/rag/chunker"
 	ragprocessor "github.com/liliang-cn/agent-go/v3/pkg/rag/processor"
 	ragstore "github.com/liliang-cn/agent-go/v3/pkg/rag/store"
@@ -37,7 +36,6 @@ type Config struct {
 	MCP    *MCPConfig    `json:"mcp,omitempty"`
 	Memory *MemoryConfig `json:"memory,omitempty"`
 	Skills *SkillsConfig `json:"skills,omitempty"`
-	PTC    *PTCConfig    `json:"ptc,omitempty"`
 
 	ProgressCallback ProgressCallback `json:"-"`
 }
@@ -74,8 +72,6 @@ type SkillsConfig struct {
 	Paths   []string `json:"paths,omitempty"`
 }
 
-// PTCConfig is defined in ptc_integration.go
-
 // ============================================================
 // Builder - chainable configuration without explicit Build()
 // ============================================================
@@ -107,8 +103,6 @@ type Builder struct {
 	enableSkills      bool
 	skillsPaths       []string
 	requiredSkills    []string // Build() fails if any of these aren't installed
-	enablePTC         bool
-	ptcCfg            *PTCConfig
 	toolPolicy        ToolExecutionPolicy
 
 	tools        []*Tool // pre-registered via WithTool/WithTools
@@ -147,10 +141,6 @@ type fastModelProvider interface {
 func New(name string) *Builder {
 	return &Builder{
 		name: name,
-		// PTC (the JS tool-orchestration sandbox) is OFF by default; tools are
-		// called directly. Opt in with WithPTC() / WithPTC(WithPTCTimeout(...)).
-		enablePTC: false,
-		ptcCfg:    nil,
 	}
 }
 
@@ -208,42 +198,6 @@ func (b *Builder) WithSkills(opts ...SkillsOption) *Builder {
 		opt(&cfg)
 	}
 	b.skillsPaths = cfg.Paths
-	return b
-}
-
-// WithPTC configures PTC. PTC is OFF by default; call this to opt in.
-//
-// Supported forms:
-//   - WithPTC()                     -> enable with defaults
-//   - WithPTC(false)                -> disable
-//   - WithPTC(WithPTCTimeout(...))  -> enable with options
-//   - WithPTC(false, ...)           -> disable (options ignored)
-func (b *Builder) WithPTC(args ...interface{}) *Builder {
-	enabled := true
-	cfg := &PTCConfig{Enabled: true, MaxToolCalls: 20, Timeout: 600 * time.Second}
-
-	for _, arg := range args {
-		switch v := arg.(type) {
-		case bool:
-			enabled = v
-		case PTCOption:
-			v(cfg)
-		case nil:
-			continue
-		default:
-			panic(fmt.Sprintf("agent.Builder.WithPTC: unsupported argument type %T", arg))
-		}
-	}
-
-	if !enabled {
-		b.enablePTC = false
-		b.ptcCfg = nil
-		return b
-	}
-
-	b.enablePTC = true
-	cfg.Enabled = true
-	b.ptcCfg = cfg
 	return b
 }
 
@@ -337,11 +291,10 @@ func (b *Builder) WithEmbedder(embedder domain.Embedder) *Builder {
 }
 
 // WithTool adds a single tool to the agent inline in the builder chain.
-// Tools registered here are available at Build() time, before PTC sync,
+// Tools registered here are available at Build() time,
 // so they are reachable via callTool() in JS sandboxes as well.
 //
 //	svc, err := agent.New("bot").
-//	    WithPTC().
 //	    WithTool(agent.NewTool("weather", "Get weather", handler)).
 //	    WithTool(agent.BuildTool("search").Description("...").Handler(h).Build()).
 //	    Build()
@@ -509,7 +462,7 @@ func (b *Builder) build() (*Service, error) {
 	// Register module tools into the unified ToolRegistry.
 	// Built-in modules (RAG, Memory) are registered first, then any extra
 	// modules added via WithModule(). All registered tools are available to
-	// both collectAllAvailableTools() and PTC's callTool().
+	// collectAllAvailableTools().
 	if ragProcessor != nil {
 		ragMod := NewRAGModule(ragProcessor, svc.addRAGSources)
 		if err := ragMod.RegisterTools(svc.toolRegistry); err != nil {
@@ -558,7 +511,7 @@ func (b *Builder) build() (*Service, error) {
 		queryStr, _ := args["query"].(string)
 		instruction, _ := args["instruction"].(string)
 		scope, _ := args["scope"].(string)
-		// Enforced here rather than in the execution loop: the PTC sandbox
+		// Enforced here rather than in the execution loop: the sandbox
 		// calls this handler directly via callTool().
 		if guidance, refused := admitToolDiscovery(ctx, queryStr); refused {
 			return guidance, nil
@@ -567,7 +520,7 @@ func (b *Builder) build() (*Service, error) {
 	}, CategoryCustom, ToolMetadata{ReadOnly: true, ConcurrencySafe: true, InterruptBehavior: InterruptBehaviorCancel})
 
 	// Register tools added inline via WithTool/WithTools. This runs after built-in
-	// modules but before PTC sync so all tools are reachable via callTool() in JS.
+	// modules so all tools are reachable.
 	for _, t := range b.tools {
 		svc.Register(t)
 	}
@@ -595,51 +548,6 @@ func (b *Builder) build() (*Service, error) {
 		svc.SetPermissionPolicy(b.permissionPolicy)
 	}
 
-	// PTC
-	if b.enablePTC && b.ptcCfg != nil {
-		// Build the PTC router: MCP and Skills are dynamic providers; all static
-		// tools (RAG, Memory, custom) are synced from the ToolRegistry below.
-		routerOpts := buildPTCRouterOptions(mcpAdapter, skillsSvc)
-		ptcRouter := ptc.NewAgentGoRouter(routerOpts...)
-		// Sync registry tools into the ptcRouter so callTool() can reach them.
-		svc.toolRegistry.SyncToPTCRouter(ptcRouter)
-
-		// Register tool search tools in PTC router for deferred tool discovery
-		for _, ts := range GetToolSearchTools() {
-			searchToolName := ts.Function.Name
-			ptcRouter.RegisterTool(ts.Function.Name, &ptc.ToolInfo{
-				Name:        ts.Function.Name,
-				Description: ts.Function.Description,
-				Parameters:  ts.Function.Parameters,
-			}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-				query, _ := args["query"].(string)
-				if query == "" {
-					return nil, fmt.Errorf("tool search requires a 'query' argument")
-				}
-				searchType := "regex"
-				if searchToolName == "tool_search_tool_bm25" {
-					searchType = "bm25"
-				}
-				results, err := svc.SearchDeferredCatalog(ctx, query, searchType)
-				if err != nil {
-					return nil, err
-				}
-				// Build tool_references result
-				var refs []domain.ToolReference
-				for _, t := range results {
-					refs = append(refs, domain.ToolReference{ToolName: t.Function.Name})
-				}
-				return domain.ToolSearchResult{ToolReferences: refs}, nil
-			})
-		}
-
-		ptcInteg, ptcErr := NewPTCIntegration(*b.ptcCfg, ptcRouter)
-		if ptcErr != nil {
-			return nil, fmt.Errorf("failed to create PTC integration: %w", ptcErr)
-		}
-		svc.SetPTC(ptcInteg)
-	}
-
 	if skillsSvc != nil {
 		svc.SetSkillsService(skillsSvc)
 	}
@@ -663,7 +571,6 @@ func (b *Builder) build() (*Service, error) {
 	// idempotent.
 	svc.RegisterOutputLint(NoPlanningOnlyFinish())
 	svc.RegisterOutputLint(FileTaskMustWrite())
-	svc.RegisterOutputLint(NoRawPTCCode()) // reject leaked PTC sandbox code in final answers
 	// v3 acceptance gates (plan §4.5): no empty terminal answers, and a task
 	// that asked for a delivery action cannot complete without evidence of it.
 	svc.RegisterOutputLint(NonEmptyFinalAnswer())
@@ -681,22 +588,18 @@ func (b *Builder) build() (*Service, error) {
 	// are registered on the unified registry so they're reachable by both the
 	// LLM loop and PTC's callTool(). After registering, re-sync the PTC router
 	// so the new tools are callable from sandboxed JS too.
-	execToolsRegistered := false
 	if b.sandbox != nil {
 		svc.execSandbox = b.sandbox
 		RegisterSandboxTools(svc, b.sandbox)
-		execToolsRegistered = true
 	}
 	if b.enableDeliver && b.sandbox != nil {
 		RegisterDeliverableTools(svc, b.sandbox)
-		execToolsRegistered = true
 	}
 	if b.autonomy.MaxRounds > 0 || b.autonomy.LintRetryBudget > 0 || b.autonomy.Scratchpad {
 		svc.defaultMaxTurns = b.autonomy.MaxRounds
 		svc.lintRetryBudgetOverride = b.autonomy.LintRetryBudget
 		if b.autonomy.Scratchpad {
 			RegisterScratchpadTools(svc)
-			execToolsRegistered = true
 		}
 	}
 	// Sub-agents are tools, not orchestration: WithSubagents installs a single
@@ -704,12 +607,7 @@ func (b *Builder) build() (*Service, error) {
 	// the same loop.
 	if len(b.subagents) > 0 {
 		RegisterSubagentTool(svc, b.subagents...)
-		execToolsRegistered = true
 	}
-	if execToolsRegistered && svc.ptcIntegration != nil && svc.ptcIntegration.router != nil {
-		svc.toolRegistry.SyncToPTCRouter(svc.ptcIntegration.router)
-	}
-
 	return svc, nil
 }
 
@@ -934,14 +832,5 @@ type SkillsOption func(*SkillsConfig)
 func WithSkillsPaths(paths ...string) SkillsOption {
 	return func(c *SkillsConfig) { c.Paths = paths }
 }
-
-// PTCOption modifies PTCConfig
-type PTCOption func(*PTCConfig)
-
-// WithPTCMaxToolCalls sets max tool calls
-func WithPTCMaxToolCalls(n int) PTCOption { return func(c *PTCConfig) { c.MaxToolCalls = n } }
-
-// WithPTCTimeout sets PTC timeout
-func WithPTCTimeout(d time.Duration) PTCOption { return func(c *PTCConfig) { c.Timeout = d } }
 
 // ============================================================

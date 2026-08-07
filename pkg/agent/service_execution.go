@@ -132,22 +132,11 @@ func (s *Service) prepareToolRound(ctx context.Context, messages *[]domain.Messa
 	return currentAgent, nil, filteredToolCalls, duplicateToolResults, fallback, false
 }
 
-func isPTCToolRound(ptcEnabled bool, filteredToolCalls []domain.ToolCall) bool {
-	return ptcEnabled && len(filteredToolCalls) == 1 && filteredToolCalls[0].Function.Name == "execute_javascript"
-}
-
 func appendToolResultsAnalysisPrompt(messages []domain.Message) []domain.Message {
 	return append(messages, domain.Message{
 		Role:    "user",
 		Content: toolResultsAnalysisPrompt,
 	})
-}
-
-func terminalAnswerFromToolRound(ptcEnabled bool, filteredToolCalls []domain.ToolCall, toolResults []ToolExecutionResult) string {
-	if !isPTCToolRound(ptcEnabled, filteredToolCalls) {
-		return ""
-	}
-	return extractPTCTerminalAnswer(toolResults)
 }
 
 type toolRoundOutcome struct {
@@ -158,7 +147,7 @@ type toolRoundOutcome struct {
 	AwaitAnswer bool
 }
 
-func (s *Service) buildToolRoundOutcome(messages []domain.Message, taskID string, result *domain.GenerationResult, duplicateToolResults, toolResults []ToolExecutionResult, ptcEnabled bool, filteredToolCalls []domain.ToolCall) toolRoundOutcome {
+func (s *Service) buildToolRoundOutcome(messages []domain.Message, taskID string, result *domain.GenerationResult, duplicateToolResults, toolResults []ToolExecutionResult, filteredToolCalls []domain.ToolCall) toolRoundOutcome {
 	allResults := append(append([]ToolExecutionResult(nil), duplicateToolResults...), toolResults...)
 	nextMessages := s.appendToolRoundToMessages(messages, taskID, result, allResults)
 	outcome := toolRoundOutcome{
@@ -175,14 +164,8 @@ func (s *Service) buildToolRoundOutcome(messages []domain.Message, taskID string
 		outcome.Blocked = blocked
 		return outcome
 	}
-	if final := terminalAnswerFromToolRound(ptcEnabled, filteredToolCalls, allResults); final != "" {
-		outcome.Terminal = final
-		return outcome
-	}
-	if !isPTCToolRound(ptcEnabled, filteredToolCalls) {
-		outcome.Messages = appendToolResultsAnalysisPrompt(outcome.Messages)
-		outcome.AwaitAnswer = true
-	}
+	outcome.Messages = appendToolResultsAnalysisPrompt(outcome.Messages)
+	outcome.AwaitAnswer = true
 	return outcome
 }
 

@@ -140,7 +140,6 @@ func TestTaskServiceResumeFromCheckpointReplaysMessages(t *testing.T) {
 		},
 	}
 	svc, err := New("Operator").
-		WithPTC(false).
 		WithConfig(testAgentConfig(t.TempDir())).
 		WithLLM(llm).
 		Build()

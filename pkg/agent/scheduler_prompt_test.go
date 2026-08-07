@@ -74,7 +74,6 @@ func newScheduledTestService(t *testing.T) (*Service, *scheduledTestLLM) {
 	t.Helper()
 	llm := &scheduledTestLLM{}
 	svc, err := New("scheduled-agent").
-		WithPTC(false).
 		WithConfig(testAgentConfig(t.TempDir())).
 		WithLLM(llm).
 		Build()
@@ -296,7 +295,6 @@ func TestScheduledPromptDoesNotAnswerFromMemory(t *testing.T) {
 	llm := &explicitRecallTestLLM{}
 
 	svc, err := New("scheduled-agent").
-		WithPTC(false).
 		WithConfig(testAgentConfig(t.TempDir())).
 		WithLLM(llm).
 		WithMemory().

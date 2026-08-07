@@ -17,18 +17,6 @@ func TestRunOptionWithTaskIDSetsConfig(t *testing.T) {
 	}
 }
 
-func TestRunOptionWithPTCEnabledCanDisablePTCForRun(t *testing.T) {
-	cfg := DefaultRunConfig()
-	WithPTCEnabled(false)(cfg)
-	if !cfg.DisablePTC {
-		t.Fatal("expected PTC to be disabled for this run")
-	}
-	WithPTCEnabled(true)(cfg)
-	if cfg.DisablePTC {
-		t.Fatal("expected PTC to be enabled for this run")
-	}
-}
-
 func TestEnsureTaskIDReusesSessionTaskID(t *testing.T) {
 	session := NewSession("agent-1")
 	session.SetContext(sessionContextTaskID, "task-existing")

@@ -16,7 +16,6 @@ import (
 	memorypkg "github.com/liliang-cn/agent-go/v3/pkg/memory"
 	"github.com/liliang-cn/agent-go/v3/pkg/pool"
 	"github.com/liliang-cn/agent-go/v3/pkg/prompt"
-	"github.com/liliang-cn/agent-go/v3/pkg/ptc"
 	"github.com/liliang-cn/agent-go/v3/pkg/sandbox"
 	"github.com/liliang-cn/agent-go/v3/pkg/skills"
 	taskpkg "github.com/liliang-cn/agent-go/v3/pkg/task"
@@ -94,12 +93,9 @@ type Service struct {
 	stopHookIDs []string
 
 	// toolRegistry is the unified registry for custom, RAG, and Memory tools.
-	// All modules register here so that both LLM listing and PTC callTool()
+	// All modules register here so that LLM tool listing
 	// dispatch go through a single source of truth.
 	toolRegistry *ToolRegistry
-
-	// PTC (Programmatic Tool Calling) integration
-	ptcIntegration *PTCIntegration
 
 	// outputLints is the registry of post-output lint rules consulted by the
 	// runtime before emitting a final completion event. Lazily initialized via
@@ -140,7 +136,6 @@ type Service struct {
 	Memory  domain.MemoryService
 	Skills  *skills.Service
 	Prompts *prompt.Manager
-	PTC     *PTCIntegration
 
 	tokenCounter *pool.TokenCounter
 	cfg          *config.Config
@@ -157,9 +152,6 @@ type Service struct {
 	defaultMaxTurns         int
 	lintRetryBudgetOverride int
 }
-
-// Ensure Service implements ptc.SearchProvider
-var _ ptc.SearchProvider = (*Service)(nil)
 
 // NewService creates a new agent service with the given dependencies.
 //
@@ -677,7 +669,6 @@ func (s *Service) Info() AgentInfo {
 		BaseURL:       s.baseURL,
 		FastModel:     s.isFastModel,
 		RAGEnabled:    s.ragProcessor != nil,
-		PTCEnabled:    s.isPTCEnabled(),
 		MemoryEnabled: s.memoryService != nil,
 		MCPEnabled:    s.mcpService != nil,
 		SkillsEnabled: s.skillsService != nil,

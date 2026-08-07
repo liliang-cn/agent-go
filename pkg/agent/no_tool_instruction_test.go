@@ -118,7 +118,6 @@ func (c *constraintLLM) RecognizeIntent(ctx context.Context, request string) (*d
 func newConstraintTestService(t *testing.T, llm *constraintLLM) *Service {
 	t.Helper()
 	svc, err := New("constraints").
-		WithPTC(true).
 		WithConfig(testAgentConfig(t.TempDir())).
 		WithLLM(llm).
 		Build()

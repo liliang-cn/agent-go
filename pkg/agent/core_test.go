@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
-	"github.com/liliang-cn/agent-go/v3/pkg/ptc"
 	"github.com/liliang-cn/agent-go/v3/pkg/resource"
 	storepkg "github.com/liliang-cn/agent-go/v3/pkg/store"
 )
@@ -88,91 +87,12 @@ func TestToolRegistry_ListForLLM_NativeMode(t *testing.T) {
 	)
 
 	// ptcEnabled=false → should return tool definitions
-	defs := reg.ListForLLM(false, "")
+	defs := reg.ListForLLM("")
 	if len(defs) == 0 {
 		t.Fatal("expected non-empty tool list for native mode")
 	}
 	if defs[0].Function.Name != "tool1" {
 		t.Errorf("unexpected tool name: %v", defs[0].Function.Name)
-	}
-}
-
-func TestToolRegistry_ListForLLM_PTCMode(t *testing.T) {
-	reg := NewToolRegistry()
-	reg.Register(
-		makeToolDef("tool1", "Test tool"),
-		func(_ context.Context, _ map[string]interface{}) (interface{}, error) { return nil, nil },
-		CategoryCustom,
-	)
-	reg.Register(
-		makeToolDef("memory_recall", "Memory recall"),
-		func(_ context.Context, _ map[string]interface{}) (interface{}, error) { return nil, nil },
-		CategoryMemory,
-	)
-
-	// ptcEnabled=true → direct/dual tools remain direct; code-only tools move to PTC.
-	defs := reg.ListForLLM(true, "")
-	names := map[string]bool{}
-	for _, def := range defs {
-		names[def.Function.Name] = true
-	}
-	if !names["memory_recall"] || !names["tool1"] {
-		t.Fatalf("expected memory_recall and dual custom tool in PTC mode, got %+v", defs)
-	}
-}
-
-func TestToolRegistry_MemoryToolsExcludedFromPTCCallTool(t *testing.T) {
-	reg := NewToolRegistry()
-	reg.Register(
-		makeToolDef("memory_recall", "Memory recall"),
-		func(_ context.Context, _ map[string]interface{}) (interface{}, error) { return nil, nil },
-		CategoryMemory,
-	)
-	reg.Register(
-		makeToolDef("rag_query", "RAG query"),
-		func(_ context.Context, _ map[string]interface{}) (interface{}, error) { return nil, nil },
-		CategoryRAG,
-	)
-
-	callTools := reg.ListForCallTool()
-	if len(callTools) != 1 {
-		t.Fatalf("expected one PTC callTool, got %d", len(callTools))
-	}
-	if callTools[0].Name != "rag_query" {
-		t.Fatalf("expected rag_query in PTC callTool list, got %s", callTools[0].Name)
-	}
-
-	router := ptc.NewAgentGoRouter()
-	reg.SyncToPTCRouter(router)
-	tools, err := router.ListAvailableTools(context.Background())
-	if err != nil {
-		t.Fatalf("ListAvailableTools failed: %v", err)
-	}
-	for _, tool := range tools {
-		if tool.Name == "memory_recall" {
-			t.Fatal("memory_recall should not be registered in PTC router")
-		}
-	}
-}
-
-func TestToolRegistry_ExecutionPolicyOverridesExposure(t *testing.T) {
-	reg := NewToolRegistry()
-	reg.SetExecutionPolicy(ToolExecutionPolicy{
-		Rules: map[string]ToolExposureMode{
-			"custom_direct": ToolExposureDirectOnly,
-			"custom_code":   ToolExposureCodeOnly,
-		},
-	})
-	reg.Register(makeToolDef("custom_direct", "direct"), func(context.Context, map[string]interface{}) (interface{}, error) { return nil, nil }, CategoryCustom)
-	reg.Register(makeToolDef("custom_code", "code"), func(context.Context, map[string]interface{}) (interface{}, error) { return nil, nil }, CategoryCustom)
-
-	directTools := reg.ListForLLM(true, "")
-	if len(directTools) != 1 || directTools[0].Function.Name != "custom_direct" {
-		t.Fatalf("expected custom_direct as direct PTC-mode tool, got %+v", directTools)
-	}
-	callTools := reg.ListForCallTool()
-	if len(callTools) != 1 || callTools[0].Name != "custom_code" {
-		t.Fatalf("expected custom_code as code tool, got %+v", callTools)
 	}
 }
 
@@ -678,36 +598,6 @@ func TestBuilder_NameSet(t *testing.T) {
 	b := New("my-agent")
 	if b.name != "my-agent" {
 		t.Errorf("expected name='my-agent', got %q", b.name)
-	}
-}
-
-func TestBuilder_DefaultsPTCDisabled(t *testing.T) {
-	b := New("ptc-default-agent")
-	if b.enablePTC {
-		t.Fatal("expected PTC to be disabled by default")
-	}
-	if b.ptcCfg != nil {
-		t.Fatal("expected no PTC config by default")
-	}
-}
-
-func TestBuilder_WithPTCOptsIn(t *testing.T) {
-	b := New("ptc-optin-agent").WithPTC()
-	if !b.enablePTC {
-		t.Fatal("expected WithPTC() to enable PTC")
-	}
-	if b.ptcCfg == nil || !b.ptcCfg.Enabled {
-		t.Fatal("expected WithPTC() to initialize an enabled PTC config")
-	}
-}
-
-func TestBuilder_WithPTCFalseOverridesDefault(t *testing.T) {
-	b := New("no-ptc-agent").WithPTC(false)
-	if b.enablePTC {
-		t.Fatal("expected WithPTC(false) to disable PTC")
-	}
-	if b.ptcCfg != nil {
-		t.Fatal("expected WithPTC(false) to clear ptc config")
 	}
 }
 

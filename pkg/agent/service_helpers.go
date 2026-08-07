@@ -10,7 +10,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
-	"github.com/liliang-cn/agent-go/v3/pkg/ptc"
 	"github.com/liliang-cn/agent-go/v3/pkg/skills"
 )
 
@@ -24,7 +23,6 @@ type skillReminder struct {
 type toolPreparationPolicy struct {
 	SessionID           string
 	TaskID              string
-	PTCEnabled          bool
 	SearchMode          bool
 	ExposeSearchTools   bool
 	HideNativeWebSearch bool
@@ -157,7 +155,6 @@ func (s *Service) isRelevantSkillSatisfied(sessionID, taskID string) bool {
 
 func (s *Service) buildToolPreparationPolicy(ctx context.Context) toolPreparationPolicy {
 	policy := toolPreparationPolicy{
-		PTCEnabled:          s.isPTCEnabled(),
 		SearchMode:          s.shouldExposeSearchTools(),
 		ExposeSearchTools:   s.shouldExposeSearchTools(),
 		HideNativeWebSearch: s.shouldHideMCPWebSearchTools(),
@@ -200,12 +197,9 @@ func shouldKeepToolForSkillFirst(toolName string, relevantSkillNames []string) b
 func (s *Service) prepareTurnInputsWithConfig(ctx context.Context, currentAgent *Agent, messages []domain.Message, goal string, cfg *RunConfig) ([]domain.ToolDefinition, []domain.Message) {
 	s.syncDiscoveredToolsFromHistory(messages, "")
 	policy := s.buildToolPreparationPolicy(ctx)
-	// A run that forbids tools must not even assemble the PTC tool catalogue:
-	// GetPTCTools embeds the callable list into execute_javascript's schema and
-	// into the prompt, which is one more place the model learns about a channel
-	// it is not allowed to use.
+	// A run that forbids tools must not assemble a tool catalogue at all — the
+	// list feeds the prompt as well as the request.
 	if cfg != nil && cfg.resolvedConstraints != nil && cfg.resolvedConstraints.ForbidTools {
-		policy.PTCEnabled = false
 		policy.ExposeSearchTools = false
 	}
 	tools := s.collectAllAvailableToolsWithPolicy(ctx, currentAgent, policy)
@@ -214,8 +208,8 @@ func (s *Service) prepareTurnInputsWithConfig(ctx context.Context, currentAgent 
 	}
 	// A user who refused tool use is obeyed by withholding the tools, not by
 	// asking the model to resist what is attached to its request. Nothing
-	// survives — not the terminal signals, not PTC's execute_javascript, not
-	// search_available_tools; the loop still terminates on a plain text turn.
+	// survives — not the terminal signals, not search_available_tools; the loop
+	// still terminates on a plain text turn.
 	//
 	// The decision comes from the run's resolved constraints (see
 	// constraints.go), never from matching phrases in the goal.
@@ -268,7 +262,6 @@ func (s *Service) addRAGSources(sources []domain.Chunk) {
 }
 
 // collectAllAvailableTools collects tools from MCP, Skills, RAG, and Agent Handoffs.
-// When PTC is enabled, RAG/MCP/Skills are NOT exposed as direct function-call tools —
 // the LLM must call them through execute_javascript + callTool(), mirroring Anthropic's
 // allowed_callers: ["code_execution"] behaviour where direct model invocation is removed.
 func (s *Service) collectAllAvailableTools(ctx context.Context, currentAgent *Agent) []domain.ToolDefinition {
@@ -277,7 +270,6 @@ func (s *Service) collectAllAvailableTools(ctx context.Context, currentAgent *Ag
 
 func (s *Service) collectAllAvailableToolsWithPolicy(ctx context.Context, currentAgent *Agent, policy toolPreparationPolicy) []domain.ToolDefinition {
 	toolsMap := make(map[string]domain.ToolDefinition)
-	ptcEnabled := policy.PTCEnabled
 	sessionID := policy.SessionID
 	searchMode := policy.SearchMode
 	relevantSkillNames := policy.RelevantSkillNames
@@ -295,10 +287,10 @@ func (s *Service) collectAllAvailableToolsWithPolicy(ctx context.Context, curren
 
 	// 1. Add static tools and active deferred tools from Registry
 	// This includes built-in tools like delegate_to_subagent and task_complete
-	addTools(s.toolRegistry.ListForLLM(ptcEnabled, sessionID))
+	addTools(s.toolRegistry.ListForLLM(sessionID))
 
 	// In saving mode, expose search tools instead of sending large MCP/skill catalogs directly.
-	if policy.ExposeSearchTools && !ptcEnabled {
+	if policy.ExposeSearchTools {
 		for _, ts := range GetToolSearchTools() {
 			toolsMap[ts.Function.Name] = ts
 		}
@@ -306,8 +298,7 @@ func (s *Service) collectAllAvailableToolsWithPolicy(ctx context.Context, curren
 
 	if currentAgent != nil {
 		// Per-agent custom tools (e.g. tools added directly to an Agent in multi-agent
-		// scenarios) — hidden when PTC is enabled.
-		if !ptcEnabled {
+		{
 			for _, def := range currentAgent.Tools() {
 				// Skip if already in registry (AddTool registers in both places).
 				if !s.toolRegistry.Has(def.Function.Name) {
@@ -317,8 +308,8 @@ func (s *Service) collectAllAvailableToolsWithPolicy(ctx context.Context, curren
 		}
 	}
 
-	// MCP tools — dynamic (servers may change at runtime); hidden in PTC mode.
-	if s.mcpService != nil && !ptcEnabled {
+	// MCP tools — dynamic (servers may change at runtime).
+	if s.mcpService != nil {
 		allMCP := s.mcpService.ListTools()
 		activeMap := s.toolRegistry.sessionActivated[sessionID]
 		deferAllMCP := searchMode
@@ -357,8 +348,8 @@ func (s *Service) collectAllAvailableToolsWithPolicy(ctx context.Context, curren
 		}
 	}
 
-	// Skills tools — dynamic; hidden in PTC mode.
-	if s.skillsService != nil && !ptcEnabled {
+	// Skills tools — dynamic.
+	if s.skillsService != nil {
 		skillsList, _ := s.skillsService.ListSkills(ctx, skills.SkillFilter{})
 		activeMap := s.toolRegistry.sessionActivated[sessionID]
 		deferAllSkills := searchMode
@@ -419,13 +410,6 @@ func (s *Service) collectAllAvailableToolsWithPolicy(ctx context.Context, curren
 				}
 			}
 		}
-	}
-
-	// PTC: expose execute_javascript as a direct LLM tool. Embed the dynamic
-	// callTool() list so the model knows exactly what it can call.
-	if s.ptcIntegration != nil {
-		availableCallTools := s.ptcAvailableCallToolsWithPolicy(ctx, policy)
-		addTools(s.ptcIntegration.GetPTCTools(availableCallTools))
 	}
 
 	// 4. Convert map back to slice
@@ -540,45 +524,6 @@ func (s *Service) setCurrentThinkingOptions(t *domain.ThinkingOptions) {
 	s.thinkingMu.Unlock()
 }
 
-func (s *Service) ptcAvailableCallTools(ctx context.Context) []ptc.ToolInfo {
-	return s.ptcAvailableCallToolsWithPolicy(ctx, s.buildToolPreparationPolicy(ctx))
-}
-
-func (s *Service) ptcAvailableCallToolsWithPolicy(ctx context.Context, policy toolPreparationPolicy) []ptc.ToolInfo {
-	if s.ptcIntegration == nil {
-		return nil
-	}
-	tools := s.ptcIntegration.GetAvailableCallTools(ctx)
-	sessionID := policy.SessionID
-	exposeSearch := s.shouldExposePTCToolSearch(ctx)
-	relevantSkillNames := policy.RelevantSkillNames
-	hasRelevantSkillFilter := len(relevantSkillNames) > 0
-
-	filtered := make([]ptc.ToolInfo, 0, len(tools))
-	for _, tool := range tools {
-		if tool.Name == "search_available_tools" || domain.IsToolSearchTool(tool.Name) {
-			if exposeSearch {
-				filtered = append(filtered, tool)
-			}
-			continue
-		}
-		if policy.ForceSkillFirst && !shouldKeepToolForSkillFirst(tool.Name, relevantSkillNames) {
-			continue
-		}
-		if hasRelevantSkillFilter && strings.HasPrefix(tool.Name, "skill_") {
-			skillID := strings.TrimPrefix(tool.Name, "skill_")
-			if !slices.Contains(relevantSkillNames, skillID) {
-				continue
-			}
-		}
-
-		if !s.isDeferredPTCCallTool(tool.Name) || s.toolRegistry.IsActivatedForSession(sessionID, tool.Name) {
-			filtered = append(filtered, tool)
-		}
-	}
-	return filtered
-}
-
 func (s *Service) shouldExposePTCToolSearch(ctx context.Context) bool {
 	if s == nil || s.toolRegistry == nil {
 		return false
@@ -674,14 +619,14 @@ func (s *Service) buildToolCatalogSummary(ctx context.Context) string {
 	}
 
 	toolHints := make([]string, 0)
-	for _, tool := range s.toolRegistry.ListForCallTool() {
-		if tool.Name == "search_available_tools" || domain.IsToolSearchTool(tool.Name) {
+	for _, name := range s.toolRegistry.Names() {
+		if name == "search_available_tools" || domain.IsToolSearchTool(name) {
 			continue
 		}
-		if strings.HasPrefix(tool.Name, "mcp_") || strings.HasPrefix(tool.Name, "skill_") {
+		if strings.HasPrefix(name, "mcp_") || strings.HasPrefix(name, "skill_") {
 			continue
 		}
-		toolHints = append(toolHints, tool.Name)
+		toolHints = append(toolHints, name)
 	}
 	slices.Sort(toolHints)
 	if len(toolHints) > 0 {

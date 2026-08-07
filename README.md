@@ -22,13 +22,12 @@ go get github.com/liliang-cn/agent-go/v3
 
 - **Agent**: a named runtime with instructions, tools, memory, and sessions.
 - **Loop**: one streaming state machine. `Run()` is `RunStream()` plus a collector; sub-agents reuse the same loop.
-- **Tool**: everything the agent can do — built-ins, MCP, skills, PTC, and sub-agents.
+- **Tool**: everything the agent can do — built-ins, MCP, skills, and sub-agents.
 - **Sub-agent**: registered with `WithSubagents(...)` and reached through a single `task(agent_name, prompt)` tool. There is no team, dispatcher or router.
 - **Task**: a first-class unit of work with status, events, frames, and output.
 - **Memory**: durable local context, separate from cache and RAG.
 - **MCP**: tool integration layer for filesystem, web, and external capabilities.
 - **Skills**: reusable Markdown/YAML workflows.
-- **PTC**: optional JavaScript tool orchestration in a Goja sandbox.
 - **RAG**: optional document retrieval when embeddings are configured.
 - **Output lints**: deterministic post-output checks that re-prompt the model on violation (instead of "please remember to..." paragraphs).
 - **Checkpoint + replay**: every terminal task writes a snapshot; crashed/cancelled runs can be re-played from the latest checkpoint.
@@ -153,7 +152,6 @@ Every service built with `agent.New(...).Build()` gets the built-ins automatical
 
 - `no_planning_only_finish` — reject planning-only endings
 - `file_task_must_write` — a task that asked for a file must have produced one
-- `no_raw_ptc_code` — sandbox JS must never be the user-facing answer
 - `non_empty_final_answer` — a run cannot terminate with no text
 - `task_delivery_contract` — a goal naming a delivery action (send the mail, post the message, write the file) cannot complete unless a matching tool was actually called
 
@@ -203,7 +201,6 @@ pkg/skills     skill loading
 pkg/providers  LLM providers (with reasoner-model fallbacks)
 pkg/pool       provider pool + token/cost accounting
 pkg/poolsvc    process-global pool service for embedders
-pkg/ptc        Programmatic Tool Calling — JS sandbox
 pkg/store      SQLite storage
 eval/          behavioral eval harness (scenarios + runner)
 examples/      runnable examples

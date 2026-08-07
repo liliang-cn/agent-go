@@ -8,7 +8,6 @@ import (
 	"sync"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
-	"github.com/liliang-cn/agent-go/v3/pkg/ptc"
 	"github.com/liliang-cn/agent-go/v3/pkg/resource"
 	"github.com/liliang-cn/agent-go/v3/pkg/search"
 )
@@ -42,8 +41,8 @@ const (
 	CategoryCustom = "custom" // user-registered via AddTool()
 	CategoryRAG    = "rag"    // rag_query, rag_ingest
 	CategoryMemory = "memory" // memory_save/recall/update/delete
-	CategorySkill  = "skill"  // skill tools (currently managed via ptcRouter)
-	CategoryMCP    = "mcp"    // MCP tools (dynamically managed via ptcRouter)
+	CategorySkill  = "skill"  // skill tools
+	CategoryMCP    = "mcp"    // MCP tools (dynamic; servers may change at runtime)
 )
 
 type registeredTool struct {
@@ -55,9 +54,8 @@ type registeredTool struct {
 
 // ToolRegistry is the single source of truth for tool definitions and handlers.
 //
-// All modules (custom, RAG, Memory) register here. PTC's callTool() dispatches
-// through this registry (via SyncToPTCRouter). This eliminates the dual-registration
-// pattern where tools had to be registered both on agent.tools and ptcRouter separately.
+// All modules (custom, RAG, Memory) register here, so tool dispatch has one
+// source of truth instead of a per-module list.
 type ToolRegistry struct {
 	mu               sync.RWMutex
 	tools            map[string]*registeredTool
@@ -107,8 +105,7 @@ func (r *ToolRegistry) IsActivatedForSession(sessionID, toolName string) bool {
 }
 
 // Register adds (or replaces) a tool. Tools registered here are:
-//   - Visible to the LLM in non-PTC mode
-//   - Accessible via callTool() inside the PTC JavaScript sandbox
+//   - Visible to the LLM
 
 // SearchAllTools searches ALL registered tools (not just deferred ones)
 func (r *ToolRegistry) SearchAllTools(query string) []domain.ToolDefinition {
@@ -140,7 +137,7 @@ func (r *ToolRegistry) SearchAllTools(query string) []domain.ToolDefinition {
 
 // Register adds (or replaces) a tool. The tool will be:
 //   - returned by ListForLLM(false) for native function calling
-//   - accessible via callTool() in the PTC JavaScript sandbox after SyncToPTCRouter
+
 func (r *ToolRegistry) Register(def domain.ToolDefinition, handler ToolHandler, category string) {
 	r.RegisterWithMetadata(def, handler, category, ToolMetadata{})
 }
@@ -285,10 +282,8 @@ func (r *ToolRegistry) DefinitionOf(name string) (domain.ToolDefinition, bool) {
 
 // ListForLLM returns the tool definitions that should be passed to the LLM.
 //
-//   - ptcEnabled=false: all registered tools (they appear as direct function calls)
-//   - ptcEnabled=true: direct_only and dual tools remain visible as direct
-//     function calls; code_only tools move behind execute_javascript/callTool.
-func (r *ToolRegistry) ListForLLM(ptcEnabled bool, sessionID string) []domain.ToolDefinition {
+//	function calls; code_only tools move behind execute_javascript/callTool.
+func (r *ToolRegistry) ListForLLM(sessionID string) []domain.ToolDefinition {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -296,33 +291,10 @@ func (r *ToolRegistry) ListForLLM(ptcEnabled bool, sessionID string) []domain.To
 
 	out := make([]domain.ToolDefinition, 0, len(r.tools))
 	for _, t := range r.tools {
-		if ptcEnabled && t.metadata.ExposureMode == ToolExposureCodeOnly {
-			continue
-		}
 		// Include if not deferred, or if explicitly activated for this session
 		if !t.def.DeferLoading || (activeMap != nil && activeMap[t.def.Function.Name]) {
 			out = append(out, t.def)
 		}
-	}
-	return out
-}
-
-// ListForCallTool returns ToolInfos for all tools accessible via callTool() in the
-// PTC JavaScript sandbox. Used by GetAvailableCallTools() to build the system prompt.
-func (r *ToolRegistry) ListForCallTool() []ptc.ToolInfo {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	out := make([]ptc.ToolInfo, 0, len(r.tools))
-	for _, t := range r.tools {
-		if t.metadata.ExposureMode == ToolExposureDirectOnly {
-			continue
-		}
-		out = append(out, ptc.ToolInfo{
-			Name:        t.def.Function.Name,
-			Description: t.def.Function.Description,
-			Parameters:  t.def.Function.Parameters,
-			Category:    t.category,
-		})
 	}
 	return out
 }
@@ -352,31 +324,6 @@ func (r *ToolRegistry) Call(ctx context.Context, name string, args map[string]in
 		return nil, fmt.Errorf("tool %q has no handler", name)
 	}
 	return tool.handler(ctx, args)
-}
-
-// SyncToPTCRouter registers all tools from this registry into the given PTC router
-// so that callTool() inside the JavaScript sandbox can find and execute them.
-// This is called once during PTC setup after all module tools have been registered.
-func (r *ToolRegistry) SyncToPTCRouter(router *ptc.AgentGoRouter) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	for name, t := range r.tools {
-		if t.metadata.ExposureMode == ToolExposureDirectOnly {
-			continue
-		}
-		toolName := name
-		handler := t.handler
-		info := &ptc.ToolInfo{
-			Name:        t.def.Function.Name,
-			Description: t.def.Function.Description,
-			Parameters:  t.def.Function.Parameters,
-			Category:    t.category,
-		}
-		// Ignore errors: tool may already be registered (idempotent)
-		_ = router.RegisterTool(toolName, info, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-			return handler(ctx, args)
-		})
-	}
 }
 
 // GetToolSearchTools returns the tool search tool definitions

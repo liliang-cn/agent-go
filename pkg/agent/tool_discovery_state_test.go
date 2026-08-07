@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
-	"github.com/liliang-cn/agent-go/v3/pkg/ptc"
 )
 
 type compactDiscoveryTestLLM struct{}
@@ -104,20 +103,13 @@ func TestSyncDiscoveredToolsFromHistory_ReactivatesDeferredTool(t *testing.T) {
 	registry.Register(searchDef, func(context.Context, map[string]interface{}) (interface{}, error) { return nil, nil }, CategoryCustom)
 	registry.Register(deferredDef, func(context.Context, map[string]interface{}) (interface{}, error) { return "sunny", nil }, CategoryCustom)
 
-	router := ptc.NewAgentGoRouter()
-	registry.SyncToPTCRouter(router)
-
 	svc := &Service{
 		toolRegistry:     registry,
 		currentSessionID: "session-sync-1",
 	}
-	svc.ptcIntegration = &PTCIntegration{
-		config: &PTCConfig{Enabled: true},
-		router: router,
-	}
 
-	before := svc.ptcAvailableCallTools(context.Background())
-	if containsToolInfoName(before, "get_weather") {
+	before := registry.ListForLLM(svc.currentSessionID)
+	if containsToolDefName(before, "get_weather") {
 		t.Fatalf("expected deferred tool hidden before sync, got %+v", before)
 	}
 
@@ -128,8 +120,17 @@ func TestSyncDiscoveredToolsFromHistory_ReactivatesDeferredTool(t *testing.T) {
 		{Role: "tool", Content: toolResultToString(searchResult)},
 	}, "")
 
-	after := svc.ptcAvailableCallTools(context.Background())
-	if !containsToolInfoName(after, "get_weather") {
+	after := registry.ListForLLM(svc.currentSessionID)
+	if !containsToolDefName(after, "get_weather") {
 		t.Fatalf("expected deferred tool visible after sync, got %+v", after)
 	}
+}
+
+func containsToolDefName(defs []domain.ToolDefinition, want string) bool {
+	for _, d := range defs {
+		if d.Function.Name == want {
+			return true
+		}
+	}
+	return false
 }

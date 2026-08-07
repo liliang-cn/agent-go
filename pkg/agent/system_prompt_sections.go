@@ -17,7 +17,6 @@ type systemPromptSection struct {
 }
 
 type systemPromptOptions struct {
-	includePTC bool
 	// forbidTools drops every rule that teaches the model to reach for a tool.
 	// The run will be offered none, so mentioning them only invites refusals.
 	forbidTools bool
@@ -110,17 +109,6 @@ func (s *Service) ensureSystemPromptSectionRegistry() {
 		}
 		return prompt.Section{Name: "system_context", Content: s.renderPromptSection(prompt.AgentSystemContext, data.data)}, nil
 	})
-	s.promptManager.RegisterSection("ptc", func(ctx context.Context, raw interface{}) (prompt.Section, error) {
-		data, ok := raw.(systemPromptSectionData)
-		if !ok {
-			return prompt.Section{}, fmt.Errorf("unexpected section data type %T", raw)
-		}
-		if !data.options.includePTC || data.service.ptcIntegration == nil {
-			return prompt.Section{Name: "ptc"}, nil
-		}
-		availableCallTools := data.service.ptcAvailableCallTools(ctx)
-		return prompt.Section{Name: "ptc", Content: data.service.ptcIntegration.GetPTCSystemPrompt(availableCallTools), Dynamic: true}, nil
-	})
 	s.promptManager.RegisterSection("memory", func(ctx context.Context, raw interface{}) (prompt.Section, error) {
 		data, ok := raw.(systemPromptSectionData)
 		if !ok {
@@ -211,7 +199,6 @@ func (s *Service) buildSystemPromptSections(ctx context.Context, agent *Agent, o
 		"system_context",
 		"frc",
 		"numeric_length_anchors",
-		"ptc",
 		"memory",
 		"messaging",
 		"tool_catalog",

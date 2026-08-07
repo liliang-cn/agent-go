@@ -55,7 +55,6 @@ func main() {
 	// tools — so disable PTC and tell the model to answer directly from its
 	// own knowledge instead of delegating or calling tools.
 	svc, err := agent.New("structured-output-demo").
-		WithPTC(false).
 		WithSystemPrompt("You are a concise equity analyst. Answer ONLY from your own knowledge. " +
 			"Do NOT call any tools, do NOT delegate to sub-agents, do NOT search the web. " +
 			"Respond immediately with the required JSON. Base answers on widely-known facts; " +

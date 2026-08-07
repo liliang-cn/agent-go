@@ -239,7 +239,6 @@ func TestRuntime_StructuredOutput_FullFlow(t *testing.T) {
 	}
 
 	svc, err := New("structured-test-agent").
-		WithPTC(false).
 		WithConfig(testAgentConfig(t.TempDir())).
 		WithLLM(llm).
 		Build()

@@ -64,7 +64,6 @@ func TestBlockedRunWithoutBlockerArgStillHasText(t *testing.T) {
 	t.Parallel()
 
 	svc, err := New("blocked-text-agent").
-		WithPTC(false).
 		WithConfig(testAgentConfig(t.TempDir())).
 		WithLLM(&blockedNoArgsLLM{}).
 		Build()

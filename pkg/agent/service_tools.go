@@ -302,7 +302,7 @@ func (s *Service) SearchDeferredCatalog(ctx context.Context, query, searchType s
 		for _, def := range matches {
 			names = append(names, def.Function.Name)
 		}
-		log.Printf("[DEBUG] PTC deferred tool search: type=%s query=%q session=%s matches=%v", searchType, query, sessionID, names)
+		log.Printf("[DEBUG] deferred tool search: type=%s query=%q session=%s matches=%v", searchType, query, sessionID, names)
 	}
 	return matches, nil
 }

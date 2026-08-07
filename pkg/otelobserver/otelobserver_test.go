@@ -209,7 +209,6 @@ func TestObserverViaService(t *testing.T) {
 	cfg.ApplyHomeLayout()
 
 	svc, err := agent.New("weather-bot").
-		WithPTC(false).
 		WithConfig(cfg).
 		WithLLM(&scriptedLLM{}).
 		WithObserver(obs).

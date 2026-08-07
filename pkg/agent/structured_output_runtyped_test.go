@@ -51,7 +51,6 @@ func TestRunTyped(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			svc, err := New("typed-agent").
-				WithPTC(false).
 				WithConfig(testAgentConfig(t.TempDir())).
 				WithLLM(&jsonReplyLLM{json: tc.json}).
 				Build()
@@ -76,7 +75,6 @@ func TestRunTypedNonJSONErrors(t *testing.T) {
 		Answer string `json:"answer"`
 	}
 	svc, err := New("typed-agent-bad").
-		WithPTC(false).
 		WithConfig(testAgentConfig(t.TempDir())).
 		WithLLM(&jsonReplyLLM{json: "totally not json"}).
 		Build()

@@ -11,7 +11,7 @@ Module path is `github.com/liliang-cn/agent-go/v3`.
 Reason about the repo in this order:
 
 1. `pkg/agent` — framework core (agent, loop, tools, context, hooks/lints, session/checkpoint, events)
-2. `pkg/*` capability modules — `providers`, `mcp`, `skills`, `memory`, `rag`, `ptc`, `prompt`, `scheduler`, `sandbox`, `worktree`, `search`
+2. `pkg/*` capability modules — `providers`, `mcp`, `skills`, `memory`, `rag`, `prompt`, `scheduler`, `sandbox`, `worktree`, `search`
 3. Support modules — `pkg/store`, `pkg/config`, `pkg/log`, `pkg/cache`, `pkg/pool`, `pkg/poolsvc`, `pkg/domain`, `pkg/cortexbridge`, `pkg/otelobserver`
 4. `eval/` — the behavioral eval harness; `examples/` — runnable library examples
 
@@ -23,7 +23,7 @@ v3 deliberately has exactly seven things in it. If a change does not fit one of 
 
 1. **Agent** — a name, a system prompt, a model, a tool set, optional sub-agents.
 2. **Loop** — one streaming state machine: assemble context → call the model → execute tools → lint the answer → terminate. `Runtime.loop` is the only implementation.
-3. **Tool** — everything the agent can do is a tool: built-ins, MCP, skills, PTC, and sub-agents.
+3. **Tool** — everything the agent can do is a tool: built-ins, MCP, skills, and sub-agents.
 4. **Context** — message assembly, task-scoped history filtering, compaction, skill reminders.
 5. **Hooks + Lints** — the deterministic layer. Hooks bracket the run and each tool; lints reject a final answer and force a retry.
 6. **Session + Checkpoint** — a session UUID owns the conversation; every terminal state writes a replayable checkpoint.
@@ -100,7 +100,6 @@ Every service built through `agent.New(...).Build()` gets the built-in set autom
 
 - `no_planning_only_finish` — final text mustn't read like "Next steps:" / "I will..."
 - `file_task_must_write` — a task that asked for a file must have produced one
-- `no_raw_ptc_code` — sandbox JS must not leak into the user-facing answer
 - `non_empty_final_answer` — a run cannot terminate with no text at all
 - `task_delivery_contract` — a goal that names a delivery action (send the mail, post the message, write the file) cannot complete unless a matching tool was actually called *and* such a tool was available
 
@@ -110,7 +109,7 @@ The discipline: when a model keeps making the same mistake, **don't add another 
 
 ### Hard constraints live in the runtime, not the prompt
 
-A user who refuses tool use is obeyed by *withholding the tools* — `prepareTurnInputsWithConfig` empties the list, including PTC's `execute_javascript` and `search_available_tools` — and any tool call the model emits anyway is refused with structured feedback. Forbidding a capability means not offering it, not offering it and then arguing about it.
+A user who refuses tool use is obeyed by *withholding the tools* — `prepareTurnInputsWithConfig` empties the list, including `search_available_tools` — and any tool call the model emits anyway is refused with structured feedback. Forbidding a capability means not offering it, not offering it and then arguing about it.
 
 **Never decide this by matching phrases in the goal.** `constraints.go` resolves each run's constraints once, in `Runtime.loop`, via one temperature-0 structured call with a keyword-free prompt:
 
@@ -136,10 +135,6 @@ Resolve constraints in the **loop**, never in a helper that only sees a goal str
 
 When a harness change (lint, prompt cut, tool-prep tweak) lands, run `make eval-live` and diff the result JSON against the previous run — that's the harness-engineering loop.
 
-### PTC = Programmatic Tool Calling
-
-`pkg/ptc/` runs model-written JavaScript in a Goja sandbox so the model can `callTool(name, args)` inside loops/filters instead of doing N tool-call rounds through the chat protocol. PTC is **default-on**. See `docs/dev/PTC.md` for the design rationale; the short version: large intermediate data stays in the sandbox, only the small final result re-enters context. Tools used by PTC must return stable structured shapes (`{ ok, data, error }`-ish), not freeform strings.
-
 ### Skill surfacing is reminder-based
 
 Skills aren't all dumped into the prompt. The runtime surfaces a small relevant subset via `<skill-discovery>` reminders and activates matching `skill_*` tools per turn. When adding a skill, fill in `when_to_use` and `paths` in the SKILL.md frontmatter — that's what `ResolveForModel(...)` ranks on.
@@ -148,7 +143,7 @@ Skills aren't all dumped into the prompt. The runtime surfaces a small relevant 
 
 - `pkg/memory` — durable per-conversation/per-task memory, with file-backed `MEMORY.md` and `_session/*.md` writers in `pkg/store/file_memory.go`. Background durable writer.
 - `pkg/cache` — ephemeral in-process caches.
-- `pkg/rag` — optional document retrieval. **Only active when an embedding model is configured.** A bare AgentGo install (no embeddings) still has Agent + MCP + Memory + PTC working — don't gate basic features on RAG availability.
+- `pkg/rag` — optional document retrieval. **Only active when an embedding model is configured.** A bare AgentGo install (no embeddings) still has Agent + MCP + Memory working — don't gate basic features on RAG availability.
 
 ### Storage layout
 

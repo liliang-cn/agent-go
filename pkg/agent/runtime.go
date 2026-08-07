@@ -266,7 +266,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		fmt.Fprintf(&sb, "MODEL:    %s\n", info.Model)
 		fmt.Fprintf(&sb, "BASEURL:  %s\n", info.BaseURL)
 		fmt.Fprintf(&sb, "FEATURES: RAG:%v, MCP:%v, Skills:%v, PTC:%v, Memory:%v\n",
-			info.RAGEnabled, info.MCPEnabled, info.SkillsEnabled, info.PTCEnabled, info.MemoryEnabled)
+			info.RAGEnabled, info.MCPEnabled, info.SkillsEnabled, false, info.MemoryEnabled)
 		r.emitDebug(0, "config", sb.String())
 	}
 
@@ -407,7 +407,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			var promptBuilder strings.Builder
 			info := r.svc.Info()
 			fmt.Fprintf(&promptBuilder, "MODEL: %s (%s)\n", info.Model, info.BaseURL)
-			if sections := formatSystemPromptSectionsForDebug(r.svc.buildSystemPromptSections(ctx, r.currentAgent, systemPromptOptions{includePTC: r.svc.ptcIntegration != nil})); sections != "" {
+			if sections := formatSystemPromptSectionsForDebug(r.svc.buildSystemPromptSections(ctx, r.currentAgent, systemPromptOptions{})); sections != "" {
 				fmt.Fprintf(&promptBuilder, "%s\n\n", sections)
 			}
 			// Token estimation
@@ -620,17 +620,9 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 				r.refuseForbiddenToolUse(&messages, state)
 				continue
 			}
-			if final, ok := r.shouldShortCircuitPTCToolRound(result.Content, result.ToolCalls); ok {
-				if r.lintGate(goal, final, &messages, state, round) {
-					return
-				}
-				continue
-			}
-
 			// Note: task_complete is intercepted at stream level above and never
 			// reaches this point. All remaining tool calls are real work items.
 
-			result.ToolCalls = r.overridePTCToolCallsFromContent(round, result.Content, result.ToolCalls)
 			result.ToolCalls = normalizeToolCalls(result.ToolCalls)
 			streamResult := &domain.GenerationResult{
 				ID:        lastResponseID,
@@ -685,7 +677,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 				}
 			}
 
-			decision := r.svc.decidePostToolRound(messages, taskID, streamResult, duplicateToolResults, toolResults, r.ptcEnabled(), filteredToolCalls)
+			decision := r.svc.decidePostToolRound(messages, taskID, streamResult, duplicateToolResults, toolResults, filteredToolCalls)
 			messages = decision.Messages
 			state.Messages = messages
 			state.recordToolResults(decision.ToolResults)
@@ -714,22 +706,6 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			}
 
 		} else {
-			// Second tool channel: with PTC the model does not emit a tool_call
-			// at all — it writes a <code> block in its reply and the runtime
-			// parses and executes it. Emptying the tool-definition list does
-			// nothing here, so a run that forbids tools has to refuse the code
-			// block explicitly, exactly as it refuses a tool_call.
-			if r.runConstraints().ForbidTools && r.svc.ptcIntegration != nil &&
-				r.svc.ptcIntegration.IsCodeResponse(result.Content) {
-				r.refuseForbiddenToolUse(&messages, state)
-				continue
-			}
-			if nextMessages, handled := r.handlePTCTextFallback(ctx, result.Content, messages); handled {
-				messages = nextMessages
-				state.Messages = messages
-				state.noteRoundCompleted()
-				continue // next round → LLM synthesises answer
-			}
 
 			// --- TOKEN BUDGET AUTO-CONTINUATION ---
 			// Only auto-continue when the model produced no meaningful text yet.
@@ -1554,17 +1530,6 @@ func (r *Runtime) runConstraints() RunConstraints {
 		return RunConstraints{}
 	}
 	return *r.cfg.resolvedConstraints
-}
-
-// ptcEnabled reports whether PTC may run for THIS run. PTC is a second tool
-// channel — the model writes a <code> block and the runtime executes it without
-// any tool_call ever existing — so it has to honour the run's constraints or a
-// tool refusal is enforced on one channel and ignored on the other.
-func (r *Runtime) ptcEnabled() bool {
-	if r == nil || r.svc == nil {
-		return false
-	}
-	return r.svc.ptcEnabledForRun(r.cfg)
 }
 
 // refuseForbiddenToolUse rejects an attempt to use tools in a run that forbids

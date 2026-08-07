@@ -44,7 +44,6 @@ func TestConstraintExtractionRetriesOnProseReply(t *testing.T) {
 
 	llm := &proseFirstLLM{constraintLLM: constraintLLM{replies: []string{"Jupiter."}}}
 	svc, err := New("prose-retry").
-		WithPTC(true).
 		WithConfig(testAgentConfig(t.TempDir())).
 		WithLLM(llm).
 		Build()
@@ -92,7 +91,6 @@ func TestConstraintExtractionAcceptsFencedReply(t *testing.T) {
 
 	llm := &fencedLLM{constraintLLM: constraintLLM{replies: []string{"Jupiter."}}}
 	svc, err := New("fenced").
-		WithPTC(true).
 		WithConfig(testAgentConfig(t.TempDir())).
 		WithLLM(llm).
 		Build()

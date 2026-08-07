@@ -107,7 +107,6 @@ func TestRuntimeRetriesOnLintViolationAndCompletes(t *testing.T) {
 		},
 	}
 	svc, err := New("lint-runtime-agent").
-		WithPTC(false).
 		WithConfig(testAgentConfig(t.TempDir())).
 		WithLLM(llm).
 		Build()
@@ -161,7 +160,6 @@ func TestRuntimeBlocksWhenLintBudgetIsExhausted(t *testing.T) {
 		},
 	}
 	svc, err := New("lint-runtime-block").
-		WithPTC(false).
 		WithConfig(testAgentConfig(t.TempDir())).
 		WithLLM(llm).
 		Build()
@@ -203,7 +201,6 @@ func TestRuntimeIgnoresLintsWhenNoneRegistered(t *testing.T) {
 
 	llm := &scriptedLintLLM{replies: []string{"just done."}}
 	svc, err := New("lint-runtime-noop").
-		WithPTC(false).
 		WithConfig(testAgentConfig(t.TempDir())).
 		WithLLM(llm).
 		Build()

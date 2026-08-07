@@ -92,8 +92,6 @@ type ExecutionResult struct {
 	Error           string                    `json:"error,omitempty"`
 	Duration        string                    `json:"duration"`
 	Metadata        map[string]interface{}    `json:"metadata,omitempty"`
-	// PTCResult contains PTC execution details when PTC mode is active.
-	PTCResult *PTCResult `json:"ptc_result,omitempty"`
 }
 
 // AgentInfo contains information about an agent's status and configuration
@@ -106,7 +104,6 @@ type AgentInfo struct {
 	FastModel     bool     `json:"fast_model,omitempty"`
 	Debug         bool     `json:"debug"`
 	RAGEnabled    bool     `json:"rag_enabled"`
-	PTCEnabled    bool     `json:"ptc_enabled"`
 	MemoryEnabled bool     `json:"memory_enabled"`
 	MCPEnabled    bool     `json:"mcp_enabled"`
 	SkillsEnabled bool     `json:"skills_enabled"`
@@ -117,7 +114,6 @@ type AgentInfo struct {
 // This is the idiomatic accessor for library integrations — use this
 // instead of type-asserting or fmt.Sprintf'ing FinalResult.
 //
-// If PTC (Programmatic Tool Calling) was used, Text() returns the
 // formatted result of the code execution (e.g. return values and logs).
 //
 //	result, err := svc.Chat(ctx, "Hello")
@@ -125,12 +121,6 @@ type AgentInfo struct {
 func (r *ExecutionResult) Text() string {
 	if r == nil {
 		return ""
-	}
-
-	// If PTC was used and we have an executed result, return the formatted output
-	// (includes return values, logs, and tool call status).
-	if r.PTCResult != nil && r.PTCResult.Type != PTCResultTypeText {
-		return r.PTCResult.FormatForLLM()
 	}
 
 	if s, ok := r.FinalResult.(string); ok {
@@ -236,10 +226,6 @@ type RunConfig struct {
 	InheritedMemoryUserID  string
 
 	// Stream enables streaming mode for real-time events
-
-	// DisablePTC forces this run through direct function calling even if the
-	// service has PTC enabled.
-	DisablePTC bool
 
 	// ResumeMessages, when non-empty, makes the runtime skip its normal
 	// initial-history assembly and instead use these messages as the
@@ -464,10 +450,6 @@ func WithParentTaskID(parentTaskID string) RunOption {
 	return func(c *RunConfig) { c.ParentTaskID = parentTaskID }
 }
 
-func WithPTCEnabled(enabled bool) RunOption {
-	return func(c *RunConfig) { c.DisablePTC = !enabled }
-}
-
 // WithToolAllowlist restricts a run to the named tools.
 func WithToolAllowlist(names []string) RunOption {
 	return func(c *RunConfig) { c.ToolAllowlist = names }
@@ -479,7 +461,7 @@ func WithToolDenylist(names []string) RunOption {
 }
 
 // WithToolsDisabled runs with no tools attached at all — not the terminal
-// signals, not PTC's execute_javascript, not search_available_tools. Any tool
+// signals, not search_available_tools. Any tool
 // call the model emits anyway is refused with structured feedback.
 //
 // Declaring this skips constraint extraction: the caller has already answered

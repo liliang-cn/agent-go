@@ -6,7 +6,6 @@ import (
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 	"github.com/liliang-cn/agent-go/v3/pkg/mcp"
-	"github.com/liliang-cn/agent-go/v3/pkg/ptc"
 	"github.com/liliang-cn/agent-go/v3/pkg/skills"
 )
 
@@ -110,15 +109,6 @@ func (s *Service) registerSkillsInRegistry(skillsService *skills.Service) {
 	}
 }
 
-// SetPTC sets the PTC integration for programmatic tool calling
-func (s *Service) SetPTC(ptcIntegration *PTCIntegration) {
-	s.ptcIntegration = ptcIntegration
-	s.PTC = ptcIntegration
-	if ptcIntegration != nil {
-		ptcIntegration.SetSearchProvider(s)
-	}
-}
-
 // SetModelInfo sets the model metadata for Info()
 func (s *Service) SetModelInfo(modelName, baseURL string, isFastModel bool) {
 	s.modelName = modelName
@@ -132,36 +122,6 @@ func (s *Service) MemoryService() domain.MemoryService {
 	return s.memoryService
 }
 
-// isPTCEnabled reports whether PTC mode is active.
-// When PTC is enabled the agent is expected to call tools explicitly via
-// execute_javascript / callTool, so automatic RAG pre-injection must be
-// suppressed to avoid spoiling the answer before the LLM can act.
-func (s *Service) isPTCEnabled() bool {
-	return s.ptcIntegration != nil && s.ptcIntegration.config != nil && s.ptcIntegration.config.Enabled
-}
-
-// ptcEnabledForRun is the run-scoped answer, and the one every execution path
-// must ask. PTC is a SECOND tool channel: the model writes a <code> block in
-// its reply and the runtime parses and executes it, without ever emitting a
-// tool_call. Emptying the tool-definition list therefore does not close it —
-// a run whose constraints forbid tools has to turn PTC off outright, or the
-// refusal is enforced on one channel and wide open on the other.
-func (s *Service) ptcEnabledForRun(cfg *RunConfig) bool {
-	if !s.isPTCEnabled() {
-		return false
-	}
-	if cfg == nil {
-		return true
-	}
-	if cfg.DisablePTC {
-		return false
-	}
-	if cfg.resolvedConstraints != nil && cfg.resolvedConstraints.ForbidTools {
-		return false
-	}
-	return true
-}
-
 // RegisterAgent registers a new agent with the service
 func (s *Service) RegisterAgent(agent *Agent) {
 	if s.registry != nil {
@@ -170,7 +130,7 @@ func (s *Service) RegisterAgent(agent *Agent) {
 }
 
 // AddTool registers a custom Go function tool on the default agent.
-// The tool becomes available to the LLM via function calling and, when PTC is
+// The tool becomes available to the LLM via function calling and, when
 // enabled, also via callTool() inside the JavaScript sandbox.
 func (s *Service) AddTool(name, description string, parameters map[string]interface{},
 	handler func(context.Context, map[string]interface{}) (interface{}, error)) {
@@ -190,7 +150,7 @@ func (s *Service) AddToolWithMetadata(name, description string, parameters map[s
 	}
 
 	// Single registration point: the ToolRegistry.
-	// collectAllAvailableTools() reads from here; PTC's callTool() routes through
+	// collectAllAvailableTools() reads from here; dispatch routes through
 	// the registry too (via SyncToPTCRouter called at build time, and for tools
 	// added after build we also sync to the ptcRouter directly below).
 	s.toolRegistry.RegisterWithMetadata(def, handler, CategoryCustom, metadata)
@@ -201,18 +161,6 @@ func (s *Service) AddToolWithMetadata(name, description string, parameters map[s
 		s.agent.AddToolWithMetadata(name, description, parameters, handler, metadata)
 	}
 
-	// If PTC is already configured, register directly on the router so that
-	// tools added after Build() are immediately accessible via callTool().
-	if s.ptcIntegration != nil && s.ptcIntegration.router != nil && metadata.ExposureMode != ToolExposureDirectOnly {
-		_ = s.ptcIntegration.router.RegisterTool(name, &ptc.ToolInfo{
-			Name:        name,
-			Description: description,
-			Parameters:  parameters,
-			Category:    CategoryCustom,
-		}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-			return handler(ctx, args)
-		})
-	}
 }
 
 func (s *Service) SetToolExecutionPolicy(policy ToolExecutionPolicy) {
@@ -245,16 +193,6 @@ func (s *Service) Register(tool *Tool) {
 		})
 	}
 
-	metadata := s.toolRegistry.MetadataOf(def.Function.Name)
-	if s.ptcIntegration != nil && s.ptcIntegration.config.Enabled && metadata.ExposureMode != ToolExposureDirectOnly {
-		info := &ptc.ToolInfo{
-			Name:        def.Function.Name,
-			Description: def.Function.Description,
-			Parameters:  def.Function.Parameters,
-			Category:    CategoryCustom,
-		}
-		_ = s.ptcIntegration.router.RegisterTool(def.Function.Name, info, tool.handler)
-	}
 }
 
 // SetSkillsService sets the skills service for agent integration

@@ -100,7 +100,6 @@ func (l *budgetCapLLM) RecognizeIntent(ctx context.Context, _ string) (*domain.I
 // StopReasonMaxBudgetUSD.
 func TestRuntime_MaxBudgetUSD_BlocksRun(t *testing.T) {
 	svc, err := New("budget-cap-test").
-		WithPTC(false).
 		WithConfig(testAgentConfig(t.TempDir())).
 		WithLLM(&budgetCapLLM{}).
 		Build()
@@ -194,7 +193,6 @@ func TestRuntime_StopReason_RefusalViaFinishReason(t *testing.T) {
 		},
 	}
 	svc, err := New("refusal-finish-reason-test").
-		WithPTC(false).
 		WithConfig(testAgentConfig(t.TempDir())).
 		WithLLM(llm).
 		Build()
@@ -233,7 +231,6 @@ func TestRuntime_StopReason_RefusalViaHeuristic(t *testing.T) {
 		},
 	}
 	svc, err := New("refusal-heuristic-test").
-		WithPTC(false).
 		WithConfig(testAgentConfig(t.TempDir())).
 		WithLLM(llm).
 		Build()
@@ -265,7 +262,6 @@ func TestRuntime_StopReason_NormalEndTurn(t *testing.T) {
 		},
 	}
 	svc, err := New("normal-end-turn-test").
-		WithPTC(false).
 		WithConfig(testAgentConfig(t.TempDir())).
 		WithLLM(llm).
 		Build()

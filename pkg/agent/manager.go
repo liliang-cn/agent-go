@@ -257,7 +257,6 @@ func (m *Manager) buildServiceForModel(model *AgentModel) (*Service, error) {
 			builder.WithMemory()
 		}
 	}
-	builder.WithPTC(model.EnablePTC)
 	if model.EnableMCP {
 		builder.WithMCP()
 	}

@@ -1,0 +1,21 @@
+name: gate_code_block_is_not_a_tool_channel
+description: >
+  There is exactly one tool channel now. PTC used to be a second one — the model
+  wrote a <code> block in its reply and the runtime parsed and executed it,
+  without any tool_call existing — which meant emptying the tool list did not
+  close it, and a run that forbade tools still executed JavaScript through that
+  path.
+
+  PTC is gone, so a <code> block is just text. This scenario keeps that true:
+  the model emits one and it is treated as the answer, not parsed and run. If a
+  text-parsed execution path is ever reintroduced, llm_calls rises to 2 (the
+  refusal round it would trigger) and this fails.
+agent: Assistant
+input: "Without using any tools, name the largest planet in the solar system."
+constraints: '{"forbid_tools":true,"deliverables":[]}'
+llm_replies:
+  - "<code>return callTool('mcp_websearch_basic', {query: 'largest planet'});</code>"
+expect:
+  status: completed
+  llm_calls: 1
+  max_tools_offered: 0

@@ -356,7 +356,6 @@ func TestAgentUsesMemorySaveToolWhenPromptSignalsDurableMemory(t *testing.T) {
 	llm := &memoryToolCallingTestLLM{}
 
 	svc, err := New("memory-agent").
-		WithPTC(false).
 		WithConfig(testCortexAgentConfig(home)).
 		WithLLM(llm).
 		WithEmbedder(vectorMemoryTestEmbedder{}).
@@ -410,7 +409,6 @@ func TestAgentUsesMemorySaveToolForImplicitScheduleStatement(t *testing.T) {
 	llm := &memoryToolCallingTestLLM{}
 
 	svc, err := New("memory-agent").
-		WithPTC(false).
 		WithConfig(testCortexAgentConfig(home)).
 		WithLLM(llm).
 		WithEmbedder(vectorMemoryTestEmbedder{}).
@@ -473,7 +471,6 @@ func TestAgentWithMemoryStoresOrdinaryDialogueViaStoreIfWorthwhile(t *testing.T)
 	}
 
 	svc, err := New("memory-agent").
-		WithPTC(false).
 		WithConfig(testAgentConfig(home)).
 		WithLLM(llm).
 		WithMemory().
@@ -533,7 +530,6 @@ func TestAgentWithMemoryStoresOrdinaryDialogueViaHeuristicFallback(t *testing.T)
 	}
 
 	svc, err := New("memory-agent").
-		WithPTC(false).
 		WithConfig(testAgentConfig(home)).
 		WithLLM(llm).
 		WithMemory().
@@ -589,7 +585,6 @@ func TestMemoryToolsAreExposedInFileOnlyMode(t *testing.T) {
 	home := t.TempDir()
 
 	svc, err := New("memory-agent").
-		WithPTC(false).
 		WithConfig(testAgentConfig(home)).
 		WithLLM(&fileMemoryTestLLM{}).
 		WithMemory().

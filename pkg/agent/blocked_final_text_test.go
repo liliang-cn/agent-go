@@ -65,7 +65,6 @@ func TestBlockedRunCarriesBlockerTextToEveryEntryPoint(t *testing.T) {
 	newSvc := func(t *testing.T) *Service {
 		t.Helper()
 		svc, err := New("blocked-entry").
-			WithPTC(false).
 			WithConfig(testAgentConfig(t.TempDir())).
 			WithLLM(&blockingLLM{blocker: blocker}).
 			Build()
@@ -148,7 +147,6 @@ func TestBlockedRunWithoutBlockerStillCarriesText(t *testing.T) {
 	t.Parallel()
 
 	svc, err := New("blocked-empty").
-		WithPTC(false).
 		WithConfig(testAgentConfig(t.TempDir())).
 		WithLLM(&blockingLLM{blocker: ""}).
 		Build()

@@ -212,8 +212,7 @@ func main() {
 	b := agent.New("SuperAI").
 		WithPrompt(buildPersona(time.Now())).
 		WithConfig(cfg).
-		WithLLM(brain).
-		WithPTC(false) // simple one-tool-per-intent turns: direct tool-calling
+		WithLLM(brain)
 	memMode := "graphflow"
 	if embedder != nil {
 		b = b.WithEmbedder(embedder).WithGraphMemory() // 图存储 + graph_recall

@@ -60,8 +60,8 @@ func decideHandoff(nextAgent *Agent, reason interface{}) *handoffDecision {
 	}
 }
 
-func (s *Service) decidePostToolRound(messages []domain.Message, taskID string, result *domain.GenerationResult, duplicateToolResults, toolResults []ToolExecutionResult, ptcEnabled bool, filteredToolCalls []domain.ToolCall) postToolRoundDecision {
-	outcome := s.buildToolRoundOutcome(messages, taskID, result, duplicateToolResults, toolResults, ptcEnabled, filteredToolCalls)
+func (s *Service) decidePostToolRound(messages []domain.Message, taskID string, result *domain.GenerationResult, duplicateToolResults, toolResults []ToolExecutionResult, filteredToolCalls []domain.ToolCall) postToolRoundDecision {
+	outcome := s.buildToolRoundOutcome(messages, taskID, result, duplicateToolResults, toolResults, filteredToolCalls)
 	decision := postToolRoundDecision{
 		Messages:    outcome.Messages,
 		ToolResults: outcome.ToolResults,

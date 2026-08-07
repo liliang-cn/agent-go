@@ -83,7 +83,6 @@ func (s *stubSummaryLLM) RecognizeIntent(ctx context.Context, _ string) (*domain
 func TestCompactMessages_PreservesHeadAndTail(t *testing.T) {
 	t.Parallel()
 	svc, err := New("compaction-test").
-		WithPTC(false).
 		WithConfig(testAgentConfig(t.TempDir())).
 		WithLLM(&stubSummaryLLM{summary: "Summary of earlier rounds: user asked X; tool Y returned Z."}).
 		Build()
@@ -134,7 +133,6 @@ func TestCompactMessages_PreservesHeadAndTail(t *testing.T) {
 func TestCompactMessages_NoOpForShortHistory(t *testing.T) {
 	t.Parallel()
 	svc, err := New("compaction-noop-test").
-		WithPTC(false).
 		WithConfig(testAgentConfig(t.TempDir())).
 		WithLLM(&stubSummaryLLM{summary: "should not be used"}).
 		Build()
@@ -241,7 +239,6 @@ func TestRuntime_AutoCompaction_FullFlow(t *testing.T) {
 	}
 
 	svc, err := New("auto-compaction-runtime").
-		WithPTC(false).
 		WithConfig(testAgentConfig(t.TempDir())).
 		WithLLM(llm).
 		Build()

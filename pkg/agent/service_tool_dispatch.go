@@ -22,9 +22,7 @@ func (s *Service) resolveExecutableToolNameForAgent(name string, currentAgent *A
 	for _, def := range currentAgent.Tools() {
 		candidates = append(candidates, def.Function.Name)
 	}
-	for _, info := range s.toolRegistry.ListForCallTool() {
-		candidates = append(candidates, info.Name)
-	}
+	candidates = append(candidates, s.toolRegistry.Names()...)
 	if s.mcpService != nil {
 		for _, def := range s.mcpService.ListTools() {
 			candidates = append(candidates, def.Function.Name)
@@ -110,9 +108,6 @@ func (s *Service) dispatchResolvedTool(ctx context.Context, currentAgent *Agent,
 			s.markRelevantSkillSatisfied(session.GetID(), currentTaskID(session))
 		}
 		return res.Output, nil
-	}
-	if toolName == "execute_javascript" && s.ptcIntegration != nil {
-		return s.ptcIntegration.ExecuteJavascriptTool(ctx, tc.Function.Arguments)
 	}
 	if domain.IsToolSearchTool(resolvedToolName) {
 		query, _ := tc.Function.Arguments["query"].(string)

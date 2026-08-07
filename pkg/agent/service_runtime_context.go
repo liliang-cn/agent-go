@@ -36,9 +36,7 @@ func (s *Service) prepareConversationContext(ctx context.Context, goal string, s
 
 	g, groupCtx := errgroup.WithContext(ctx)
 
-	// Skip pre-injected RAG context in PTC mode so the runtime keeps explicit
-	// `rag_query` capability reachable via callTool()/execute_javascript.
-	if s.ragProcessor != nil && !s.isPTCEnabled() {
+	if s.ragProcessor != nil {
 		g.Go(func() error {
 			if opts.emitProgress {
 				s.emitProgress("thinking", "🔍 Searching knowledge base...", 0, "")

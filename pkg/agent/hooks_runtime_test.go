@@ -109,7 +109,6 @@ func TestRuntime_UserPromptSubmit_RewritesPromptAndInjectsContext(t *testing.T) 
 	}
 
 	svc, err := New("user-prompt-submit-agent").
-		WithPTC(false).
 		WithConfig(testAgentConfig(t.TempDir())).
 		WithLLM(llm).
 		Build()

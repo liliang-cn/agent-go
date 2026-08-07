@@ -19,7 +19,6 @@ func (s *Service) buildSystemPrompt(ctx context.Context, agent *Agent) string {
 func (s *Service) buildSystemPromptForRun(ctx context.Context, agent *Agent, cfg *RunConfig) string {
 	forbid := cfg != nil && cfg.resolvedConstraints != nil && cfg.resolvedConstraints.ForbidTools
 	return renderSystemPromptSections(s.buildSystemPromptSections(ctx, agent, systemPromptOptions{
-		includePTC:  s.ptcIntegration != nil && s.ptcEnabledForRun(cfg),
 		forbidTools: forbid,
 	}))
 }
@@ -32,23 +31,12 @@ func (s *Service) buildMemoryPromptNote(ctx context.Context, agent *Agent) strin
 	hasSave := false
 	hasRecall := false
 
-	if s.ptcIntegration != nil && s.ptcIntegration.config.Enabled {
-		for _, tool := range s.ptcAvailableCallTools(ctx) {
-			switch tool.Name {
-			case "memory_save":
-				hasSave = true
-			case "memory_recall":
-				hasRecall = true
-			}
-		}
-	} else {
-		for _, tool := range s.collectAllAvailableTools(ctx, agent) {
-			switch tool.Function.Name {
-			case "memory_save":
-				hasSave = true
-			case "memory_recall":
-				hasRecall = true
-			}
+	for _, tool := range s.collectAllAvailableTools(ctx, agent) {
+		switch tool.Function.Name {
+		case "memory_save":
+			hasSave = true
+		case "memory_recall":
+			hasRecall = true
 		}
 	}
 
@@ -78,16 +66,7 @@ func (s *Service) buildAgentMessagingPromptNote(ctx context.Context, agent *Agen
 	hasSend := false
 	hasRead := false
 
-	if s.ptcIntegration != nil && s.ptcIntegration.config.Enabled {
-		for _, tool := range s.ptcAvailableCallTools(ctx) {
-			switch tool.Name {
-			case "send_agent_message":
-				hasSend = true
-			case "get_agent_messages":
-				hasRead = true
-			}
-		}
-	} else if s.toolRegistry != nil {
+	if s.toolRegistry != nil {
 		for _, tool := range s.collectAllAvailableTools(ctx, agent) {
 			switch tool.Function.Name {
 			case "send_agent_message":

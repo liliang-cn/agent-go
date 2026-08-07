@@ -122,7 +122,6 @@ func TestFileTaskMustWrite(t *testing.T) {
 // without the runtime rejecting + re-prompting.
 func TestBuildAutoRegistersNoPlanningOnlyFinish(t *testing.T) {
 	svc, err := New("plain-agent").
-		WithPTC(false).
 		WithConfig(testAgentConfig(t.TempDir())).
 		WithLLM(&streamMemorySaveTestLLM{}).
 		Build()

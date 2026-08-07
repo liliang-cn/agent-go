@@ -33,9 +33,6 @@ func (s *Service) Resources(ctx context.Context) []resource.Resource {
 	if s.ragProcessor != nil {
 		out = append(out, resource.Resource{ID: "rag:default", Kind: resource.KindRAG, Name: "default", Provider: "agentgo"})
 	}
-	if s.ptcIntegration != nil && s.ptcIntegration.config != nil && s.ptcIntegration.config.Enabled {
-		out = append(out, resource.Resource{ID: "ptc:goja", Kind: resource.KindPTC, Name: "goja", Provider: "agentgo"})
-	}
 	if s.mcpService != nil {
 		for _, tool := range s.mcpService.ListTools() {
 			out = append(out, resource.Resource{
