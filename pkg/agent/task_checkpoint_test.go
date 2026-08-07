@@ -214,8 +214,10 @@ func TestTaskServiceResumeFromCheckpointReplaysMessages(t *testing.T) {
 		t.Fatalf("resumed unified task mismatch: %#v", resumed)
 	}
 
-	// Wait briefly for the goroutine to wrap the run.
-	deadline := time.Now().Add(2 * time.Second)
+	// Wait for the goroutine to wrap the run. Generous on purpose: under full-
+	// suite load 2s flaked (the poll body is cheap, so a long ceiling costs
+	// nothing when the run completes promptly).
+	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		got, _ := manager.Tasks().Get(context.Background(), taskID)
 		if got != nil && strings.Contains(got.Output, "final: 42") {
