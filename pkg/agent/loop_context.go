@@ -10,6 +10,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
@@ -284,4 +286,152 @@ func (s *Service) appendToolRoundToMessages(messages []domain.Message, taskID st
 		}
 	}
 	return messages
+}
+
+func (s *Service) buildRelevantSkillReminder(ctx context.Context, goal string, session *Session) *skillReminder {
+	if s == nil || s.skillsService == nil || strings.TrimSpace(goal) == "" {
+		return nil
+	}
+
+	skillsList, err := s.skillsService.ResolveForModel(ctx, goal, extractTouchedPathsForSkills(goal, session))
+	if err != nil || len(skillsList) == 0 {
+		return nil
+	}
+
+	if len(skillsList) > 5 {
+		skillsList = skillsList[:5]
+	}
+
+	sent := sentRelevantSkillNames(session)
+	newNames := make([]string, 0, len(skillsList))
+	for _, sk := range skillsList {
+		if !slices.Contains(sent, sk.ID) {
+			newNames = append(newNames, sk.ID)
+		}
+	}
+	if len(newNames) == 0 {
+		return nil
+	}
+	sessionID := ""
+	if session != nil {
+		sessionID = session.GetID()
+	}
+	currentNames := make([]string, 0, len(skillsList))
+	for _, sk := range skillsList {
+		currentNames = append(currentNames, sk.ID)
+	}
+	if sessionID != "" {
+		s.rememberRelevantSkillsForSession(sessionID, currentNames)
+	}
+	for _, name := range newNames {
+		if sessionID != "" && s.toolRegistry != nil {
+			s.toolRegistry.ActivateForSession(sessionID, "skill_"+name)
+		}
+	}
+
+	var sb strings.Builder
+	sb.WriteString("<skill-discovery>\n")
+	sb.WriteString("Skills relevant to your task:\n")
+	for _, sk := range skillsList {
+		if !slices.Contains(newNames, sk.ID) {
+			continue
+		}
+		line := "- skill_" + sk.ID
+		if strings.TrimSpace(sk.Description) != "" {
+			line += ": " + strings.TrimSpace(sk.Description)
+		}
+		if strings.TrimSpace(sk.WhenToUse) != "" {
+			line += " | use when: " + strings.TrimSpace(sk.WhenToUse)
+		}
+		if len(line) > 320 {
+			line = line[:319] + "…"
+		}
+		sb.WriteString(line + "\n")
+	}
+	sb.WriteString("</skill-discovery>")
+	text := strings.TrimSpace(sb.String())
+	if text == "" {
+		return nil
+	}
+	return &skillReminder{
+		Names: newNames,
+		Text:  text,
+	}
+}
+
+func extractTouchedPathsForSkills(goal string, session *Session) []string {
+	seen := make(map[string]struct{})
+	add := func(candidate string) {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			return
+		}
+		candidate = strings.Trim(candidate, ".,!?;:()[]{}\"'")
+		if candidate == "" {
+			return
+		}
+		if strings.Contains(candidate, "/") || strings.Contains(candidate, ".") {
+			seen[filepath.Clean(candidate)] = struct{}{}
+		}
+	}
+
+	for _, token := range strings.Fields(goal) {
+		add(token)
+	}
+
+	if session != nil {
+		for _, msg := range session.GetLastNMessages(6) {
+			for _, token := range strings.Fields(msg.Content) {
+				add(token)
+			}
+		}
+	}
+
+	out := make([]string, 0, len(seen))
+	for path := range seen {
+		out = append(out, path)
+	}
+	slices.Sort(out)
+	return out
+}
+
+func sentRelevantSkillNames(session *Session) []string {
+	if session == nil {
+		return nil
+	}
+	raw, ok := session.GetContext(sessionContextSentSkillReminders)
+	if !ok || raw == nil {
+		return nil
+	}
+	switch v := raw.(type) {
+	case []string:
+		return append([]string(nil), v...)
+	case []interface{}:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
+				out = append(out, strings.TrimSpace(s))
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func markRelevantSkillsSent(session *Session, names []string) {
+	if session == nil || len(names) == 0 {
+		return
+	}
+	existing := sentRelevantSkillNames(session)
+	merged := append([]string(nil), existing...)
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" || slices.Contains(merged, name) {
+			continue
+		}
+		merged = append(merged, name)
+	}
+	slices.Sort(merged)
+	session.SetContext(sessionContextSentSkillReminders, merged)
 }
