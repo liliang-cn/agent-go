@@ -85,7 +85,6 @@ type Service struct {
 	hooks *HookRegistry
 
 	// Async sub-agent coordinator
-	asyncTasks *SubAgentCoordinator
 
 	// Stop-hook tracking: maps StopHookConfig registrations to their hook IDs
 	// in the registry so UnregisterStopHooks can remove them.
@@ -207,7 +206,6 @@ func NewService(
 		logger:                logger,
 		memoryScopeAgentID:    strings.TrimSpace(agent.Name()),
 		hooks:                 NewHookRegistry(),
-		asyncTasks:            NewSubAgentCoordinator(),
 		toolRegistry:          NewToolRegistry(),
 		tokenCounter:          pool.NewTokenCounter(),
 		inProgressTools:       make(map[string]int),

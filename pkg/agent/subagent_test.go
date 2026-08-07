@@ -124,22 +124,6 @@ func TestSubAgentGetResult(t *testing.T) {
 	}
 }
 
-func TestSubAgentPause(t *testing.T) {
-	agent := NewAgent("test-agent")
-
-	subAgent := NewSubAgent(SubAgentConfig{
-		Agent:    agent,
-		Goal:     "test goal",
-		MaxTurns: 1,
-	})
-
-	// Pause before running
-	err := subAgent.Pause()
-	if err == nil {
-		t.Error("Expected error when pausing non-running subagent")
-	}
-}
-
 func TestFilterTools(t *testing.T) {
 	tools := []interface{}{
 		domain.ToolDefinition{Type: "function", Function: domain.ToolFunction{Name: "tool1"}},
@@ -327,45 +311,6 @@ func TestSubAgentCancel(t *testing.T) {
 	}
 }
 
-func TestSubAgentStop(t *testing.T) {
-	agent := NewAgent("test-agent")
-
-	subAgent := NewSubAgent(SubAgentConfig{
-		Agent:    agent,
-		Goal:     "test goal",
-		MaxTurns: 10,
-	})
-
-	// Stop is an alias for Cancel
-	err := subAgent.Stop()
-	if err == nil {
-		t.Error("Expected error when stopping non-running subagent")
-	}
-}
-
-func TestSubAgentIsTerminal(t *testing.T) {
-	agent := NewAgent("test-agent")
-
-	subAgent := NewSubAgent(SubAgentConfig{
-		Agent:    agent,
-		Goal:     "test goal",
-		MaxTurns: 1,
-	})
-
-	// Pending state is not terminal
-	if subAgent.IsTerminal() {
-		t.Error("Pending state should not be terminal")
-	}
-
-	// Run to completion (will fail due to no service)
-	subAgent.Run(context.Background())
-
-	// Now should be terminal
-	if !subAgent.IsTerminal() {
-		t.Error("Failed state should be terminal")
-	}
-}
-
 func TestSubAgentGetDuration(t *testing.T) {
 	agent := NewAgent("test-agent")
 
@@ -412,21 +357,6 @@ func TestSubAgentID(t *testing.T) {
 
 	if subAgent.ID() == "" {
 		t.Error("Expected non-empty ID")
-	}
-}
-
-func TestSubAgentProgressChan(t *testing.T) {
-	agent := NewAgent("test-agent")
-
-	subAgent := NewSubAgent(SubAgentConfig{
-		Agent:    agent,
-		Goal:     "test goal",
-		MaxTurns: 1,
-	})
-
-	progressChan := subAgent.ProgressChan()
-	if progressChan == nil {
-		t.Error("Expected non-nil progress channel")
 	}
 }
 
@@ -495,35 +425,6 @@ func TestSubAgentStates(t *testing.T) {
 	}
 }
 
-func TestSubAgentWait(t *testing.T) {
-	agent := NewAgent("test-agent")
-
-	subAgent := NewSubAgent(SubAgentConfig{
-		Agent:    agent,
-		Goal:     "test goal",
-		MaxTurns: 1,
-	})
-
-	// Run in background
-	go subAgent.Run(context.Background())
-
-	// Wait for completion
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	result, err := subAgent.Wait(ctx)
-
-	// Should complete (with error due to no service)
-	if err == nil {
-		t.Log("Result:", result)
-	}
-
-	// State should be terminal
-	if !subAgent.IsTerminal() {
-		t.Error("Expected terminal state after Wait")
-	}
-}
-
 func TestSubAgentShortTimeout(t *testing.T) {
 	agent := NewAgent("test-agent")
 
@@ -560,34 +461,5 @@ func TestSubAgentLongTimeout(t *testing.T) {
 
 	if subAgent.config.Timeout != 10*time.Minute {
 		t.Errorf("Expected 10m timeout, got %v", subAgent.config.Timeout)
-	}
-}
-
-func TestSubAgentProgress(t *testing.T) {
-	agent := NewAgent("test-agent")
-
-	subAgent := NewSubAgent(SubAgentConfig{
-		Agent:    agent,
-		Goal:     "test goal",
-		MaxTurns: 5,
-	})
-
-	progress := SubAgentProgress{
-		SubagentID:   subAgent.ID(),
-		SubagentName: subAgent.Name(),
-		CurrentTurn:  2,
-		MaxTurns:     5,
-		State:        SubAgentStateRunning,
-		Goal:         "test goal",
-		ElapsedTime:  time.Second,
-		Message:      "Test progress",
-	}
-
-	// Verify progress struct fields
-	if progress.SubagentID == "" {
-		t.Error("Progress SubagentID should not be empty")
-	}
-	if progress.CurrentTurn != 2 {
-		t.Errorf("Expected CurrentTurn 2, got %d", progress.CurrentTurn)
 	}
 }

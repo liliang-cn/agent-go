@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -177,11 +176,6 @@ func (sa *SubAgent) observerInfo() SubAgentInfo {
 // Name returns the agent name
 func (sa *SubAgent) Name() string {
 	return sa.config.Agent.Name()
-}
-
-// ProgressChan returns a channel for progress updates
-func (sa *SubAgent) ProgressChan() <-chan SubAgentProgress {
-	return sa.progressChan
 }
 
 // emitProgress emits progress update
@@ -430,47 +424,6 @@ func (sa *SubAgent) Cancel() error {
 	return nil
 }
 
-// Stop gracefully stops the sub-agent (alias for Cancel for clarity)
-func (sa *SubAgent) Stop() error {
-	return sa.Cancel()
-}
-
-// Wait waits for the sub-agent to complete and returns the result
-func (sa *SubAgent) Wait(ctx context.Context) (interface{}, error) {
-	ticker := time.NewTicker(50 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ticker.C:
-			sa.mu.RLock()
-			state := sa.state
-			result := sa.result
-			err := sa.err
-			sa.mu.RUnlock()
-
-			if state == SubAgentStateCompleted ||
-				state == SubAgentStateFailed ||
-				state == SubAgentStateCancelled ||
-				state == SubAgentStateTimeout {
-				return result, err
-			}
-		}
-	}
-}
-
-// IsTerminal returns true if the sub-agent is in a terminal state
-func (sa *SubAgent) IsTerminal() bool {
-	sa.mu.RLock()
-	defer sa.mu.RUnlock()
-	return sa.state == SubAgentStateCompleted ||
-		sa.state == SubAgentStateFailed ||
-		sa.state == SubAgentStateCancelled ||
-		sa.state == SubAgentStateTimeout
-}
-
 // execute runs the agent with tool filtering
 // execute runs the sub-agent through the SAME loop the top-level run uses.
 // A sub-agent is not a second execution engine — it is one more Runtime over
@@ -611,39 +564,6 @@ func filterTools(tools []domain.ToolDefinition, allowlist, denylist []string) []
 	return result
 }
 
-// Resume resumes a paused/background sub-agent
-func (sa *SubAgent) Resume(ctx context.Context, newGoal string) (interface{}, error) {
-	sa.mu.Lock()
-	if sa.state != SubAgentStatePaused {
-		sa.mu.Unlock()
-		return nil, fmt.Errorf("subagent not in paused state (current: %s)", sa.state)
-	}
-	sa.state = SubAgentStateRunning
-	sa.config.Goal = newGoal
-	sa.progressChan = make(chan SubAgentProgress, 10)
-	sa.events = make(chan *Event, 64)
-	sa.mu.Unlock()
-
-	return sa.Run(ctx)
-}
-
-// Pause pauses a running sub-agent
-func (sa *SubAgent) Pause() error {
-	sa.mu.Lock()
-	defer sa.mu.Unlock()
-
-	if sa.state != SubAgentStateRunning {
-		return fmt.Errorf("subagent not running (current: %s)", sa.state)
-	}
-
-	if sa.cancel != nil {
-		sa.cancel()
-	}
-
-	sa.state = SubAgentStatePaused
-	return nil
-}
-
 // GetState returns current state
 func (sa *SubAgent) GetState() SubAgentState {
 	sa.mu.RLock()
@@ -695,132 +615,6 @@ func copyMap(m map[string]interface{}) map[string]interface{} {
 		result[k] = v
 	}
 	return result
-}
-
-// ============================================================
-// SubAgentCoordinator - Manages concurrent SubAgent execution
-// ============================================================
-
-// SubAgentResult is the outcome of one coordinated sub-agent run.
-type SubAgentResult struct {
-	ID     string
-	Name   string
-	Result interface{}
-	Error  error
-	State  SubAgentState
-}
-
-// SubAgentCoordinator manages multiple SubAgents running concurrently
-type SubAgentCoordinator struct {
-	mu        sync.RWMutex
-	subagents map[string]*SubAgent
-	results   map[string]*SubAgentResult
-	running   map[string]context.CancelFunc
-
-	logger *slog.Logger
-}
-
-// NewSubAgentCoordinator creates a new coordinator
-func NewSubAgentCoordinator() *SubAgentCoordinator {
-	return &SubAgentCoordinator{
-		subagents: make(map[string]*SubAgent),
-		results:   make(map[string]*SubAgentResult),
-		running:   make(map[string]context.CancelFunc),
-		logger:    slog.Default().With("module", "subagent.coordinator"),
-	}
-}
-
-// Add adds a SubAgent to the coordinator
-func (c *SubAgentCoordinator) Add(sa *SubAgent) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.subagents[sa.id] = sa
-}
-
-// Remove removes a SubAgent from the coordinator
-func (c *SubAgentCoordinator) Remove(id string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	delete(c.subagents, id)
-	delete(c.results, id)
-	if cancel, ok := c.running[id]; ok {
-		cancel()
-		delete(c.running, id)
-	}
-}
-
-// RunAsync starts a SubAgent in a separate goroutine
-func (c *SubAgentCoordinator) RunAsync(ctx context.Context, sa *SubAgent) <-chan *SubAgentResult {
-	resultChan := make(chan *SubAgentResult, 1)
-
-	c.mu.Lock()
-	c.subagents[sa.id] = sa
-	c.mu.Unlock()
-
-	go func() {
-		defer close(resultChan)
-
-		// Create cancellable context
-		runCtx, cancel := context.WithCancel(ctx)
-		c.mu.Lock()
-		c.running[sa.id] = cancel
-		c.mu.Unlock()
-
-		// Cleanup on exit
-		defer func() {
-			c.mu.Lock()
-			delete(c.running, sa.id)
-			c.mu.Unlock()
-		}()
-
-		// Execute SubAgent
-		result, err := sa.Run(runCtx)
-
-		// Store result
-		r := &SubAgentResult{
-			ID:     sa.id,
-			Name:   sa.config.Agent.Name(),
-			Result: result,
-			Error:  err,
-			State:  sa.GetState(),
-		}
-
-		c.mu.Lock()
-		c.results[sa.id] = r
-		c.mu.Unlock()
-
-		resultChan <- r
-	}()
-
-	return resultChan
-}
-
-// Cancel cancels a specific SubAgent
-func (c *SubAgentCoordinator) Cancel(id string) bool {
-	c.mu.RLock()
-	cancel, ok := c.running[id]
-	c.mu.RUnlock()
-
-	if ok {
-		cancel()
-		return true
-	}
-	return false
-}
-
-// GetResult returns the result of a specific SubAgent
-func (c *SubAgentCoordinator) GetResult(id string) (*SubAgentResult, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	r, ok := c.results[id]
-	return r, ok
-}
-
-// Count returns the number of managed SubAgents
-func (c *SubAgentCoordinator) Count() int {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return len(c.subagents)
 }
 
 func formatContext(ctx map[string]interface{}) string {
