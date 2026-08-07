@@ -101,10 +101,63 @@ func (s *Service) collectAllAvailableTools(ctx context.Context, currentAgent *Ag
 	return s.collectAllAvailableToolsWithPolicy(ctx, currentAgent, s.buildToolPreparationPolicy(ctx))
 }
 
+// ToolDiscoveryThreshold is the tool count above which the runtime stops
+// putting everything in the schema and hides the bulk (MCP tools and skills)
+// behind search_available_tools.
+//
+// Below it — which is where an ordinary agent lives — every registered tool
+// goes straight into the schema and search_available_tools is not offered at
+// all. Hiding tools behind a search step costs a round trip and, worse, invites
+// the model to go shopping: a benchmark run made 35 search calls against an
+// agent whose entire catalogue would have fitted in the schema, while a
+// comparable agent with a static tool set made none and scored higher.
+//
+// Discovery still exists for genuinely large catalogues; it is no longer the
+// default for small ones.
+const ToolDiscoveryThreshold = 32
+
+// collectAllAvailableToolsWithPolicy decides whether this turn gets a flat tool
+// list or a layered one. It collects once with everything visible; only if that
+// overflows the threshold does it collect again with the bulk deferred.
 func (s *Service) collectAllAvailableToolsWithPolicy(ctx context.Context, currentAgent *Agent, policy toolPreparationPolicy) []domain.ToolDefinition {
+	threshold := s.toolDiscoveryThreshold()
+
+	flat := s.collectTools(ctx, currentAgent, policy, false)
+	if len(flat) <= threshold || !policy.ExposeSearchTools {
+		// Nothing is hidden, so the search tool has nothing to find. Offering it
+		// anyway is a standing invitation to waste a round. The tool stays in
+		// the registry (it is still callable if something activates it); it just
+		// does not go into the schema.
+		return withoutToolSearchTools(flat)
+	}
+	return s.collectTools(ctx, currentAgent, policy, true)
+}
+
+// toolDiscoveryThreshold reports the configured catalogue size above which
+// discovery layering kicks in.
+func (s *Service) toolDiscoveryThreshold() int {
+	if s != nil && s.cfg != nil && s.cfg.Tooling.DiscoveryThreshold > 0 {
+		return s.cfg.Tooling.DiscoveryThreshold
+	}
+	return ToolDiscoveryThreshold
+}
+
+// withoutToolSearchTools drops the discovery tools from a flat catalogue.
+func withoutToolSearchTools(tools []domain.ToolDefinition) []domain.ToolDefinition {
+	out := make([]domain.ToolDefinition, 0, len(tools))
+	for _, t := range tools {
+		if t.Function.Name == "search_available_tools" || domain.IsToolSearchTool(t.Function.Name) {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
+func (s *Service) collectTools(ctx context.Context, currentAgent *Agent, policy toolPreparationPolicy, deferBulk bool) []domain.ToolDefinition {
 	toolsMap := make(map[string]domain.ToolDefinition)
 	sessionID := policy.SessionID
-	searchMode := policy.SearchMode
+	searchMode := deferBulk
 	relevantSkillNames := policy.RelevantSkillNames
 	hasRelevantSkillFilter := len(relevantSkillNames) > 0
 
@@ -122,8 +175,8 @@ func (s *Service) collectAllAvailableToolsWithPolicy(ctx context.Context, curren
 	// This includes built-in tools like delegate_to_subagent and task_complete
 	addTools(s.toolRegistry.ListForLLM(sessionID))
 
-	// In saving mode, expose search tools instead of sending large MCP/skill catalogs directly.
-	if policy.ExposeSearchTools {
+	// Search tools ride along only when something is actually hidden behind them.
+	if deferBulk && policy.ExposeSearchTools {
 		for _, ts := range GetToolSearchTools() {
 			toolsMap[ts.Function.Name] = ts
 		}
@@ -254,11 +307,18 @@ func (s *Service) collectAllAvailableToolsWithPolicy(ctx context.Context, curren
 	return tools
 }
 
+// shouldExposeSearchTools reports whether discovery is permitted at all. The
+// decision to actually use it is made by catalogue size in
+// collectAllAvailableToolsWithPolicy; this only lets an operator switch the
+// mechanism off entirely.
 func (s *Service) shouldExposeSearchTools() bool {
 	if s == nil || s.cfg == nil {
+		return true
+	}
+	if s.cfg.Tooling.DisableToolSearch {
 		return false
 	}
-	return s.cfg.Tooling.SavingMode && s.cfg.Tooling.EnableSearchTools
+	return true
 }
 
 func (s *Service) webSearchMode() domain.WebSearchMode {

@@ -105,9 +105,19 @@ type CacheConfig struct {
 }
 
 type ToolingConfig struct {
-	SavingMode        bool            `mapstructure:"saving_mode"`
-	EnableSearchTools bool            `mapstructure:"enable_search_tools"`
-	WebSearch         WebSearchConfig `mapstructure:"web_search"`
+	SavingMode        bool `mapstructure:"saving_mode"`
+	EnableSearchTools bool `mapstructure:"enable_search_tools"`
+
+	// DiscoveryThreshold is the number of tools above which the runtime hides
+	// the bulk behind search_available_tools instead of putting everything in
+	// the schema. Zero means the built-in default (agent.ToolDiscoveryThreshold).
+	DiscoveryThreshold int `mapstructure:"discovery_threshold"`
+
+	// DisableToolSearch switches the discovery mechanism off entirely, so a
+	// catalogue of any size goes into the schema flat.
+	DisableToolSearch bool `mapstructure:"disable_tool_search"`
+
+	WebSearch WebSearchConfig `mapstructure:"web_search"`
 }
 
 type WebSearchConfig struct {
