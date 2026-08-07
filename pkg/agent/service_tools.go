@@ -3,12 +3,9 @@ package agent
 import (
 	"context"
 	"fmt"
-	"log"
-	"regexp"
 	"strings"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
-	"github.com/liliang-cn/agent-go/v3/pkg/search"
 	"github.com/liliang-cn/agent-go/v3/pkg/skills"
 )
 
@@ -272,147 +269,6 @@ func getToolNames(defs []domain.ToolDefinition) []string {
 		names[i] = d.Function.Name
 	}
 	return names
-}
-
-func (s *Service) SearchDeferredCatalog(ctx context.Context, query, searchType string) ([]domain.ToolDefinition, error) {
-	currentAgent := getCurrentAgent(ctx)
-	if currentAgent == nil {
-		currentAgent = s.agent
-	}
-
-	catalog := s.deferredToolCatalog(ctx, currentAgent)
-	if len(catalog) == 0 {
-		return nil, nil
-	}
-
-	var matches []domain.ToolDefinition
-	switch strings.ToLower(strings.TrimSpace(searchType)) {
-	case "bm25":
-		matches = rankDeferredToolCatalog(query, catalog)
-	default:
-		matches = regexMatchDeferredToolCatalog(query, catalog)
-	}
-
-	sessionID := s.CurrentSessionID()
-	for _, def := range matches {
-		s.toolRegistry.ActivateForSession(sessionID, def.Function.Name)
-	}
-	if s.debug {
-		names := make([]string, 0, len(matches))
-		for _, def := range matches {
-			names = append(names, def.Function.Name)
-		}
-		log.Printf("[DEBUG] deferred tool search: type=%s query=%q session=%s matches=%v", searchType, query, sessionID, names)
-	}
-	return matches, nil
-}
-
-func (s *Service) deferredToolCatalog(ctx context.Context, currentAgent *Agent) []domain.ToolDefinition {
-	toolsMap := make(map[string]domain.ToolDefinition)
-
-	for _, def := range s.toolRegistry.ListDeferredTools() {
-		if s.isToolAllowedForAgent(currentAgent, def.Function.Name) {
-			toolsMap[def.Function.Name] = def
-		}
-	}
-
-	if s.mcpService != nil {
-		for _, tool := range s.mcpService.ListTools() {
-			if s.shouldHideMCPWebSearchTools() && isMCPWebSearchToolName(tool.Function.Name) {
-				continue
-			}
-			if !s.isToolAllowedForAgent(currentAgent, tool.Function.Name) {
-				continue
-			}
-			t := tool
-			t.DeferLoading = true
-			toolsMap[t.Function.Name] = t
-		}
-	}
-
-	if s.skillsService != nil {
-		if skillsList, err := s.skillsService.ListSkills(ctx, skills.SkillFilter{}); err == nil {
-			for _, sk := range skillsList {
-				if !sk.Enabled || sk.DisableModelInvocation {
-					continue
-				}
-				def := buildSkillToolDef(*sk)
-				if !s.isToolAllowedForAgent(currentAgent, def.Function.Name) {
-					continue
-				}
-				def.DeferLoading = true
-				toolsMap[def.Function.Name] = def
-			}
-		}
-	}
-
-	out := make([]domain.ToolDefinition, 0, len(toolsMap))
-	for _, def := range toolsMap {
-		out = append(out, def)
-	}
-	return out
-}
-
-func rankDeferredToolCatalog(query string, catalog []domain.ToolDefinition) []domain.ToolDefinition {
-	if strings.TrimSpace(query) == "" || len(catalog) == 0 {
-		return nil
-	}
-	documents := make([]search.Document, 0, len(catalog))
-	defsByName := make(map[string]domain.ToolDefinition, len(catalog))
-	for _, def := range catalog {
-		name := def.Function.Name
-		defsByName[name] = def
-		documents = append(documents, search.Document{
-			ID: name,
-			Text: strings.Join([]string{
-				name,
-				strings.ReplaceAll(name, "_", " "),
-				def.Function.Description,
-			}, " "),
-		})
-	}
-	scored := search.Rank(query, documents, 5, nil)
-	results := make([]domain.ToolDefinition, 0, len(scored))
-	for _, item := range scored {
-		if def, ok := defsByName[item.ID]; ok {
-			results = append(results, def)
-		}
-	}
-	return results
-}
-
-func regexMatchDeferredToolCatalog(pattern string, catalog []domain.ToolDefinition) []domain.ToolDefinition {
-	if len(catalog) == 0 {
-		return nil
-	}
-	var re *regexp.Regexp
-	if strings.TrimSpace(pattern) != "" {
-		if compiled, err := regexp.Compile("(?i)" + pattern); err == nil {
-			re = compiled
-		}
-	}
-
-	patternLower := strings.ToLower(strings.TrimSpace(pattern))
-	results := make([]domain.ToolDefinition, 0)
-	for _, def := range catalog {
-		name := def.Function.Name
-		desc := def.Function.Description
-		matched := false
-		if re != nil {
-			matched = re.MatchString(name) || re.MatchString(desc)
-		} else if patternLower != "" {
-			nameLower := strings.ToLower(name)
-			descLower := strings.ToLower(desc)
-			matched = strings.Contains(nameLower, patternLower) || strings.Contains(descLower, patternLower)
-		}
-		if matched {
-			results = append(results, def)
-		}
-	}
-	if len(results) > 5 {
-		results = results[:5]
-	}
-	return results
 }
 
 // buildSkillToolDef builds a ToolDefinition for a skill with proper parameter schema.

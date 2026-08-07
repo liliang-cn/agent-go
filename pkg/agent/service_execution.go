@@ -474,19 +474,6 @@ func toolResultToString(result interface{}) string {
 	}
 }
 
-func filterToolDefinitions(tools []domain.ToolDefinition, keep func(tool domain.ToolDefinition) bool) []domain.ToolDefinition {
-	if len(tools) == 0 {
-		return nil
-	}
-	filtered := make([]domain.ToolDefinition, 0, len(tools))
-	for _, tool := range tools {
-		if keep == nil || keep(tool) {
-			filtered = append(filtered, tool)
-		}
-	}
-	return filtered
-}
-
 // appendToolRoundToMessages appends the assistant message and tool result messages.
 func (s *Service) appendToolRoundToMessages(messages []domain.Message, taskID string, result *domain.GenerationResult, toolResults []ToolExecutionResult) []domain.Message {
 	messages = append(messages, withTaskID(domain.Message{

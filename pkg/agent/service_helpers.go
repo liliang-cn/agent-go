@@ -524,57 +524,6 @@ func (s *Service) setCurrentThinkingOptions(t *domain.ThinkingOptions) {
 	s.thinkingMu.Unlock()
 }
 
-func (s *Service) shouldExposePTCToolSearch(ctx context.Context) bool {
-	if s == nil || s.toolRegistry == nil {
-		return false
-	}
-	sessionID := s.CurrentSessionID()
-	for _, tool := range s.toolRegistry.ListDeferredTools() {
-		if !s.toolRegistry.IsActivatedForSession(sessionID, tool.Function.Name) {
-			return true
-		}
-	}
-	if s.mcpService != nil {
-		for _, tool := range s.mcpService.ListTools() {
-			if s.shouldHideMCPWebSearchTools() && isMCPWebSearchToolName(tool.Function.Name) {
-				continue
-			}
-			if !s.toolRegistry.IsActivatedForSession(sessionID, tool.Function.Name) {
-				return true
-			}
-		}
-	}
-	if s.skillsService != nil {
-		skillsList, _ := s.skillsService.ListSkills(ctx, skills.SkillFilter{})
-		for _, sk := range skillsList {
-			if !sk.Enabled || sk.DisableModelInvocation {
-				continue
-			}
-			toolName := "skill_" + sk.ID
-			if !s.toolRegistry.IsActivatedForSession(sessionID, toolName) {
-				return true
-			}
-		}
-	}
-	return s.shouldExposeSearchTools()
-}
-
-func (s *Service) isDeferredPTCCallTool(toolName string) bool {
-	if toolName == "" {
-		return false
-	}
-	if def, ok := s.toolRegistry.DefinitionOf(toolName); ok {
-		return def.DeferLoading
-	}
-	if strings.HasPrefix(toolName, "mcp_") {
-		return true
-	}
-	if strings.HasPrefix(toolName, "skill_") {
-		return true
-	}
-	return false
-}
-
 func (s *Service) buildToolCatalogSummary(ctx context.Context) string {
 	if !s.shouldExposeSearchTools() {
 		return ""

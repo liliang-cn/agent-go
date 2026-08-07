@@ -1,20 +1,6 @@
 package agent
 
-import (
-	"context"
-	"fmt"
-	"strings"
-
-	"github.com/google/uuid"
-	"github.com/liliang-cn/agent-go/v3/pkg/domain"
-)
-
-func (r *Runtime) executeToolViaSubAgent(ctx context.Context, tc domain.ToolCall) (interface{}, error, bool) {
-	subagentID := uuid.NewString()
-	r.emit(EventTypeThinking, fmt.Sprintf("Delegating %s to SubAgent %s...", tc.Function.Name, subagentID[:8]))
-
-	return r.svc.executeToolViaSubAgentWithEvents(ctx, r.currentAgent, r.session, tc, r.forwardSubAgentEvent, r.debugEnabled())
-}
+import "strings"
 
 func (r *Runtime) forwardSubAgentEvent(evt *Event) {
 	if evt == nil || r.eventChan == nil {
