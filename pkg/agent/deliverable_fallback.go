@@ -25,15 +25,20 @@ import (
 
 // undeliverableRequirements returns the deliverables this run owes that no
 // available tool can satisfy.
+//
+// "Can no tool do this?" is answered by the constraint extraction, which sees
+// the run's tool catalog and names the tool it picked (satisfied_by). An empty
+// pick — or a pick that is not actually registered — means the capability is
+// missing, which is exactly the case this fallback steers.
 func undeliverableRequirements(constraints RunConstraints, availableTools []string) []DeliverableRequirement {
 	var out []DeliverableRequirement
 	for _, want := range constraints.Deliverables {
-		kind := strings.ToLower(strings.TrimSpace(want.Kind))
-		markers, known := deliveryToolMarkers[kind]
-		if !known {
+		if want.SatisfiedBy != "" && toolIsAvailable(availableTools, want.SatisfiedBy) {
 			continue
 		}
-		if toolCallsMatchAny(availableTools, markers) {
+		// A file deliverable with a named path is verified against the artifact
+		// by the delivery contract, not steered toward a partial answer.
+		if strings.EqualFold(strings.TrimSpace(want.Kind), "file") && want.Path != "" {
 			continue
 		}
 		out = append(out, want)

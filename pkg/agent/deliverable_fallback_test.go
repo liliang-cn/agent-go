@@ -142,7 +142,7 @@ func TestNoRedirectWhenDeliveryToolExists(t *testing.T) {
 	t.Parallel()
 
 	missing := undeliverableRequirements(
-		RunConstraints{Deliverables: []DeliverableRequirement{{Kind: "email"}}},
+		RunConstraints{Deliverables: []DeliverableRequirement{{Kind: "email", SatisfiedBy: "send_email"}}},
 		[]string{"send_email"},
 	)
 	if len(missing) != 0 {
@@ -174,7 +174,7 @@ func TestDeliverableBlockMustCarryWork(t *testing.T) {
 		t.Error("a run with no deliverables must pass")
 	}
 	if ok, _ := lint.Check("nope", LintContext{
-		Deliverables:   []DeliverableRequirement{{Kind: "email"}},
+		Deliverables:   []DeliverableRequirement{{Kind: "email", SatisfiedBy: "send_email"}},
 		AvailableTools: []string{"send_email"},
 	}); !ok {
 		t.Error("a run whose mail tool exists must pass")

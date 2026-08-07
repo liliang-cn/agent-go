@@ -109,16 +109,17 @@ func (r *Runtime) runFinalLints(content string, turn int) *LintViolation {
 		sessionID = r.session.GetID()
 	}
 	lintCtx := LintContext{
-		AgentName:      agentName,
-		TaskID:         taskID,
-		SessionID:      sessionID,
-		TurnIndex:      turn,
-		Goal:           r.goal,
-		ToolCalls:      r.toolNamesUsedSnapshot(),
-		AvailableTools: r.availableToolNamesSnapshot(),
-		Deliverables:   r.runConstraints().Deliverables,
-		IsRetry:        r.lintRetryBudget < defaultLintRetryBudget,
-		RetryCount:     defaultLintRetryBudget - r.lintRetryBudget,
+		AgentName:        agentName,
+		TaskID:           taskID,
+		SessionID:        sessionID,
+		TurnIndex:        turn,
+		Goal:             r.goal,
+		ToolCalls:        r.toolNamesUsedSnapshot(),
+		AvailableTools:   r.availableToolNamesSnapshot(),
+		Deliverables:     r.runConstraints().Deliverables,
+		RequestedActions: r.runConstraints().RequestedActions,
+		IsRetry:          r.lintRetryBudget < defaultLintRetryBudget,
+		RetryCount:       defaultLintRetryBudget - r.lintRetryBudget,
 	}
 	if reg := r.svc.OutputLints(); reg != nil {
 		if v := reg.Run(content, lintCtx); v != nil {

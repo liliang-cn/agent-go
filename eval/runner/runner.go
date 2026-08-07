@@ -243,10 +243,37 @@ func runOnce(ctx context.Context, sc *Scenario, opts RunOptions) (*singleRun, er
 
 func buildMockService(sc *Scenario, home string, mock *MockLLM) (*agent.Service, error) {
 	cfg := buildEvalConfig(home)
-	return agent.New(scenarioAgentName(sc)).
+	svc, err := agent.New(scenarioAgentName(sc)).
 		WithConfig(cfg).
 		WithLLM(mock).
 		Build()
+	if err != nil {
+		return nil, err
+	}
+	registerStubTools(svc, sc.Tools)
+	return svc, nil
+}
+
+// registerStubTools attaches the scenario's fake tools. They do nothing; they
+// exist so the run has the capability a scenario wants to hold the model to.
+func registerStubTools(svc *agent.Service, tools []StubTool) {
+	for _, tool := range tools {
+		result := strings.TrimSpace(tool.Result)
+		if result == "" {
+			result = "ok"
+		}
+		svc.AddTool(
+			strings.TrimSpace(tool.Name),
+			tool.Description,
+			map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+			func(context.Context, map[string]interface{}) (interface{}, error) {
+				return result, nil
+			},
+		)
+	}
 }
 
 // buildEvalConfig assembles the minimal *config.Config the runner needs to
@@ -292,6 +319,8 @@ func registerLints(svc *agent.Service, names []string) error {
 			svc.RegisterOutputLint(agent.NonEmptyFinalAnswer())
 		case "task_delivery_contract":
 			svc.RegisterOutputLint(agent.TaskDeliveryContract())
+		case "requested_action_contract":
+			svc.RegisterOutputLint(agent.RequestedActionContract())
 		case "no_planning_only_finish":
 			svc.RegisterOutputLint(agent.NoPlanningOnlyFinish())
 		default:

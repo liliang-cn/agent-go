@@ -199,6 +199,11 @@ type RunConfig struct {
 	// skips constraint extraction entirely.
 	RequiredDeliverables []DeliverableRequirement
 
+	// RequiredActions are tool actions the user asked this run to carry out
+	// (set a reminder, add a schedule, record a note). Declaring them with
+	// WithRequestedActions() skips constraint extraction entirely.
+	RequiredActions []RequestedAction
+
 	// DisableConstraintExtraction turns off the per-run structured pass that
 	// derives constraints from the goal. With it off, only constraints the
 	// caller declared outright are enforced.
@@ -478,6 +483,19 @@ func WithToolsDisabled() RunOption {
 func WithRequiredDeliverables(deliverables ...DeliverableRequirement) RunOption {
 	return func(c *RunConfig) {
 		c.RequiredDeliverables = append(c.RequiredDeliverables, deliverables...)
+	}
+}
+
+// WithRequestedActions declares tool actions this run was asked to carry out
+// (a reminder, a calendar entry, a note). The requested-action contract lint
+// refuses to let the run complete while a matching tool was available and never
+// called — which is what stops the model from writing "I've set the reminder"
+// without setting anything.
+//
+// Declaring these skips constraint extraction.
+func WithRequestedActions(actions ...RequestedAction) RunOption {
+	return func(c *RunConfig) {
+		c.RequiredActions = append(c.RequiredActions, actions...)
 	}
 }
 

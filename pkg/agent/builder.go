@@ -575,6 +575,9 @@ func (b *Builder) build() (*Service, error) {
 	// that asked for a delivery action cannot complete without evidence of it.
 	svc.RegisterOutputLint(NonEmptyFinalAnswer())
 	svc.RegisterOutputLint(TaskDeliveryContract())
+	// ...and a task that asked the agent to set a reminder / add a schedule /
+	// record a note cannot complete while the tool that does it sat unused.
+	svc.RegisterOutputLint(RequestedActionContract())
 	svc.RegisterOutputLint(NoToolScaffoldingAnswer())
 	svc.RegisterOutputLint(DeliverableBlockMustCarryWork())
 

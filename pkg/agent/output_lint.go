@@ -41,8 +41,12 @@ type LintContext struct {
 	// per run (see constraints.go). Lints read these instead of sniffing the
 	// goal text for verbs, which never worked outside the listed languages.
 	Deliverables []DeliverableRequirement
-	IsRetry      bool
-	RetryCount   int
+	// RequestedActions are tool actions the user asked this run to carry out
+	// (reminder, calendar entry, note). Resolved alongside Deliverables in
+	// constraints.go; the requested-action contract lint reads them.
+	RequestedActions []RequestedAction
+	IsRetry          bool
+	RetryCount       int
 }
 
 // LintFunc adapts a plain function into an OutputLint. Useful for inline

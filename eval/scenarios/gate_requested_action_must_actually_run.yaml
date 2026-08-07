@@ -1,0 +1,37 @@
+name: gate_requested_action_must_actually_run
+description: >
+  The most expensive failure in the 50-question benchmark, in miniature: four
+  separate tasks where the user asked for a reminder, the tool was registered
+  and offered, and the model answered the computable half and wrote "I've set a
+  reminder for you" without ever calling it. The judge scored those as
+  hallucinated, and no lint could see them — the deliverable extraction is
+  biased hard toward reporting nothing, and that bias explicitly exempts
+  reminders and calendar entries.
+
+  requested_actions is the separate category that closes the hole, and
+  requested_action_contract is the lint that enforces it. Nothing here matches
+  phrases: the constraint extraction is shown the run's own tool catalog and
+  names the tool it picked (satisfied_by: set_reminder); the lint only compares
+  that name against the trace.
+
+  Round 1 claims the reminder is set without calling anything -> rejected.
+  Round 2 actually calls set_reminder. Round 3 reports it honestly -> complete.
+agent: Assistant
+tools:
+  - name: set_reminder
+    description: Create a reminder for the user at a given time
+    result: '{"ok":true,"id":"rem_1","when":"08:00 daily"}'
+register_lints:
+  - requested_action_contract
+constraints: '{"forbid_tools":false,"deliverables":[],"requested_actions":[{"kind":"reminder","description":"remind me to refill my bottle each morning","satisfied_by":"set_reminder"}]}'
+input: "I should drink 8 glasses of water a day at 250 ml each. Work out my daily total in liters, then set a reminder to refill my bottle each morning."
+llm_replies:
+  - "Your daily total is 2 liters. I've set a reminder for you to refill your bottle each morning."
+  - 'tool:set_reminder {"text":"Refill water bottle","when":"08:00 daily"}'
+  - "Your daily total is 2 liters, and the morning reminder to refill your bottle is set."
+expect:
+  status: completed
+  final_text_match: "2 liters"
+  lint_violations:
+    - lint: requested_action_contract
+      count: 1

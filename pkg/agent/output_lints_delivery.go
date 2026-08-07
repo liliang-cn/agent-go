@@ -45,33 +45,45 @@ func NonEmptyFinalAnswer() OutputLint {
 // answer. One or two characters is a stutter, not a reply.
 const minimumFinalAnswerChars = 2
 
-// --- task_delivery_contract ---------------------------------------------------
+// --- task_delivery_contract / requested_action_contract -------------------------
+//
+// Both contracts below are pure structure. Neither knows what a mail tool or a
+// reminder tool is called, because nothing in this package can know that: every
+// embedder names their tools differently, and a name table only ever covers the
+// ones somebody thought to list. The semantic step — "which of the tools this
+// run actually has would carry this out?" — happens once, in the constraint
+// extraction, which is shown the run's own tool catalog and answers with a
+// tool name (see constraints.go, satisfied_by). What is left here is a
+// comparison: extraction named tool X, did the trace call X?
 
-// deliveryToolMarkers maps a deliverable kind to the tool-name fragments that
-// prove it happened. These match TOOL NAMES, which this framework controls —
-// not user text, which it does not.
-var deliveryToolMarkers = map[string][]string{
-	"email":   {"send_mail", "send_email", "sendmail", "smtp", "gmail", "outlook", "mailer"},
-	"message": {"slack", "send_sms", "telegram", "wechat", "discord", "chat_post", "push_notification", "notify_user"},
-	"file":    {"fs_write", "fs_edit", "fs_multi_edit", "write_file", "create_file", "sandbox_write"},
+// toolWasCalled reports whether name appears in the run's tool-call trace.
+// Exact match on the registered tool name — the extraction copied that name out
+// of the catalog, so there is nothing to normalise or guess at.
+func toolWasCalled(toolCalls []string, name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, call := range toolCalls {
+		if strings.TrimSpace(call) == name {
+			return true
+		}
+	}
+	return false
 }
 
-// deliveryVerb renders a kind as something to say back to the model.
-var deliveryVerb = map[string]string{
-	"email":   "send the email",
-	"message": "send the message",
-	"file":    "write the file",
-	"other":   "perform the delivery you were asked for",
+// toolIsAvailable reports whether name is one of the tools this run could call.
+func toolIsAvailable(availableTools []string, name string) bool {
+	return toolWasCalled(availableTools, name)
 }
 
 // TaskDeliveryContract enforces the v3 delivery contract: when the run owes a
-// side effect, it cannot be declared complete until the trace shows a tool that
-// performs that side effect was actually called.
+// side effect, it cannot be declared complete until the trace shows the tool
+// that performs that side effect was actually called.
 //
 // "Computed the right number but never sent the mail" was the single most
 // common silent failure in v2; this makes it a rejected terminal state instead.
 //
-// A deliverable whose tools were never available is NOT a violation — the agent
+// A deliverable no available tool can satisfy is NOT a violation — the agent
 // cannot be faulted for a capability it was never given, and burning the retry
 // budget on it just turns a clean task_blocked into a loop.
 func TaskDeliveryContract() OutputLint {
@@ -79,11 +91,9 @@ func TaskDeliveryContract() OutputLint {
 		NameValue: "task_delivery_contract",
 		Fn: func(_ string, ctx LintContext) (bool, string) {
 			for _, want := range ctx.Deliverables {
-				kind := strings.ToLower(strings.TrimSpace(want.Kind))
-
 				// A named target file is checkable directly: prefer the
 				// artifact over the attempt.
-				if kind == "file" && want.Path != "" {
+				if strings.EqualFold(strings.TrimSpace(want.Kind), "file") && want.Path != "" {
 					if fileArtifactExists(want.Path) {
 						continue
 					}
@@ -92,49 +102,70 @@ func TaskDeliveryContract() OutputLint {
 						"been truncated). Actually write the file, verify it exists, then finish; " +
 						"or call task_blocked with the concrete blocker."
 				}
-
-				markers, known := deliveryToolMarkers[kind]
-				if !known {
-					// "other": nothing specific to check for, so trust the run.
-					continue
+				if reason := unmetToolContract(ctx, want.SatisfiedBy, want.Description,
+					"perform the delivery"); reason != "" {
+					return false, reason
 				}
-				if toolCallsMatchAny(ctx.ToolCalls, markers) {
-					continue
-				}
-				if !toolCallsMatchAny(ctx.AvailableTools, markers) {
-					// No tool in this run can perform the delivery. Rejecting
-					// here would burn the retry budget on something the agent
-					// cannot do; that case belongs to task_blocked.
-					continue
-				}
-				verb := deliveryVerb[kind]
-				if verb == "" {
-					verb = deliveryVerb["other"]
-				}
-				detail := ""
-				if want.Description != "" {
-					detail = " (" + want.Description + ")"
-				}
-				return false, "the task explicitly asked you to " + verb + detail +
-					", but no tool that performs that action was called in this run. " +
-					"Actually perform the delivery now and report the confirmation, " +
-					"or call task_blocked with the concrete blocker that prevents it."
 			}
 			return true, ""
 		},
 	}
 }
 
-func toolCallsMatchAny(toolCalls []string, markers []string) bool {
-	for _, call := range toolCalls {
-		lower := strings.ToLower(call)
-		for _, marker := range markers {
-			if strings.Contains(lower, marker) {
-				return true
+// RequestedActionContract enforces the other half of the same idea: when the
+// user asked the agent to DO something with a tool — set a reminder, add a
+// schedule, record a note — the run cannot be declared complete while the tool
+// that does it sat unused.
+//
+// This exists because the deliverable extraction is biased hard toward
+// reporting nothing, and that bias explicitly exempts reminders and calendar
+// entries: over-extracting a deliverable puts an ordinary question under a
+// contract it can never satisfy. The exemption left a hole the benchmark walked
+// straight into — four separate tasks where the model wrote "I've set a
+// reminder for you" and never called the tool sitting right there. Requested
+// actions are their own category so the exemption can stay and the hole can
+// close.
+func RequestedActionContract() OutputLint {
+	return LintFunc{
+		NameValue: "requested_action_contract",
+		Fn: func(_ string, ctx LintContext) (bool, string) {
+			for _, want := range ctx.RequestedActions {
+				if reason := unmetToolContract(ctx, want.SatisfiedBy, want.Description,
+					"carry out that action"); reason != "" {
+					return false, reason
+				}
 			}
-		}
+			return true, ""
+		},
 	}
-	return false
+}
+
+// unmetToolContract returns the rejection reason when the run had the named
+// tool and never called it, or "" when the contract is satisfied (or not
+// enforceable). Shared by both contracts so their semantics cannot drift.
+func unmetToolContract(ctx LintContext, tool, description, verb string) string {
+	if tool == "" {
+		// No available tool can do this. Rejecting here would burn the retry
+		// budget on something the agent cannot do; that case belongs to
+		// task_blocked, or to the partial-answer redirect.
+		return ""
+	}
+	if toolWasCalled(ctx.ToolCalls, tool) {
+		return ""
+	}
+	if !toolIsAvailable(ctx.AvailableTools, tool) {
+		// The tool the extraction named is not registered for this run after
+		// all; treat it as a missing capability rather than a failure.
+		return ""
+	}
+	detail := ""
+	if strings.TrimSpace(description) != "" {
+		detail = " (" + strings.TrimSpace(description) + ")"
+	}
+	return "the user explicitly asked you to " + verb + detail +
+		", and the tool " + tool + " that does it was available to you, but you never called it. " +
+		"Do not tell the user it is done when it is not. Call " + tool + " now and report what it " +
+		"returned, or call task_blocked stating plainly that you did not do it and why."
 }
 
 // fileArtifactExists reports whether path names a non-empty regular file.

@@ -54,6 +54,13 @@ type Scenario struct {
 	// Input is the user goal handed to RunStream.
 	Input string `yaml:"input"`
 
+	// Tools registers stub tools on the service before the run. They exist so a
+	// scenario can pin behaviour that depends on a capability BEING PRESENT —
+	// "the user asked for a reminder, the tool was right there, and the model
+	// claimed it was done without calling it" is only a failure when the tool
+	// exists. Each stub returns a canned success result. Mock mode only.
+	Tools []StubTool `yaml:"tools"`
+
 	// RegisterLints names lints that should be wired into the service before
 	// running. Use "default" to wire the full RegisterDefaultOutputLints set.
 	// Otherwise the items must match known builtin names.
@@ -77,6 +84,17 @@ type Scenario struct {
 
 	// Expect describes the post-conditions that must hold for a single run.
 	Expect ExpectSpec `yaml:"expect"`
+}
+
+// StubTool is a fake tool made available to a mock-mode run. It performs no
+// work; the point is only that the runtime, the constraint extraction and the
+// lints can all see that the capability exists.
+type StubTool struct {
+	Name        string `yaml:"name"`
+	Description string `yaml:"description"`
+	// Result is the string handed back when the tool is called. Defaults to
+	// a generic success marker.
+	Result string `yaml:"result"`
 }
 
 // ExpectSpec lists the assertions for a scenario.
@@ -195,6 +213,9 @@ func validateScenario(sc *Scenario, path string) error {
 		if len(sc.LLMReplies) > 0 {
 			return fmt.Errorf("scenario %s: llm_replies must be empty for live mode (the real model decides)", path)
 		}
+		if len(sc.Tools) > 0 {
+			return fmt.Errorf("scenario %s: tools are mock-only (live runs use the real tool surface)", path)
+		}
 	default:
 		return fmt.Errorf("scenario %s: mode %q is invalid (allowed: mock | live)", path, sc.Mode)
 	}
@@ -203,6 +224,11 @@ func validateScenario(sc *Scenario, path string) error {
 	}
 	if sc.Runs < 0 {
 		return fmt.Errorf("scenario %s: runs must be >= 1", path)
+	}
+	for _, tool := range sc.Tools {
+		if strings.TrimSpace(tool.Name) == "" {
+			return fmt.Errorf("scenario %s: every stub tool needs a name", path)
+		}
 	}
 	switch sc.Expect.Status {
 	case "completed", "blocked", "error":
