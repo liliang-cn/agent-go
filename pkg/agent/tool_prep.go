@@ -42,6 +42,69 @@ func (s *Service) buildToolPreparationPolicy(ctx context.Context) toolPreparatio
 	return policy
 }
 
+// ensureRequiredToolsVisible puts back any tool the run is contractually
+// required to call.
+//
+// Two policies narrow the schema for good reasons — skill-first (consult the
+// relevant skill before reaching for anything else) and discovery layering (a
+// huge catalogue goes behind a search step). Both are indifferent to what this
+// particular run owes the user, and that indifference produced the worst
+// outcome in the benchmark: a weak skill match on a question about drinking
+// water stripped set_reminder out of the schema, so the model reported the
+// reminder capability as absent — while the delivery contract stood waiting for
+// a call to exactly that tool. The run then either burned rounds rediscovering
+// the tool or gave up and told the user it could not be done.
+//
+// Hiding a tool the run must call is self-defeating whatever the reason for
+// hiding it, so the constraint wins. Which tools those are was decided once, by
+// the constraint extraction reading the run's own tool catalogue (satisfied_by
+// in constraints.go); nothing is matched or guessed at here.
+//
+// An explicit allow/deny list still wins — it is applied after this — because
+// that is the caller speaking directly.
+func (s *Service) ensureRequiredToolsVisible(tools []domain.ToolDefinition, cfg *RunConfig) []domain.ToolDefinition {
+	if s == nil || s.toolRegistry == nil || cfg == nil || cfg.resolvedConstraints == nil {
+		return tools
+	}
+	constraints := *cfg.resolvedConstraints
+	if constraints.ForbidTools {
+		// A run with no tools at all cannot be owed one.
+		return tools
+	}
+	present := make(map[string]bool, len(tools))
+	for _, t := range tools {
+		present[t.Function.Name] = true
+	}
+	for _, name := range requiredToolNames(constraints) {
+		if name == "" || present[name] {
+			continue
+		}
+		def, ok := s.toolRegistry.DefinitionOf(name)
+		if !ok {
+			continue
+		}
+		// Deferred definitions are hidden by construction; the point of putting
+		// this one back is that the model can call it directly.
+		def.DeferLoading = false
+		tools = append(tools, def)
+		present[name] = true
+	}
+	return tools
+}
+
+// requiredToolNames lists the tools this run's constraints name as the ones
+// that carry out what the user asked for.
+func requiredToolNames(constraints RunConstraints) []string {
+	out := make([]string, 0, len(constraints.Deliverables)+len(constraints.RequestedActions))
+	for _, d := range constraints.Deliverables {
+		out = append(out, strings.TrimSpace(d.SatisfiedBy))
+	}
+	for _, a := range constraints.RequestedActions {
+		out = append(out, strings.TrimSpace(a.SatisfiedBy))
+	}
+	return out
+}
+
 func shouldKeepToolForSkillFirst(toolName string, relevantSkillNames []string) bool {
 	toolName = strings.TrimSpace(toolName)
 	switch {
@@ -72,6 +135,7 @@ func (s *Service) prepareTurnInputsWithConfig(ctx context.Context, currentAgent 
 		policy.ExposeSearchTools = false
 	}
 	tools := s.collectAllAvailableToolsWithPolicy(ctx, currentAgent, policy)
+	tools = s.ensureRequiredToolsVisible(tools, cfg)
 	if cfg != nil && (len(cfg.ToolAllowlist) > 0 || len(cfg.ToolDenylist) > 0) {
 		tools = filterTools(tools, cfg.ToolAllowlist, cfg.ToolDenylist)
 	}
