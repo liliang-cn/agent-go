@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -11,49 +10,13 @@ import (
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 )
 
-type roundMetrics struct {
-	round      int
-	tokens     int
-	toolCalls  int
-	llmMs      int64
-	toolMs     int64
-	durationMs int64
-}
-
-type executionMetrics struct {
-	toolCalls        int
-	toolsUsed        []string
-	estimatedTokens  int
-	rounds           int
-	roundStats       []roundMetrics
-	totalDurationMs  int64
-	estimatedCostUSD float64
-}
-
-// ============================================================
-// Error Withholding - Recovery from API errors
-// ============================================================
-
-// IsWithholdable returns true if the error is a recoverable error
-// that can be handled via compaction/retry.
-func IsWithholdable(err error) bool {
-	if err == nil {
-		return false
-	}
-	return errors.Is(err, domain.ErrContextTooLong) ||
-		errors.Is(err, domain.ErrMaxOutputTokens) ||
-		errors.Is(err, domain.ErrRateLimited)
-}
-
-// IsContextTooLong returns true if the error indicates context length exceeded.
-func IsContextTooLong(err error) bool {
-	return err != nil && errors.Is(err, domain.ErrContextTooLong)
-}
-
-// IsMaxOutputTokens returns true if the error indicates max output tokens exceeded.
-func IsMaxOutputTokens(err error) bool {
-	return err != nil && errors.Is(err, domain.ErrMaxOutputTokens)
-}
+// Tool rounds — the execution half of concept 3.
+//
+// One turn's worth of tool work: normalising the calls the model emitted,
+// collapsing duplicates that cannot return anything new, executing them, and
+// deciding whether the round produced a terminal answer or another turn's
+// input. runtime.go drives the loop; this file owns what happens inside a
+// single tool round.
 
 type ToolExecutionCallbacks struct {
 	OnToolCall   func(name string, args map[string]interface{}, interruptBehavior string)
@@ -62,13 +25,6 @@ type ToolExecutionCallbacks struct {
 	EventSink    func(*Event)
 	Debug        bool
 }
-
-const (
-	recentConversationWindow  = 6
-	olderConversationLimit    = 12
-	toolUseNudgePrompt        = "Do not describe what you would do. You have tools available — call them now to accomplish the goal. Use the tool functions provided to you."
-	toolResultsAnalysisPrompt = "Analyze the tool results above. If you have fulfilled the user's request, provide your final answer and call task_complete. If a concrete blocker prevents completion, call task_blocked. Otherwise continue executing directly with the available tools."
-)
 
 func (s *Service) prepareToolRound(ctx context.Context, messages *[]domain.Message, currentAgent *Agent, session *Session, result *domain.GenerationResult, prevToolCalls map[string]int, round int) (*Agent, interface{}, []domain.ToolCall, []ToolExecutionResult, string, bool) {
 	result.ToolCalls = normalizeToolCalls(result.ToolCalls)
@@ -326,68 +282,4 @@ type ToolExecutionResult struct {
 	Result     interface{} `json:"result"`
 	Error      string      `json:"error,omitempty"`
 	Blocked    bool        `json:"blocked,omitempty"`
-}
-
-// performRAGQuery performs a RAG query to get relevant documents
-func (s *Service) performRAGQuery(ctx context.Context, query string) (string, error) {
-	if s.ragProcessor == nil {
-		return "", nil
-	}
-
-	// Use the RAG processor to query
-	request := domain.QueryRequest{
-		Query:        query,
-		TopK:         5, // Get top 5 results
-		Temperature:  0.3,
-		ShowThinking: false,
-		ShowSources:  true,
-	}
-
-	results, err := s.ragProcessor.Query(ctx, request)
-	if err != nil {
-		return "", err
-	}
-
-	// Format results as context
-	if results.Answer == "" && len(results.Sources) == 0 {
-		return "", nil
-	}
-
-	// Collect sources for final result (deduplicated)
-	s.addRAGSources(results.Sources)
-
-	var context strings.Builder
-	context.WriteString("## Relevant Documents\n\n")
-
-	// Add answer if available
-	if results.Answer != "" {
-		context.WriteString(fmt.Sprintf("**Answer:** %s\n\n", results.Answer))
-	}
-
-	// Add sources
-	for i, source := range results.Sources {
-		context.WriteString(fmt.Sprintf("### Document %d\n", i+1))
-		if source.DocumentID != "" {
-			context.WriteString(fmt.Sprintf("**Source:** %s\n", source.DocumentID))
-		}
-		if source.Score > 0 {
-			context.WriteString(fmt.Sprintf("**Score:** %.2f\n", source.Score))
-		}
-		if source.Content != "" {
-			context.WriteString(fmt.Sprintf("**Content:** %s\n", source.Content))
-		}
-		context.WriteString("\n---\n\n")
-	}
-
-	return context.String(), nil
-}
-
-// countDocuments counts the number of documents in RAG context
-func countDocuments(ragContext string) int {
-	if ragContext == "" {
-		return 0
-	}
-	// Count "### Document" occurrences
-	count := strings.Count(ragContext, "### Document")
-	return count
 }

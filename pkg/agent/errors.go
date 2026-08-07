@@ -1,6 +1,11 @@
 package agent
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+)
 
 // AgentError is the base type for agent-related errors
 type AgentError struct {
@@ -69,4 +74,29 @@ func NewMaxTurnsExceeded(maxTurns, currentRound int, goal string) *MaxTurnsExcee
 		CurrentRound: currentRound,
 		Goal:         goal,
 	}
+}
+
+// ============================================================
+// Error Withholding - Recovery from API errors
+// ============================================================
+
+// IsWithholdable returns true if the error is a recoverable error
+// that can be handled via compaction/retry.
+func IsWithholdable(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, domain.ErrContextTooLong) ||
+		errors.Is(err, domain.ErrMaxOutputTokens) ||
+		errors.Is(err, domain.ErrRateLimited)
+}
+
+// IsContextTooLong returns true if the error indicates context length exceeded.
+func IsContextTooLong(err error) bool {
+	return err != nil && errors.Is(err, domain.ErrContextTooLong)
+}
+
+// IsMaxOutputTokens returns true if the error indicates max output tokens exceeded.
+func IsMaxOutputTokens(err error) bool {
+	return err != nil && errors.Is(err, domain.ErrMaxOutputTokens)
 }

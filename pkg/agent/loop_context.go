@@ -435,3 +435,73 @@ func markRelevantSkillsSent(session *Session, names []string) {
 	slices.Sort(merged)
 	session.SetContext(sessionContextSentSkillReminders, merged)
 }
+
+// performRAGQuery performs a RAG query to get relevant documents
+func (s *Service) performRAGQuery(ctx context.Context, query string) (string, error) {
+	if s.ragProcessor == nil {
+		return "", nil
+	}
+
+	// Use the RAG processor to query
+	request := domain.QueryRequest{
+		Query:        query,
+		TopK:         5, // Get top 5 results
+		Temperature:  0.3,
+		ShowThinking: false,
+		ShowSources:  true,
+	}
+
+	results, err := s.ragProcessor.Query(ctx, request)
+	if err != nil {
+		return "", err
+	}
+
+	// Format results as context
+	if results.Answer == "" && len(results.Sources) == 0 {
+		return "", nil
+	}
+
+	// Collect sources for final result (deduplicated)
+	s.addRAGSources(results.Sources)
+
+	var context strings.Builder
+	context.WriteString("## Relevant Documents\n\n")
+
+	// Add answer if available
+	if results.Answer != "" {
+		context.WriteString(fmt.Sprintf("**Answer:** %s\n\n", results.Answer))
+	}
+
+	// Add sources
+	for i, source := range results.Sources {
+		context.WriteString(fmt.Sprintf("### Document %d\n", i+1))
+		if source.DocumentID != "" {
+			context.WriteString(fmt.Sprintf("**Source:** %s\n", source.DocumentID))
+		}
+		if source.Score > 0 {
+			context.WriteString(fmt.Sprintf("**Score:** %.2f\n", source.Score))
+		}
+		if source.Content != "" {
+			context.WriteString(fmt.Sprintf("**Content:** %s\n", source.Content))
+		}
+		context.WriteString("\n---\n\n")
+	}
+
+	return context.String(), nil
+}
+
+// countDocuments counts the number of documents in RAG context
+func countDocuments(ragContext string) int {
+	if ragContext == "" {
+		return 0
+	}
+	// Count "### Document" occurrences
+	count := strings.Count(ragContext, "### Document")
+	return count
+}
+
+const (
+	recentConversationWindow  = 6
+	olderConversationLimit    = 12
+	toolResultsAnalysisPrompt = "Analyze the tool results above. If you have fulfilled the user's request, provide your final answer and call task_complete. If a concrete blocker prevents completion, call task_blocked. Otherwise continue executing directly with the available tools."
+)
