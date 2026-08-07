@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 )
@@ -113,20 +112,12 @@ func TestRunPersistsNonStreamingTaskEventsAndFrames(t *testing.T) {
 		t.Fatal("expected task id from Run")
 	}
 
-	// Events and frames are persisted asynchronously after Run returns; poll
-	// rather than assert immediately, or slow CI runners read an empty store.
-	var task *UnifiedTask
-	deadline := time.Now().Add(15 * time.Second)
-	for time.Now().Before(deadline) {
-		var err error
-		task, err = svc.store.GetTask(result.TaskID)
-		if err != nil {
-			t.Fatalf("GetTask() error = %v", err)
-		}
-		if task != nil && len(task.Events) > 0 && len(task.Frames) >= 2 {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
+	// Asserted immediately, not polled: every task write now happens under the
+	// task lock and completes before Run returns, so anything missing here is a
+	// real regression rather than a slow machine.
+	task, err := svc.store.GetTask(result.TaskID)
+	if err != nil {
+		t.Fatalf("GetTask() error = %v", err)
 	}
 	if task == nil {
 		t.Fatal("task never appeared in the store")

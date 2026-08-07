@@ -166,41 +166,45 @@ func (s *Store) SaveTaskFramesFromSession(session *Session) error {
 		if len(frames) == 0 {
 			continue
 		}
-		task, err := s.agentGoDB.GetTask(taskID)
-		if err != nil || task == nil {
-			parentTaskID := ""
-			if raw, ok := session.GetContext("runtime.parent_task_id"); ok {
-				parentTaskID, _ = raw.(string)
+		// Read-modify-write under the task lock: the observer goroutine writes
+		// Status/Events on the same row and would otherwise clobber Frames.
+		err := s.updateTask(taskID, func(task *UnifiedTask) *UnifiedTask {
+			if task == nil {
+				parentTaskID := ""
+				if raw, ok := session.GetContext("runtime.parent_task_id"); ok {
+					parentTaskID, _ = raw.(string)
+				}
+				task = &taskpkg.Task{
+					ID:               taskID,
+					Kind:             taskpkg.KindAgent,
+					Status:           taskpkg.StatusRunning,
+					SessionID:        session.ID,
+					RuntimeSessionID: session.ID,
+					ParentTaskID:     strings.TrimSpace(parentTaskID),
+					CreatedAt:        firstNonZeroTime(session.CreatedAt, time.Now()),
+					Source:           "session",
+					SourceID:         session.ID,
+				}
 			}
-			task = &taskpkg.Task{
-				ID:               taskID,
-				Kind:             taskpkg.KindAgent,
-				Status:           taskpkg.StatusRunning,
-				SessionID:        session.ID,
-				RuntimeSessionID: session.ID,
-				ParentTaskID:     strings.TrimSpace(parentTaskID),
-				CreatedAt:        firstNonZeroTime(session.CreatedAt, time.Now()),
-				Source:           "session",
-				SourceID:         session.ID,
+			task.Frames = replaceTaskFramesForSession(task.Frames, session.ID, frames)
+			if task.RuntimeSessionID == "" {
+				task.RuntimeSessionID = session.ID
 			}
-		}
-		task.Frames = replaceTaskFramesForSession(task.Frames, session.ID, frames)
-		if task.RuntimeSessionID == "" {
-			task.RuntimeSessionID = session.ID
-		}
-		if task.SessionID == "" {
-			task.SessionID = session.ID
-		}
-		if task.Input == "" {
-			task.Input = firstTaskFrameContent(frames, "user")
-		}
-		if output := lastTaskFrameContent(frames, "assistant"); output != "" {
-			task.Output = output
-			if task.Status == "" || task.Status == taskpkg.StatusRunning {
-				task.Status = taskpkg.StatusCompleted
+			if task.SessionID == "" {
+				task.SessionID = session.ID
 			}
-		}
-		if err := s.agentGoDB.SaveTask(task); err != nil {
+			if task.Input == "" {
+				task.Input = firstTaskFrameContent(frames, "user")
+			}
+			if output := lastTaskFrameContent(frames, "assistant"); output != "" {
+				task.Output = output
+				if task.Status == "" || task.Status == taskpkg.StatusRunning {
+					task.Status = taskpkg.StatusCompleted
+				}
+			}
+			return task
+		})
+		if err != nil {
 			return err
 		}
 	}
