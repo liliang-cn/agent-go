@@ -70,7 +70,15 @@ go run ./examples/quickstart      # minimal agent.New(...).Build() + RunStream
 - `Service.Run` calls `RunStream` and collects the events into an `ExecutionResult`. There is no second, non-streaming implementation to keep in sync.
 - A sub-agent (`pkg/agent/subagent.go`) builds a **child `Runtime` over the same `Service`** — its own session, a narrower tool surface (`RunConfig.ToolAllowlist` / `ToolDenylist`), a different event sink. It is not a second engine.
 
-When extending runtime behavior, push it into the shared helpers (`prepareTurnInputsWithConfig`, `prepareToolRound`, `executePreparedToolRound`, `streamToolTurn`, …). Do not fork a branch.
+When extending runtime behavior, push it into the shared helpers rather than forking a branch. They are grouped by concern, one file each:
+
+| file | owns |
+|---|---|
+| `runtime.go` | the loop state machine, round advance, terminal states, event emission |
+| `loop_context.go` | what the model sees before its turn: memory/RAG retrieval, history filtering, the recent/older split, skill reminders, compaction |
+| `tool_prep.go` | what a turn may call: tool collection, allow/deny lists, constraints, skill-first policy, generation options |
+| `tool_round.go` | what happens inside one tool round: normalise, dedupe, execute, decide terminal |
+| `service.go` | lifecycle and the public entry points (`Run`, `RunStream`, `Ask`, `Chat`, structured output) |
 
 Tool execution has its own state model — `ReadOnly`, `ConcurrencySafe`, `Destructive`, `InterruptBehavior`, plus `queued`/`executing`/`completed` lifecycle. New tools should declare these honestly so batching, permissioning, and cancel work.
 
