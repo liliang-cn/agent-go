@@ -189,4 +189,5 @@ func RegisterDefaultOutputLints(svc *Service) {
 	svc.RegisterOutputLint(NonEmptyFinalAnswer())
 	svc.RegisterOutputLint(TaskDeliveryContract())
 	svc.RegisterOutputLint(NoToolScaffoldingAnswer())
+	svc.RegisterOutputLint(DeliverableBlockMustCarryWork())
 }

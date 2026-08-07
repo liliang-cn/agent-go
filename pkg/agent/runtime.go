@@ -24,6 +24,11 @@ var errTaskTerminal = errors.New("task terminal signal")
 
 // Runtime orchestrates the event loop for agent execution
 type Runtime struct {
+	// deliverableFallbackUsed keeps the missing-delivery-tool nudge to one per
+	// run: the model gets one chance to answer the computable part, then a
+	// second block is allowed through.
+	deliverableFallbackUsed bool
+
 	svc          *Service
 	eventChan    chan *Event
 	currentAgent *Agent
@@ -540,6 +545,9 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			r.emitToolResult(taskTerminalName, final, nil, "")
 			r.trackToolResult(taskTerminalName)
 			if taskTerminalName == "task_blocked" {
+				if r.redirectBlockedToPartialAnswer(&messages, state) {
+					continue
+				}
 				r.blockRun(goal, final, messages, true)
 				return
 			}
@@ -596,10 +604,15 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			state.resetContinuation()
 
 			// Double check terminal tools in case they were not intercepted during stream.
+			redirected := false
 			for _, tc := range result.ToolCalls {
 				if isTaskTerminalToolName(tc.Function.Name) {
 					final := taskTerminalToolResult(tc.Function.Name, tc.Function.Arguments, result.Content)
 					if tc.Function.Name == "task_blocked" {
+						if r.redirectBlockedToPartialAnswer(&messages, state) {
+							redirected = true
+							break
+						}
 						r.blockRun(goal, final, nil, false)
 						return
 					}
@@ -609,6 +622,11 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 					r.completeRun(goal, final, nil, false)
 					return
 				}
+			}
+			if redirected {
+				// The block was turned into "answer what you can"; the
+				// task_blocked call itself must not now run as a tool.
+				continue
 			}
 			// Hard constraint, enforced in the runtime rather than the prompt:
 			// a run whose constraints forbid tools gets an empty tool list (see

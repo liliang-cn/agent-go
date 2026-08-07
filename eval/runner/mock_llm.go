@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -63,6 +64,36 @@ func (m *MockLLM) noteTools(tools []domain.ToolDefinition) {
 	m.mu.Unlock()
 }
 
+// toolCallReplyPrefix marks a scripted reply as a tool call rather than text:
+//
+//	llm_replies:
+//	  - 'tool:task_blocked {"blocker":"I have no email tool."}'
+//
+// Without this a scenario cannot reach any path that keys off a terminal tool
+// call, and would silently exercise the free-text path instead.
+const toolCallReplyPrefix = "tool:"
+
+// replyResult turns the next scripted reply into either text or a tool call.
+func (m *MockLLM) replyResult() *domain.GenerationResult {
+	raw := m.nextReply()
+	if !strings.HasPrefix(raw, toolCallReplyPrefix) {
+		return &domain.GenerationResult{Content: raw}
+	}
+	spec := strings.TrimSpace(strings.TrimPrefix(raw, toolCallReplyPrefix))
+	name, argsJSON, _ := strings.Cut(spec, " ")
+	args := map[string]interface{}{}
+	if strings.TrimSpace(argsJSON) != "" {
+		_ = json.Unmarshal([]byte(argsJSON), &args)
+	}
+	return &domain.GenerationResult{
+		ToolCalls: []domain.ToolCall{{
+			ID:       "mock-" + strings.TrimSpace(name),
+			Type:     "function",
+			Function: domain.FunctionCall{Name: strings.TrimSpace(name), Arguments: args},
+		}},
+	}
+}
+
 func (m *MockLLM) nextReply() string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -95,12 +126,12 @@ func (m *MockLLM) Stream(ctx context.Context, prompt string, opts *domain.Genera
 
 func (m *MockLLM) GenerateWithTools(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions) (*domain.GenerationResult, error) {
 	m.noteTools(tools)
-	return &domain.GenerationResult{Content: m.nextReply()}, nil
+	return m.replyResult(), nil
 }
 
 func (m *MockLLM) StreamWithTools(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions, callback domain.ToolCallCallback) error {
 	m.noteTools(tools)
-	return callback(&domain.GenerationResult{Content: m.nextReply()})
+	return callback(m.replyResult())
 }
 
 func (m *MockLLM) GenerateStructured(ctx context.Context, prompt string, schema interface{}, opts *domain.GenerationOptions) (*domain.StructuredResult, error) {
