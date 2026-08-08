@@ -16,6 +16,7 @@ import (
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 	"github.com/liliang-cn/agent-go/v3/pkg/prompt"
+	"github.com/liliang-cn/agent-go/v3/pkg/skills"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -293,13 +294,23 @@ func (s *Service) buildRelevantSkillReminder(ctx context.Context, goal string, s
 		return nil
 	}
 
-	skillsList, err := s.skillsService.ResolveForModel(ctx, goal, extractTouchedPathsForSkills(goal, session))
-	if err != nil || len(skillsList) == 0 {
+	// Only skills that actually clear the relevance floor. Below it the match
+	// is an incidental word overlap — "Check the weather in Chicago…" used to
+	// resolve to a frontend design skill because its description ends "strict
+	// pre-flight check". Naming that in a <skill-discovery> reminder is not
+	// free: it spends context and invites the model to go and use it.
+	scored, err := s.skillsService.ResolveForModelScored(
+		ctx, goal, extractTouchedPathsForSkills(goal, session), s.skillMinScore())
+	if err != nil || len(scored) == 0 {
 		return nil
 	}
 
-	if len(skillsList) > 5 {
-		skillsList = skillsList[:5]
+	if len(scored) > 5 {
+		scored = scored[:5]
+	}
+	skillsList := make([]*skills.Skill, 0, len(scored))
+	for _, item := range scored {
+		skillsList = append(skillsList, item.Skill)
 	}
 
 	sent := sentRelevantSkillNames(session)

@@ -177,7 +177,8 @@ disable-model-invocation: false
 		}, nil, CategoryCustom)
 	}
 
-	// What the lexical matcher returns for "Check the weather in Chicago…".
+	// Pretend the matcher returned it anyway, so this pins the schema half of
+	// the behaviour independently of the scoring half.
 	svc.rememberRelevantSkillsForSession("session-skill-first", []string{"design-taste-frontend"})
 	session := NewSession("agent-1")
 	session.ID = "session-skill-first"
@@ -213,5 +214,64 @@ disable-model-invocation: false
 		if !containsStr(afterNames, want) {
 			t.Fatalf("expected %s after the skill was used, got %v", want, afterNames)
 		}
+	}
+}
+
+// The scoring half, end to end: a weather question must not surface a frontend
+// design skill at all — no <skill-discovery> reminder, no activated tool, no
+// promotion. skills-go now scores that overlap at 0.03 and the runtime declines
+// to act below its floor.
+//
+// The same registry must still find a skill that genuinely fits, or the floor
+// has simply been set too high.
+func TestWeakSkillMatchIsNotSurfacedAtAll(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeSkill := func(name, desc string) {
+		p := filepath.Join(dir, name, "SKILL.md")
+		if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		body := "---\nname: " + name + "\ndescription: " + desc +
+			"\nuser-invocable: true\ndisable-model-invocation: false\n---\n\n# " + name + "\n"
+		if err := os.WriteFile(p, []byte(body), 0644); err != nil {
+			t.Fatalf("write skill: %v", err)
+		}
+	}
+	writeSkill("design-taste-frontend",
+		"Anti-slop frontend skill for landing pages, portfolios, and redesigns. Real design systems when applicable, audit-first on redesigns, strict pre-flight check.")
+	writeSkill("cortexdb", "Use CortexDB for vector search, hybrid search, knowledge graphs, and RAG.")
+	writeSkill("golang-pro", "Implements concurrent Go patterns using goroutines and channels, designs microservices with gRPC or REST.")
+	writeSkill("brandkit", "Premium brand-kit image generation for brand-guidelines boards, logo systems and identity decks.")
+
+	skillsSvc, err := skills.NewService(&skills.Config{Enabled: true, Paths: []string{dir}})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	if err := skillsSvc.LoadAll(context.Background()); err != nil {
+		t.Fatalf("LoadAll: %v", err)
+	}
+
+	svc := &Service{
+		skillsService:         skillsSvc,
+		toolRegistry:          NewToolRegistry(),
+		sessionRelevantSkills: make(map[string][]string),
+		taskSkillSatisfied:    make(map[string]bool),
+	}
+
+	weather := "Check the weather in Chicago. If it's sunny, remind me to hang the laundry outside; otherwise remind me to use the dryer."
+	if reminder := svc.buildRelevantSkillReminder(context.Background(), weather, NewSession("agent-1")); reminder != nil {
+		t.Errorf("a weather question surfaced skills %v: %q", reminder.Names, reminder.Text)
+	}
+
+	// The floor is not simply excluding everything.
+	design := "I need a landing page for my startup, make the design look premium"
+	reminder := svc.buildRelevantSkillReminder(context.Background(), design, NewSession("agent-2"))
+	if reminder == nil {
+		t.Fatal("a genuine design request surfaced no skill; the floor is too high")
+	}
+	if !strings.Contains(reminder.Text, "skill_design-taste-frontend") {
+		t.Errorf("expected the design skill, got %q", reminder.Text)
 	}
 }

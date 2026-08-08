@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/skills"
 )
 
 const sessionContextSentSkillReminders = "skills.sent_relevant_names"
@@ -24,7 +25,11 @@ type toolPreparationPolicy struct {
 	SearchMode          bool
 	ExposeSearchTools   bool
 	HideNativeWebSearch bool
-	RelevantSkillNames  []string
+	// HideRegistryWebSearch drops a locally registered `web_search` tool when
+	// the MCP route is the configured one and is actually present. Offering
+	// both is how one question turned into two searches.
+	HideRegistryWebSearch bool
+	RelevantSkillNames    []string
 	// ForceSkillFirst promotes the matched skills' tools to the front of the
 	// schema while they are still outstanding. It used to remove every other
 	// tool instead; see promoteRelevantSkillTools for why a lexical match is
@@ -284,4 +289,22 @@ func getSkillVarTypeString(typ string) string {
 	default:
 		return "string"
 	}
+}
+
+// skillMinScore is the relevance a skill must reach before the runtime acts on
+// the match — surfacing it in a <skill-discovery> reminder, activating its
+// tool, or promoting it up the schema.
+//
+// Below the floor the match is an incidental word overlap rather than a
+// judgement about the task, and acting on one used to be expensive: it spent
+// context on an irrelevant skill and, while skill-first was subtractive, took
+// unrelated tools away from the model entirely.
+func (s *Service) skillMinScore() float64 {
+	if s == nil || s.cfg == nil || s.cfg.Skills.MinRelevance == 0 {
+		return skills.DefaultSkillMinScore
+	}
+	if s.cfg.Skills.MinRelevance < 0 {
+		return 0
+	}
+	return s.cfg.Skills.MinRelevance
 }

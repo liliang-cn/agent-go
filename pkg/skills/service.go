@@ -242,17 +242,49 @@ func (s *Service) Resolve(ctx context.Context, query string) ([]*Skill, error) {
 }
 
 // ResolveForModel finds model-invocable skills relevant to the current task.
+//
+// It applies no relevance floor. Prefer ResolveForModelScored, which reports
+// how good each match is — acting on a weak lexical guess is what made a
+// weather question resolve to a frontend design skill.
 func (s *Service) ResolveForModel(ctx context.Context, query string, touchedPaths []string) ([]*Skill, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	resolved, err := s.registry.ResolveForModel(ctx, query, touchedPaths)
+	scored, err := s.ResolveForModelScored(ctx, query, touchedPaths, 0)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]*Skill, 0, len(resolved))
-	for _, sk := range resolved {
-		out = append(out, convertFromSkillGo(sk))
+	out := make([]*Skill, 0, len(scored))
+	for _, item := range scored {
+		out = append(out, item.Skill)
+	}
+	return out, nil
+}
+
+// ScoredSkill pairs a resolved skill with its relevance to the query, in [0,1].
+type ScoredSkill struct {
+	Skill *Skill  `json:"skill"`
+	Score float64 `json:"score"`
+}
+
+// DefaultSkillMinScore is the relevance below which a match is not worth acting
+// on. Re-exported from skills-go so callers need not import it to get the
+// calibrated value.
+const DefaultSkillMinScore = skillgo.DefaultMinScore
+
+// ResolveForModelScored is ResolveForModel with the relevance score attached
+// and a floor the caller chooses. minScore of 0 returns everything.
+func (s *Service) ResolveForModelScored(ctx context.Context, query string, touchedPaths []string, minScore float64) ([]ScoredSkill, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	resolved, err := s.registry.ResolveForModelScored(ctx, query, skillgo.ResolveOptions{
+		TouchedPaths: touchedPaths,
+		MinScore:     minScore,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ScoredSkill, 0, len(resolved))
+	for _, item := range resolved {
+		out = append(out, ScoredSkill{Skill: convertFromSkillGo(item.Skill), Score: item.Score})
 	}
 	return out, nil
 }

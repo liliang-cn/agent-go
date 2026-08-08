@@ -90,6 +90,10 @@ type SkillsConfig struct {
 	AutoLoad              bool     `mapstructure:"auto_load"`
 	AllowCommandInjection bool     `mapstructure:"allow_command_injection"`
 	RequireConfirmation   bool     `mapstructure:"require_confirmation"`
+	// MinRelevance is the score a skill must reach before the runtime surfaces
+	// it to the model. Zero uses skills.DefaultSkillMinScore; set it negative
+	// to surface every match, however weak.
+	MinRelevance float64 `mapstructure:"min_relevance"`
 }
 
 type MemoryConfig struct {
