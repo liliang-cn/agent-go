@@ -1,9 +1,15 @@
 name: lint_blocks_when_budget_exhausted
 description: >
-  When a lint always rejects the model's response, the runtime should
-  exhaust its retry budget and emit a Blocked event naming the lint,
-  rather than looping forever. Uses the agent-agnostic
+  When a lint always rejects the model's response, the runtime should exhaust
+  its retry budget and block rather than loop forever. Uses the agent-agnostic
   no_planning_only_finish lint (v3 has no role-scoped lints).
+
+  The blocked event used to carry the lint's own reason as its text, so the user
+  read "output lint no_planning_only_finish repeatedly rejected the response:
+  …" as the final answer. Lint reasons are addressed to the model; which lint
+  fired belongs in the error event and the StopReason, not in the reply. So this
+  now asserts the opposite of what it once did: the user gets the model's last
+  draft plus a plain caveat, and the machinery stays out of sight.
 agent: Assistant
 register_lints:
   - no_planning_only_finish
@@ -15,7 +21,8 @@ llm_replies:
   - "Next steps: I will call the tool and report back."
 expect:
   status: blocked
-  final_text_match: "no_planning_only_finish"
+  final_text_match: "could not confirm"
+  final_text_must_not_match: "output lint"
   llm_calls: 3
   lint_violations:
     - lint: no_planning_only_finish

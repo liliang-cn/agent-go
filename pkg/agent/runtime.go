@@ -172,11 +172,37 @@ func (r *Runtime) lintGate(goal, content string, messages *[]domain.Message, sta
 	// Budget exhausted: this final attempt is itself a violation. Emit it as a
 	// (hard) error so observers/eval count every violation, then block.
 	r.emit(EventTypeError, fmt.Sprintf("output lint %s rejected response: %s", violation.LintName, violation.Reason))
-	r.blockRunWithStop(goal,
-		fmt.Sprintf("output lint %s repeatedly rejected the response: %s", violation.LintName, violation.Reason),
-		*messages, true, StopReasonLintExhausted)
+	r.blockRunWithStop(goal, lintExhaustedUserText(content), *messages, true, StopReasonLintExhausted)
 	return true
 }
+
+// lintExhaustedUserText is what the user sees when a run is blocked because a
+// lint kept rejecting the answer.
+//
+// Lint reasons are written TO THE MODEL — "you never called it", "call X now
+// and report what it returned". They used to be handed straight to
+// blockRunWithStop, so a run that exhausted its budget printed
+// "output lint requested_action_contract repeatedly rejected the response: the
+// user explicitly asked you to…" as its final answer. The user was shown the
+// machinery arguing with itself instead of a reply.
+//
+// What they get instead is the model's own last draft — which is usually the
+// substantive work, and the reason the run got as far as it did — plus one
+// plain sentence saying it could not be confirmed. Which lint fired, and why,
+// stays where it belongs: the error event and the StopReason.
+func lintExhaustedUserText(draft string) string {
+	draft = strings.TrimSpace(draft)
+	if draft == "" {
+		return lintExhaustedCaveat
+	}
+	return draft + "\n\n" + lintExhaustedCaveat
+}
+
+// lintExhaustedCaveat contradicts the draft rather than merely hedging it: the
+// answer above may well claim an action was completed, and that claim is
+// precisely what could not be verified.
+const lintExhaustedCaveat = "Note: I could not confirm that everything you asked for was actually carried out. " +
+	"If the answer above says an action was completed, treat that as unverified."
 
 // forceFinalSynthesis runs one model call with tools DISABLED to force a text
 // conclusion when the round budget is exhausted. Without it, a model that

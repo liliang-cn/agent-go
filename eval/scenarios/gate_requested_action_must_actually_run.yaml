@@ -23,7 +23,7 @@ tools:
     result: '{"ok":true,"id":"rem_1","when":"08:00 daily"}'
 register_lints:
   - requested_action_contract
-constraints: '{"forbid_tools":false,"deliverables":[],"requested_actions":[{"kind":"reminder","description":"remind me to refill my bottle each morning","satisfied_by":"set_reminder"}]}'
+constraints: '{"forbid_tools":false,"deliverables":[],"requested_actions":[{"kind":"reminder","description":"remind me to refill my bottle each morning","satisfied_by":"set_reminder","unconditional":true}]}'
 input: "I should drink 8 glasses of water a day at 250 ml each. Work out my daily total in liters, then set a reminder to refill my bottle each morning."
 llm_replies:
   - "Your daily total is 2 liters. I've set a reminder for you to refill your bottle each morning."

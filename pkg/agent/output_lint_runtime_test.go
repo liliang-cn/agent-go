@@ -188,8 +188,16 @@ func TestRuntimeBlocksWhenLintBudgetIsExhausted(t *testing.T) {
 	if blocked == "" {
 		t.Fatalf("expected EventTypeBlocked when lint budget is exhausted")
 	}
-	if !strings.Contains(blocked, "no_route_phrase") {
-		t.Fatalf("expected blocker to name the failing lint, got %q", blocked)
+	// The user gets the model's last draft plus a plain caveat. Which lint
+	// fired, and the reason it gave, are addressed to the model and belong to
+	// the error event and the StopReason — putting them here once meant a user
+	// read "output lint no_route_phrase repeatedly rejected the response: …"
+	// as their answer.
+	if strings.Contains(blocked, "no_route_phrase") || strings.Contains(blocked, "output lint") {
+		t.Fatalf("blocker leaked lint machinery to the user, got %q", blocked)
+	}
+	if !strings.Contains(blocked, "could not confirm") {
+		t.Fatalf("expected the blocker to tell the user the result is unverified, got %q", blocked)
 	}
 	if got := atomic.LoadInt32(&lint.calls); got != int32(defaultLintRetryBudget+1) {
 		t.Fatalf("expected lint to be invoked budget+1 times (=%d), got %d", defaultLintRetryBudget+1, got)

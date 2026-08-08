@@ -130,6 +130,15 @@ func RequestedActionContract() OutputLint {
 		NameValue: "requested_action_contract",
 		Fn: func(_ string, ctx LintContext) (bool, string) {
 			for _, want := range ctx.RequestedActions {
+				if !want.Unconditional {
+					// The user attached a condition ("if the average is below
+					// 85, remind me…"). Whether it holds is the task's own work,
+					// and the runtime cannot evaluate it — so enforcing the
+					// action would demand a tool call the correct answer must
+					// not make. Restraint is the right behaviour here, and a
+					// contract cannot tell restraint from neglect.
+					continue
+				}
 				if reason := unmetToolContract(ctx, want.SatisfiedBy, want.Description,
 					"carry out that action"); reason != "" {
 					return false, reason

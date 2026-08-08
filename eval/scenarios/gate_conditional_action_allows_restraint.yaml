@@ -1,0 +1,35 @@
+name: gate_conditional_action_allows_restraint
+description: >
+  The other half of the requested-action contract, and the regression that
+  proved it was needed.
+
+  "My test scores are 88, 92, 79, and 85. Calculate the average, and if it's
+  below 85, remind me to study harder." The average is 86, so the right answer
+  sets no reminder at all — restraint IS the task. But the user did say the
+  words "remind me", so the extraction reports a reminder action, and the
+  contract demanded a call that the correct answer must not make: three
+  rejections, a blocked run, and the lint's own machine text delivered to the
+  user as the final answer.
+
+  A contract cannot tell restraint from neglect, so it must not try. The
+  extraction now reports whether the user attached a condition, and only an
+  unconditional action is enforced. The tool stays reachable either way, for the
+  branch where the condition does hold — which is why set_reminder is registered
+  here and must simply go uncalled.
+agent: Assistant
+tools:
+  - name: set_reminder
+    description: Create a reminder for the user at a given time
+register_lints:
+  - requested_action_contract
+constraints: '{"forbid_tools":false,"deliverables":[],"requested_actions":[{"kind":"reminder","description":"remind me to study harder if the average is below 85","satisfied_by":"set_reminder","unconditional":false}]}'
+input: "My test scores are 88, 92, 79, and 85. Calculate the average, and if it's below 85, remind me to study harder."
+llm_replies:
+  - "The average of 88, 92, 79 and 85 is 86. That is above 85, so I have not set a reminder."
+expect:
+  status: completed
+  final_text_match: "86"
+  final_text_must_not_match: "output lint"
+  llm_calls: 1
+  max_lint_violations:
+    requested_action_contract: 0

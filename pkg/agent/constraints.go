@@ -58,6 +58,20 @@ type RequestedAction struct {
 	// by the extraction from the run's own tool catalog. Empty means this run
 	// has no tool for it, and the action is not enforced.
 	SatisfiedBy string `json:"satisfied_by,omitempty"`
+	// Unconditional is true when the user asked for the action outright, and
+	// false when they attached a condition to it ("if the average is below 85,
+	// remind me to study harder").
+	//
+	// Only an unconditional action can be a contract. Whether a condition holds
+	// is the task's own work — the average turns out to be 86, so the right
+	// behaviour is to set nothing — and the runtime has no way to evaluate it.
+	// Enforcing a conditional action means demanding a tool call that the
+	// correct answer must not make, which is exactly what turned a passing
+	// task into a blocked one.
+	//
+	// A conditional action is still reported, because the tool it names must
+	// stay reachable for the branch where the condition does hold.
+	Unconditional bool `json:"unconditional"`
 }
 
 // DeliverableRequirement is one side effect the run owes the user.
@@ -136,8 +150,13 @@ func newConstraintExtractionSchema() map[string]interface{} {
 						},
 						"description":  map[string]interface{}{"type": "string"},
 						"satisfied_by": satisfiedBySchema(),
+						"unconditional": map[string]interface{}{
+							"type": "boolean",
+							"description": "true if the user asked for this outright; " +
+								"false if they attached a condition to it.",
+						},
 					},
-					"required": []string{"kind", "description", "satisfied_by"},
+					"required": []string{"kind", "description", "satisfied_by", "unconditional"},
 				},
 			},
 		},
@@ -240,6 +259,7 @@ Rules:
   - kind: "reminder" for a reminder/alarm/timer, "calendar" for a calendar entry/schedule/event, "note" for something recorded for later, "other" for anything else the user asked you to perform.
   - Report the action only if the user asked for it in their own words. A calculation, a translation, a lookup, or an explanation is NOT a requested action.
   - Never invent an action because it would be helpful. When unsure, report nothing.
+  - unconditional: true when the user asked for the action outright. false when they attached ANY condition to it — "if …, remind me", "should it rain, add …", "otherwise book …". Read carefully: a request can ask for a calculation or a lookup outright and then make the action depend on how it turns out. That action is conditional.
 - satisfied_by (on every deliverable and every requested action): pick the ONE tool from the AVAILABLE TOOLS list below that would carry it out, and copy its name exactly. Use "" when no listed tool can carry it out. Never invent a name that is not on the list.
 - Work in whatever language the request is written in.
 `
@@ -390,9 +410,10 @@ func parseRunConstraints(raw string) (RunConstraints, error) {
 			kind = "other"
 		}
 		out.RequestedActions = append(out.RequestedActions, RequestedAction{
-			Kind:        kind,
-			Description: strings.TrimSpace(a.Description),
-			SatisfiedBy: strings.TrimSpace(a.SatisfiedBy),
+			Kind:          kind,
+			Description:   strings.TrimSpace(a.Description),
+			SatisfiedBy:   strings.TrimSpace(a.SatisfiedBy),
+			Unconditional: a.Unconditional,
 		})
 	}
 	return out, nil

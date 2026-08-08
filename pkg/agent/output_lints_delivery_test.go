@@ -98,9 +98,10 @@ func TestRequestedActionContract(t *testing.T) {
 		t.Fatalf("name = %q", lint.Name())
 	}
 	reminder := []RequestedAction{{
-		Kind:        "reminder",
-		Description: "remind me to refill my bottle each morning",
-		SatisfiedBy: "set_reminder",
+		Kind:          "reminder",
+		Description:   "remind me to refill my bottle each morning",
+		SatisfiedBy:   "set_reminder",
+		Unconditional: true,
 	}}
 
 	// The benchmark failure this exists for: the model answers the computable
@@ -130,7 +131,7 @@ func TestRequestedActionContract(t *testing.T) {
 	// No tool in this run can set a reminder (extraction picked nothing) ->
 	// not the agent's fault, pass.
 	if ok, reason := lint.Check("Your daily total is 2 L.", LintContext{
-		RequestedActions: []RequestedAction{{Kind: "reminder", Description: "refill reminder"}},
+		RequestedActions: []RequestedAction{{Kind: "reminder", Description: "refill reminder", Unconditional: true}},
 		AvailableTools:   []string{"resolve_datetime"},
 	}); !ok {
 		t.Fatalf("expected a run with no reminder capability to pass, got %q", reason)
@@ -148,11 +149,49 @@ func TestRequestedActionContract(t *testing.T) {
 	// Japanese request enforces identically.
 	if ok, _ := lint.Check("リマインダーを設定しました。", LintContext{
 		RequestedActions: []RequestedAction{
-			{Kind: "reminder", Description: "毎朝の水の補充", SatisfiedBy: "set_reminder"},
+			{Kind: "reminder", Description: "毎朝の水の補充", SatisfiedBy: "set_reminder", Unconditional: true},
 		},
 		ToolCalls:      []string{"resolve_datetime"},
 		AvailableTools: []string{"set_reminder"},
 	}); ok {
 		t.Fatal("expected the contract to hold regardless of the request language")
+	}
+}
+
+// "Calculate the average, and if it's below 85, remind me to study harder."
+//
+// The average is 86, so the right answer sets no reminder at all — restraint is
+// the task. The extraction reports the action anyway (the user did say the
+// words), and enforcing it demanded a tool call the correct answer must not
+// make: three rejections, then a blocked run, on a task that had been passing.
+// A contract cannot tell restraint from neglect, so it must not try.
+func TestRequestedActionContractIgnoresConditionalActions(t *testing.T) {
+	t.Parallel()
+
+	lint := RequestedActionContract()
+	conditional := []RequestedAction{{
+		Kind:        "reminder",
+		Description: "remind me to study harder if the average is below 85",
+		SatisfiedBy: "set_reminder",
+		// The user attached a condition, so the runtime cannot enforce it.
+		Unconditional: false,
+	}}
+
+	if ok, reason := lint.Check("Your average is 86, which is above 85 — nothing to do.", LintContext{
+		RequestedActions: conditional,
+		ToolCalls:        []string{},
+		AvailableTools:   []string{"set_reminder"},
+	}); !ok {
+		t.Fatalf("correct restraint was punished: %q", reason)
+	}
+
+	// The same action, asked for outright, is still a contract.
+	unconditional := conditional
+	unconditional[0].Unconditional = true
+	if ok, _ := lint.Check("Done.", LintContext{
+		RequestedActions: unconditional,
+		AvailableTools:   []string{"set_reminder"},
+	}); ok {
+		t.Fatal("an unconditional action must still be enforced")
 	}
 }

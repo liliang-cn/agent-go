@@ -55,6 +55,16 @@ func TestRequiredToolSurvivesANarrowedSchema(t *testing.T) {
 		t.Errorf("a tools-forbidden run must stay empty, got %+v", toolNames(got))
 	}
 
+	// A conditional action is not enforced by the contract, but the branch
+	// where its condition holds still needs the tool, so it stays visible.
+	conditional := DefaultRunConfig()
+	conditional.resolvedConstraints = &RunConstraints{
+		RequestedActions: []RequestedAction{{Kind: "reminder", SatisfiedBy: "set_reminder", Unconditional: false}},
+	}
+	if got := svc.ensureRequiredToolsVisible(nil, conditional); !containsToolNamed(got, "set_reminder") {
+		t.Errorf("a conditional action must still keep its tool reachable: %+v", toolNames(got))
+	}
+
 	// A tool nobody registered cannot be conjured up.
 	unknown := DefaultRunConfig()
 	unknown.resolvedConstraints = &RunConstraints{
