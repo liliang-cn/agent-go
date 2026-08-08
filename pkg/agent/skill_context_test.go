@@ -117,23 +117,35 @@ disable-model-invocation: false
 	}
 }
 
-func TestCollectAllAvailableToolsSkillFirstHidesRawToolsUntilSkillSatisfied(t *testing.T) {
+// Skill-first recommends; it does not confiscate.
+//
+// The matcher behind it is lexical — skills-go scores a skill by asking whether
+// each four-letter-or-longer input word appears as a substring of its name,
+// when_to_use or description, and anything above zero counts. So a question
+// about the weather matched a frontend design skill on the word "check", which
+// appears inside "pre-flight check" in that skill's description. When the match
+// removed every other tool, that one word took web search away and the model
+// told the user no web search tool existed.
+//
+// This is that exact case, with that exact skill text. The relevant skill must
+// lead the list; the unrelated capability must still be there.
+func TestSkillFirstRecommendsWithoutRemovingCapabilities(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	skillPath := filepath.Join(dir, "docs-review", "SKILL.md")
+	skillPath := filepath.Join(dir, "design-taste-frontend", "SKILL.md")
 	if err := os.MkdirAll(filepath.Dir(skillPath), 0755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
 	content := `---
-name: docs-review
-description: Review docs edits.
-when_to_use: Use when editing markdown docs.
+name: design-taste-frontend
+description: Anti-slop frontend skill for landing pages and redesigns, with a strict pre-flight check.
+when_to_use: Use when building a landing page.
 user-invocable: true
 disable-model-invocation: false
 ---
 
-# Review docs
+# Design taste
 `
 	if err := os.WriteFile(skillPath, []byte(content), 0644); err != nil {
 		t.Fatalf("write skill: %v", err)
@@ -154,40 +166,52 @@ disable-model-invocation: false
 		sessionRelevantSkills: make(map[string][]string),
 		taskSkillSatisfied:    make(map[string]bool),
 	}
-	svc.toolRegistry.Register(domain.ToolDefinition{
-		Type: "function",
-		Function: domain.ToolFunction{
-			Name:        "custom_raw_tool",
-			Description: "Raw tool that should stay hidden before skill execution.",
-			Parameters:  map[string]interface{}{"type": "object"},
-		},
-	}, nil, CategoryCustom)
+	for _, name := range []string{"web_search", "set_reminder"} {
+		svc.toolRegistry.Register(domain.ToolDefinition{
+			Type: "function",
+			Function: domain.ToolFunction{
+				Name:        name,
+				Description: name,
+				Parameters:  map[string]interface{}{"type": "object"},
+			},
+		}, nil, CategoryCustom)
+	}
 
-	svc.rememberRelevantSkillsForSession("session-skill-first", []string{"docs-review"})
+	// What the lexical matcher returns for "Check the weather in Chicago…".
+	svc.rememberRelevantSkillsForSession("session-skill-first", []string{"design-taste-frontend"})
 	session := NewSession("agent-1")
 	session.ID = "session-skill-first"
 	session.SetContext(sessionContextTaskID, "task-1")
 	ctx := withCurrentSession(context.Background(), session)
 
-	before := svc.collectAllAvailableTools(ctx, NewAgent("Responder"))
-	beforeNames := make([]string, 0, len(before))
-	for _, tool := range before {
-		beforeNames = append(beforeNames, tool.Function.Name)
-	}
-	if containsStr(beforeNames, "custom_raw_tool") {
-		t.Fatalf("expected raw tool hidden before skill execution, got %v", beforeNames)
-	}
-	if !containsStr(beforeNames, "skill_docs-review") {
-		t.Fatalf("expected relevant skill visible before skill execution, got %v", beforeNames)
+	tools := svc.collectAllAvailableTools(ctx, NewAgent("Responder"))
+	names := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		names = append(names, tool.Function.Name)
 	}
 
+	for _, want := range []string{"web_search", "set_reminder"} {
+		if !containsStr(names, want) {
+			t.Fatalf("an unrelated skill match removed %s from the schema: %v", want, names)
+		}
+	}
+	if !containsStr(names, "skill_design-taste-frontend") {
+		t.Fatalf("expected the matched skill to be offered, got %v", names)
+	}
+	if names[0] != "skill_design-taste-frontend" {
+		t.Errorf("expected the matched skill to lead the list, got %v", names)
+	}
+
+	// Once the skill has been used the promotion stops; nothing else changes.
 	svc.markRelevantSkillSatisfied("session-skill-first", "task-1")
 	after := svc.collectAllAvailableTools(ctx, NewAgent("Responder"))
 	afterNames := make([]string, 0, len(after))
 	for _, tool := range after {
 		afterNames = append(afterNames, tool.Function.Name)
 	}
-	if !containsStr(afterNames, "custom_raw_tool") {
-		t.Fatalf("expected raw tool visible after skill execution, got %v", afterNames)
+	for _, want := range []string{"web_search", "set_reminder"} {
+		if !containsStr(afterNames, want) {
+			t.Fatalf("expected %s after the skill was used, got %v", want, afterNames)
+		}
 	}
 }

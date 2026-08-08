@@ -94,6 +94,12 @@ func (s *Service) ensureRequiredToolsVisible(tools []domain.ToolDefinition, cfg 
 
 // requiredToolNames lists the tools this run's constraints name as the ones
 // that carry out what the user asked for.
+//
+// Conditional actions count here even though the contract does not enforce
+// them. "If it rains, remind me to take an umbrella" is not something the
+// runtime can hold the model to — but the branch where it does rain needs the
+// reminder tool, so it has to be reachable either way. Visibility and
+// enforcement are different questions and get different answers.
 func requiredToolNames(constraints RunConstraints) []string {
 	out := make([]string, 0, len(constraints.Deliverables)+len(constraints.RequestedActions))
 	for _, d := range constraints.Deliverables {
@@ -105,21 +111,48 @@ func requiredToolNames(constraints RunConstraints) []string {
 	return out
 }
 
-func shouldKeepToolForSkillFirst(toolName string, relevantSkillNames []string) bool {
-	toolName = strings.TrimSpace(toolName)
-	switch {
-	case toolName == "":
-		return false
-	case isTaskTerminalToolName(toolName):
-		return true
-	case toolName == "search_available_tools" || domain.IsToolSearchTool(toolName):
-		return true
-	case strings.HasPrefix(toolName, "skill_"):
-		skillID := strings.TrimPrefix(toolName, "skill_")
-		return len(relevantSkillNames) == 0 || slices.Contains(relevantSkillNames, skillID)
-	default:
-		return false
+// promoteRelevantSkillTools moves the matched skills' tools to the front of the
+// schema. This is the whole of "skill-first" now, and the change from what it
+// used to be is the point.
+//
+// It used to be subtractive: while a relevant skill was outstanding, every tool
+// that was not that skill or a terminal was dropped from the schema. The
+// intention — consult the skill before reaching for anything else — is a good
+// one, but it rested on the match being right, and the matcher cannot carry
+// that weight. It is lexical: skills-go scores a skill by testing whether each
+// input word of four characters or more appears as a SUBSTRING of the skill's
+// name, when_to_use or description, and any score above zero counted. So
+// "Check the weather in Chicago…" matched a frontend design skill, because
+// "check" appears inside "pre-flight check" in its description. That one word
+// took web search out of the schema, and the model — reading the schema it was
+// given — told the user no web search tool was available.
+//
+// The score is not exposed through pkg/skills, so there is no threshold to
+// raise, and inventing one here would mean reimplementing the matcher. The
+// honest conclusion is that a lexical guess is not grounds for removing a
+// capability. It is fine grounds for a recommendation, so that is what it makes
+// now: the skill goes first in the list, the <skill-discovery> reminder says it
+// is relevant, and everything else stays reachable.
+func promoteRelevantSkillTools(tools []domain.ToolDefinition, relevantSkillNames []string) []domain.ToolDefinition {
+	if len(tools) == 0 || len(relevantSkillNames) == 0 {
+		return tools
 	}
+	isRelevantSkill := func(name string) bool {
+		if !strings.HasPrefix(name, "skill_") {
+			return false
+		}
+		return slices.Contains(relevantSkillNames, strings.TrimPrefix(name, "skill_"))
+	}
+	front := make([]domain.ToolDefinition, 0, len(relevantSkillNames))
+	rest := make([]domain.ToolDefinition, 0, len(tools))
+	for _, t := range tools {
+		if isRelevantSkill(t.Function.Name) {
+			front = append(front, t)
+			continue
+		}
+		rest = append(rest, t)
+	}
+	return append(front, rest...)
 }
 
 // prepareTurnInputsWithConfig is the single place where a turn's tool list and
@@ -228,9 +261,6 @@ func (s *Service) collectTools(ctx context.Context, currentAgent *Agent, policy 
 	// Helper to add tools with deduplication
 	addTools := func(defs []domain.ToolDefinition) {
 		for _, d := range defs {
-			if policy.ForceSkillFirst && !shouldKeepToolForSkillFirst(d.Function.Name, relevantSkillNames) {
-				continue
-			}
 			toolsMap[d.Function.Name] = d
 		}
 	}
@@ -368,6 +398,9 @@ func (s *Service) collectTools(ctx context.Context, currentAgent *Agent, policy 
 		tools = append(tools, tool)
 	}
 
+	if policy.ForceSkillFirst {
+		tools = promoteRelevantSkillTools(tools, relevantSkillNames)
+	}
 	return tools
 }
 

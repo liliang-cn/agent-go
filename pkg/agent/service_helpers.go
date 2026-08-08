@@ -25,7 +25,11 @@ type toolPreparationPolicy struct {
 	ExposeSearchTools   bool
 	HideNativeWebSearch bool
 	RelevantSkillNames  []string
-	ForceSkillFirst     bool
+	// ForceSkillFirst promotes the matched skills' tools to the front of the
+	// schema while they are still outstanding. It used to remove every other
+	// tool instead; see promoteRelevantSkillTools for why a lexical match is
+	// not grounds for taking a capability away.
+	ForceSkillFirst bool
 }
 
 func (s *Service) resolveCurrentAgent(session *Session) *Agent {
