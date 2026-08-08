@@ -24,9 +24,10 @@ import (
 
 func (s *Service) buildToolPreparationPolicy(ctx context.Context) toolPreparationPolicy {
 	policy := toolPreparationPolicy{
-		SearchMode:          s.shouldExposeSearchTools(),
-		ExposeSearchTools:   s.shouldExposeSearchTools(),
-		HideNativeWebSearch: s.shouldHideMCPWebSearchTools(),
+		SearchMode:            s.shouldExposeSearchTools(),
+		ExposeSearchTools:     s.shouldExposeSearchTools(),
+		HideNativeWebSearch:   s.shouldHideMCPWebSearchTools(),
+		HideRegistryWebSearch: s.shouldHideRegistryWebSearchTool(),
 	}
 	if session := getCurrentSession(ctx); session != nil {
 		policy.SessionID = strings.TrimSpace(session.GetID())
@@ -261,6 +262,9 @@ func (s *Service) collectTools(ctx context.Context, currentAgent *Agent, policy 
 	// Helper to add tools with deduplication
 	addTools := func(defs []domain.ToolDefinition) {
 		for _, d := range defs {
+			if policy.HideRegistryWebSearch && d.Function.Name == registryWebSearchToolName {
+				continue
+			}
 			toolsMap[d.Function.Name] = d
 		}
 	}
@@ -435,6 +439,39 @@ func (s *Service) webSearchContextSize() string {
 func (s *Service) shouldHideMCPWebSearchTools() bool {
 	mode := s.webSearchMode()
 	return mode == domain.WebSearchModeNative || mode == domain.WebSearchModeOff
+}
+
+// registryWebSearchToolName is the built-in tool RegisterWebSearchTool adds.
+const registryWebSearchToolName = "web_search"
+
+// shouldHideRegistryWebSearchTool reports whether a locally registered
+// web_search is redundant this turn.
+//
+// An embedder that registers the built-in web_search AND runs the MCP
+// websearch server offers the model two ways to do one thing, and the model
+// takes both: the efficiency audit found single questions answered with a
+// web_search call and an mcp_websearch_basic call back to back, one task
+// spending five search calls. Nothing was wrong with either route — there were
+// just two of them.
+//
+// The configured mode already says which route this service means to use, so
+// honour it symmetrically: HideNativeWebSearch drops the MCP tools when the
+// mode is native, and this drops the registry tool when the mode is mcp. Only
+// when the MCP route is actually present, or a service configured for mcp with
+// no server running would be left with no way to search at all.
+func (s *Service) shouldHideRegistryWebSearchTool() bool {
+	if s == nil || s.webSearchMode() != domain.WebSearchModeMCP {
+		return false
+	}
+	if s.mcpService == nil {
+		return false
+	}
+	for _, tool := range s.mcpService.ListTools() {
+		if isMCPWebSearchToolName(tool.Function.Name) {
+			return true
+		}
+	}
+	return false
 }
 
 func isMCPWebSearchToolName(name string) bool {
