@@ -275,3 +275,63 @@ func TestWeakSkillMatchIsNotSurfacedAtAll(t *testing.T) {
 		t.Errorf("expected the design skill, got %q", reminder.Text)
 	}
 }
+
+// A skills service must search the paths it was given and nothing else.
+//
+// skills-go used to append them to its defaults, so every test that built a
+// fixture directory was really running against that fixture plus whatever the
+// developer had installed in ~/.agents/skills. The relevance floor is
+// calibrated against corpus statistics, so the corpus quietly changing size
+// between a laptop and CI is not a cosmetic difference: it is why
+// TestWeakSkillMatchIsNotSurfacedAtAll passed here and failed there.
+//
+// This asserts the isolation from agent-go's side, so the day the dependency
+// regresses, it fails as one clear test rather than as a scoring mystery.
+func TestSkillsServiceSearchesOnlyTheConfiguredPaths(t *testing.T) {
+	// Not parallel: t.Setenv redirects HOME for the duration.
+
+	// A skill outside the configured corpus, in the location skills-go used to
+	// merge in regardless.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	stray := filepath.Join(home, ".agents", "skills", "stray-skill")
+	if err := os.MkdirAll(stray, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(stray, "SKILL.md"),
+		[]byte("---\nname: stray-skill\ndescription: Should never be loaded by an explicit corpus.\n---\n\n# stray\n"),
+		0644); err != nil {
+		t.Fatalf("write skill: %v", err)
+	}
+
+	dir := t.TempDir()
+	wanted := filepath.Join(dir, "wanted-skill")
+	if err := os.MkdirAll(wanted, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(wanted, "SKILL.md"),
+		[]byte("---\nname: wanted-skill\ndescription: The only skill this corpus declares.\n---\n\n# wanted\n"),
+		0644); err != nil {
+		t.Fatalf("write skill: %v", err)
+	}
+
+	svc, err := skills.NewService(&skills.Config{Enabled: true, Paths: []string{dir}})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	if err := svc.LoadAll(context.Background()); err != nil {
+		t.Fatalf("LoadAll: %v", err)
+	}
+
+	loaded, err := svc.ListSkills(context.Background(), skills.SkillFilter{})
+	if err != nil {
+		t.Fatalf("ListSkills: %v", err)
+	}
+	names := make([]string, 0, len(loaded))
+	for _, sk := range loaded {
+		names = append(names, sk.ID)
+	}
+	if len(names) != 1 || names[0] != "wanted-skill" {
+		t.Fatalf("the corpus was not isolated to the configured path: %v", names)
+	}
+}
