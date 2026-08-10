@@ -15,7 +15,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/liliang-cn/cortexdb/v2 v2.63.2
 	github.com/liliang-cn/mcp-swagger-server v0.4.0
-	github.com/liliang-cn/skills-go v1.8.0
+	github.com/liliang-cn/skills-go v1.9.0
 	github.com/mark3labs/mcp-go v0.32.0
 	github.com/modelcontextprotocol/go-sdk v1.6.1
 	github.com/openai/openai-go/v3 v3.39.0

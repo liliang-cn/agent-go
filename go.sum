@@ -281,8 +281,8 @@ github.com/liliang-cn/mcp-swagger-server v0.4.0 h1:vgcUvQp+ped++O1+hQz29oWtXiHE+
 github.com/liliang-cn/mcp-swagger-server v0.4.0/go.mod h1:/ulyr2I9rj9LFAY4mdT875hewZGYgMi08uNKBa203Ew=
 github.com/liliang-cn/pipeit v0.1.0 h1:ZU5hkL5SXr6vHtn/gcJBX9i55l0HM4rVsYTfxqn5M34=
 github.com/liliang-cn/pipeit v0.1.0/go.mod h1:ghxqa1CKTztR5me4vl8srIYQhfv89tc37SnocoXv4/E=
-github.com/liliang-cn/skills-go v1.8.0 h1:/NiI48TGxHCaMrvHINv4rAUWoLyZru0p2dnFhO4qagc=
-github.com/liliang-cn/skills-go v1.8.0/go.mod h1:9uDod4rl/qZmh2vu6jcmbMMf0bjms7QNpBePg3zXxUo=
+github.com/liliang-cn/skills-go v1.9.0 h1:f734/1BM4edgTeMlhkcUnXYenxeXEdgVm9/MDbkwE3Y=
+github.com/liliang-cn/skills-go v1.9.0/go.mod h1:9uDod4rl/qZmh2vu6jcmbMMf0bjms7QNpBePg3zXxUo=
 github.com/mailru/easyjson v0.7.7 h1:UGYAvKxe3sBsEDzO8ZeWOSlIQfWFlxbzLZe7hwFURr0=
 github.com/mailru/easyjson v0.7.7/go.mod h1:xzfreul335JAWq5oZzymOObrkdz5UnU4kGfJJLY9Nlc=
 github.com/makeworld-the-better-one/dither/v2 v2.4.0 h1:Az/dYXiTcwcRSe59Hzw4RI1rSnAZns+1msaCXetrMFE=
