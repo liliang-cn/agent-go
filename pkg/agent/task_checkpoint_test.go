@@ -214,10 +214,13 @@ func TestTaskServiceResumeFromCheckpointReplaysMessages(t *testing.T) {
 		t.Fatalf("resumed unified task mismatch: %#v", resumed)
 	}
 
-	// Wait for the goroutine to wrap the run. Generous on purpose: under full-
-	// suite load 2s flaked (the poll body is cheap, so a long ceiling costs
-	// nothing when the run completes promptly).
-	deadline := time.Now().Add(15 * time.Second)
+	// Wait for the goroutine that wraps the run. The deadline is short on
+	// purpose: it was widened to 2s and then to 15s chasing a flake that was
+	// never slowness. persistUnifiedTask could write a stale snapshot over the
+	// terminal one, and the loss was permanent — no deadline reaches a row that
+	// nothing writes again. With that fixed the write lands promptly or not at
+	// all, so a long ceiling only delays the report.
+	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		got, _ := manager.Tasks().Get(context.Background(), taskID)
 		if got != nil && strings.Contains(got.Output, "final: 42") {

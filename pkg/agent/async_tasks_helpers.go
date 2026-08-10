@@ -77,8 +77,11 @@ func (m *Manager) emitTaskEvent(taskID string, evt *TaskEvent, terminal bool) {
 	}
 	m.taskMu.Unlock()
 
-	sendTaskEventToSubscribers(subs, evt, terminal)
+	// Persist before announcing. A subscriber told "completed" will go and read
+	// the row, and it has to be there when they do — announcing first left a
+	// window where the task reported done and the store still said running.
 	m.persistUnifiedTask(taskID)
+	sendTaskEventToSubscribers(subs, evt, terminal)
 }
 
 func (m *Manager) setTaskCancel(taskID string, cancel context.CancelFunc) {

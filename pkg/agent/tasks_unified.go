@@ -111,19 +111,89 @@ func matchesTaskFilter(t *UnifiedTask, f store.TaskListFilter) bool {
 	return true
 }
 
+// persistUnifiedTaskSnapshotHook is a test seam. It fires after the in-memory
+// snapshot has been taken and before the row is written, which is the window
+// the bug lived in. Tests use it to hold one writer there while another runs to
+// completion. Nil in production.
+var persistUnifiedTaskSnapshotHook func(taskID string)
+
+// persistUnifiedTask mirrors the in-memory async task onto its stored row.
+//
+// This is the fifth writer of a task row, and the last one that was still doing
+// an unserialised read-modify-write. c848ae1 converted the four on the run path;
+// this one reads from a different source — the manager's async map rather than
+// the row itself — which is why it did not look like the same shape. It is.
+//
+// The window was wide because hydrateUnifiedTask queries the message store
+// between the snapshot and the write. updateAsyncTask fires this as a bare
+// goroutine on every mutation, so a resume did:
+//
+//	P1  snapshot{running, output:""} ... blocked in ListMessagesForTask ...
+//	P2  snapshot{completed, output:"final: 42"} -> write
+//	P1                                          -> write   (stale, wins)
+//
+// leaving the row permanently running with no output — which is exactly what
+// CI reported, and why widening the poll deadline twice never helped: nothing
+// writes that row again.
+//
+// Taking the snapshot inside the store's per-task lock is what fixes it: the
+// last writer to acquire the lock is now, necessarily, the one holding the
+// freshest snapshot. It also puts this writer under the same lock as the run
+// path, so the two can no longer clobber each other.
 func (m *Manager) persistUnifiedTask(taskID string) {
 	if m == nil || m.store == nil || strings.TrimSpace(taskID) == "" {
 		return
 	}
-	m.taskMu.RLock()
-	task := cloneAsyncTask(m.asyncTasks[taskID])
-	m.taskMu.RUnlock()
-	unified := unifiedTaskFromAsync(task)
-	if unified == nil {
+	_ = m.store.updateTask(taskID, func(existing *UnifiedTask) *UnifiedTask {
+		m.taskMu.RLock()
+		task := cloneAsyncTask(m.asyncTasks[taskID])
+		m.taskMu.RUnlock()
+
+		if hook := persistUnifiedTaskSnapshotHook; hook != nil {
+			hook(taskID)
+		}
+
+		unified := unifiedTaskFromAsync(task)
+		if unified == nil {
+			return nil
+		}
+		m.hydrateUnifiedTask(unified)
+		carryOverTaskFields(existing, unified)
+		return unified
+	})
+}
+
+// carryOverTaskFields preserves the parts of a task row that the async-task
+// mirror does not own. It builds its row from the AsyncTask alone, which knows
+// nothing about stats, lineage, or the runtime's frames — so without this, a
+// status update would silently erase them.
+func carryOverTaskFields(existing, updated *UnifiedTask) {
+	if existing == nil || updated == nil {
 		return
 	}
-	m.hydrateUnifiedTask(unified)
-	_ = m.store.SaveTask(unified)
+	if updated.Stats == nil {
+		updated.Stats = existing.Stats
+	}
+	if strings.TrimSpace(updated.ParentTaskID) == "" {
+		updated.ParentTaskID = existing.ParentTaskID
+	}
+	// Frames come from the message store; when that lookup finds nothing yet,
+	// keep whatever the runtime has already written rather than blanking it.
+	if len(updated.Frames) == 0 {
+		updated.Frames = existing.Frames
+	}
+	if len(updated.Events) == 0 {
+		updated.Events = existing.Events
+	}
+	if updated.CreatedAt.IsZero() {
+		updated.CreatedAt = existing.CreatedAt
+	}
+	if updated.StartedAt == nil {
+		updated.StartedAt = existing.StartedAt
+	}
+	if strings.TrimSpace(updated.Input) == "" {
+		updated.Input = existing.Input
+	}
 }
 
 func unifiedTaskFromAsync(task *AsyncTask) *UnifiedTask {
