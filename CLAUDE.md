@@ -134,6 +134,32 @@ This replaced four hardcoded phrase tables (`noToolInstructionPhrases`, delivery
 
 Resolve constraints in the **loop**, never in a helper that only sees a goal string — that mistake is why the gate fired for `Run` but not `Ask`.
 
+### Cancellation is a registry, and it is an outcome
+
+Two separate registries, because the two callers hold different things.
+
+- **A run.** `startRun` derives a cancellable context per run and records it in
+  `Service.runs` (`pkg/agent/run_cancel.go`). `Cancel()` stops **every** run in
+  flight on the service; `CancelRun(runID)` stops one (name it with
+  `WithRunID`); `CancelSession(sessionID)` stops one conversation;
+  `ActiveRuns()` lists them. Registration is released when the event stream
+  closes, so a stale ID can never answer "ok" to a stop. All three defer — and
+  return false — while a tool with `InterruptBehavior: block` is mid-execution.
+  Sub-agents are not registered: they run under the parent's context.
+- **A scheduled execution.** `pkg/scheduler` gives every execution its own
+  context (`beginRun`) instead of handing out the scheduler root, so
+  `CancelRun(runID)` / `CancelTaskRuns(taskID)` stop one run without touching
+  the timers. `Stop()` is unchanged: it still tears everything down.
+  `RunTaskAsync` / `PromptScheduler.RunNowAsync` exist because `RunNow` blocks
+  for the whole run — a host stuck inside it cannot draw the cancel button.
+
+A stop is **not** an error. The runtime terminates with `EventTypeCancelled`
+(`workflow_cancelled`) + `StopReasonCancelled`, writes a
+`CheckpointReasonTaskCancelled` snapshot so `ResumeFromCheckpoint` can pick the
+work back up, and persists the task as `cancelled`. `ExecutionResult.Cancelled`
+is true with `Err() == nil`, exactly like `Blocked` — a caller branching on err
+must never mistake its own stop button for a crash.
+
 ### Eval harness
 
 `eval/runner/` is a behavioral eval driver: every YAML in `eval/scenarios/` defines an `input`, an entry agent, optional lint registrations, expected `status`/`final_text_match` constraints, and optional `lint_violations` counts. Two profiles:

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -44,6 +45,10 @@ type PromptRun struct {
 	SessionID string
 	Answer    string
 	Err       error
+	// Cancelled reports that the run was stopped before it finished. Err is
+	// nil in that case: a host notifying on Err would otherwise pop up a
+	// failure alert for the user's own cancel button.
+	Cancelled bool
 	StartedAt time.Time
 	Duration  time.Duration
 }
@@ -160,23 +165,44 @@ func (e *PromptExecutor) Execute(ctx context.Context, parameters map[string]stri
 		Duration:  time.Since(started),
 	}
 	blocked := false
+	cancelled := false
 	if result != nil {
 		run.Answer = strings.TrimSpace(result.Text())
 		blocked = result.Blocked
+		cancelled = result.Cancelled
 		// A run that failed without an error still failed; surface it rather
 		// than recording a success with an empty answer. A *blocked* run is not
 		// that: the agent answered, and its answer is why it stopped — that
 		// text is exactly what the host needs to notify with, so it must not be
 		// demoted to an error and dropped.
-		if err == nil && !blocked && !result.Success && result.Error != "" {
+		if err == nil && !blocked && !cancelled && !result.Success && result.Error != "" {
 			err = fmt.Errorf("%s", result.Error)
 			run.Err = err
 		}
+	}
+	// A cancelled run reaches here two ways: the loop reported it (result
+	// .Cancelled), or the context died before the loop could say anything and
+	// Run returned context.Canceled. Both are the same outcome.
+	if !cancelled && errors.Is(err, context.Canceled) {
+		cancelled = true
+	}
+	if cancelled {
+		err = nil
+		run.Err = nil
+		run.Cancelled = true
 	}
 	if e.observer != nil {
 		e.observer(run)
 	}
 
+	if cancelled {
+		return &scheduler.TaskResult{
+			Success:   false,
+			Cancelled: true,
+			Output:    run.Answer,
+			Duration:  run.Duration,
+		}, nil
+	}
 	if err != nil {
 		return &scheduler.TaskResult{Success: false, Error: err.Error(), Duration: run.Duration}, err
 	}

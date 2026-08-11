@@ -34,6 +34,14 @@ type TaskScheduler struct {
 	// Context for cancellation
 	ctx    context.Context
 	cancel context.CancelFunc
+
+	// activeRuns holds the executions currently in flight, keyed by run ID,
+	// so one of them can be cancelled without stopping the scheduler. See
+	// cancel.go. Its own lock: cancelling must not queue behind whatever
+	// holds mu, since the moment a stop is worth pressing is the moment the
+	// scheduler is busy.
+	runsMu     sync.Mutex
+	activeRuns map[string]*taskRun
 }
 
 // NewScheduler creates a new task scheduler
@@ -57,6 +65,7 @@ func NewScheduler(cfg *config.Config) *TaskScheduler {
 		semaphore:  make(chan struct{}, schedulerConfig.MaxConcurrentTasks),
 		ctx:        ctx,
 		cancel:     cancel,
+		activeRuns: make(map[string]*taskRun),
 	}
 
 	return scheduler
@@ -132,22 +141,28 @@ func (s *TaskScheduler) start(execute bool) error {
 	return nil
 }
 
-// Stop stops the scheduler
+// Stop stops the scheduler. Every in-flight execution is cancelled through the
+// root context and waited for; the semantics are unchanged by the arrival of
+// per-execution cancel, which is the narrower operation.
 func (s *TaskScheduler) Stop() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if !s.running {
+		s.mu.Unlock()
 		return nil
 	}
-
 	s.running = false
 	close(s.stopCh)
 	s.cancel()
+	// Released before waiting: an execution goroutine takes mu.RLock to look
+	// up its executor, so holding the write lock across wg.Wait() deadlocks
+	// against any task that started in the same instant as the shutdown.
+	s.mu.Unlock()
 
 	// Wait for all goroutines to finish
 	s.wg.Wait()
 
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	// Close storage
 	if s.storage != nil {
 		if err := s.storage.Close(); err != nil {
@@ -207,7 +222,7 @@ func (s *TaskScheduler) CreateTask(task *Task) (string, error) {
 		return "", fmt.Errorf("failed to store task: %w", err)
 	}
 
-	log.Printf("Created task %s (%s) with schedule: %s", task.ID[:8], task.Type, task.Schedule)
+	log.Printf("Created task %s (%s) with schedule: %s", shortID(task.ID), task.Type, task.Schedule)
 	return task.ID, nil
 }
 
@@ -284,7 +299,11 @@ func (s *TaskScheduler) EnableTask(id string, enabled bool) error {
 	return s.storage.EnableTask(id, enabled)
 }
 
-// RunTask runs a task immediately
+// RunTask runs a task immediately and blocks until it finishes.
+//
+// A prompt task can legitimately take minutes, so a UI thread should prefer
+// RunTaskAsync: this call cannot be interrupted by its caller, only by
+// CancelTaskRuns from another goroutine.
 func (s *TaskScheduler) RunTask(id string) (*TaskResult, error) {
 	if !s.running {
 		return nil, fmt.Errorf("scheduler is not running")
@@ -295,7 +314,48 @@ func (s *TaskScheduler) RunTask(id string) (*TaskResult, error) {
 		return nil, fmt.Errorf("failed to get task: %w", err)
 	}
 
-	return s.executeTask(task)
+	return s.executeTask(task, true)
+}
+
+// RunTaskAsync starts a task immediately in the background and returns the run
+// ID of the execution, which CancelRun accepts.
+//
+// It exists because RunTask blocks for as long as the task takes, which for an
+// agent prompt is minutes: a host that calls it from a UI handler freezes, and
+// a frozen UI cannot offer the cancel button that would end the wait. The
+// outcome lands in the execution history (GetTaskExecutions) the same way a
+// cron-fired run's does.
+func (s *TaskScheduler) RunTaskAsync(id string) (string, error) {
+	if !s.running {
+		return "", fmt.Errorf("scheduler is not running")
+	}
+
+	task, err := s.storage.GetTask(id)
+	if err != nil {
+		return "", fmt.Errorf("failed to get task: %w", err)
+	}
+
+	// Resolved up front so an unknown task type is reported to the caller
+	// rather than buried in a log line from a goroutine nobody is watching.
+	s.mu.RLock()
+	_, exists := s.executors[TaskType(task.Type)]
+	s.mu.RUnlock()
+	if !exists {
+		return "", fmt.Errorf("no executor for task type: %s", task.Type)
+	}
+
+	runCtx, run, release := s.beginRun(task.ID, true)
+
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		defer release()
+		if _, err := s.executeTaskWithRun(task, runCtx, run); err != nil {
+			log.Printf("Task %s execution error: %v", shortID(task.ID), err)
+		}
+	}()
+
+	return run.RunID, nil
 }
 
 // GetTaskExecutions retrieves execution history for a task
@@ -341,7 +401,7 @@ func (s *TaskScheduler) checkAndExecuteDueTasks() {
 			go s.executeTaskAsync(task)
 		default:
 			// At capacity, skip this execution
-			log.Printf("Skipping task %s - at capacity", task.ID[:8])
+			log.Printf("Skipping task %s - at capacity", shortID(task.ID))
 		}
 	}
 }
@@ -351,30 +411,43 @@ func (s *TaskScheduler) executeTaskAsync(task *Task) {
 	defer s.wg.Done()
 	defer func() { <-s.semaphore }() // Release semaphore
 
-	result, err := s.executeTask(task)
-	if err != nil {
-		log.Printf("Task %s execution error: %v", task.ID[:8], err)
-	} else if result != nil && !result.Success {
-		log.Printf("Task %s failed: %s", task.ID[:8], result.Error)
-	} else {
-		log.Printf("Task %s completed successfully in %v", task.ID[:8], result.Duration)
+	result, err := s.executeTask(task, false)
+	switch {
+	case err != nil:
+		log.Printf("Task %s execution error: %v", shortID(task.ID), err)
+	case result != nil && result.Cancelled:
+		log.Printf("Task %s cancelled after %v", shortID(task.ID), result.Duration)
+	case result != nil && !result.Success:
+		log.Printf("Task %s failed: %s", shortID(task.ID), result.Error)
+	default:
+		log.Printf("Task %s completed successfully in %v", shortID(task.ID), result.Duration)
 	}
 
 	// Update next run time if this is a scheduled task
 	if task.Schedule != "" {
 		nextRun, err := s.cronParser.ParseAndNext(task.Schedule, time.Now())
 		if err != nil {
-			log.Printf("Error calculating next run for task %s: %v", task.ID[:8], err)
+			log.Printf("Error calculating next run for task %s: %v", shortID(task.ID), err)
 		} else {
 			if err := s.storage.UpdateTaskNextRun(task.ID, nextRun); err != nil {
-				log.Printf("Error updating next run for task %s: %v", task.ID[:8], err)
+				log.Printf("Error updating next run for task %s: %v", shortID(task.ID), err)
 			}
 		}
 	}
 }
 
-// executeTask executes a single task
-func (s *TaskScheduler) executeTask(task *Task) (*TaskResult, error) {
+// executeTask executes a single task, registering a cancellable context for
+// the execution so CancelRun / CancelTaskRuns can stop just this one.
+func (s *TaskScheduler) executeTask(task *Task, manual bool) (*TaskResult, error) {
+	runCtx, run, release := s.beginRun(task.ID, manual)
+	defer release()
+	return s.executeTaskWithRun(task, runCtx, run)
+}
+
+// executeTaskWithRun is executeTask once the execution has been registered.
+// Split out so RunTaskAsync can own the registration across a goroutine
+// boundary and hand its run ID back to the caller before the work starts.
+func (s *TaskScheduler) executeTaskWithRun(task *Task, runCtx context.Context, run *taskRun) (*TaskResult, error) {
 	s.mu.RLock()
 	executor, exists := s.executors[TaskType(task.Type)]
 	s.mu.RUnlock()
@@ -395,9 +468,11 @@ func (s *TaskScheduler) executeTask(task *Task) (*TaskResult, error) {
 		log.Printf("Failed to create execution record: %v", err)
 	}
 
-	// Execute task
+	// Execute task with the execution's own context, not the scheduler root:
+	// that is what makes cancelling one run possible without stopping the
+	// scheduler.
 	start := time.Now()
-	result, err := executor.Execute(s.ctx, task.Parameters)
+	result, err := executor.Execute(runCtx, task.Parameters)
 	duration := time.Since(start)
 
 	// Update execution record
@@ -405,7 +480,29 @@ func (s *TaskScheduler) executeTask(task *Task) (*TaskResult, error) {
 	execution.EndTime = &endTime
 	execution.Duration = duration
 
-	if err != nil {
+	// A run somebody stopped is cancelled, not failed. Checked before the
+	// error branch because a cancelled executor usually does return an error
+	// (context.Canceled, or whatever it wrapped it in), and recording that as
+	// a failure is how a stop button ends up looking like a crash in the
+	// history list.
+	cancelled := run != nil && run.wasCancelled()
+	if cancelled || (result != nil && result.Cancelled) {
+		execution.Status = TaskStatusCancelled
+		execution.Error = ""
+		if result != nil {
+			execution.Output = result.Output
+		}
+		out := ""
+		if result != nil {
+			out = result.Output
+		}
+		result = &TaskResult{
+			Success:   false,
+			Cancelled: true,
+			Output:    out,
+			Duration:  duration,
+		}
+	} else if err != nil {
 		execution.Status = TaskStatusFailed
 		execution.Error = err.Error()
 		result = &TaskResult{

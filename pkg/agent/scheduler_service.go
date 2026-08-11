@@ -26,6 +26,11 @@ type ScheduledPrompt struct {
 	Enabled  bool       `json:"enabled"`
 	NextRun  *time.Time `json:"next_run,omitempty"`
 	LastRun  *time.Time `json:"last_run,omitempty"`
+	// Running reports that an execution of this schedule is in flight right
+	// now, which is what tells a UI whether to offer "run now" or "cancel".
+	// Carried on the listing rather than left to a second call so a view does
+	// not have to poll two endpoints and reconcile them.
+	Running bool `json:"running"`
 }
 
 // PromptScheduler runs prompts on a cron schedule.
@@ -129,12 +134,18 @@ func (p *PromptScheduler) List() ([]ScheduledPrompt, error) {
 	if err != nil {
 		return nil, err
 	}
+	running := make(map[string]bool)
+	for _, r := range p.inner.RunningTasks() {
+		running[r.TaskID] = true
+	}
 	out := make([]ScheduledPrompt, 0, len(tasks))
 	for _, t := range tasks {
 		if t == nil || t.Type != string(TaskTypeAgentPrompt) {
 			continue
 		}
-		out = append(out, toScheduledPrompt(t))
+		sp := toScheduledPrompt(t)
+		sp.Running = running[t.ID]
+		out = append(out, sp)
 	}
 	return out, nil
 }
@@ -147,10 +158,73 @@ func (p *PromptScheduler) SetEnabled(id string, enabled bool) error {
 // Delete removes a schedule.
 func (p *PromptScheduler) Delete(id string) error { return p.inner.DeleteTask(id) }
 
-// RunNow executes a schedule immediately. Without this, finding out whether
-// "0 8 * * *" does what was meant takes until tomorrow morning.
+// RunNow executes a schedule immediately and waits for it. Without this,
+// finding out whether "0 8 * * *" does what was meant takes until tomorrow
+// morning.
+//
+// It blocks for as long as the run takes — up to the executor's timeout,
+// fifteen minutes by default. A host calling this from a UI handler should use
+// RunNowAsync instead: a frozen UI cannot draw the cancel button that would
+// end the wait.
 func (p *PromptScheduler) RunNow(id string) (*scheduler.TaskResult, error) {
+	if p == nil || p.inner == nil {
+		return nil, fmt.Errorf("scheduler not built")
+	}
 	return p.inner.RunTask(id)
+}
+
+// RunNowAsync starts a schedule immediately in the background and returns the
+// run ID of that execution. The outcome arrives through the PromptExecutor
+// observer (WithPromptObserver) and the execution history (History), the same
+// way a timer-fired run's does.
+func (p *PromptScheduler) RunNowAsync(id string) (string, error) {
+	if p == nil || p.inner == nil {
+		return "", fmt.Errorf("scheduler not built")
+	}
+	return p.inner.RunTaskAsync(id)
+}
+
+// CancelRun stops the in-flight execution(s) of one schedule and reports how
+// many were stopped. Zero means nothing was running — which is not an error:
+// a stop that lands after the run finished is simply late.
+//
+// The schedule is untouched: its timer stands and it can be run again. That is
+// the difference between this and SetEnabled(id, false), and between this and
+// Stop(), which halts the whole cron loop.
+func (p *PromptScheduler) CancelRun(id string) (int, error) {
+	if p == nil || p.inner == nil {
+		return 0, fmt.Errorf("scheduler not built")
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return 0, fmt.Errorf("schedule id is required")
+	}
+	return p.inner.CancelTaskRuns(id), nil
+}
+
+// CancelRunByID stops one execution by the run ID RunNowAsync returned, for a
+// host that started several runs of the same schedule and wants to stop one.
+func (p *PromptScheduler) CancelRunByID(runID string) bool {
+	if p == nil || p.inner == nil {
+		return false
+	}
+	return p.inner.CancelRun(strings.TrimSpace(runID))
+}
+
+// Running lists the executions currently in flight across all schedules.
+func (p *PromptScheduler) Running() []scheduler.RunningTask {
+	if p == nil || p.inner == nil {
+		return nil
+	}
+	return p.inner.RunningTasks()
+}
+
+// IsRunning reports whether an execution of this schedule is in flight.
+func (p *PromptScheduler) IsRunning(id string) bool {
+	if p == nil || p.inner == nil {
+		return false
+	}
+	return p.inner.IsTaskRunning(strings.TrimSpace(id))
 }
 
 // History returns recent executions of a schedule, newest first.

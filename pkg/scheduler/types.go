@@ -55,10 +55,26 @@ type TaskExecution struct {
 
 // TaskResult represents the result of a task execution
 type TaskResult struct {
-	Success  bool          `json:"success"`
-	Output   string        `json:"output,omitempty"`
-	Error    string        `json:"error,omitempty"`
-	Duration time.Duration `json:"duration"`
+	Success bool   `json:"success"`
+	Output  string `json:"output,omitempty"`
+	// Cancelled reports that this execution was stopped on purpose — by
+	// CancelRun / CancelTaskRuns, or by the executor noticing its context
+	// went away. Success is false but Error stays empty: a stop somebody
+	// asked for is an outcome, not a failure, and a host that only looks at
+	// Success would otherwise show it in red.
+	Cancelled bool          `json:"cancelled,omitempty"`
+	Error     string        `json:"error,omitempty"`
+	Duration  time.Duration `json:"duration"`
+}
+
+// shortID abbreviates an ID for log lines. Guards the length: task IDs are
+// normally UUIDs, but nothing forces that, and slicing [:8] on a caller-chosen
+// ID panics the scheduler goroutine.
+func shortID(id string) string {
+	if len(id) <= 8 {
+		return id
+	}
+	return id[:8]
 }
 
 // Executor interface for task executors
