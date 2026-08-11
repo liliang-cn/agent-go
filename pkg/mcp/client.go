@@ -73,6 +73,20 @@ func NewClient(config *ServerConfig, opts *ClientOptions) (*Client, error) {
 		return nil, fmt.Errorf("server config cannot be nil")
 	}
 
+	// An explicit transport replaces the ServerConfig-driven dial entirely, so
+	// there is nothing in the config left to validate.
+	if opts != nil && opts.Transport != nil {
+		return &Client{
+			config:            config,
+			tools:             make(map[string]*mcp.Tool),
+			resources:         make(map[string]*mcp.Resource),
+			resourceTemplates: make(map[string]*mcp.ResourceTemplate),
+			prompts:           make(map[string]*mcp.Prompt),
+			connected:         false,
+			options:           opts,
+		}, nil
+	}
+
 	// Validate based on server type
 	switch config.Type {
 	case ServerTypeHTTP:
@@ -122,45 +136,73 @@ func (c *Client) Connect(ctx context.Context) error {
 	var transport mcp.Transport
 	var err error
 
+	if c.options != nil && c.options.Transport != nil {
+		transport = c.options.Transport
+	}
+
+	switch {
+	case transport != nil:
+		// Caller supplied the transport; nothing to build.
+	default:
+		transport, err = c.createConfiguredTransport(ctx)
+		if err != nil {
+			return err
+		}
+	}
+
+	return c.connectOver(ctx, transport)
+}
+
+// createConfiguredTransport builds the transport described by the ServerConfig.
+func (c *Client) createConfiguredTransport(ctx context.Context) (mcp.Transport, error) {
+	var transport mcp.Transport
+	var err error
+
 	switch c.config.Type {
 	case ServerTypeHTTP:
 		// Create HTTP transport for HTTP-based MCP servers
 		if c.config.URL == "" {
-			return fmt.Errorf("URL is required for HTTP MCP server %s", c.config.Name)
+			return nil, fmt.Errorf("URL is required for HTTP MCP server %s", c.config.Name)
 		}
 		transport, err = c.createHTTPTransport()
 		if err != nil {
-			return fmt.Errorf("failed to create HTTP transport for %s: %w", c.config.Name, err)
+			return nil, fmt.Errorf("failed to create HTTP transport for %s: %w", c.config.Name, err)
 		}
 	case ServerTypeSSE:
 		if c.config.URL == "" {
-			return fmt.Errorf("URL is required for SSE MCP server %s", c.config.Name)
+			return nil, fmt.Errorf("URL is required for SSE MCP server %s", c.config.Name)
 		}
 		transport, err = c.createSSETransport()
 		if err != nil {
-			return fmt.Errorf("failed to create SSE transport for %s: %w", c.config.Name, err)
+			return nil, fmt.Errorf("failed to create SSE transport for %s: %w", c.config.Name, err)
 		}
 
 	case ServerTypeInProcess:
 		transport, err = c.createInProcessTransport(ctx)
 		if err != nil {
-			return fmt.Errorf("failed to create in-process transport for %s: %w", c.config.Name, err)
+			return nil, fmt.Errorf("failed to create in-process transport for %s: %w", c.config.Name, err)
 		}
 
 	case ServerTypeStdio, "":
 		// Default to stdio for backward compatibility
 		if len(c.config.Command) == 0 {
-			return fmt.Errorf("command is required for stdio MCP server %s", c.config.Name)
+			return nil, fmt.Errorf("command is required for stdio MCP server %s", c.config.Name)
 		}
 		transport, err = c.createStdioTransport(ctx)
 		if err != nil {
-			return fmt.Errorf("failed to create stdio transport for %s: %w", c.config.Name, err)
+			return nil, fmt.Errorf("failed to create stdio transport for %s: %w", c.config.Name, err)
 		}
 
 	default:
-		return fmt.Errorf("unsupported server type: %s", c.config.Type)
+		return nil, fmt.Errorf("unsupported server type: %s", c.config.Type)
 	}
 
+	return transport, nil
+}
+
+// connectOver performs the initialize handshake on a ready transport and loads
+// the server's tools, resources and prompts.
+func (c *Client) connectOver(ctx context.Context, transport mcp.Transport) error {
 	// Create MCP client with implementation info
 	clientImpl := &mcp.Implementation{
 		Name:    "agentgo",
@@ -575,6 +617,7 @@ func (c *Client) CallTool(ctx context.Context, toolName string, arguments map[st
 	return &ToolResult{
 		Success: true,
 		Data:    data,
+		IsError: response.IsError,
 	}, nil
 }
 

@@ -56,6 +56,13 @@ type ClientOptions struct {
 
 	// Roots - filesystem boundaries for server operations
 	Roots []*mcp.Root
+
+	// Transport, when set, is used verbatim instead of building one from the
+	// ServerConfig. It is the seam for an MCP session that is not a subprocess
+	// or a URL — an in-memory pair from mcp.NewInMemoryTransports(), a pipe to
+	// a server hosted in the same binary, a recorded transport in a test.
+	// Connect() still performs the normal initialize handshake over it.
+	Transport mcp.Transport
 }
 
 // Config represents the overall MCP configuration
@@ -278,6 +285,14 @@ type ToolResult struct {
 	Success bool        `json:"success"`
 	Data    interface{} `json:"data"`
 	Error   string      `json:"error,omitempty"`
+
+	// IsError mirrors the MCP spec's CallToolResult.isError: the call itself
+	// round-tripped fine (so Success is true and Data carries the server's
+	// message) but the tool reported a failure. The agent loop deliberately
+	// keeps feeding Data back to the model in that case — a tool saying "no
+	// such file" is information, not a transport failure — so callers that
+	// need a hard failure must check this field themselves.
+	IsError bool `json:"is_error,omitempty"`
 }
 
 // ResourceInfo represents information about an MCP resource
