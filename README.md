@@ -81,9 +81,10 @@ fmt.Println(result.Text())
 ## Pluggable memory backends
 
 The four built-in `store_type` values are `file`, `cortex`, `memoryflow` and
-`graphflow`, plus `cortex-remote` for a shared CortexDB reached over gRPC.
-Anything else is a plugin. There are three seams, in decreasing order of how
-much the framework still does for you:
+`graphflow`. Two plugins ship with the framework: `cortex-remote` for a shared
+CortexDB reached over gRPC, and `mcp-memory` for **any** memory service that
+speaks MCP. Anything else is a plugin too. There are three seams, in decreasing
+order of how much the framework still does for you:
 
 **1. Register a backend by name** (the one to reach for). After registering,
 `store_type = "<name>"` in `agentgo.toml` selects it:
@@ -139,8 +140,66 @@ func (s *MyStore) Get(ctx context.Context, id string) (*domain.Memory, error) { 
 Never fake a method you cannot implement — return
 `domain.ErrMemoryStoreUnsupported` and let the caller degrade.
 
+### `store_type = "mcp-memory"` — any MCP memory service
+
+`mcp-memory` turns any MCP server with memory tools into an agent's memory
+store. It is not written for one product: no tool name and no argument name is
+assumed, so the mapping is the integration.
+
+```toml
+[memory]
+store_type = "mcp-memory"
+dsn        = "https://memory.example.com/mcp"   # or a stdio command line
+
+[memory.options]
+"tool.store"  = "save_memory"
+"tool.search" = "find_memories"
+"tool.get"    = "read_memory"
+"tool.delete" = "forget_memory"
+"tool.list"   = "all_memories"
+
+"arg.store.content" = "text"          # arg.<op>.<canonical> = <remote param>
+"arg.store.tags"    = "labels"
+"arg.search.query"  = "q"
+"arg.search.limit"  = "max_results"
+
+"result.search.items" = "matches"     # dot path to the array ("" = the root)
+"result.search.hit"   = "memory"      # the record inside one hit
+"result.search.score" = "relevance"
+
+"field.id"      = "uuid"              # field.<canonical> = <remote field>
+"field.content" = "text"
+```
+
+Presets exist for convenience — `profile = "cortexdb"` expands to a full mapping
+for CortexDB's MCP tools, and your own options still win. A profile is always
+named explicitly; nothing is ever inferred from a server's tool names. Register
+your own with `store.RegisterMCPMemoryProfile(name, options)`.
+
+Covered: `Store`, `StoreWithScope`, `Get`, `Update`, `Delete`, `SearchByText`,
+`List` (each only when its `tool.<op>` is configured — an unmapped operation
+returns `ErrMemoryStoreUnsupported` rather than pretending). `InitSchema` is a
+no-op; the server owns its storage.
+
+Degraded on purpose: the vector `Search` / `SearchBySession` / `SearchByScope`
+return **empty, not an error**, because an MCP memory tool takes a query string
+and the server owns the embedding model. That makes `memory.Service` fall
+through to `SearchByText`, which is the route that actually reaches the server.
+
+Unsupported: `IncrementAccess`, `GetByType`, `Clear`, `DeleteBySession`,
+`ConfigureBank`, `Reflect`, `AddMentalModel`.
+
+The store opens its own MCP connection, so it does not depend on the agent's MCP
+service being assembled first. If the same server is also listed in
+`mcpServers.json`, the process holds two sessions to it — deduplicate on the
+host side if that matters. Connection is lazy: building an agent never requires
+the memory server to be up. Call `Close()` when you own the store;
+`memory.Service.Close()` does not cascade.
+
 Runnable: `examples/memory-custom-store` (seams 1 and 2 + BaseStore),
-`examples/memory-remote-cortex` (the shared-CortexDB backend, live).
+`examples/memory-remote-cortex` (the shared-CortexDB backend, live),
+`examples/memory-mcp` (the MCP backend against an in-process server, no external
+dependency).
 
 ## Sub-agents are just a tool
 

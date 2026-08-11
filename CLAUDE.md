@@ -234,9 +234,10 @@ built-in, registered and injected backends get identical retrieval/injection
 behaviour. Keep it that way.
 
 Built-in `store_type` values: `file`, `cortex`, `memoryflow`, `graphflow`.
-Shipped plugin: `cortex-remote` (`pkg/store/memory_cortex_remote.go`) — a shared
-CortexDB over gRPC, the "shared brain". It covers Store/StoreWithScope/Get/
-Update/Delete/SearchByText/List; vector `Search`/`SearchByScope`/
+
+Shipped plugin 1: `cortex-remote` (`pkg/store/memory_cortex_remote.go`) — a
+shared CortexDB over gRPC, the "shared brain". It covers Store/StoreWithScope/
+Get/Update/Delete/SearchByText/List; vector `Search`/`SearchByScope`/
 `SearchBySession` **degrade to empty** because the remote surface takes a query
 string, not a vector (the server owns the embedder), and the memory service then
 falls through to `SearchByText`; `IncrementAccess`, `GetByType`, `Clear`,
@@ -244,9 +245,51 @@ falls through to `SearchByText`; `IncrementAccess`, `GetByType`, `Clear`,
 `ErrMemoryStoreUnsupported`. Endpoint and token come from the DSN/options or
 `$CORTEXDB_REMOTE` / `$CORTEXDB_GRPC_TOKEN` — never from code.
 
+Shipped plugin 2: `mcp-memory` (`pkg/store/memory_mcp.go`) — **any** MCP server
+with memory tools, which is why nothing about it is product-shaped.
+
+- **The mapping is the integration.** `MemoryStoreConfig.Options` names every
+  tool (`tool.store` … `tool.list`), every request argument
+  (`arg.<op>.<canonical> = <remote param>`, `"-"` suppresses one), every static
+  extra (`const.<op>.<param>`), every response path (`result.search.items` /
+  `.hit` / `.score`, `result.get.item`, `result.list.items`, `result.store.id` —
+  dot paths, `""` = the root) and every record field
+  (`field.<canonical> = <remote field>`). Only six identity defaults exist
+  (`store.content`, `search.query`, `get.id`, `update.id`, `update.content`,
+  `delete.id`) — every optional argument is opt-in, because sending a parameter
+  a server never declared is how a generic client stops being generic. **There
+  is no synonym table and there must never be one**: `content` vs `text` is a
+  configuration fact, not something to infer from a tool name. `profile =
+  "cortexdb"` (`memory_mcp_profiles.go`) expands to a full preset and explicit
+  options still win — a profile is *named* in config, never detected.
+  `store.RegisterMCPMemoryProfile` registers more.
+- **Its own connection.** The store dials its own `pkg/mcp` client lazily on
+  first use, so it neither depends on assembly order nor blocks agent
+  construction when the server is down. `Close()` tears it down;
+  `memory.Service.Close()` does not cascade, so hold the store if you want
+  deterministic cleanup. A server also listed in `mcpServers.json` will have two
+  sessions in the process — dedupe on the host side (superai's
+  `backend/mcp_memory_route.go` already does).
+- **Honest coverage.** Store/StoreWithScope/Get/Update/Delete/SearchByText/List,
+  each only when its `tool.<op>` is configured; `InitSchema` is a no-op; vector
+  `Search`/`SearchBySession`/`SearchByScope` degrade to empty exactly like
+  cortex-remote; the other seven return `ErrMemoryStoreUnsupported`.
+- **Scope is the trap.** Session/scope are taken *only* from our own metadata
+  blob (`metadata_key`, default `agentgo`, the same blob cortex-remote writes,
+  so both backends share a brain) or from an explicitly mapped
+  `field.session`/`field.scope_type`/`field.scope_id`. A foreign record comes
+  back scope-less → global → visible to every chain. Mapping a server's own
+  bucket name into `SessionID` is exactly the `d0eb578` bug: the store looks
+  healthy, `SearchByText` returns rows, and `RetrieveAndInject` injects nothing
+  because the scope filter drops them all. `TestMCPMemoryForeignRecordsStayGlobal`
+  fails with "0 memories" the moment someone maps it.
+
 The discipline: **an honest `ErrMemoryStoreUnsupported` beats a fake
 implementation.** If a backend cannot do something, say so and let the caller
-degrade.
+degrade. And when you add a memory backend, test it through
+`memory.Service.RetrieveAndInject` with `embedder = nil`, asserting on the
+injected *text* — a store-level Store/Search round trip passes while the agent
+sees nothing.
 
 ### Memory ≠ cache ≠ RAG
 
