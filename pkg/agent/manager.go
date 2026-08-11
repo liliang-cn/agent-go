@@ -173,8 +173,18 @@ func (m *Manager) getOrBuildService(name string) (*Service, error) {
 	m.mu.RLock()
 	svc, exists := m.services[name]
 	m.mu.RUnlock()
-	if exists {
+	if exists && !svc.Closed() {
 		return svc, nil
+	}
+	if exists {
+		// Somebody closed a service the Manager still had cached. Handing it
+		// out again would run turns against a store that is gone, so drop it
+		// and build a fresh one.
+		m.mu.Lock()
+		if cached, still := m.services[name]; still && cached == svc {
+			delete(m.services, name)
+		}
+		m.mu.Unlock()
 	}
 
 	model, err := m.store.GetAgentModelByName(name)
@@ -188,7 +198,7 @@ func (m *Manager) getOrBuildService(name string) (*Service, error) {
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if svc, exists := m.services[name]; exists {
+	if svc, exists := m.services[name]; exists && !svc.Closed() {
 		_ = newSvc.Close()
 		return svc, nil
 	}

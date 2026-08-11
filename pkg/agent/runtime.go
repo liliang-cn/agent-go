@@ -1060,7 +1060,7 @@ func (r *Runtime) persistMessages(messages []domain.Message) {
 		return
 	}
 	if err := r.svc.store.SaveSession(r.session); err != nil {
-		r.svc.logger.Warn("failed to save session history", slog.String("error", err.Error()))
+		r.reportHistoryPersistFailure("session history", err)
 	}
 }
 
@@ -1083,8 +1083,34 @@ func (r *Runtime) persistFinalAnswer(content string) {
 	}
 	r.session.AddMessage(msg)
 	if err := r.svc.store.SaveSession(r.session); err != nil {
-		r.svc.logger.Warn("failed to save the final answer", slog.String("error", err.Error()))
+		r.reportHistoryPersistFailure("the final answer", err)
 	}
+}
+
+// historyPersistFailedMarker labels the event a failed history write emits, so
+// a host can match on it rather than on the prose.
+const historyPersistFailedMarker = "history_persist_failed"
+
+// reportHistoryPersistFailure is what a failed conversation write does now.
+//
+// It used to be a Warn and nothing else, which made losing a conversation the
+// quietest event in the system: the run reported success, the answer reached
+// the screen, and the only trace was a line in a log the user never reads. A
+// write that fails is not a detail of the run — it is the run's output going
+// missing — so it is logged as an error and published on the event stream the
+// same way a failed compaction or a rejected lint is. The run still finishes:
+// the answer is already computed and the caller should get it.
+func (r *Runtime) reportHistoryPersistFailure(what string, err error) {
+	if err == nil {
+		return
+	}
+	msg := fmt.Sprintf("failed to save %s to the conversation store: %v", what, err)
+	if r.svc != nil && r.svc.logger != nil {
+		r.svc.logger.Error(msg,
+			slog.String("session_id", sessionIDOrEmpty(r.session)),
+			slog.String("error", err.Error()))
+	}
+	r.emitMarked(EventTypeError, historyPersistFailedMarker, msg)
 }
 
 func (r *Runtime) completeRun(goal, content string, messages []domain.Message, persistHistory bool) {

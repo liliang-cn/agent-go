@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/config"
@@ -38,6 +39,13 @@ type Service struct {
 	// can wait for them instead of letting them write after the caller has moved
 	// on. See service_background.go.
 	bgWork bgWorkGroup
+
+	// closed records that Close has run, so a borrower still holding this
+	// Service (a scheduled PromptExecutor, a Manager cache entry the host has
+	// already replaced) is refused a new run instead of executing one against a
+	// closed store. closeOnce keeps Close idempotent. See service_close.go.
+	closed    atomic.Bool
+	closeOnce sync.Once
 
 	debug         bool
 	llmService    domain.Generator
@@ -441,6 +449,14 @@ func (s *Service) RunStreamWithOptions(ctx context.Context, goal string, opts ..
 func (s *Service) startRun(ctx context.Context, goal string, cfg *RunConfig) (*Session, <-chan *Event, error) {
 	if cfg == nil {
 		cfg = DefaultRunConfig()
+	}
+
+	// A closed Service has no store to write to. Refusing here — the one entry
+	// point into the loop — is what stops a borrower that outlived the owner
+	// (a schedule still pointed at the service a host rebuilt) from running a
+	// turn whose history nobody can save. See service_close.go.
+	if s.Closed() {
+		return nil, nil, ErrServiceClosed
 	}
 
 	sessionID := strings.TrimSpace(cfg.SessionID)

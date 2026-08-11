@@ -162,6 +162,36 @@ work back up, and persists the task as `cancelled`. `ExecutionResult.Cancelled`
 is true with `Err() == nil`, exactly like `Blocked` — a caller branching on err
 must never mistake its own stop button for a crash.
 
+### A Service owns its store; everything else only borrows the Service
+
+`Service` opens exactly one long-lived resource — the `Store`, and through it
+the `*sql.DB` behind `agentgo.db` — so `Service.Close()` is the only thing
+allowed to release it. A `PromptExecutor` on a timer, a `Manager` cache entry, a
+host's window: all borrowers. A borrower never closes, and must not keep running
+turns through a Service that has been closed.
+
+That second half is enforced now (`pkg/agent/service_close.go`):
+
+- `Close()` is idempotent, marks the service closed *first*, cancels the runs
+  still in flight (bounded by `closeDrainTimeout`), then releases memory + store.
+- `startRun` — the single entry point into the loop — refuses a closed service
+  with `ErrServiceClosed`, so `Run` / `RunStream` / `Ask` / `Chat` / structured
+  output / the prompt scheduler all fail the same way. `Service.Closed()` lets a
+  host ask first.
+- `Manager.getOrBuildService` drops a cached service somebody closed and rebuilds.
+
+Why: a host that rebuilt its agent and left a `PromptScheduler` pointed at the
+old one kept firing schedules against a closed store. The model answered, the
+answer reached the UI, the run reported success — and every write of the
+conversation failed with `sql: database is closed`, logged as a warning and
+dropped. **A failed history write is now an ERROR log plus an `EventTypeError`
+event marked `history_persist_failed`**, not a warning nobody reads.
+
+Same rule one layer down: `scheduler.Storage` mirrors into a canonical
+`AgentGoDB` it *borrows*; `TaskScheduler.Stop` closes the handle
+`TaskScheduler.start` opened. A borrower closing its lender's handle is the same
+bug in miniature.
+
 ### Eval harness
 
 `eval/runner/` is a behavioral eval driver: every YAML in `eval/scenarios/` defines an `input`, an entry agent, optional lint registrations, expected `status`/`final_text_match` constraints, and optional `lint_violations` counts. Two profiles:

@@ -183,17 +183,3 @@ func (s *Service) CompactSession(ctx context.Context, sessionID string) (string,
 
 	return resolveConversationSummary(session), nil
 }
-
-// Close closes the service and releases resources
-func (s *Service) Close() error {
-	// Wait for work a run left running (memory extraction) before closing the
-	// store underneath it.
-	s.waitBackground()
-	// The memory service owns a worker goroutine and a write queue; closing it
-	// drains pending writes rather than leaving them to land after the caller
-	// has torn its directory down.
-	if closer, ok := s.memoryService.(interface{ Close() error }); ok && closer != nil {
-		_ = closer.Close()
-	}
-	return s.store.Close()
-}

@@ -156,6 +156,14 @@ func (e *PromptExecutor) Execute(ctx context.Context, parameters map[string]stri
 	// session binding if a caller needs to.
 	opts := append([]RunOption{WithSessionID(sessionID)}, e.runOpts...)
 	result, err := e.svc.Run(runCtx, prompt, opts...)
+	// A schedule outlives the service it was built on: a host that rebuilds
+	// its agent (new settings, new tools) and forgets to rebuild the scheduler
+	// leaves this executor pointed at a closed Service. Say which mistake it
+	// is — the bare sentinel would arrive as "agent service is closed" with no
+	// hint that the timers are the thing to restart.
+	if errors.Is(err, ErrServiceClosed) {
+		err = fmt.Errorf("%w: this schedule is still bound to a service the host has released — rebuild the scheduler against the current one", ErrServiceClosed)
+	}
 
 	run := PromptRun{
 		Prompt:    prompt,
