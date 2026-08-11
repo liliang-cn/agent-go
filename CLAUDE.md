@@ -193,6 +193,8 @@ degrade.
 ### Memory ≠ cache ≠ RAG
 
 - `pkg/memory` — durable per-conversation/per-task memory, with file-backed `MEMORY.md` and `_session/*.md` writers in `pkg/store/file_memory.go`. Background durable writer.
+
+  Both sides of memory are unconditional, and both have exactly one switch. Retrieval runs on every turn unless `WithMemoryRetrieval(false)`. Auto-store runs on every turn unless `WithMemoryAutoStore(false)`: `storeIfWorthwhileSync` asks the model once (`should_store` + extracted items) and that verdict is final — there is no pre-filter on the goal's wording and no keyword fallback that overrides a "no". Neither side is ever decided by inspecting what the user typed; if you are tempted to skip a call because a request "looks like" a question, the answer is the explicit option, not a prefix list.
 - `pkg/cache` — ephemeral in-process caches.
 - `pkg/rag` — optional document retrieval. **Only active when an embedding model is configured.** A bare AgentGo install (no embeddings) still has Agent + MCP + Memory working — don't gate basic features on RAG availability.
 

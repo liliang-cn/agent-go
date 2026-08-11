@@ -71,6 +71,10 @@ type MemoryConfig struct {
 	// write side keeps recording. Zero value = retrieval on.
 	RetrievalDisabled bool `json:"retrieval_disabled,omitempty"`
 
+	// AutoStoreDisabled turns off the post-run memory extraction pass (the
+	// write side) while retrieval keeps reading. Zero value = auto-store on.
+	AutoStoreDisabled bool `json:"auto_store_disabled,omitempty"`
+
 	// DSN is the connection string handed to a registered store factory.
 	DSN string `json:"dsn,omitempty"`
 	// Options is free-form configuration handed to a registered store factory.
@@ -780,6 +784,7 @@ func (b *Builder) assembleMemoryService(memStore domain.MemoryStore, llmSvc doma
 		memCfg.ReflectThreshold = b.memoryCfg.ReflectThreshold
 	}
 	memCfg.DisableRetrieval = b.memoryCfg.RetrievalDisabled
+	memCfg.DisableAutoStore = b.memoryCfg.AutoStoreDisabled
 
 	memSvc := memory.NewService(memStore, llmSvc, embedSvc, memCfg)
 
@@ -916,6 +921,23 @@ func WithMemoryReflect(threshold int) MemoryOption {
 //		Build()
 func WithMemoryRetrieval(enabled bool) MemoryOption {
 	return func(c *MemoryConfig) { c.RetrievalDisabled = !enabled }
+}
+
+// WithMemoryAutoStore turns the automatic write side on or off. It is on by
+// default: after every run one temperature-0.1 extraction call decides whether
+// the interaction contained anything worth remembering, and the model's verdict
+// is final.
+//
+// Pass false when an embedder wants retrieval without paying for one extraction
+// call per turn — memories then only arrive through explicit MemoryService.Add
+// or the memory tools. This is the only supported way to skip auto-store; the
+// framework never infers it from the wording of a request.
+//
+//	svc, _ := agent.New("assistant").
+//		WithMemory(agent.WithMemoryAutoStore(false)).
+//		Build()
+func WithMemoryAutoStore(enabled bool) MemoryOption {
+	return func(c *MemoryConfig) { c.AutoStoreDisabled = !enabled }
 }
 
 // WithMemoryGraphFlow enables the CortexDB GraphFlow-enhanced memory store.

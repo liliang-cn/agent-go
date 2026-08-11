@@ -34,6 +34,11 @@ type Service struct {
 	// It is an explicit operator choice, never inferred from what the user typed.
 	disableRetrieval bool
 
+	// disableAutoStore turns the automatic write side off entirely (explicit
+	// Add/Store calls still work). Like disableRetrieval it is an operator
+	// choice, never inferred from what the user typed.
+	disableAutoStore bool
+
 	// Hybrid search
 	enableHybrid bool
 	rrfK         float64
@@ -64,6 +69,12 @@ type Config struct {
 	// operators who want the write side without the read-side token cost; the
 	// framework never decides this on its own by inspecting the user's text.
 	DisableRetrieval bool
+
+	// DisableAutoStore skips the post-run memory extraction pass for every
+	// turn. It exists for operators who want the read side without paying for
+	// one extraction call per turn; the framework never decides this on its own
+	// by inspecting the user's text.
+	DisableAutoStore bool
 
 	// Hybrid search
 	EnableHybrid bool
@@ -112,6 +123,7 @@ func NewService(
 		rrfK:             config.RRFK,
 		reflectThreshold: config.ReflectThreshold,
 		disableRetrieval: config.DisableRetrieval,
+		disableAutoStore: config.DisableAutoStore,
 	}
 
 	if config.NoiseFilterConfig != nil {
@@ -152,7 +164,7 @@ func (s *Service) runDurableWorker() {
 }
 
 func (s *Service) EnqueueStoreIfWorthwhile(req *domain.MemoryStoreRequest) bool {
-	if s == nil || req == nil {
+	if s == nil || req == nil || s.disableAutoStore {
 		return false
 	}
 	s.startDurableWorkerIfNeeded()
@@ -329,16 +341,15 @@ func (s *Service) StoreIfWorthwhile(ctx context.Context, req *domain.MemoryStore
 }
 
 func (s *Service) storeIfWorthwhileSync(ctx context.Context, req *domain.MemoryStoreRequest) error {
-	if s.llm == nil {
+	if s.llm == nil || s.disableAutoStore || req == nil {
 		return nil
 	}
 
-	// 1. Triviality check: Don't bother LLM for very short/common greetings
-	cleanGoal := strings.ToLower(strings.TrimSpace(req.TaskGoal))
-	if len(cleanGoal) < 5 || cleanGoal == "hi" || cleanGoal == "hello" || cleanGoal == "hey" {
-		return nil
-	}
-	if shouldSkipAutoStoreForTaskGoal(req.TaskGoal) {
+	// The only pre-filter left is emptiness: an interaction with no goal and no
+	// result has nothing to extract, so there is nothing to ask the model about.
+	// Everything else — is this worth remembering, is it a question, is it a
+	// greeting — is the extraction call's decision, not a phrase table's.
+	if strings.TrimSpace(req.TaskGoal) == "" && strings.TrimSpace(req.TaskResult) == "" {
 		return nil
 	}
 
@@ -376,10 +387,9 @@ func (s *Service) storeIfWorthwhileSync(ctx context.Context, req *domain.MemoryS
 		}
 	}
 
-	if summary == nil || !summary.ShouldStore || len(summary.Memories) == 0 {
-		summary = heuristicMemorySummary(req)
-	}
-
+	// No second opinion: if the extraction call said no, or failed, nothing is
+	// stored. A keyword table that overrode a "no" would be deciding by wording
+	// exactly what the model was just asked to decide.
 	if summary == nil || !summary.ShouldStore || len(summary.Memories) == 0 {
 		return nil
 	}
@@ -1038,193 +1048,6 @@ func mergeUniqueStrings(parts ...[]string) []string {
 		}
 	}
 	return result
-}
-
-func heuristicMemorySummary(req *domain.MemoryStoreRequest) *domain.MemorySummaryResult {
-	if req == nil {
-		return nil
-	}
-
-	content := strings.TrimSpace(req.TaskGoal)
-	if !looksLikeHeuristicMemoryStatement(content) {
-		return nil
-	}
-
-	item := domain.MemoryItem{
-		Type:        heuristicMemoryType(content),
-		Content:     content,
-		Importance:  heuristicMemoryImportance(content),
-		ScopeReason: "Heuristic extraction from a direct declarative dialogue turn.",
-	}
-
-	return &domain.MemorySummaryResult{
-		ShouldStore: true,
-		Memories:    []domain.MemoryItem{item},
-		Reasoning:   "Stored via deterministic dialogue heuristic fallback.",
-	}
-}
-
-func shouldSkipAutoStoreForTaskGoal(goal string) bool {
-	goal = strings.TrimSpace(goal)
-	if goal == "" {
-		return true
-	}
-	if looksLikeExplicitMemorySave(goal) {
-		return false
-	}
-	return looksLikeInformationSeekingQuestion(goal)
-}
-
-func looksLikeExplicitMemorySave(goal string) bool {
-	lower := strings.ToLower(strings.TrimSpace(goal))
-	if lower == "" {
-		return false
-	}
-	prefixes := []string{
-		"remember:",
-		"save to memory",
-		"please remember",
-		"remember that",
-		"store this in memory",
-		"keep this in mind",
-		"记住:",
-		"记住：",
-		"请记住",
-		"帮我记住",
-		"保存到记忆",
-		"存到记忆",
-	}
-	for _, prefix := range prefixes {
-		if strings.HasPrefix(lower, prefix) {
-			return true
-		}
-	}
-	return false
-}
-
-func looksLikeInformationSeekingQuestion(goal string) bool {
-	trimmed := strings.TrimSpace(goal)
-	if trimmed == "" {
-		return false
-	}
-	lower := strings.ToLower(trimmed)
-	if strings.ContainsAny(trimmed, "?\n\r\t") || strings.Contains(trimmed, "？") {
-		return true
-	}
-	prefixes := []string{
-		"what ", "which ", "who ", "where ", "when ", "why ", "how ",
-		"can you", "could you", "would you", "will you",
-		"tell me", "explain", "describe", "list ", "show ", "find ", "search ", "compare ",
-		"什么", "哪个", "谁", "哪里", "什么时候", "为什么", "怎么",
-		"告诉我", "解释", "描述", "列出", "展示", "查找", "搜索", "比较",
-	}
-	for _, prefix := range prefixes {
-		if strings.HasPrefix(lower, prefix) {
-			return true
-		}
-	}
-	return false
-}
-
-func looksLikeHeuristicMemoryStatement(text string) bool {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return false
-	}
-
-	lower := strings.ToLower(text)
-	if len([]rune(text)) < 8 || len([]rune(text)) > 240 {
-		return false
-	}
-	if strings.ContainsAny(text, "?\n\r\t") || strings.ContainsAny(text, "？") {
-		return false
-	}
-
-	commandPrefixes := []string{
-		"remember:", "save to memory", "what ", "why ", "how ", "who ", "when ", "where ",
-		"can you", "could you", "please ", "list ", "show ", "find ", "search ", "explain ",
-		"tell me", "help ", "summarize ", "compare ", "write ", "generate ",
-		"请", "帮我", "告诉我", "解释", "总结", "比较", "搜索", "查一下", "找一下", "列出",
-	}
-	for _, prefix := range commandPrefixes {
-		if strings.HasPrefix(lower, prefix) {
-			return false
-		}
-	}
-
-	acknowledgements := []string{
-		"ok", "okay", "thanks", "thank you", "got it", "understood",
-		"好的", "谢谢", "收到", "明白了",
-	}
-	for _, token := range acknowledgements {
-		if lower == token {
-			return false
-		}
-	}
-
-	return true
-}
-
-func heuristicMemoryType(text string) domain.MemoryType {
-	lower := strings.ToLower(text)
-
-	preferenceKeywords := []string{
-		"prefer", "prefers", "like", "likes", "love", "loves", "favorite", "enjoy", "enjoys",
-		"dislike", "dislikes", "hate", "hates",
-		"喜欢", "偏好", "更喜欢", "最喜欢", "不喜欢", "讨厌",
-	}
-	for _, keyword := range preferenceKeywords {
-		if strings.Contains(lower, keyword) {
-			return domain.MemoryTypePreference
-		}
-	}
-
-	patternKeywords := []string{
-		"always", "usually", "typically", "tends to", "often", "generally",
-		"总是", "通常", "经常", "往往",
-	}
-	for _, keyword := range patternKeywords {
-		if strings.Contains(lower, keyword) {
-			return domain.MemoryTypePattern
-		}
-	}
-
-	skillKeywords := []string{
-		"skilled at", "good at", "experienced in", "can build", "can write", "can implement",
-		"擅长", "会", "能够", "熟悉",
-	}
-	for _, keyword := range skillKeywords {
-		if strings.Contains(lower, keyword) {
-			return domain.MemoryTypeSkill
-		}
-	}
-
-	contextKeywords := []string{
-		"currently", "right now", "at the moment", "working on", "in this session",
-		"目前", "现在", "正在", "这次对话", "当前",
-	}
-	for _, keyword := range contextKeywords {
-		if strings.Contains(lower, keyword) {
-			return domain.MemoryTypeContext
-		}
-	}
-
-	return domain.MemoryTypeFact
-}
-
-func heuristicMemoryImportance(text string) float64 {
-	switch heuristicMemoryType(text) {
-	case domain.MemoryTypePreference:
-		return 0.9
-	case domain.MemoryTypeSkill:
-		return 0.85
-	case domain.MemoryTypePattern:
-		return 0.8
-	case domain.MemoryTypeContext:
-		return 0.7
-	default:
-		return 0.75
-	}
 }
 
 func scopeHierarchyLevel(scopeType domain.MemoryScopeType) int {

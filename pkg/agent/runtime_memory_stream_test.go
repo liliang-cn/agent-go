@@ -36,8 +36,14 @@ func (s *streamMemorySaveTestLLM) GenerateStructured(ctx context.Context, prompt
 		}), nil
 	case schemaHasProperty(schema, "should_store"):
 		return structuredJSON(map[string]interface{}{
-			"should_store": false,
-			"memories":     []map[string]interface{}{},
+			"should_store": true,
+			"memories": []map[string]interface{}{
+				{
+					"type":       "fact",
+					"content":    "明天下午17：00去万达广场吃饭。",
+					"importance": 0.85,
+				},
+			},
 		}), nil
 	default:
 		return structuredJSON(map[string]interface{}{}), nil

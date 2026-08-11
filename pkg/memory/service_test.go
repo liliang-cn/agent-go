@@ -552,7 +552,7 @@ func TestService_StoreIfWorthwhile(t *testing.T) {
 		store.AssertNotCalled(t, "Store")
 	})
 
-	t.Run("Heuristic fallback stores direct declarative preference", func(t *testing.T) {
+	t.Run("A no from the extraction call is final", func(t *testing.T) {
 		isolatedStore := new(MockMemoryStore)
 		isolatedLLM := new(MockGenerator)
 		isolatedEmbedder := new(MockEmbedder)
@@ -569,23 +569,16 @@ func TestService_StoreIfWorthwhile(t *testing.T) {
 			Raw:   `{"should_store": false, "memories": []}`,
 			Valid: true,
 		}, nil)
-		isolatedEmbedder.On("Embed", ctx, "Alice prefers coffee over tea.").Return([]float64{0.9, 0.1, 0.2}, nil)
-		isolatedStore.On("Store", ctx, mock.MatchedBy(func(m *domain.Memory) bool {
-			return m.Content == "Alice prefers coffee over tea." &&
-				m.Type == domain.MemoryTypePreference &&
-				m.ScopeType == domain.MemoryScopeAgent &&
-				m.ScopeID == "Responder"
-		})).Return(nil)
 
 		err := isolatedService.StoreIfWorthwhile(ctx, req)
 
 		assert.NoError(t, err)
 		isolatedLLM.AssertExpectations(t)
-		isolatedEmbedder.AssertExpectations(t)
-		isolatedStore.AssertExpectations(t)
+		isolatedStore.AssertNotCalled(t, "Store")
+		isolatedEmbedder.AssertNotCalled(t, "Embed")
 	})
 
-	t.Run("Heuristic fallback does not store questions", func(t *testing.T) {
+	t.Run("Question-shaped goals still reach the extraction call", func(t *testing.T) {
 		isolatedStore := new(MockMemoryStore)
 		isolatedLLM := new(MockGenerator)
 		isolatedEmbedder := new(MockEmbedder)
@@ -597,15 +590,20 @@ func TestService_StoreIfWorthwhile(t *testing.T) {
 			TaskResult: "I don't know yet.",
 		}
 
+		isolatedLLM.On("GenerateStructured", ctx, mock.Anything, mock.Anything, mock.Anything).Return(&domain.StructuredResult{
+			Raw:   `{"should_store": false, "memories": []}`,
+			Valid: true,
+		}, nil)
+
 		err := isolatedService.StoreIfWorthwhile(ctx, req)
 
 		assert.NoError(t, err)
-		isolatedLLM.AssertNotCalled(t, "GenerateStructured")
+		isolatedLLM.AssertCalled(t, "GenerateStructured", ctx, mock.Anything, mock.Anything, mock.Anything)
 		isolatedStore.AssertNotCalled(t, "Store")
 		isolatedEmbedder.AssertNotCalled(t, "Embed")
 	})
 
-	t.Run("Question-like task goals never auto-store even if LLM says yes", func(t *testing.T) {
+	t.Run("A question that carries a fact is stored when the model says so", func(t *testing.T) {
 		isolatedStore := new(MockMemoryStore)
 		isolatedLLM := new(MockGenerator)
 		isolatedEmbedder := new(MockEmbedder)
@@ -613,16 +611,26 @@ func TestService_StoreIfWorthwhile(t *testing.T) {
 
 		req := &domain.MemoryStoreRequest{
 			SessionID:  "session-question-2",
-			TaskGoal:   "What is my favorite snack? Reply with only the snack.",
-			TaskResult: "cashew-7714",
+			AgentID:    "Responder",
+			TaskGoal:   "How do I get my cashew allergy noted on the catering form?",
+			TaskResult: "Put it in the dietary notes field; I have recorded that you are allergic to cashews.",
 		}
+
+		isolatedLLM.On("GenerateStructured", ctx, mock.Anything, mock.Anything, mock.Anything).Return(&domain.StructuredResult{
+			Raw:   `{"should_store": true, "memories": [{"type": "fact", "content": "The user is allergic to cashews.", "importance": 0.9}]}`,
+			Valid: true,
+		}, nil)
+		isolatedEmbedder.On("Embed", ctx, "The user is allergic to cashews.").Return([]float64{0.5, 0.4, 0.3}, nil)
+		isolatedStore.On("Store", ctx, mock.MatchedBy(func(m *domain.Memory) bool {
+			return m.Content == "The user is allergic to cashews."
+		})).Return(nil)
 
 		err := isolatedService.StoreIfWorthwhile(ctx, req)
 
 		assert.NoError(t, err)
-		isolatedLLM.AssertNotCalled(t, "GenerateStructured")
-		isolatedStore.AssertNotCalled(t, "Store")
-		isolatedEmbedder.AssertNotCalled(t, "Embed")
+		isolatedLLM.AssertExpectations(t)
+		isolatedEmbedder.AssertExpectations(t)
+		isolatedStore.AssertExpectations(t)
 	})
 
 	t.Run("Preference memories default to agent scope when agent context exists", func(t *testing.T) {
