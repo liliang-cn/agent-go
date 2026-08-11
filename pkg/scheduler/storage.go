@@ -42,7 +42,13 @@ func (nt *NullTime) Scan(value interface{}) error {
 
 // Storage handles task persistence in SQLite
 type Storage struct {
-	db        *sql.DB
+	db *sql.DB
+	// canonical is borrowed, never owned: it is where scheduler tasks are
+	// mirrored into AgentGo's canonical tasks table, and whoever opened that
+	// handle is the one that closes it (see TaskScheduler.Stop). A Storage
+	// that closed a handle it did not open would kill a database its lender is
+	// still writing to — which is how a scheduled run ends up reporting
+	// success while its history goes nowhere.
 	canonical *storepkg.AgentGoDB
 	mu        sync.Mutex
 }
@@ -93,6 +99,11 @@ func NewStorage(dbPath string) (*Storage, error) {
 	return storage, nil
 }
 
+// NewStorageWithCanonical opens the scheduler store and mirrors its tasks into
+// an existing canonical AgentGoDB.
+//
+// The canonical handle is borrowed. Close releases only the store this
+// constructor opened; closing the caller's handle is the caller's business.
 func NewStorageWithCanonical(dbPath string, canonical *storepkg.AgentGoDB) (*Storage, error) {
 	storage, err := NewStorage(dbPath)
 	if err != nil {
@@ -102,11 +113,9 @@ func NewStorageWithCanonical(dbPath string, canonical *storepkg.AgentGoDB) (*Sto
 	return storage, nil
 }
 
-// Close closes the database connection
+// Close closes the database connection this Storage opened. The canonical
+// handle it mirrors into belongs to whoever passed it in and is left alone.
 func (s *Storage) Close() error {
-	if s.canonical != nil {
-		_ = s.canonical.Close()
-	}
 	return s.db.Close()
 }
 

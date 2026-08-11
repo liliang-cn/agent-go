@@ -14,8 +14,12 @@ import (
 
 // TaskScheduler implements the Scheduler interface
 type TaskScheduler struct {
-	config     *SchedulerConfig
-	storage    *Storage
+	config  *SchedulerConfig
+	storage *Storage
+	// canonical is the AgentGoDB handle start() opened so scheduler tasks are
+	// mirrored into AgentGo's canonical tasks table. Opened here, closed here:
+	// the Storage that writes through it only borrows it.
+	canonical  *storepkg.AgentGoDB
 	cronParser *CronParser
 	executors  map[TaskType]Executor
 
@@ -107,16 +111,21 @@ func (s *TaskScheduler) start(execute bool) error {
 		return fmt.Errorf("scheduler is already running")
 	}
 
-	// Initialize storage
+	// Initialize storage. The canonical handle is opened here and therefore
+	// closed here (Stop), not by the Storage that borrows it.
 	var canonical *storepkg.AgentGoDB
 	if s.config.CanonicalDatabasePath != "" {
 		canonical, _ = storepkg.NewAgentGoDB(s.config.CanonicalDatabasePath)
 	}
 	storage, err := NewStorageWithCanonical(s.config.DatabasePath, canonical)
 	if err != nil {
+		if canonical != nil {
+			_ = canonical.Close()
+		}
 		return fmt.Errorf("failed to initialize storage: %w", err)
 	}
 	s.storage = storage
+	s.canonical = canonical
 
 	// Register default executors
 	s.registerDefaultExecutors()
@@ -163,11 +172,18 @@ func (s *TaskScheduler) Stop() error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// Close storage
+	// Close storage, then the canonical handle start() opened for it — in that
+	// order, so nothing mirrors a task into a database that is already gone.
 	if s.storage != nil {
 		if err := s.storage.Close(); err != nil {
 			log.Printf("Error closing storage: %v", err)
 		}
+	}
+	if s.canonical != nil {
+		if err := s.canonical.Close(); err != nil {
+			log.Printf("Error closing canonical database: %v", err)
+		}
+		s.canonical = nil
 	}
 
 	log.Println("Task scheduler stopped")

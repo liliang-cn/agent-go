@@ -136,6 +136,26 @@ func TestStorageMirrorsCanonicalTasks(t *testing.T) {
 	assert.Equal(t, "running", string(canonicalTask.Status))
 }
 
+// TestStorageDoesNotCloseTheCanonicalHandleItBorrows pins the ownership rule:
+// NewStorageWithCanonical takes a handle it did not open, so Close must leave
+// it alone. A borrower that closes its lender's database turns every later
+// write by the lender into "sql: database is closed" — the exact shape of the
+// bug that made scheduled runs lose their history.
+func TestStorageDoesNotCloseTheCanonicalHandleItBorrows(t *testing.T) {
+	tempDir := t.TempDir()
+	canonical, err := storepkg.NewAgentGoDB(filepath.Join(tempDir, "agentgo.db"))
+	require.NoError(t, err)
+	defer canonical.Close()
+
+	storage, err := NewStorageWithCanonical(filepath.Join(tempDir, "scheduler.db"), canonical)
+	require.NoError(t, err)
+	require.NoError(t, storage.Close())
+
+	// The lender is still usable.
+	_, err = canonical.ListTasks(10)
+	require.NoError(t, err, "Storage.Close closed a canonical handle it only borrowed")
+}
+
 func TestStorageExecutionOperations(t *testing.T) {
 	tempDir := t.TempDir()
 	storage, err := NewStorage(tempDir + "/test.db")
