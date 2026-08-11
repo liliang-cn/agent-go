@@ -312,8 +312,13 @@ func (s *Service) RetrieveAndInjectWithContextAndLogic(ctx context.Context, quer
 		allMemories = s.mergeAndRank(allMemories)
 	}
 
-	// 6b. Query-aware filtering for relation-heavy schedule recall.
-	allMemories = FilterMemoriesForQuery(query, allMemories)
+	// There is deliberately no step between ranking and the cap that re-reads the
+	// query. FilterMemoriesForQuery used to sit here and drop ranked results when
+	// the request contained "安排"/"计划"/"plan" — it dropped everything for
+	// "帮我做一个学习计划", and "…plan for the api service" matched the personal
+	// branch because "api " contains "i ". The scope chain, the noise filter, the
+	// scorer and MaxMemories already narrow this list; guessing intent from
+	// wording only ever removed memories the agent should have seen.
 
 	// 7. Limit results
 	if len(allMemories) > s.maxMemories {

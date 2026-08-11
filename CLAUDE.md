@@ -132,6 +132,8 @@ type RunConstraints struct {
 
 This replaced four hardcoded phrase tables (`noToolInstructionPhrases`, delivery `GoalMarkers`, `fileOutputIntentPatterns`, the auto-memory hook). They are the same disease as the deleted `isExplicitMemoryRecallQuery`: a list only enforces the languages someone thought to enumerate, and silently does nothing for everyone else. If you find yourself adding a phrase to a list to change runtime behavior, that is the signal to extract a constraint instead.
 
+**The input side is now clear: no hardcoded phrase or regexp table anywhere in the framework reads the user's request and changes behavior.** (Tokenizing a query to *rank* something — `service_tools.go` tool search, `pkg/search` BM25 — is relevance, not a verdict, and is fine. Matching the *model's* output — `planningEndingPatterns`, `looksLikeRefusalText` — is the output side, which is where deterministic checks belong.) Seven tables were removed — the four above, plus `pkg/memory`'s `QueryClassifier` (retrieval gate), `shouldSkipAutoStoreForTaskGoal` and friends (auto-store gate), and `FilterMemoriesForQuery`/`detectRecallFilterMode` (post-retrieval schedule filter). Every remaining regexp in `pkg/memory` reads *stored memory content* — noise filtering in `filter.go`, event extraction in `structured_schedule.go` — which is a different thing: content the model wrote, not wording the user chose. Adding a new list that inspects a goal, a query or a prompt is a regression, not a feature; the two supported ways to change behavior from the request are a structured constraint extraction and an explicit option.
+
 Resolve constraints in the **loop**, never in a helper that only sees a goal string — that mistake is why the gate fired for `Run` but not `Ask`.
 
 ### Cancellation is a registry, and it is an outcome
@@ -221,6 +223,8 @@ degrade.
 - `pkg/memory` — durable per-conversation/per-task memory, with file-backed `MEMORY.md` and `_session/*.md` writers in `pkg/store/file_memory.go`. Background durable writer.
 
   Both sides of memory are unconditional, and both have exactly one switch. Retrieval runs on every turn unless `WithMemoryRetrieval(false)`. Auto-store runs on every turn unless `WithMemoryAutoStore(false)`: `storeIfWorthwhileSync` asks the model once (`should_store` + extracted items) and that verdict is final — there is no pre-filter on the goal's wording and no keyword fallback that overrides a "no". Neither side is ever decided by inspecting what the user typed; if you are tempted to skip a call because a request "looks like" a question, the answer is the explicit option, not a prefix list.
+
+  Nothing narrows the retrieved set after ranking either. `FilterMemoriesForQuery` used to sit between the scorer and the `MaxMemories` cap and drop ranked memories whenever the query contained `安排`/`计划`/`plan`/`agenda` — it returned *nothing* for `帮我做一个学习计划`, and `…plan for the api service` took its "personal schedule" branch because `api ` contains `i `. It is gone. `pkg/memory/structured_schedule.go` keeps only the content-side half: it reads stored memory text to derive event metadata and to apply later corrections to earlier events, and it never sees the query.
 - `pkg/cache` — ephemeral in-process caches.
 - `pkg/rag` — optional document retrieval. **Only active when an embedding model is configured.** A bare AgentGo install (no embeddings) still has Agent + MCP + Memory working — don't gate basic features on RAG availability.
 

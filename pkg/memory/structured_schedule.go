@@ -1,9 +1,13 @@
+// Everything in this file reads *memory content* — it extracts time expressions,
+// subjects, participants and correction hints out of what was stored, and it
+// applies later corrections to earlier events. None of it may look at the user's
+// query: deciding which retrieved memories the user "meant" from the wording of
+// the request is the mistake this framework has now removed seven times.
 package memory
 
 import (
 	"context"
 	"regexp"
-	"slices"
 	"strings"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
@@ -242,143 +246,6 @@ func applyUserInvolvement(text string, event *domain.MemoryEventMetadata) {
 		event.UserRole = domain.MemoryUserRoleOwner
 		event.RelevanceToUser = domain.MemoryEventRelevanceDirect
 	}
-}
-
-// FilterMemoriesForQuery applies relation-aware schedule filtering to retrieved memories.
-func FilterMemoriesForQuery(query string, memories []*domain.MemoryWithScore) []*domain.MemoryWithScore {
-	if len(memories) == 0 {
-		return memories
-	}
-
-	mode, targetProfile := detectRecallFilterMode(query, memories)
-	if mode == recallFilterModeNone {
-		return memories
-	}
-
-	filtered := make([]*domain.MemoryWithScore, 0, len(memories))
-	for _, memory := range memories {
-		if memory == nil || memory.Memory == nil {
-			continue
-		}
-
-		event := storedOrDerivedEventMetadata(memory.Memory)
-		switch mode {
-		case recallFilterModeTargetProfile:
-			if targetProfile == "" {
-				continue
-			}
-			if event != nil && eventHasProfile(event, targetProfile) {
-				filtered = append(filtered, memory)
-				continue
-			}
-			if strings.Contains(strings.ToLower(memory.Content), strings.ToLower(targetProfile)) {
-				filtered = append(filtered, memory)
-			}
-		case recallFilterModePersonalSchedule:
-			if event == nil {
-				filtered = append(filtered, memory)
-				continue
-			}
-			if event.RequiresUser ||
-				event.UserRole == domain.MemoryUserRoleOwner ||
-				event.UserRole == domain.MemoryUserRoleParticipant ||
-				event.RelevanceToUser == domain.MemoryEventRelevanceDirect {
-				filtered = append(filtered, memory)
-			}
-		case recallFilterModeHouseholdSchedule:
-			filtered = append(filtered, memory)
-		}
-	}
-
-	return filtered
-}
-
-type recallFilterMode int
-
-const (
-	recallFilterModeNone recallFilterMode = iota
-	recallFilterModePersonalSchedule
-	recallFilterModeHouseholdSchedule
-	recallFilterModeTargetProfile
-)
-
-func detectRecallFilterMode(query string, memories []*domain.MemoryWithScore) (recallFilterMode, string) {
-	lower := strings.ToLower(strings.TrimSpace(query))
-	if lower == "" {
-		return recallFilterModeNone, ""
-	}
-	if !containsAny(lower, []string{
-		"安排", "计划", "日程", "会议", "待办", "todo", "schedule", "plan", "agenda",
-	}) {
-		return recallFilterModeNone, ""
-	}
-	if containsAny(lower, []string{"家里", "家中", "family", "household", "我们家"}) {
-		return recallFilterModeHouseholdSchedule, ""
-	}
-
-	profile := detectTargetProfile(query, memories)
-	if profile != "" && !isUserSelfReference(profile) {
-		return recallFilterModeTargetProfile, profile
-	}
-	if containsAny(lower, []string{"我", "我的", "my ", " me ", "i "}) {
-		return recallFilterModePersonalSchedule, ""
-	}
-
-	return recallFilterModeNone, ""
-}
-
-func detectTargetProfile(query string, memories []*domain.MemoryWithScore) string {
-	lowerQuery := strings.ToLower(query)
-	profiles := collectKnownProfiles(memories)
-	for _, profile := range profiles {
-		if strings.Contains(lowerQuery, strings.ToLower(profile)) {
-			return profile
-		}
-	}
-	return ""
-}
-
-func collectKnownProfiles(memories []*domain.MemoryWithScore) []string {
-	var profiles []string
-	for _, memory := range memories {
-		if memory == nil || memory.Memory == nil {
-			continue
-		}
-		event := storedOrDerivedEventMetadata(memory.Memory)
-		if event == nil {
-			continue
-		}
-		profiles = append(profiles, event.SubjectProfiles...)
-		profiles = append(profiles, event.ParticipantProfiles...)
-		profiles = append(profiles, event.OrganizerProfiles...)
-	}
-	profiles = dedupeStrings(profiles)
-	slices.SortFunc(profiles, func(a, b string) int {
-		switch {
-		case len(a) > len(b):
-			return -1
-		case len(a) < len(b):
-			return 1
-		default:
-			return strings.Compare(a, b)
-		}
-	})
-	return profiles
-}
-
-func eventHasProfile(event *domain.MemoryEventMetadata, profile string) bool {
-	profile = strings.ToLower(strings.TrimSpace(profile))
-	if event == nil || profile == "" {
-		return false
-	}
-	for _, group := range [][]string{event.SubjectProfiles, event.ParticipantProfiles, event.OrganizerProfiles} {
-		for _, candidate := range group {
-			if strings.EqualFold(strings.TrimSpace(candidate), profile) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func normalizeStructuredText(text string) string {
