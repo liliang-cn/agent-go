@@ -100,6 +100,15 @@ type MemoryConfig struct {
 	StoreType   MemoryStoreType `mapstructure:"store_type"`
 	MemoryPath  string          `mapstructure:"memory_path"`
 	MaxMemories int             `mapstructure:"max_memories"`
+
+	// DSN is the connection string for networked memory backends registered
+	// through agent.RegisterMemoryStore. Ignored by the built-in store types.
+	DSN string `mapstructure:"dsn"`
+
+	// Options is free-form configuration handed to a registered memory store
+	// factory (`[memory.options]` in agentgo.toml). Never put secrets here that
+	// you would not want on disk — prefer the backend's environment fallback.
+	Options map[string]string `mapstructure:"options"`
 }
 
 type CacheConfig struct {

@@ -58,12 +58,21 @@ type MCPConfig struct {
 
 // MemoryConfig holds Memory configuration
 type MemoryConfig struct {
-	Enabled          bool     `json:"enabled"`
-	MemoryPath       string   `json:"memory_path,omitempty"`
-	StoreType        string   `json:"store_type,omitempty"`        // "file", "cortex"
+	Enabled    bool   `json:"enabled"`
+	MemoryPath string `json:"memory_path,omitempty"`
+	// StoreType selects the backend: one of the built-ins ("file", "cortex",
+	// "memoryflow", "graphflow") or any name passed to RegisterMemoryStore.
+	StoreType        string   `json:"store_type,omitempty"`
 	ReflectThreshold int      `json:"reflect_threshold,omitempty"` // auto-reflect after N new facts (0 = disabled)
 	Mission          string   `json:"mission,omitempty"`           // MemoryBank mission statement
 	Directives       []string `json:"directives,omitempty"`        // MemoryBank hard directives
+
+	// DSN is the connection string handed to a registered store factory.
+	DSN string `json:"dsn,omitempty"`
+	// Options is free-form configuration handed to a registered store factory.
+	Options map[string]string `json:"options,omitempty"`
+	// Store, when set, is used verbatim: no factory, no registry lookup.
+	Store domain.MemoryStore `json:"-"`
 }
 
 // SkillsConfig holds Skills configuration
@@ -99,6 +108,7 @@ type Builder struct {
 	mcpCfgPaths       []string
 	enableMemory      bool
 	memoryCfg         MemoryConfig
+	memoryService     domain.MemoryService
 	registerGraphTool bool
 	enableSkills      bool
 	skillsPaths       []string
@@ -399,7 +409,12 @@ func (b *Builder) build() (*Service, error) {
 	// Build Memory
 	var memSvc domain.MemoryService
 	var memoryStoreType string
-	if b.enableMemory {
+	switch {
+	case b.memoryService != nil:
+		// Escape hatch: the embedder owns retrieval and injection too.
+		memSvc = b.memoryService
+		memoryStoreType = firstNonEmptyTaskString(b.memoryCfg.StoreType, "custom")
+	case b.enableMemory:
 		memSvc, memoryStoreType, err = b.buildMemoryService(agentgoCfg, embedSvc, llmSvc)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create memory service: %w", err)
@@ -653,6 +668,15 @@ func (b *Builder) buildMemoryService(agentgoCfg *config.Config, embedSvc domain.
 		log.Printf("[DEBUG] Memory: storeType=%s, memPath=%s, embedSvc=%v", storeType, memPath, embedSvc != nil)
 	}
 
+	// Seam 1: an injected instance wins over every kind of lookup.
+	if b.memoryCfg.Store != nil {
+		memStore = b.memoryCfg.Store
+		if storeType == "" {
+			storeType = config.MemoryStoreType("custom")
+		}
+		return b.assembleMemoryService(memStore, llmSvc, embedSvc, storeType)
+	}
+
 	switch storeType {
 	case config.MemoryStoreTypeFile:
 		memStore, err = store.NewFileMemoryStore(memPath)
@@ -684,9 +708,69 @@ func (b *Builder) buildMemoryService(agentgoCfg *config.Config, embedSvc domain.
 			return nil, "", fmt.Errorf("failed to init graphflow memory schema: %w", err)
 		}
 	default:
-		return nil, "", fmt.Errorf("unsupported memory store type: %s", storeType)
+		// Seam 2: not a built-in — ask the plugin registry. The switch above
+		// always wins, so a plugin can never shadow a built-in store type.
+		factory, ok := domain.LookupMemoryStore(storeType.String())
+		if !ok {
+			return nil, "", fmt.Errorf(
+				"unsupported memory store type: %s (built-in: file, cortex, memoryflow, graphflow; registered: %v)",
+				storeType, domain.RegisteredMemoryStores())
+		}
+		memStore, err = factory(domain.MemoryStoreConfig{
+			Name:      storeType.String(),
+			Path:      memPath,
+			DSN:       b.resolveMemoryDSN(agentgoCfg),
+			Options:   b.resolveMemoryOptions(agentgoCfg),
+			Embedder:  embedSvc,
+			Generator: llmSvc,
+		})
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to create %q memory store: %w", storeType, err)
+		}
+		if memStore == nil {
+			return nil, "", fmt.Errorf("memory store factory %q returned a nil store", storeType)
+		}
+		// A registered store owns its own bootstrap; an unsupported InitSchema
+		// is a legitimate answer (a remote backend's schema is not ours).
+		if err := memStore.InitSchema(context.Background()); err != nil && !domain.IsMemoryStoreUnsupported(err) {
+			return nil, "", fmt.Errorf("failed to init %q memory schema: %w", storeType, err)
+		}
 	}
 
+	return b.assembleMemoryService(memStore, llmSvc, embedSvc, storeType)
+}
+
+// resolveMemoryDSN prefers the builder option, then agentgo.toml.
+func (b *Builder) resolveMemoryDSN(agentgoCfg *config.Config) string {
+	if b.memoryCfg.DSN != "" {
+		return b.memoryCfg.DSN
+	}
+	if agentgoCfg != nil {
+		return agentgoCfg.Memory.DSN
+	}
+	return ""
+}
+
+// resolveMemoryOptions merges agentgo.toml `[memory.options]` with the builder
+// options; the builder wins on conflict.
+func (b *Builder) resolveMemoryOptions(agentgoCfg *config.Config) map[string]string {
+	merged := map[string]string{}
+	if agentgoCfg != nil {
+		for k, v := range agentgoCfg.Memory.Options {
+			merged[k] = v
+		}
+	}
+	for k, v := range b.memoryCfg.Options {
+		merged[k] = v
+	}
+	return merged
+}
+
+// assembleMemoryService wraps a resolved store in the standard memory service
+// and seeds the MemoryBank directives. Every path through buildMemoryService
+// ends here, so injected, registered and built-in stores get identical
+// retrieval/injection behaviour.
+func (b *Builder) assembleMemoryService(memStore domain.MemoryStore, llmSvc domain.Generator, embedSvc domain.Embedder, storeType config.MemoryStoreType) (domain.MemoryService, string, error) {
 	memCfg := memory.DefaultConfig()
 	if b.memoryCfg.ReflectThreshold > 0 {
 		memCfg.ReflectThreshold = b.memoryCfg.ReflectThreshold
@@ -817,6 +901,45 @@ func WithMemoryReflect(threshold int) MemoryOption {
 // WithMemoryGraphFlow enables the CortexDB GraphFlow-enhanced memory store.
 func WithMemoryGraphFlow() MemoryOption {
 	return func(c *MemoryConfig) { c.StoreType = "graphflow" }
+}
+
+// WithMemoryDSN sets the connection string handed to a registered memory store
+// factory (see RegisterMemoryStore). Built-in store types ignore it.
+func WithMemoryDSN(dsn string) MemoryOption {
+	return func(c *MemoryConfig) { c.DSN = dsn }
+}
+
+// WithMemoryOption sets one free-form option for a registered memory store
+// factory. Repeatable.
+func WithMemoryOption(key, value string) MemoryOption {
+	return func(c *MemoryConfig) {
+		if c.Options == nil {
+			c.Options = map[string]string{}
+		}
+		c.Options[key] = value
+	}
+}
+
+// WithMemoryOptions merges free-form options for a registered memory store
+// factory.
+func WithMemoryOptions(options map[string]string) MemoryOption {
+	return func(c *MemoryConfig) {
+		if c.Options == nil {
+			c.Options = map[string]string{}
+		}
+		for k, v := range options {
+			c.Options[k] = v
+		}
+	}
+}
+
+// WithMemoryStore injects an already-constructed domain.MemoryStore. It wins
+// over StoreType: no registry lookup, no factory, no path resolution. Use it
+// when the embedder owns the backend's lifecycle.
+//
+//	svc, _ := agent.New("assistant").WithMemory(agent.WithMemoryStore(myStore)).Build()
+func WithMemoryStore(store domain.MemoryStore) MemoryOption {
+	return func(c *MemoryConfig) { c.Store = store }
 }
 
 // WithMemoryBank sets the agent's long-term mission statement and hard directives.

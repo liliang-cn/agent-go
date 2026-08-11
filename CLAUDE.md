@@ -147,6 +147,49 @@ When a harness change (lint, prompt cut, tool-prep tweak) lands, run `make eval-
 
 Skills aren't all dumped into the prompt. The runtime surfaces a small relevant subset via `<skill-discovery>` reminders and activates matching `skill_*` tools per turn. When adding a skill, fill in `when_to_use` and `paths` in the SKILL.md frontmatter — that's what `ResolveForModel(...)` ranks on.
 
+### Memory backends are pluggable — don't grow the switch
+
+`buildMemoryService` (`pkg/agent/builder.go`) resolves `store_type` through a
+switch of the four built-ins and then falls back to a registry. **A new backend
+is a registration, not a new `case`.** The seams, in priority order:
+
+1. `agent.RegisterMemoryStore(name, factory)` — `pkg/agent/memory_registry.go`,
+   backed by `pkg/domain/memory_store_plugin.go`. The registry lives in
+   `pkg/domain` because it is the only package both `pkg/config` (which must
+   accept a plugin name in `MemoryStoreType.Valid()`) and `pkg/store` (which
+   self-registers `cortex-remote` in `init()`) can import — `pkg/config` imports
+   `pkg/store`, and `pkg/memory` imports `pkg/store`, so neither could host it.
+   The factory receives `domain.MemoryStoreConfig{Name, Path, DSN, Options,
+   Embedder, Generator}`; `WithMemoryDSN` / `WithMemoryOption(s)` and
+   agentgo.toml's `[memory] dsn` / `[memory.options]` feed it.
+   Registration is strict: blank name, nil factory, built-in name, or duplicate
+   is an error. `UnregisterMemoryStore` replaces one deliberately.
+2. `WithMemoryStore(domain.MemoryStore)` — inject an instance; wins over
+   `store_type` entirely.
+3. `memory.BaseStore` (= `domain.UnsupportedMemoryStore`) — embeddable base
+   whose eighteen methods all return `domain.ErrMemoryStoreUnsupported`.
+4. `Builder.WithMemoryService(domain.MemoryService)` — escape hatch; nothing in
+   `buildMemoryService` runs.
+
+Every resolved store funnels through `Builder.assembleMemoryService`, so
+built-in, registered and injected backends get identical retrieval/injection
+behaviour. Keep it that way.
+
+Built-in `store_type` values: `file`, `cortex`, `memoryflow`, `graphflow`.
+Shipped plugin: `cortex-remote` (`pkg/store/memory_cortex_remote.go`) — a shared
+CortexDB over gRPC, the "shared brain". It covers Store/StoreWithScope/Get/
+Update/Delete/SearchByText/List; vector `Search`/`SearchByScope`/
+`SearchBySession` **degrade to empty** because the remote surface takes a query
+string, not a vector (the server owns the embedder), and the memory service then
+falls through to `SearchByText`; `IncrementAccess`, `GetByType`, `Clear`,
+`DeleteBySession`, `ConfigureBank`, `Reflect`, `AddMentalModel` return
+`ErrMemoryStoreUnsupported`. Endpoint and token come from the DSN/options or
+`$CORTEXDB_REMOTE` / `$CORTEXDB_GRPC_TOKEN` — never from code.
+
+The discipline: **an honest `ErrMemoryStoreUnsupported` beats a fake
+implementation.** If a backend cannot do something, say so and let the caller
+degrade.
+
 ### Memory ≠ cache ≠ RAG
 
 - `pkg/memory` — durable per-conversation/per-task memory, with file-backed `MEMORY.md` and `_session/*.md` writers in `pkg/store/file_memory.go`. Background durable writer.

@@ -78,6 +78,70 @@ result, _ := svc.Chat(ctx, "What do you know about me?")
 fmt.Println(result.Text())
 ```
 
+## Pluggable memory backends
+
+The four built-in `store_type` values are `file`, `cortex`, `memoryflow` and
+`graphflow`, plus `cortex-remote` for a shared CortexDB reached over gRPC.
+Anything else is a plugin. There are three seams, in decreasing order of how
+much the framework still does for you:
+
+**1. Register a backend by name** (the one to reach for). After registering,
+`store_type = "<name>"` in `agentgo.toml` selects it:
+
+```go
+func init() {
+	agent.MustRegisterMemoryStore("redis", func(cfg agent.MemoryStoreConfig) (domain.MemoryStore, error) {
+		// cfg carries Name, Path, DSN, Options, Embedder and Generator.
+		return newRedisStore(cfg.DSN, cfg.OptionOr("namespace", "agentgo"))
+	})
+}
+
+svc, _ := agent.New("assistant").
+	WithMemory(
+		agent.WithMemoryStoreType("redis"),
+		agent.WithMemoryDSN("redis://localhost:43510"),
+		agent.WithMemoryOption("namespace", "team"),
+	).
+	Build()
+```
+
+Registration is concurrency-safe and strict: a blank name, a nil factory, a
+built-in name, or a duplicate is an error, never a silent overwrite. Use
+`agent.UnregisterMemoryStore(name)` to replace one on purpose.
+
+**2. Inject an instance** — skips the registry and the factory:
+
+```go
+agent.New("assistant").WithMemory(agent.WithMemoryStore(myStore))
+```
+
+**3. Replace the service** — the escape hatch; you own retrieval and injection
+policy too:
+
+```go
+agent.New("assistant").WithMemoryService(myMemoryService)
+```
+
+### `memory.BaseStore`
+
+`domain.MemoryStore` has eighteen methods. Embed `memory.BaseStore` and override
+only the ones your backend can actually serve; the rest return
+`memory.ErrMemoryStoreUnsupported`, which callers degrade on rather than fail:
+
+```go
+type MyStore struct{ memory.BaseStore }
+
+func (s *MyStore) Store(ctx context.Context, m *domain.Memory) error { ... }
+func (s *MyStore) SearchByText(ctx context.Context, q string, k int) ([]*domain.MemoryWithScore, error) { ... }
+func (s *MyStore) Get(ctx context.Context, id string) (*domain.Memory, error) { ... }
+```
+
+Never fake a method you cannot implement — return
+`domain.ErrMemoryStoreUnsupported` and let the caller degrade.
+
+Runnable: `examples/memory-custom-store` (seams 1 and 2 + BaseStore),
+`examples/memory-remote-cortex` (the shared-CortexDB backend, live).
+
 ## Sub-agents are just a tool
 
 ```go

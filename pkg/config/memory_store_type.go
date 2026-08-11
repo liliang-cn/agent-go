@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 )
 
 type MemoryStoreType string
@@ -43,6 +45,21 @@ func (t MemoryStoreType) String() string {
 }
 
 func (t MemoryStoreType) Valid() bool {
+	normalized := NormalizeMemoryStoreType(t.String())
+	switch normalized {
+	case MemoryStoreTypeFile, MemoryStoreTypeCortex, MemoryStoreTypeMemoryFlow, MemoryStoreTypeGraphFlow:
+		return true
+	default:
+		// Anything else is valid exactly when a plugin claimed the name via
+		// agent.RegisterMemoryStore. Unknown-and-unregistered stays invalid, so
+		// a typo is still rejected at config time.
+		return domain.MemoryStoreRegistered(normalized.String())
+	}
+}
+
+// IsBuiltin reports whether this store type is one of the four the framework
+// ships, as opposed to a plugin registered through agent.RegisterMemoryStore.
+func (t MemoryStoreType) IsBuiltin() bool {
 	switch NormalizeMemoryStoreType(t.String()) {
 	case MemoryStoreTypeFile, MemoryStoreTypeCortex, MemoryStoreTypeMemoryFlow, MemoryStoreTypeGraphFlow:
 		return true
