@@ -27,9 +27,12 @@ type Service struct {
 
 	// Enhanced memory components
 	scorer       *MemoryScorer
-	classifier   *QueryClassifier
 	noiseFilter  *NoiseFilter
 	scopeWeights *ScopeWeightConfig
+
+	// disableRetrieval turns the read side off entirely (writes still happen).
+	// It is an explicit operator choice, never inferred from what the user typed.
+	disableRetrieval bool
 
 	// Hybrid search
 	enableHybrid bool
@@ -54,9 +57,13 @@ type Config struct {
 
 	// Enhanced features
 	ScoringConfig     *ScoringConfig
-	ClassifierConfig  *ClassifierConfig
 	NoiseFilterConfig *NoiseFilterConfig
 	ScopeWeights      *ScopeWeightConfig
+
+	// DisableRetrieval skips memory retrieval for every query. It exists for
+	// operators who want the write side without the read-side token cost; the
+	// framework never decides this on its own by inspecting the user's text.
+	DisableRetrieval bool
 
 	// Hybrid search
 	EnableHybrid bool
@@ -72,7 +79,6 @@ func DefaultConfig() *Config {
 		MinScore:          0.01,
 		MaxMemories:       5,
 		ScoringConfig:     DefaultScoringConfig(),
-		ClassifierConfig:  DefaultClassifierConfig(),
 		NoiseFilterConfig: DefaultNoiseFilterConfig(),
 		ScopeWeights:      DefaultScopeWeightConfig(),
 		EnableHybrid:      false,
@@ -101,11 +107,11 @@ func NewService(
 		minScore:         config.MinScore,
 		maxMemories:      config.MaxMemories,
 		scorer:           NewMemoryScorer(config.ScoringConfig),
-		classifier:       NewQueryClassifier(config.ClassifierConfig),
 		scopeWeights:     config.ScopeWeights,
 		enableHybrid:     config.EnableHybrid,
 		rrfK:             config.RRFK,
 		reflectThreshold: config.ReflectThreshold,
+		disableRetrieval: config.DisableRetrieval,
 	}
 
 	if config.NoiseFilterConfig != nil {
@@ -198,8 +204,10 @@ func (s *Service) RetrieveAndInjectWithContext(ctx context.Context, query string
 // RetrieveAndInjectWithContextAndLogic is the full retrieval pipeline returning the navigator's
 // reasoning string alongside the context and memories.
 func (s *Service) RetrieveAndInjectWithContextAndLogic(ctx context.Context, query string, queryContext domain.MemoryQueryContext) (string, []*domain.MemoryWithScore, string, error) {
-	// 0. Adaptive retrieval - skip if query doesn't need memory
-	if s.classifier != nil && !s.classifier.NeedsMemory(query) {
+	// 0. Retrieval is unconditional unless an operator explicitly turned it off.
+	// Guessing "this query does not need memory" from the user's wording is how
+	// "list all my memories" ended up skipping the memory store entirely.
+	if s.disableRetrieval {
 		return "", nil, "", nil
 	}
 

@@ -67,6 +67,10 @@ type MemoryConfig struct {
 	Mission          string   `json:"mission,omitempty"`           // MemoryBank mission statement
 	Directives       []string `json:"directives,omitempty"`        // MemoryBank hard directives
 
+	// RetrievalDisabled turns off memory retrieval (the read side) while the
+	// write side keeps recording. Zero value = retrieval on.
+	RetrievalDisabled bool `json:"retrieval_disabled,omitempty"`
+
 	// DSN is the connection string handed to a registered store factory.
 	DSN string `json:"dsn,omitempty"`
 	// Options is free-form configuration handed to a registered store factory.
@@ -775,6 +779,7 @@ func (b *Builder) assembleMemoryService(memStore domain.MemoryStore, llmSvc doma
 	if b.memoryCfg.ReflectThreshold > 0 {
 		memCfg.ReflectThreshold = b.memoryCfg.ReflectThreshold
 	}
+	memCfg.DisableRetrieval = b.memoryCfg.RetrievalDisabled
 
 	memSvc := memory.NewService(memStore, llmSvc, embedSvc, memCfg)
 
@@ -896,6 +901,21 @@ func WithMemoryStoreType(storeType string) MemoryOption {
 // Set to 0 to disable auto-reflection.
 func WithMemoryReflect(threshold int) MemoryOption {
 	return func(c *MemoryConfig) { c.ReflectThreshold = threshold }
+}
+
+// WithMemoryRetrieval turns memory retrieval (the read side) on or off. It is
+// on by default: every turn queries the memory store, and the store's own
+// scoring, scope chain, noise filter and MaxMemories cap decide what survives.
+//
+// Pass false when an embedder wants memories recorded but never injected — for
+// example to save prompt tokens. This is the only supported way to skip
+// retrieval; the framework never infers it from the wording of a request.
+//
+//	svc, _ := agent.New("assistant").
+//		WithMemory(agent.WithMemoryRetrieval(false)).
+//		Build()
+func WithMemoryRetrieval(enabled bool) MemoryOption {
+	return func(c *MemoryConfig) { c.RetrievalDisabled = !enabled }
 }
 
 // WithMemoryGraphFlow enables the CortexDB GraphFlow-enhanced memory store.

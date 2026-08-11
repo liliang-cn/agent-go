@@ -200,16 +200,26 @@ func TestService_RetrieveAndInject(t *testing.T) {
 	config := DefaultConfig()
 	service := NewService(store, llm, embedder, config)
 
-	t.Run("Skip retrieval for greetings", func(t *testing.T) {
+	t.Run("Retrieval happens for a short greeting-shaped query", func(t *testing.T) {
 		query := "hello"
-		sessionID := "session-1"
+		isolatedStore := new(MockMemoryStore)
+		isolatedEmbedder := new(MockEmbedder)
+		greetService := NewService(isolatedStore, llm, isolatedEmbedder, DefaultConfig())
 
-		formatted, memories, err := service.RetrieveAndInject(ctx, query, sessionID)
+		vector := []float64{0.4, 0.5, 0.6}
+		isolatedEmbedder.On("Embed", ctx, query).Return(vector, nil)
+		isolatedStore.On("Search", ctx, vector, 3, 0.5).Return([]*domain.MemoryWithScore{}, nil)
+		isolatedStore.On("SearchByScope", ctx, vector, mock.Anything, mock.Anything).
+			Return([]*domain.MemoryWithScore{}, nil)
+		isolatedStore.On("SearchByText", ctx, query, mock.AnythingOfType("int")).
+			Return([]*domain.MemoryWithScore{}, nil)
+		isolatedStore.On("List", ctx, mock.AnythingOfType("int"), 0).
+			Return([]*domain.Memory{}, 0, nil)
+
+		_, _, err := greetService.RetrieveAndInject(ctx, query, "session-greeting")
 
 		assert.NoError(t, err)
-		assert.Empty(t, formatted)
-		assert.Nil(t, memories)
-		store.AssertNotCalled(t, "SearchByScope")
+		isolatedStore.AssertCalled(t, "SearchByScope", ctx, vector, mock.Anything, mock.Anything)
 	})
 
 	t.Run("Perform retrieval for information query", func(t *testing.T) {
