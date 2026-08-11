@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"fmt"
-	"log"
 	"log/slog"
 	"strings"
 	"sync"
@@ -40,19 +39,24 @@ type Service struct {
 	// on. See service_background.go.
 	bgWork bgWorkGroup
 
-	debug                 bool
-	llmService            domain.Generator
-	mcpService            MCPToolExecutor
-	ragProcessor          domain.Processor
-	memoryService         domain.MemoryService
-	skillsService         *skills.Service
-	promptManager         *prompt.Manager // Central prompt management
-	store                 *Store
-	agent                 *Agent
-	registry              *Registry
-	logger                *slog.Logger
+	debug         bool
+	llmService    domain.Generator
+	mcpService    MCPToolExecutor
+	ragProcessor  domain.Processor
+	memoryService domain.MemoryService
+	skillsService *skills.Service
+	promptManager *prompt.Manager // Central prompt management
+	store         *Store
+	agent         *Agent
+	registry      *Registry
+	logger        *slog.Logger
+	// cancelMu guards the in-flight run registry below. See run_cancel.go —
+	// a service can be driving several runs at once (a chat turn, a scheduled
+	// prompt, a sub-agent), so cancellation is a lookup in `runs`, not a
+	// single stored CancelFunc.
 	cancelMu              sync.RWMutex
-	cancelFunc            context.CancelFunc
+	runs                  map[string]*runHandle
+	runSeq                uint64
 	progressCb            ProgressCallback
 	currentSessionID      string // Auto-generated UUID for Chat() method
 	sessionMu             sync.RWMutex
@@ -473,8 +477,15 @@ func (s *Service) startRun(ctx context.Context, goal string, cfg *RunConfig) (*S
 		createdAt: startedAt,
 	})
 
+	// Register the run so Cancel / CancelRun / CancelSession can reach it.
+	// startRun is the single entry point into the loop, so registering here
+	// covers Run, RunStream, Ask, Chat, structured output and the prompt
+	// scheduler alike — the same reason constraints are resolved in the loop
+	// and not in a per-entry-point helper.
+	runCtx, releaseRun := s.registerRun(ctx, cfg.RunID, session.GetID(), taskID)
+
 	runtime := NewRuntime(s, session, cfg)
-	return session, s.observeRunStream(session, taskID, goal, startedAt, runtime.RunStream(ctx, goal)), nil
+	return session, s.observeRunStream(session, taskID, goal, startedAt, runtime.RunStream(runCtx, goal), releaseRun), nil
 }
 
 // Run executes a goal with optional configuration.
@@ -549,12 +560,18 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 			result.Error = evt.Content
 			result.StepsFailed++
 			result.StepsTotal++
+		case EventTypeCancelled:
+			// Deliberately leaves result.Error empty: a stop the caller asked
+			// for is not something to report back to them as a failure.
+			result.Success = false
+			result.Cancelled = true
+			result.StepsTotal++
 		case EventTypeError:
 			lastError = evt.Content
 		}
 	}
 
-	if !result.Success && result.Error == "" {
+	if !result.Success && !result.Cancelled && result.Error == "" {
 		result.Error = lastError
 	}
 	completedAt := time.Now()
@@ -564,24 +581,6 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 		result.EstimatedTokens = s.estimateRunTokens(goal, result.FinalResult)
 	}
 	return result, nil
-}
-
-// Cancel forcefully stops the current agent execution
-func (s *Service) Cancel() bool {
-	s.cancelMu.Lock()
-	defer s.cancelMu.Unlock()
-
-	if s.hasBlockingToolInProgress() {
-		log.Printf("[Agent] Cancellation deferred: blocking tool still in progress")
-		return false
-	}
-
-	if s.cancelFunc != nil {
-		log.Printf("[Agent] Cancelling current execution...")
-		s.cancelFunc()
-		return true
-	}
-	return false
 }
 
 // ─── Cognitive Memory APIs ───────────────────────────────────────────────────

@@ -98,8 +98,8 @@ func TestServiceCancel_BlockedByRunningBlockingTool(t *testing.T) {
 	svc := &Service{
 		inProgressTools: make(map[string]int),
 	}
-	cancelled := false
-	svc.cancelFunc = func() { cancelled = true }
+	runCtx, release := svc.registerRun(context.Background(), "run-1", "sess-1", "task-1")
+	defer release()
 
 	_, end := svc.beginToolExecution("memory_save", nil)
 	defer end()
@@ -107,8 +107,8 @@ func TestServiceCancel_BlockedByRunningBlockingTool(t *testing.T) {
 	if svc.Cancel() {
 		t.Fatal("expected cancel to be blocked while blocking tool is running")
 	}
-	if cancelled {
-		t.Fatal("expected cancel func not to be called while blocked")
+	if runCtx.Err() != nil {
+		t.Fatal("expected the run context to stay alive while cancel is deferred")
 	}
 }
 
@@ -119,14 +119,14 @@ func TestServiceCancel_AllowsCancelableTool(t *testing.T) {
 		inProgressTools: make(map[string]int),
 		toolRegistry:    NewToolRegistry(),
 	}
-	cancelled := false
-	svc.cancelFunc = func() { cancelled = true }
 	svc.toolRegistry.RegisterWithMetadata(
 		makeToolDef("rag_query", "RAG"),
 		nil,
 		CategoryRAG,
 		ToolMetadata{ReadOnly: true, ConcurrencySafe: true, InterruptBehavior: InterruptBehaviorCancel},
 	)
+	runCtx, release := svc.registerRun(context.Background(), "run-1", "sess-1", "task-1")
+	defer release()
 
 	_, end := svc.beginToolExecution("rag_query", nil)
 	defer end()
@@ -134,7 +134,7 @@ func TestServiceCancel_AllowsCancelableTool(t *testing.T) {
 	if !svc.Cancel() {
 		t.Fatal("expected cancel to succeed for cancelable tool")
 	}
-	if !cancelled {
-		t.Fatal("expected cancel func to be called")
+	if runCtx.Err() == nil {
+		t.Fatal("expected the registered run's context to be cancelled")
 	}
 }

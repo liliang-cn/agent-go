@@ -406,9 +406,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 	for round := 0; round < maxRounds; round++ {
 		// Check cancellation
 		if ctx.Err() != nil {
-			r.emitTombstone()
-			r.ensureToolResultConsistency()
-			r.emit(EventTypeError, "Execution cancelled")
+			r.cancelRun(messages)
 			return
 		}
 
@@ -588,6 +586,14 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		}
 
 		if err != nil {
+			// A cancelled run surfaces here first: the provider call is the
+			// long pole, so stop lands inside it far more often than at the
+			// top of the round. Reporting that as "LLM error: context
+			// canceled" is how a stop button ends up painted red.
+			if ctx.Err() != nil {
+				r.cancelRun(messages)
+				return
+			}
 			r.emitTombstone()
 			r.ensureToolResultConsistency()
 			r.emit(EventTypeError, fmt.Sprintf("LLM error: %v", err))
@@ -711,6 +717,10 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 				r.CheckpointStart("tool_execution")
 				syncToolResults, err := r.svc.executeToolCallsWithOptions(ctx, r.currentAgent, r.session, remainingCalls, r.buildStreamingToolExecutionCallbacks(), true)
 				if err != nil {
+					if ctx.Err() != nil {
+						r.cancelRun(messages)
+						return
+					}
 					r.emit(EventTypeError, fmt.Sprintf("Tool execution error: %v", err))
 					return
 				}
@@ -802,7 +812,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 	// Round budget exhausted without reaching a terminal. If the run was
 	// cancelled, don't fabricate a completion — just stop.
 	if ctx.Err() != nil {
-		r.emit(EventTypeError, "Execution cancelled")
+		r.cancelRun(messages)
 		return
 	}
 	// Force a final synthesis pass with tools DISABLED so the caller gets a
@@ -1164,6 +1174,44 @@ func (r *Runtime) blockRunWithStop(goal, blocker string, messages []domain.Messa
 	}
 	if persistHistory {
 		r.persistMessages(messages)
+	}
+	r.clearCollectedSources()
+}
+
+// cancelledRunText is what a stopped run reports as its final content. Kept
+// stable because hosts match on it to tell a stop from a failure in older
+// event streams that predate EventTypeCancelled.
+const cancelledRunText = "Execution cancelled"
+
+// cancelRun is the terminal path for a run whose context went away — a host
+// pressed stop, a per-run deadline expired, the process is shutting down.
+//
+// It is a sibling of completeRun and blockRun, not a variant of the error
+// emission it replaced. A stop is an outcome: the checkpoint is written (so
+// Tasks().ResumeFromCheckpoint can pick the work back up), the partial history
+// is persisted, and the terminal event says "cancelled" rather than "error" so
+// the task lands in the store as cancelled and a UI does not paint the user's
+// own stop button red.
+func (r *Runtime) cancelRun(messages []domain.Message) {
+	// Clear whatever half-streamed text is on screen before the terminal
+	// event, and close out any tool call that never got a result — an
+	// interrupted round otherwise leaves the transcript inconsistent.
+	r.emitTombstone()
+	r.ensureToolResultConsistency()
+
+	r.persistTerminalCheckpoint(currentTaskID(r.session), CheckpointReasonTaskCancelled, "", messages)
+	r.persistMessages(messages)
+
+	r.emitTurnState(TurnStageCompleted, "run cancelled", 0, 0)
+	r.eventChan <- &Event{
+		ID:               uuid.New().String(),
+		Type:             EventTypeCancelled,
+		AgentName:        r.currentAgent.Name(),
+		AgentID:          r.currentAgent.ID(),
+		Content:          cancelledRunText,
+		StopReason:       StopReasonCancelled,
+		EstimatedCostUSD: r.currentCostUSD(),
+		Timestamp:        time.Now(),
 	}
 	r.clearCollectedSources()
 }

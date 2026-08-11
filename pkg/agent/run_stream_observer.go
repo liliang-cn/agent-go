@@ -7,13 +7,24 @@ import (
 	taskpkg "github.com/liliang-cn/agent-go/v3/pkg/task"
 )
 
-func (s *Service) observeRunStream(session *Session, taskID, goal string, startedAt time.Time, upstream <-chan *Event) <-chan *Event {
+// observeRunStream mirrors a run's event stream into the task store and
+// releases the run's cancel registration once the stream has closed. release
+// may be nil; when it is not, it is called exactly once, after the last event
+// has been forwarded — a run must stay cancellable right up to its terminal
+// event, and must stop answering "ok" to a stop the instant it is over.
+func (s *Service) observeRunStream(session *Session, taskID, goal string, startedAt time.Time, upstream <-chan *Event, release func()) <-chan *Event {
 	if upstream == nil {
+		if release != nil {
+			release()
+		}
 		return upstream
 	}
 	out := make(chan *Event, 64)
 	go func() {
 		defer close(out)
+		if release != nil {
+			defer release()
+		}
 
 		var metrics executionMetrics
 		toolSet := map[string]struct{}{}
@@ -81,6 +92,18 @@ func (s *Service) observeRunStream(session *Session, taskID, goal string, starte
 						createdAt:   startedAt,
 						finishedAt:  evt.Timestamp,
 						appendError: true,
+					})
+				case EventTypeCancelled:
+					// A cancelled run is an outcome, not a failure: somebody
+					// asked it to stop and it did. Recording it as "failed"
+					// made a deliberate stop indistinguishable from a crash
+					// in the task list.
+					s.persistRunTaskState(session, taskID, taskRunStateOptions{
+						status:     taskpkg.StatusCancelled,
+						input:      goal,
+						output:     strings.TrimSpace(evt.Content),
+						createdAt:  startedAt,
+						finishedAt: evt.Timestamp,
 					})
 				case EventTypeError:
 					s.persistRunTaskState(session, taskID, taskRunStateOptions{

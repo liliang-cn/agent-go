@@ -48,6 +48,10 @@ const (
 	CheckpointReasonAfterTool    CheckpointReason = "after_tool"
 	CheckpointReasonTaskComplete CheckpointReason = "task_complete"
 	CheckpointReasonTaskBlocked  CheckpointReason = "task_blocked"
+	// CheckpointReasonTaskCancelled snapshots a run that was stopped mid
+	// flight. It is the whole point of writing one: a cancelled task is the
+	// case where Tasks().ResumeFromCheckpoint has something worth resuming.
+	CheckpointReasonTaskCancelled CheckpointReason = "task_cancelled"
 )
 
 // MaxCheckpointsPerTask caps how many snapshots are kept per task. The

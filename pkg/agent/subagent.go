@@ -469,6 +469,11 @@ func (sa *SubAgent) execute(ctx context.Context) (interface{}, error) {
 			final = evt.Content
 		case EventTypeBlocked:
 			blocked = evt.Content
+		case EventTypeCancelled:
+			// The parent's context is the one that went away, so let the
+			// cancellation propagate as such instead of reporting it to the
+			// parent loop as a tool that failed.
+			runErr = context.Canceled
 		case EventTypeError:
 			if strings.TrimSpace(evt.Content) != "" {
 				runErr = errors.New(evt.Content)

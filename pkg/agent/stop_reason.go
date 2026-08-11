@@ -49,9 +49,15 @@ const (
 	StopReasonStopHook StopReason = "stop_hook"
 
 	// StopReasonErrorDuringExecution means an underlying step failed
-	// (provider error, tool crash, context cancellation, ...). The
-	// task's blocker text carries the specific error message.
+	// (provider error, tool crash, ...). The task's blocker text carries
+	// the specific error message.
 	StopReasonErrorDuringExecution StopReason = "error_during_execution"
+
+	// StopReasonCancelled means the run's context was cancelled — a host
+	// pressed stop, a per-run deadline expired, or the process is shutting
+	// down. Distinct from error_during_execution because nothing failed;
+	// the work is simply unfinished, and the latest checkpoint can resume it.
+	StopReasonCancelled StopReason = "cancelled"
 )
 
 // classifyFinishReason maps a provider-side finish_reason string to a

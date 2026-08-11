@@ -76,7 +76,12 @@ type ExecutionResult struct {
 	// proceed, explaining why in Text(). That is an outcome, not a failure:
 	// Err() stays nil so a caller doing `if err != nil { return }` cannot
 	// silently discard the explanation. Check Blocked (or Success) to branch.
-	Blocked         bool                      `json:"blocked,omitempty"`
+	Blocked bool `json:"blocked,omitempty"`
+	// Cancelled reports that the run's context was cancelled before it
+	// finished. Like Blocked this is an outcome, not a failure — Err() stays
+	// nil and Text() holds whatever had been produced — so a caller that
+	// branches on err cannot mistake its own stop button for a crash.
+	Cancelled       bool                      `json:"cancelled,omitempty"`
 	StepsTotal      int                       `json:"steps_total"`
 	StepsDone       int                       `json:"steps_done"`
 	StepsFailed     int                       `json:"steps_failed"`
@@ -150,6 +155,11 @@ func (r *ExecutionResult) Err() error {
 	if r.Blocked {
 		return nil
 	}
+	// Same reasoning for a stop: the caller asked for it, so reporting it as
+	// an error would turn "you pressed cancel" into a red failure.
+	if r.Cancelled {
+		return nil
+	}
 	return fmt.Errorf("%s", r.Error)
 }
 
@@ -215,6 +225,13 @@ type RunConfig struct {
 
 	// SystemPromptOverride replaces the agent's instructions for this run.
 	SystemPromptOverride string
+
+	// RunID names this run in the service's in-flight registry so
+	// Service.CancelRun can stop exactly this one. Empty means the runtime
+	// generates a UUID, which Service.ActiveRuns then reports. Set it with
+	// WithRunID when the host wants to hold the handle itself (a UI that
+	// tags a request before the run has started, say).
+	RunID string
 
 	// SessionID specifies a session ID for multi-turn conversations
 	SessionID string
@@ -346,6 +363,14 @@ func WithSessionID(sessionID string) RunOption {
 // WithTaskID sets a specific task ID for the run.
 func WithTaskID(taskID string) RunOption {
 	return func(c *RunConfig) { c.TaskID = taskID }
+}
+
+// WithRunID names the run so Service.CancelRun(id) can stop exactly this one.
+// Without it the runtime generates a UUID and the caller has to read it back
+// from Service.ActiveRuns — fine for a supervisor, useless for a UI that needs
+// to be able to press stop before the first event arrives.
+func WithRunID(runID string) RunOption {
+	return func(c *RunConfig) { c.RunID = runID }
 }
 
 // WithResumeMessages seeds the runtime with a pre-assembled message

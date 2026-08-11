@@ -23,6 +23,12 @@ const (
 	EventTypeComplete EventType = "workflow_complete"
 	EventTypeBlocked  EventType = "workflow_blocked"
 	EventTypeError    EventType = "workflow_error"
+	// EventTypeCancelled terminates a run whose context was cancelled.
+	// It is a fourth terminal event rather than an error because a stop is
+	// an outcome the caller asked for: nothing went wrong, the answer is
+	// simply unfinished. Hosts that paint workflow_error red would otherwise
+	// report the user's own stop button as a failure.
+	EventTypeCancelled EventType = "workflow_cancelled"
 
 	// Thinking & Streaming
 	EventTypeThinking  EventType = "thinking"  // Agent is processing
