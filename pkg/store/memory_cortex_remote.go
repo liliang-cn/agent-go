@@ -496,9 +496,14 @@ func (s *CortexRemoteMemoryStore) AddMentalModel(ctx context.Context, model *dom
 // agentGoMemoryExtras is the half of domain.Memory that cortexdb's record has
 // no native column for. It rides in metadata under metadataKeyAgentGo.
 type agentGoMemoryExtras struct {
-	Type       domain.MemoryType       `json:"type,omitempty"`
-	ScopeType  domain.MemoryScopeType  `json:"scope_type,omitempty"`
-	ScopeID    string                  `json:"scope_id,omitempty"`
+	Type      domain.MemoryType      `json:"type,omitempty"`
+	ScopeType domain.MemoryScopeType `json:"scope_type,omitempty"`
+	ScopeID   string                 `json:"scope_id,omitempty"`
+	// SessionID is agent-go's own session id, round-tripped verbatim. It is not
+	// the same string as the record's remote session_id — see
+	// agentGoSessionFromRemoteBank — and getting the two confused is what made
+	// every retrieval against a shared brain return nothing.
+	SessionID  string                  `json:"session_id,omitempty"`
 	Keywords   []string                `json:"keywords,omitempty"`
 	Tags       []string                `json:"tags,omitempty"`
 	SourceType domain.MemorySourceType `json:"source_type,omitempty"`
@@ -511,6 +516,7 @@ func (s *CortexRemoteMemoryStore) metadataFor(m *domain.Memory) (*structpb.Struc
 		Type:       m.Type,
 		ScopeType:  m.ScopeType,
 		ScopeID:    m.ScopeID,
+		SessionID:  m.SessionID,
 		Keywords:   m.Keywords,
 		Tags:       m.Tags,
 		SourceType: m.SourceType,
@@ -544,7 +550,6 @@ func (s *CortexRemoteMemoryStore) metadataFor(m *domain.Memory) (*structpb.Struc
 func memoryFromRemoteRecord(rec *rpcv1.MemoryRecord) *domain.Memory {
 	m := &domain.Memory{
 		ID:         rec.GetId(),
-		SessionID:  rec.GetSessionId(),
 		Content:    rec.GetContent(),
 		Importance: rec.GetImportance(),
 		Type:       domain.MemoryTypeFact,
@@ -553,8 +558,41 @@ func memoryFromRemoteRecord(rec *rpcv1.MemoryRecord) *domain.Memory {
 		m.CreatedAt = ts.AsTime()
 		m.UpdatedAt = ts.AsTime()
 	}
-	applyRemoteMetadata(m, rec.GetMetadata().AsMap(), rec.GetScope())
+	applyRemoteMetadata(m, rec.GetMetadata().AsMap(), rec.GetScope(), rec.GetSessionId())
 	return m
+}
+
+// agentGoSessionFromRemoteBank translates a remote bucket name into agent-go's
+// own session/scope vocabulary.
+//
+// A cortexdb server names the bucket a memory landed in with its own grammar —
+// "memory:global:<namespace>", "memory:session:<session>:<namespace>",
+// "memory:user:<user>:<namespace>". That string must never be copied into
+// domain.Memory.SessionID, because agent-go parses *that* field with its own
+// bank grammar (memory.ParseBankID), under which "memory:global:default"
+// decodes to the nonsense scope {type:"memory", id:"global:default"}. It then
+// matches no scope in any chain, filterMemoriesByScopes drops the memory, and
+// RetrieveAndInject injects nothing — a shared brain that stores and searches
+// perfectly while the agent never sees a single memory.
+func agentGoSessionFromRemoteBank(bankID, scope string) (sessionID, scopeID string) {
+	parts := strings.Split(bankID, ":")
+	if len(parts) >= 3 && parts[0] == "memory" {
+		switch parts[1] {
+		case "global":
+			return "", ""
+		case "session":
+			return parts[2], ""
+		case "user":
+			return "", parts[2]
+		}
+	}
+	// Unrecognised naming. Only a genuinely session-scoped record may keep an
+	// opaque id — carrying one on a global record would make it unmatchable,
+	// which is the exact failure this function exists to prevent.
+	if scope == "" || scope == string(domain.MemoryScopeGlobal) {
+		return "", ""
+	}
+	return bankID, ""
 }
 
 // remoteMemoryJSON is the shape memory_list_all returns.
@@ -571,23 +609,26 @@ type remoteMemoryJSON struct {
 func (r remoteMemoryJSON) toDomain() *domain.Memory {
 	m := &domain.Memory{
 		ID:        r.ID,
-		SessionID: r.SessionID,
 		Content:   r.Content,
 		Type:      domain.MemoryTypeFact,
 		CreatedAt: r.CreatedAt,
 		UpdatedAt: r.CreatedAt,
 	}
-	applyRemoteMetadata(m, r.Metadata, r.Scope)
+	applyRemoteMetadata(m, r.Metadata, r.Scope, r.SessionID)
 	return m
 }
 
 // applyRemoteMetadata restores the agent-go half of a memory. A record written
-// by another client of the shared brain simply has no blob, and keeps the
-// defaults.
-func applyRemoteMetadata(m *domain.Memory, meta map[string]interface{}, scope string) {
+// by another client of the shared brain simply has no blob, and gets its
+// session/scope derived from the remote bucket name instead.
+func applyRemoteMetadata(m *domain.Memory, meta map[string]interface{}, scope, remoteBankID string) {
 	if m.ScopeType == "" && scope != "" {
 		m.ScopeType = domain.MemoryScopeType(scope)
 	}
+	// Translate the remote bucket name first, so a record with no agent-go blob
+	// still lands in a scope the retrieval filter can match.
+	m.SessionID, m.ScopeID = agentGoSessionFromRemoteBank(remoteBankID, scope)
+
 	if meta == nil {
 		return
 	}
@@ -608,10 +649,13 @@ func applyRemoteMetadata(m *domain.Memory, meta map[string]interface{}, scope st
 	if extras.Type != "" {
 		m.Type = extras.Type
 	}
+	// Our own record: the blob is authoritative for everything the remote schema
+	// has no column for, including the session id we originally wrote.
 	if extras.ScopeType != "" {
 		m.ScopeType = extras.ScopeType
 	}
 	m.ScopeID = extras.ScopeID
+	m.SessionID = extras.SessionID
 	m.Keywords = extras.Keywords
 	m.Tags = extras.Tags
 	m.SourceType = extras.SourceType

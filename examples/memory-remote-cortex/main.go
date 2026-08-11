@@ -1,6 +1,12 @@
 // Command memory-remote-cortex is a live connectivity check for the
 // "cortex-remote" memory backend: it stores one memory in a shared CortexDB
-// over gRPC, searches it back, reads it by ID, then deletes it.
+// over gRPC, searches it back, reads it by ID, proves it survives the
+// RetrieveAndInject path the agent loop walks every round, then deletes it.
+//
+// That last step is not decoration. A store can pass Store/Search/Get and
+// still be useless, because retrieval also filters by scope chain — exactly
+// how this backend once returned zero memories to the loop while its store
+// layer looked perfectly healthy.
 //
 // Nothing is hardcoded — endpoint and token come from the environment:
 //
@@ -17,9 +23,11 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/memory"
 	"github.com/liliang-cn/agent-go/v3/pkg/store"
 )
 
@@ -97,6 +105,25 @@ func main() {
 	} else {
 		fmt.Printf("listed       : %d of %d in the shared brain\n", len(listed), total)
 	}
+
+	// --- the path the agent loop actually walks every round ---
+	//
+	// Store/Search/Get above only prove the store layer. What the loop calls is
+	// RetrieveAndInject, which additionally filters by scope chain — and that
+	// filter is where a shared brain's memories can silently vanish. No
+	// embedder is passed, exactly as a shared-backend agent is built: the
+	// remote server owns the embedding model.
+	memSvc := memory.NewService(remote, nil, nil, memory.DefaultConfig())
+	injected, recalled, err := memSvc.RetrieveAndInjectWithContext(
+		ctx, marker+" — what is it?", domain.MemoryQueryContext{SessionID: "smoke-session"})
+	if err != nil {
+		log.Fatalf("retrieve and inject: %v", err)
+	}
+	fmt.Printf("auto-inject   : %d memory/ies recalled for a fresh session\n", len(recalled))
+	if len(recalled) == 0 || !strings.Contains(injected, marker) {
+		log.Fatalf("auto-inject FAILED: the memory is invisible to the agent loop.\ninjected context: %q", injected)
+	}
+	fmt.Printf("injected text : %s\n", strings.TrimSpace(strings.ReplaceAll(injected, "\n", " ")))
 
 	// --- capabilities the gRPC surface does not cover ---
 	fmt.Printf("Clear()      : %v\n", remote.Clear(ctx))

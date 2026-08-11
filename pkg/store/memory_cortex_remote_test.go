@@ -485,6 +485,83 @@ func TestCortexRemoteConfigFromStoreConfig(t *testing.T) {
 // TestCortexRemoteMetadataFromForeignWriter checks that a record written by
 // another client of the same shared brain (no agent-go metadata blob) still
 // reads back as a usable memory.
+// TestCortexRemoteNormalizesRemoteBankID pins the fix for the retrieval
+// blackout: a cortexdb server names buckets with its own grammar
+// ("memory:global:default"), and agent-go parses Memory.SessionID with a
+// different one. Copying the remote name across produced the scope
+// {type:"memory", id:"global:default"}, which matches nothing, so every
+// retrieval filtered the memory out and RetrieveAndInject injected nothing.
+func TestCortexRemoteNormalizesRemoteBankID(t *testing.T) {
+	cases := []struct {
+		name          string
+		bankID        string
+		scope         string
+		wantSessionID string
+		wantScopeID   string
+	}{
+		{"global bucket", "memory:global:default", "global", "", ""},
+		{"global bucket, other namespace", "memory:global:superleo-chat", "global", "", ""},
+		{"session bucket", "memory:session:58789ce9-9b84-45ff-9ee4-d8c8f56b55e0:ns", "session", "58789ce9-9b84-45ff-9ee4-d8c8f56b55e0", ""},
+		{"user bucket", "memory:user:liang:ns", "user", "", "liang"},
+		// A bucket name we do not understand must not become a session id on a
+		// global record — that is exactly how a memory becomes unmatchable.
+		{"unknown naming, global scope", "whatever::weird", "global", "", ""},
+		{"unknown naming, no scope", "whatever::weird", "", "", ""},
+		{"unknown naming, session scope", "opaque-bucket", "session", "opaque-bucket", ""},
+		{"empty", "", "global", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotSession, gotScopeID := agentGoSessionFromRemoteBank(tc.bankID, tc.scope)
+			if gotSession != tc.wantSessionID {
+				t.Errorf("sessionID = %q, want %q", gotSession, tc.wantSessionID)
+			}
+			if gotScopeID != tc.wantScopeID {
+				t.Errorf("scopeID = %q, want %q", gotScopeID, tc.wantScopeID)
+			}
+		})
+	}
+}
+
+// TestCortexRemoteRoundTripsSessionID proves an agent-go session id survives a
+// write/read cycle exactly, rather than coming back as the remote's bucket name.
+func TestCortexRemoteRoundTripsSessionID(t *testing.T) {
+	s, fake := newTestRemoteStore(t)
+	ctx := context.Background()
+
+	for _, tc := range []struct {
+		name      string
+		sessionID string
+		scopeType domain.MemoryScopeType
+	}{
+		{"global memory has no session", "", domain.MemoryScopeGlobal},
+		{"session memory keeps its session", "probe-session", domain.MemoryScopeSession},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mem := &domain.Memory{Content: "round trip " + tc.name, Type: domain.MemoryTypeFact,
+				SessionID: tc.sessionID, ScopeType: tc.scopeType}
+			if err := s.Store(ctx, mem); err != nil {
+				t.Fatalf("Store() error = %v", err)
+			}
+			// Simulate the server rewriting session_id to its own bucket name,
+			// which is what a real cortexdb does.
+			rec := fake.records[mem.ID]
+			rec.SessionId = "memory:global:default"
+			if tc.sessionID != "" {
+				rec.SessionId = "memory:session:" + tc.sessionID + ":default"
+			}
+
+			got, err := s.Get(ctx, mem.ID)
+			if err != nil {
+				t.Fatalf("Get() error = %v", err)
+			}
+			if got.SessionID != tc.sessionID {
+				t.Errorf("SessionID = %q, want %q (the remote bucket name must not leak through)", got.SessionID, tc.sessionID)
+			}
+		})
+	}
+}
+
 func TestCortexRemoteMetadataFromForeignWriter(t *testing.T) {
 	meta, err := structpb.NewStruct(map[string]interface{}{
 		"kind":       "preference",
