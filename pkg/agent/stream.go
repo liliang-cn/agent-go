@@ -6,10 +6,9 @@ import (
 )
 
 // This file provides small, composable primitives over the runtime's event
-// channels (<-chan *Event) and generic channels. They mirror the per-step
-// collection logic of pipeline.go's CollectPipelineResult but operate on a
-// single stream, and add fan-in / fan-out helpers useful when wiring several
-// RunStream channels together.
+// channels (<-chan *Event) and generic channels: single-stream collection plus
+// fan-in / fan-out helpers useful when wiring several RunStream channels
+// together.
 
 // Merge fans N channels of T into a single output channel. Each input's own
 // ordering is preserved; no ordering is guaranteed across inputs. The output
@@ -45,8 +44,7 @@ func MergeEvents(chans ...<-chan *Event) <-chan *Event {
 
 // Concat drains an event stream and returns the final text: EventTypePartial
 // deltas are concatenated, but any terminal Content (EventTypeComplete /
-// EventTypeBlocked) overrides the accumulated partials — mirroring the
-// per-step logic in CollectPipelineResult.
+// EventTypeBlocked) overrides the accumulated partials.
 func Concat(ch <-chan *Event) string {
 	var partials strings.Builder
 	terminal := ""
