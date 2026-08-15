@@ -22,11 +22,7 @@ func NewMultiEngineSearcher() MultiEngineSearcher {
 // NewBasicMultiEngineSearcher creates a basic searcher without chromedp
 func NewBasicMultiEngineSearcher() MultiEngineSearcher {
 	return &multiEngineSearcher{
-		engines: map[string]SearchEngine{
-			"bing":       NewBingGoQueryEngine(),
-			"brave":      NewBraveGoQueryEngine(),
-			"duckduckgo": NewDuckDuckGoGoQueryEngine(),
-		},
+		engines:   defaultEngines(),
 		extractor: extraction.NewChromedpExtractor(),
 	}
 }
@@ -124,8 +120,7 @@ func (m *multiEngineSearcher) selectEngine(preferred []string) SearchEngine {
 		}
 	}
 
-	priorityOrder := []string{"bing", "brave", "duckduckgo"}
-	for _, name := range priorityOrder {
+	for _, name := range enginePriority() {
 		if engine, ok := m.engines[name]; ok {
 			return engine
 		}
@@ -135,7 +130,7 @@ func (m *multiEngineSearcher) selectEngine(preferred []string) SearchEngine {
 }
 
 func (m *multiEngineSearcher) fallbackSearch(ctx context.Context, query string, maxResults int, failedEngine string) ([]SearchResult, error) {
-	priorityOrder := []string{"bing", "brave", "duckduckgo"}
+	priorityOrder := enginePriority()
 
 	for _, name := range priorityOrder {
 		if name == failedEngine {
@@ -155,7 +150,7 @@ func (m *multiEngineSearcher) fallbackSearch(ctx context.Context, query string, 
 
 func (m *multiEngineSearcher) getEngines(names []string) []SearchEngine {
 	if len(names) == 0 {
-		names = []string{"bing", "brave", "duckduckgo"}
+		names = enginePriority()
 	}
 
 	var engines []SearchEngine

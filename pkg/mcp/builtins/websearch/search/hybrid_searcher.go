@@ -18,11 +18,7 @@ type HybridMultiEngineSearcher struct {
 // NewHybridSearcher creates a new hybrid searcher
 func NewHybridSearcher() MultiEngineSearcher {
 	return &HybridMultiEngineSearcher{
-		engines: map[string]SearchEngine{
-			"bing":       NewBingGoQueryEngine(),
-			"brave":      NewBraveGoQueryEngine(),
-			"duckduckgo": NewDuckDuckGoGoQueryEngine(),
-		},
+		engines:   defaultEngines(),
 		extractor: extraction.NewHybridExtractor(),
 	}
 }
@@ -192,9 +188,7 @@ func (h *HybridMultiEngineSearcher) selectEngine(preferred []string) SearchEngin
 		}
 	}
 
-	// Default priority
-	priorityOrder := []string{"duckduckgo", "bing", "brave"}
-	for _, name := range priorityOrder {
+	for _, name := range enginePriority() {
 		if engine, ok := h.engines[name]; ok {
 			return engine
 		}
@@ -204,7 +198,7 @@ func (h *HybridMultiEngineSearcher) selectEngine(preferred []string) SearchEngin
 }
 
 func (h *HybridMultiEngineSearcher) fallbackSearch(ctx context.Context, query string, maxResults int, failedEngine string) ([]SearchResult, error) {
-	priorityOrder := []string{"duckduckgo", "bing", "brave"}
+	priorityOrder := enginePriority()
 
 	for _, name := range priorityOrder {
 		if name == failedEngine {
@@ -224,7 +218,7 @@ func (h *HybridMultiEngineSearcher) fallbackSearch(ctx context.Context, query st
 
 func (h *HybridMultiEngineSearcher) getEngines(names []string) []SearchEngine {
 	if len(names) == 0 {
-		names = []string{"duckduckgo", "bing", "brave"}
+		names = enginePriority()
 	}
 
 	var engines []SearchEngine
