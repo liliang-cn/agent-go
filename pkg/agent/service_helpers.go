@@ -197,7 +197,7 @@ func (s *Service) addRAGSources(sources []domain.Chunk) {
 }
 
 func (s *Service) buildWebSearchPromptNote(currentAgent *Agent) string {
-	switch s.webSearchMode() {
+	switch s.webSearchSurfaceMode() {
 	case domain.WebSearchModeNative:
 		return "Web search capability:\n- Up-to-date web lookups are available through the model's native web search capability.\n- Do not search the tool catalog for mcp_websearch tools when you need current web information."
 	case domain.WebSearchModeAuto:

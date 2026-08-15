@@ -426,7 +426,61 @@ func (s *Service) webSearchMode() domain.WebSearchMode {
 	if s == nil || s.cfg == nil {
 		return domain.WebSearchModeMCP
 	}
+	// An unset mode defaults to auto here — at the service level, where it
+	// only shapes agent tool rounds — and deliberately not in
+	// NormalizeWebSearchMode, whose zero value also covers bare per-request
+	// options that must stay parameter-free.
+	if strings.TrimSpace(s.cfg.Tooling.WebSearch.Mode) == "" {
+		return domain.WebSearchModeAuto
+	}
 	return domain.NormalizeWebSearchMode(domain.WebSearchMode(s.cfg.Tooling.WebSearch.Mode))
+}
+
+// nativeWebSearchVerdict asks the generator what it has learned about the
+// upstream's native web-search support. Generators that cannot report (mocks,
+// non-pool providers) leave the verdict unknown.
+func (s *Service) nativeWebSearchVerdict() (supported, known bool) {
+	if s == nil {
+		return false, false
+	}
+	if r, ok := s.llmService.(domain.NativeWebSearchReporter); ok {
+		return r.NativeWebSearchVerdict()
+	}
+	return false, false
+}
+
+// webSearchSurfaceMode is the mode as the tool surface and prompt should see
+// it: auto resolves to native once the provider has proven it searches, and
+// to mcp once it has proven it rejects the parameters. While the verdict is
+// unknown, auto stays auto — both routes remain available.
+func (s *Service) webSearchSurfaceMode() domain.WebSearchMode {
+	mode := s.webSearchMode()
+	if mode != domain.WebSearchModeAuto {
+		return mode
+	}
+	if supported, known := s.nativeWebSearchVerdict(); known {
+		if supported {
+			return domain.WebSearchModeNative
+		}
+		return domain.WebSearchModeMCP
+	}
+	return mode
+}
+
+// webSearchGenerationMode is the mode the generation options should carry.
+// It differs from the surface mode in one deliberate way: a proven-native
+// auto still reports auto, keeping the pool's strip-and-retry safety net
+// armed in case a heterogeneous upstream later rejects the parameters. Only
+// proven-unsupported downgrades, so doomed parameters stop being sent.
+func (s *Service) webSearchGenerationMode() domain.WebSearchMode {
+	mode := s.webSearchMode()
+	if mode != domain.WebSearchModeAuto {
+		return mode
+	}
+	if supported, known := s.nativeWebSearchVerdict(); known && !supported {
+		return domain.WebSearchModeMCP
+	}
+	return mode
 }
 
 func (s *Service) webSearchContextSize() string {
@@ -437,7 +491,7 @@ func (s *Service) webSearchContextSize() string {
 }
 
 func (s *Service) shouldHideMCPWebSearchTools() bool {
-	mode := s.webSearchMode()
+	mode := s.webSearchSurfaceMode()
 	return mode == domain.WebSearchModeNative || mode == domain.WebSearchModeOff
 }
 
@@ -460,7 +514,7 @@ const registryWebSearchToolName = "web_search"
 // when the MCP route is actually present, or a service configured for mcp with
 // no server running would be left with no way to search at all.
 func (s *Service) shouldHideRegistryWebSearchTool() bool {
-	if s == nil || s.webSearchMode() != domain.WebSearchModeMCP {
+	if s == nil || s.webSearchSurfaceMode() != domain.WebSearchModeMCP {
 		return false
 	}
 	if s.mcpService == nil {
@@ -482,7 +536,7 @@ func (s *Service) toolGenerationOptions(temperature float64, maxTokens int, tool
 	opts := &domain.GenerationOptions{
 		Temperature:          temperature,
 		MaxTokens:            maxTokens,
-		WebSearchMode:        s.webSearchMode(),
+		WebSearchMode:        s.webSearchGenerationMode(),
 		WebSearchContextSize: s.webSearchContextSize(),
 	}
 	if toolChoice != "" {

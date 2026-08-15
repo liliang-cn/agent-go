@@ -208,7 +208,16 @@ func (p *Pool) clientForWrapper(wrapper *clientWrapper, model string) (*Client, 
 	if model == "" || strings.EqualFold(model, wrapper.provider.ModelName) {
 		return wrapper.client, nil
 	}
-	return newClientForProvider(wrapper.provider, model, p.promptManager)
+	derived, err := newClientForProvider(wrapper.provider, model, p.promptManager)
+	if err != nil {
+		return nil, err
+	}
+	// One provider, one native-search verdict: a model-override client shares
+	// the wrapper client's evidence instead of starting from unknown.
+	if wrapper.client != nil && wrapper.client.nativeSearch != nil {
+		derived.nativeSearch = wrapper.client.nativeSearch
+	}
+	return derived, nil
 }
 
 // Get 获取一个client（根据策略）

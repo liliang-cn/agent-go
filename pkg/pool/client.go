@@ -22,6 +22,10 @@ type Client struct {
 	modelName     string
 	http          *http.Client
 	promptManager *prompt.Manager
+	// nativeSearch accumulates evidence about the upstream's native
+	// web-search support (see native_search.go). Shared by pointer across
+	// clients derived from the same provider.
+	nativeSearch *nativeSearchState
 }
 
 // NewClient 创建新client
@@ -42,6 +46,7 @@ func NewClient(providerName, baseURL, key, modelName string) (*Client, error) {
 			Timeout: 600 * time.Second,
 		},
 		promptManager: prompt.NewManager(),
+		nativeSearch:  &nativeSearchState{},
 	}, nil
 }
 
@@ -452,6 +457,7 @@ func (c *Client) GenerateWithTools(ctx context.Context, messages []domain.Messag
 	if err != nil {
 		return nil, fmt.Errorf("request failed (model=%s): %w", c.modelName, err)
 	}
+	c.recordNativeWebSearch(opts, curOpts, resp)
 
 	var result struct {
 		Choices []struct {

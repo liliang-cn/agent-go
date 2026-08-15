@@ -250,7 +250,10 @@ func defaultConfig(home string) *Config {
 		Tooling: ToolingConfig{
 			EnableSearchTools: true,
 			WebSearch: WebSearchConfig{
-				Mode: "mcp",
+				// auto: send the native web-search parameters, learn from the
+				// provider's behaviour, and prefer whichever route is proven
+				// to work (domain.NativeWebSearchReporter).
+				Mode: "auto",
 			},
 		},
 		Agent: AgentConfig{
