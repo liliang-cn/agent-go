@@ -20,8 +20,49 @@ type MCPTool interface {
 	ServerName() string
 	// Schema returns the input schema for this tool
 	Schema() map[string]interface{}
+	// Annotations returns the tool's MCP behaviour hints, or nil when the
+	// server sent none. See ToolAnnotations.
+	Annotations() *ToolAnnotations
 	// Call executes the tool with given arguments
 	Call(ctx context.Context, args map[string]interface{}) (*MCPToolResult, error)
+}
+
+// ToolAnnotations carries the behaviour hints an MCP server publishes with a
+// tool: whether calling it changes anything, whether a change is destructive,
+// whether repeating a call is safe.
+//
+// These exist so a host can decide what an agent is allowed to invoke without
+// guessing from the tool's name — and guessing is genuinely unreliable, because
+// names put the subject before the operation ("..._promoter_status" reads as a
+// promotion to a substring match, and "widget" contains "get").
+//
+// Every field is a pointer: MCP treats an absent hint as unknown rather than
+// false, and a host that conflates the two would silently downgrade an
+// unannotated read-only tool into a mutating one, or worse the other way round.
+type ToolAnnotations struct {
+	// Title is a human-readable name for the tool.
+	Title string
+	// ReadOnlyHint is true when the tool does not modify its environment.
+	ReadOnlyHint *bool
+	// DestructiveHint is true when a change may be irreversible. Only
+	// meaningful when the tool is not read-only.
+	DestructiveHint *bool
+	// IdempotentHint is true when repeating a call with the same arguments has
+	// no additional effect.
+	IdempotentHint *bool
+	// OpenWorldHint is true when the tool touches something outside the
+	// server's own closed world (the public internet, say).
+	OpenWorldHint *bool
+}
+
+// IsReadOnly reports whether the server declared this tool read-only. The
+// second result is false when no hint was published at all, which the caller
+// must not read as "mutating" — it means the server said nothing.
+func (a *ToolAnnotations) IsReadOnly() (readOnly, declared bool) {
+	if a == nil || a.ReadOnlyHint == nil {
+		return false, false
+	}
+	return *a.ReadOnlyHint, true
 }
 
 // MCPToolResult represents the result of an MCP tool call
@@ -72,6 +113,40 @@ func (w *MCPToolWrapper) ServerName() string {
 		return w.customTool.ServerName()
 	}
 	return w.serverName
+}
+
+// Annotations implements MCPTool. It returns nil when the server published no
+// hints for this tool, which is different from publishing "false".
+func (w *MCPToolWrapper) Annotations() *ToolAnnotations {
+	if w.customTool != nil {
+		return w.customTool.Annotations()
+	}
+	if w.tool == nil || w.tool.Annotations == nil {
+		return nil
+	}
+	a := w.tool.Annotations
+	return &ToolAnnotations{
+		Title: a.Title,
+		// The SDK models readOnlyHint and idempotentHint as plain bools,
+		// destructiveHint and openWorldHint as pointers. A plain false is
+		// ambiguous — unset and "declared false" look identical over the
+		// wire, since both omit the field — so it is reported as declared
+		// only when true. A host loses nothing by this: either way it learns
+		// the server did not promise read-only.
+		ReadOnlyHint:    trueOrNil(a.ReadOnlyHint),
+		DestructiveHint: a.DestructiveHint,
+		IdempotentHint:  trueOrNil(a.IdempotentHint),
+		OpenWorldHint:   a.OpenWorldHint,
+	}
+}
+
+// trueOrNil renders a non-pointer hint as a pointer, collapsing false to "not
+// declared" — see Annotations.
+func trueOrNil(v bool) *bool {
+	if !v {
+		return nil
+	}
+	return &v
 }
 
 func (w *MCPToolWrapper) Schema() map[string]interface{} {

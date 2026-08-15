@@ -484,3 +484,58 @@ func (t *MemoryDeleteTool) Call(ctx context.Context, args map[string]interface{}
 		},
 	}, nil
 }
+
+// The built-in memory tools declare their own behaviour, so a host that gates
+// on annotations treats them the same way it treats any server's tools instead
+// of having to special-case the ones agent-go ships. Their world is closed:
+// they touch the local store and nothing else.
+//
+// Reads.
+
+func (t *MemorySearchTool) Annotations() *ToolAnnotations {
+	return readOnlyMemoryAnnotations("Search memories")
+}
+
+func (t *MemoryGetTool) Annotations() *ToolAnnotations {
+	return readOnlyMemoryAnnotations("Get a memory")
+}
+
+func (t *MemoryListTool) Annotations() *ToolAnnotations {
+	return readOnlyMemoryAnnotations("List memories")
+}
+
+// Writes. Add is additive; update and delete can destroy what was there, and
+// both are idempotent — repeating them lands on the same state.
+
+func (t *MemoryAddTool) Annotations() *ToolAnnotations {
+	return writeMemoryAnnotations("Add a memory", false, false)
+}
+
+func (t *MemoryUpdateTool) Annotations() *ToolAnnotations {
+	return writeMemoryAnnotations("Update a memory", true, true)
+}
+
+func (t *MemoryDeleteTool) Annotations() *ToolAnnotations {
+	return writeMemoryAnnotations("Delete a memory", true, true)
+}
+
+func readOnlyMemoryAnnotations(title string) *ToolAnnotations {
+	yes, no := true, false
+	return &ToolAnnotations{
+		Title:          title,
+		ReadOnlyHint:   &yes,
+		IdempotentHint: &yes,
+		OpenWorldHint:  &no,
+	}
+}
+
+func writeMemoryAnnotations(title string, destructive, idempotent bool) *ToolAnnotations {
+	no := false
+	return &ToolAnnotations{
+		Title:           title,
+		ReadOnlyHint:    &no,
+		DestructiveHint: &destructive,
+		IdempotentHint:  &idempotent,
+		OpenWorldHint:   &no,
+	}
+}
