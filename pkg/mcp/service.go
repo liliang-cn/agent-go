@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -71,13 +72,20 @@ func (s *Service) StartServers(ctx context.Context, serverNames []string) error 
 		}
 	}
 
+	// Start every server, then report the failures together. Returning on
+	// the first error let one broken entry — a stale binary path in a config
+	// file, say — take down every other server with it, including the
+	// in-process builtins that cannot fail that way. A stack found out the
+	// hard way: an outdated cortexdb path meant the builtin websearch never
+	// started either, and the agent lost search because a *memory* server
+	// moved its binary.
+	var errs []error
 	for _, name := range serverNames {
 		if _, err := s.manager.StartServer(ctx, name); err != nil {
-			return fmt.Errorf("failed to start server %s: %w", name, err)
+			errs = append(errs, fmt.Errorf("failed to start server %s: %w", name, err))
 		}
 	}
-
-	return nil
+	return errors.Join(errs...)
 }
 
 // StopServer stops a specific MCP server
