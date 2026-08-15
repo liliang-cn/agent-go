@@ -115,9 +115,10 @@ func TestCompactMessages_PreservesHeadAndTail(t *testing.T) {
 		t.Errorf("system head not preserved: %+v", out[0])
 	}
 
-	// Second message is the summary
-	if out[1].Role != "system" || !strings.Contains(out[1].Content, "COMPACTED CONVERSATION SUMMARY") {
-		t.Errorf("expected summary as second message, got: %+v", out[1])
+	// Second message is the summary, as a user turn: a system-role summary
+	// followed by an assistant tool_calls tail is a hard 400 on Gemini.
+	if out[1].Role != "user" || !strings.Contains(out[1].Content, "COMPACTED CONVERSATION SUMMARY") {
+		t.Errorf("expected summary as second message with user role, got: %+v", out[1])
 	}
 	if !strings.Contains(out[1].Content, "tool Y returned Z") {
 		t.Errorf("summary content missing: %s", out[1].Content)
@@ -153,6 +154,65 @@ func TestCompactMessages_NoOpForShortHistory(t *testing.T) {
 	if len(out) != len(msgs) {
 		t.Errorf("expected no-op when keepRecent covers entire body, got len %d", len(out))
 	}
+}
+
+// TestCompactMessages_TailStartingOnToolCallsFollowsUserTurn pins the exact
+// shape that 400'd on Gemini in the wild: compaction folded everything up to
+// an assistant tool_calls message (including the original user goal), and the
+// summary was emitted as a system message — leaving a function-call turn with
+// no user turn before it. Gemini requires a function call to immediately
+// follow a user turn or a function response; the summary must therefore be a
+// user turn.
+func TestCompactMessages_TailStartingOnToolCallsFollowsUserTurn(t *testing.T) {
+	t.Parallel()
+	svc, err := New("compaction-gemini-order-test").
+		WithConfig(testAgentConfig(t.TempDir())).
+		WithLLM(&stubSummaryLLM{summary: "goal and first fetch folded"}).
+		Build()
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	defer svc.Close()
+
+	tc := []domain.ToolCall{{ID: "call-2", Type: "function", Function: domain.FunctionCall{Name: "fetch_page"}}}
+	msgs := []domain.Message{
+		{Role: "system", Content: "prompt"},
+		{Role: "user", Content: "the original goal"},
+		{Role: "user", Content: "a reminder"},
+		{Role: "assistant", ToolCalls: []domain.ToolCall{{ID: "call-1", Type: "function", Function: domain.FunctionCall{Name: "fetch_url"}}}},
+		{Role: "tool", Content: "small result", ToolCallID: "call-1"},
+		// tail from here: an assistant function-call turn
+		{Role: "assistant", ToolCalls: tc},
+		{Role: "tool", Content: "huge result", ToolCallID: "call-2"},
+		{Role: "user", Content: "continue"},
+	}
+	out, err := svc.compactMessages(context.Background(), msgs, 3)
+	if err != nil {
+		t.Fatalf("compactMessages: %v", err)
+	}
+	for i, m := range out {
+		if len(m.ToolCalls) == 0 {
+			continue
+		}
+		if i == 0 {
+			t.Fatalf("compacted history starts with a tool_calls message: %+v", out)
+		}
+		prev := out[i-1].Role
+		if prev != "user" && prev != "tool" {
+			t.Fatalf("tool_calls message at %d follows %q, want user or tool (Gemini turn order): %+v", i, prev, rolesOf(out))
+		}
+	}
+}
+
+func rolesOf(msgs []domain.Message) []string {
+	roles := make([]string, len(msgs))
+	for i, m := range msgs {
+		roles[i] = m.Role
+		if len(m.ToolCalls) > 0 {
+			roles[i] += "+tool_calls"
+		}
+	}
+	return roles
 }
 
 // scriptedCompactRuntimeLLM exposes both Generate (for the summarizer)

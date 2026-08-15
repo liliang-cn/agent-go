@@ -86,8 +86,17 @@ func (s *Service) compactMessages(ctx context.Context, msgs []domain.Message, ke
 
 	out := make([]domain.Message, 0, len(head)+1+len(tail))
 	out = append(out, head...)
+	// The summary is a user turn, not a system message. It stands in for the
+	// folded user/assistant turns — which crucially include the original goal
+	// — and the verbatim tail often begins with an assistant tool_calls
+	// message. Gemini's turn validator rejects a function call that does not
+	// immediately follow a user turn or a function response, so
+	// [system, system(summary), assistant(tool_calls), ...] is a hard 400
+	// there; [system, user(summary), assistant(tool_calls), ...] is valid
+	// everywhere. (CompactMessages, the session-level compactor, already
+	// emits its summary as a user turn for the same reason.)
 	out = append(out, domain.Message{
-		Role: "system",
+		Role: "user",
 		Content: fmt.Sprintf(
 			"=== COMPACTED CONVERSATION SUMMARY ===\n%s\n=== END SUMMARY ===\n"+
 				"The above replaces %d earlier message(s) to stay within the context budget. "+
