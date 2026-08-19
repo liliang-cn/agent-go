@@ -8,9 +8,9 @@
 
 **Agent framework for Go with local-first AI capabilities.**
 
-AgentGo is a Go framework for building agents that run locally, use tools, keep memory, and compose with each other.
+AgentGo is a Go library for building agents that run locally, use tools, keep memory, and compose with each other. It is centered on `pkg/agent`: one transparent streaming loop, everything-is-a-tool, and determinism enforced by lints and runtime contracts rather than by longer prompts. There is no required CLI, UI, or server — you embed it.
 
-It is centered on `pkg/agent`: one transparent loop, everything-is-a-tool, and determinism enforced by lints rather than by longer prompts. AgentGo is a library — there is no CLI, no UI, no server. You embed it.
+[中文文档](README_zh-CN.md)
 
 ## Install
 
@@ -18,22 +18,11 @@ It is centered on `pkg/agent`: one transparent loop, everything-is-a-tool, and d
 go get github.com/liliang-cn/agent-go/v3
 ```
 
-## Core Ideas
+Requires Go 1.25+.
 
-- **Agent**: a named runtime with instructions, tools, memory, and sessions.
-- **Loop**: one streaming state machine. `Run()` is `RunStream()` plus a collector; sub-agents reuse the same loop.
-- **Tool**: everything the agent can do — built-ins, MCP, skills, and sub-agents.
-- **Sub-agent**: registered with `WithSubagents(...)` and reached through a single `task(agent_name, prompt)` tool. There is no team, dispatcher or router.
-- **Task**: a first-class unit of work with status, events, frames, and output.
-- **Memory**: durable local context, separate from cache and RAG.
-- **MCP**: tool integration layer for filesystem, web, and external capabilities.
-- **Skills**: reusable Markdown/YAML workflows.
-- **RAG**: optional document retrieval when embeddings are configured.
-- **Output lints**: deterministic post-output checks that re-prompt the model on violation (instead of "please remember to..." paragraphs).
-- **Checkpoint + replay**: every terminal task writes a snapshot; crashed/cancelled runs can be re-played from the latest checkpoint.
-- **Eval harness**: scenario-driven behavioral evaluation, mock or live LLM, JSON output for cross-commit diffs.
+## Quick start
 
-## Minimal Agent
+Inject any OpenAI-compatible provider and ask:
 
 ```go
 package main
@@ -41,167 +30,82 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
+	"os"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/agent"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/providers"
 )
 
 func main() {
-	ctx := context.Background()
+	llm, err := providers.NewOpenAILLMProvider(&domain.OpenAIProviderConfig{
+		BaseURL:  "https://api.deepseek.com/v1",
+		APIKey:   os.Getenv("DEEPSEEK_API_KEY"),
+		LLMModel: "deepseek-chat",
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	svc, err := agent.New("assistant").
+		WithLLM(llm).
 		WithPrompt("You are a concise Go assistant.").
 		Build()
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 	defer svc.Close()
 
-	reply, err := svc.Ask(ctx, "What is AgentGo?")
+	reply, err := svc.Ask(context.Background(), "What is AgentGo?")
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 	fmt.Println(reply)
 }
 ```
 
-## Agent With Memory
+If you skip `WithLLM`, configuration is loaded from `AGENTGO_HOME` (default `~/.agentgo`), where providers live in `data/agentgo.db`. See `examples/quickstart` for the config-driven variant.
+
+Four entry points, one loop underneath:
+
+- `svc.Ask(ctx, q)` — one shot, returns `(string, error)`.
+- `svc.Chat(ctx, q)` — multi-turn with session state, returns `*ExecutionResult`.
+- `svc.Stream(ctx, q)` — token channel (`<-chan string`).
+- `svc.RunStream(ctx, goal, opts...)` — full runtime events: state updates, tool calls, tool results, partials. `Run()` is `RunStream()` plus a collector.
+
+## Core concepts
+
+- **Agent** — a named runtime with instructions, tools, memory, and sessions, assembled by `agent.New(name).With...().Build()`.
+- **Loop** — one streaming state machine. Sub-agents reuse the same loop, so their events bubble up, their answers are linted, and their terminal states are checkpointed.
+- **Tool** — everything the agent can do: built-ins, your functions, MCP servers, skills, and sub-agents.
+- **Sub-agent** — registered with `WithSubagents(...)`, reached by the model through a single `task(agent_name, prompt)` tool. There is no separate team/dispatcher/router layer.
+- **Task** — a first-class unit of work with status, events, frames, checkpoints, and output, persisted in SQLite.
+- **Memory** — durable local context, separate from cache and RAG. Pluggable backends.
+- **Output lints** — deterministic post-output checks that re-prompt the model on violation, instead of "please remember to..." paragraphs.
+
+## Capabilities
+
+### Custom tools
+
+Register a Go function; the schema is a plain JSON-Schema map:
 
 ```go
-svc, _ := agent.New("assistant").
-	WithMemory().
-	Build()
-defer svc.Close()
-
-svc.Chat(ctx, "My name is Alice and I prefer short answers.")
-result, _ := svc.Chat(ctx, "What do you know about me?")
-
-fmt.Println(result.Text())
-```
-
-## Pluggable memory backends
-
-The four built-in `store_type` values are `file`, `cortex`, `memoryflow` and
-`graphflow`. Two plugins ship with the framework: `cortex-remote` for a shared
-CortexDB reached over gRPC, and `mcp-memory` for **any** memory service that
-speaks MCP. Anything else is a plugin too. There are three seams, in decreasing
-order of how much the framework still does for you:
-
-**1. Register a backend by name** (the one to reach for). After registering,
-`store_type = "<name>"` in `agentgo.toml` selects it:
-
-```go
-func init() {
-	agent.MustRegisterMemoryStore("redis", func(cfg agent.MemoryStoreConfig) (domain.MemoryStore, error) {
-		// cfg carries Name, Path, DSN, Options, Embedder and Generator.
-		return newRedisStore(cfg.DSN, cfg.OptionOr("namespace", "agentgo"))
+svc.AddTool("read_config", "Read a service's current configuration",
+	map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"service": map[string]interface{}{"type": "string"},
+		},
+	},
+	func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+		return loadConfig(args["service"].(string))
 	})
-}
-
-svc, _ := agent.New("assistant").
-	WithMemory(
-		agent.WithMemoryStoreType("redis"),
-		agent.WithMemoryDSN("redis://localhost:43510"),
-		agent.WithMemoryOption("namespace", "team"),
-	).
-	Build()
 ```
 
-Registration is concurrency-safe and strict: a blank name, a nil factory, a
-built-in name, or a duplicate is an error, never a silent overwrite. Use
-`agent.UnregisterMemoryStore(name)` to replace one on purpose.
+Built-in tools include web search, URL fetch, datetime, a scratchpad, and (when a sandbox is attached) command execution and deliverable scanning.
 
-**2. Inject an instance** — skips the registry and the factory:
-
-```go
-agent.New("assistant").WithMemory(agent.WithMemoryStore(myStore))
-```
-
-**3. Replace the service** — the escape hatch; you own retrieval and injection
-policy too:
-
-```go
-agent.New("assistant").WithMemoryService(myMemoryService)
-```
-
-### `memory.BaseStore`
-
-`domain.MemoryStore` has eighteen methods. Embed `memory.BaseStore` and override
-only the ones your backend can actually serve; the rest return
-`memory.ErrMemoryStoreUnsupported`, which callers degrade on rather than fail:
-
-```go
-type MyStore struct{ memory.BaseStore }
-
-func (s *MyStore) Store(ctx context.Context, m *domain.Memory) error { ... }
-func (s *MyStore) SearchByText(ctx context.Context, q string, k int) ([]*domain.MemoryWithScore, error) { ... }
-func (s *MyStore) Get(ctx context.Context, id string) (*domain.Memory, error) { ... }
-```
-
-Never fake a method you cannot implement — return
-`domain.ErrMemoryStoreUnsupported` and let the caller degrade.
-
-### `store_type = "mcp-memory"` — any MCP memory service
-
-`mcp-memory` turns any MCP server with memory tools into an agent's memory
-store. It is not written for one product: no tool name and no argument name is
-assumed, so the mapping is the integration.
-
-```toml
-[memory]
-store_type = "mcp-memory"
-dsn        = "https://memory.example.com/mcp"   # or a stdio command line
-
-[memory.options]
-"tool.store"  = "save_memory"
-"tool.search" = "find_memories"
-"tool.get"    = "read_memory"
-"tool.delete" = "forget_memory"
-"tool.list"   = "all_memories"
-
-"arg.store.content" = "text"          # arg.<op>.<canonical> = <remote param>
-"arg.store.tags"    = "labels"
-"arg.search.query"  = "q"
-"arg.search.limit"  = "max_results"
-
-"result.search.items" = "matches"     # dot path to the array ("" = the root)
-"result.search.hit"   = "memory"      # the record inside one hit
-"result.search.score" = "relevance"
-
-"field.id"      = "uuid"              # field.<canonical> = <remote field>
-"field.content" = "text"
-```
-
-Presets exist for convenience — `profile = "cortexdb"` expands to a full mapping
-for CortexDB's MCP tools, and your own options still win. A profile is always
-named explicitly; nothing is ever inferred from a server's tool names. Register
-your own with `store.RegisterMCPMemoryProfile(name, options)`.
-
-Covered: `Store`, `StoreWithScope`, `Get`, `Update`, `Delete`, `SearchByText`,
-`List` (each only when its `tool.<op>` is configured — an unmapped operation
-returns `ErrMemoryStoreUnsupported` rather than pretending). `InitSchema` is a
-no-op; the server owns its storage.
-
-Degraded on purpose: the vector `Search` / `SearchBySession` / `SearchByScope`
-return **empty, not an error**, because an MCP memory tool takes a query string
-and the server owns the embedding model. That makes `memory.Service` fall
-through to `SearchByText`, which is the route that actually reaches the server.
-
-Unsupported: `IncrementAccess`, `GetByType`, `Clear`, `DeleteBySession`,
-`ConfigureBank`, `Reflect`, `AddMentalModel`.
-
-The store opens its own MCP connection, so it does not depend on the agent's MCP
-service being assembled first. If the same server is also listed in
-`mcpServers.json`, the process holds two sessions to it — deduplicate on the
-host side if that matters. Connection is lazy: building an agent never requires
-the memory server to be up. Call `Close()` when you own the store;
-`memory.Service.Close()` does not cascade.
-
-Runnable: `examples/memory-custom-store` (seams 1 and 2 + BaseStore),
-`examples/memory-remote-cortex` (the shared-CortexDB backend, live),
-`examples/memory-mcp` (the MCP backend against an in-process server, no external
-dependency).
-
-## Sub-agents are just a tool
+### Sub-agents
 
 ```go
 svc, _ := agent.New("lead").
@@ -218,15 +122,119 @@ svc, _ := agent.New("lead").
 		},
 	).
 	Build()
-defer svc.Close()
 
 result, _ := svc.Run(ctx, "Research X and write two paragraphs about it.")
-fmt.Println(result.Text())
 ```
 
-The model reaches a sub-agent by calling `task(agent_name, prompt)`. It runs through the same loop, so its events bubble up, its answer is linted, and its terminal state is checkpointed.
+Runnable variants (basic, parallel, async, auto-delegation, filtering): `examples/subagent/`.
 
-## Tasks
+### Memory
+
+```go
+svc, _ := agent.New("assistant").WithMemory().Build()
+
+svc.Chat(ctx, "My name is Alice and I prefer short answers.")
+result, _ := svc.Chat(ctx, "What do you know about me?")
+```
+
+Built-in `store_type` values: `file` (no embedder needed), `cortex`, `memoryflow`, and `graphflow` (`WithGraphMemory()`, needs `WithEmbedder`). Two more ship as plugins: `cortex-remote` (a shared CortexDB over gRPC) and `mcp-memory` (any MCP server with memory tools, mapped via `tool.*` / `arg.*` / `result.*` options — no tool name is assumed).
+
+Three seams for your own backend, in decreasing order of what the framework still does for you:
+
+1. `agent.MustRegisterMemoryStore("redis", factory)` — register by name, then select with `agent.WithMemoryStoreType("redis")`. Registration is concurrency-safe and strict; duplicates are errors, never silent overwrites.
+2. `WithMemory(agent.WithMemoryStore(myStore))` — inject an instance.
+3. `WithMemoryService(mySvc)` — replace the whole service; you own retrieval and injection policy.
+
+`domain.MemoryStore` has eighteen methods; embed `memory.BaseStore` and override only what your backend can serve — the rest return `memory.ErrMemoryStoreUnsupported`, which callers degrade on rather than fail.
+
+Runnable: `examples/memory-custom-store`, `examples/memory-remote-cortex`, `examples/memory-mcp`.
+
+### Run memory (automatic recall and capture)
+
+`RunMemory` hooks a run's start and end for an external long-term memory system. Recall injects a "Recalled context" section into the system prompt (bounded: 5s timeout, ~10k chars, failures only log); capture runs asynchronously after the run completes, so a run is never blocked by its memory.
+
+```go
+type RunMemory interface {
+	RecallForRun(ctx context.Context, goal string) (string, error)
+	CaptureRun(ctx context.Context, goal, finalText string) error
+}
+
+svc, _ := agent.New("ops").
+	WithRunMemory(cortexbridge.NewRunMemory(cortexDB)). // or your own impl
+	Build()
+```
+
+`pkg/cortexbridge.NewRunMemory` is the CortexDB implementation: it captures `DECISION:`-style marker lines and entities into a typed graph and recalls them for later runs. End-to-end demo: `examples/graph-memory-experiment`.
+
+### MCP
+
+```go
+svc, _ := agent.New("assistant").
+	WithMCP(agent.WithMCPConfigPaths("./mcpServers.json")).
+	Build()
+```
+
+Servers are declared in `mcpServers.json` (see the sample at the repo root); their tools register alongside built-ins. Runnable: `examples/mcp/basic`, `examples/mcp/advanced`.
+
+### Skills
+
+`WithSkills()` loads reusable Markdown/YAML workflows from `AGENTGO_HOME/skills` (or `agent.WithSkillsPaths(...)`). `Options.RequiredSkills` makes `Build()` fail unless every named skill is installed.
+
+### RAG
+
+Optional document retrieval, only in the path when an embedder is configured:
+
+```go
+svc, _ := agent.New("assistant").
+	WithEmbedder(embedder). // e.g. providers.NewOpenAIEmbedderProvider(...)
+	WithRAG().
+	Build()
+```
+
+### Structured output
+
+```go
+type Brief struct {
+	Ticker    string   `json:"ticker"    desc:"uppercase stock symbol"`
+	KeyPoints []string `json:"key_points" desc:"3-4 short, factual takeaways"`
+}
+
+brief, err := agent.RunTyped[Brief](ctx, svc, "Summarize NVDA.")
+```
+
+`RunTyped[T]` derives a JSON Schema from the struct (tags drive names, `desc`, optionality) and returns a parsed `T`. `agent.WithStructuredOutput(spec)` is the hand-written-schema `RunOption`. Enforced two ways: natively via `response_format` on providers that support it (with automatic fallback), and by a deterministic post-validation lint that re-prompts on mismatch. Runnable: `examples/structured-output`.
+
+### Output lints
+
+When an agent keeps making the same mistake, don't add another instruction sentence — register a lint:
+
+```go
+svc.RegisterOutputLint(agent.LintFunc{
+	NameValue: "no_planning_only_finish",
+	Fn: func(text string, ctx agent.LintContext) (bool, string) {
+		if strings.HasSuffix(strings.TrimSpace(text), "Next steps:") {
+			return false, "response reads like a plan; deliver the work or call task_blocked"
+		}
+		return true, ""
+	},
+})
+```
+
+Every built service gets the built-ins: `no_planning_only_finish`, `file_task_must_write`, `non_empty_final_answer`, and `task_delivery_contract` (a goal naming a delivery action cannot complete unless a matching tool was actually called). The runtime works out what a run must deliver with one small structured call — not phrase matching, so it behaves the same in every language. Declare it yourself and the extraction call is skipped:
+
+```go
+result, _ := svc.Run(ctx, "Name the largest planet.", agent.WithToolsDisabled())
+
+result, _ = svc.Run(ctx, goal, agent.WithRequiredDeliverables(
+	agent.DeliverableRequirement{Kind: "email", Description: "the summary"},
+))
+
+result, _ = svc.Run(ctx, goal, agent.WithConstraintExtraction(false))
+```
+
+A blocked run is an outcome, not an error: `result.Err()` stays nil, `result.Text()` carries the explanation — branch on `result.Blocked`.
+
+### Tasks, checkpoint and replay
 
 ```go
 store, _ := agent.NewStore("agentgo.db")
@@ -238,64 +246,93 @@ task, _ := manager.Tasks().Submit(ctx, agent.TaskSubmitOptions{
 	AgentName: "Assistant",
 	Input:     "Check the current repository status.",
 })
-
 done, _ := manager.Tasks().Await(ctx, task.ID)
-fmt.Println(done.Status)
-fmt.Println(done.Output)
 ```
 
-## Checkpoint + replay
+Every terminal state writes a `TaskCheckpoint`. A crashed or cancelled task can be re-played from the latest snapshot:
 
 ```go
-// Crashed or cancelled task? Re-play it from the last snapshot.
 resumed, _ := manager.Tasks().ResumeFromCheckpoint(ctx, task.ID, agent.CheckpointResumeOptions{
 	FollowUp: "and now also do X",
 })
 ```
 
-Every terminal state writes a `TaskCheckpoint`; `WithResumeMessages` is the low-level `RunOption` underneath.
+`agent.WithResumeMessages` is the low-level `RunOption` underneath.
 
-## Output lints — moving "please don't" out of prompts
+### Sandbox and scheduler
 
-When an agent keeps making the same mistake (ending with "Next steps:...", claiming it sent an email it never sent, answering with nothing at all), don't add another sentence to its instruction. Register a lint:
+`pkg/sandbox` provides isolated execution environments (local process and Docker); attach one with `WithSandbox(sb)` to enable the command-execution and deliverable tools. `pkg/scheduler` runs cron-style scheduled jobs with pluggable executors. `pkg/worktree` has dependency-free helpers for isolated git worktrees.
+
+## Run options
+
+Passed to `Run` / `RunStream` per call:
+
+| Option | Effect |
+| --- | --- |
+| `WithMaxTurns(n)` | cap loop iterations |
+| `WithTemperature(t)` / `WithMaxTokens(n)` | sampling controls |
+| `WithThinking(bool)` | provider-side chain-of-thought on/off (DeepSeek reasoner `thinking.type` shape); `false` cuts latency on tool-heavy runs |
+| `WithToolsDisabled()` | offer zero tools; any tool call is refused |
+| `WithToolAllowlist(names)` / `WithToolDenylist(names)` | restrict the tool surface |
+| `WithStructuredOutput(spec)` / `WithStructuredOutputType[T]()` | enforce a JSON shape |
+| `WithRequiredDeliverables(...)` / `WithRequestedActions(...)` | declare the delivery contract |
+| `WithConstraintExtraction(bool)` | toggle the per-run constraint-extraction call |
+| `WithSessionID(id)` / `WithTaskID(id)` / `WithRunID(id)` / `WithParentTaskID(id)` | identity and lineage |
+| `WithResumeMessages(msgs)` | continue from prior history (checkpoint replay) |
+| `WithInputParts(...)` / `WithInputImages(paths...)` | multimodal input |
+| `WithMaxBudgetUSD(x)` | stop the run when estimated spend exceeds the budget |
+| `WithAutoCompaction(threshold, keep)` / `WithoutAutoCompaction()` | context compaction policy |
+| `WithDebug(bool)` | verbose logging for one run |
+
+Builder-side options (`agent.New(...).With...`): `WithLLM`, `WithEmbedder`, `WithConfig`, `WithPrompt` / `WithSystemPrompt`, `WithMemory` / `WithGraphMemory` / `WithMemoryService`, `WithRunMemory`, `WithMCP`, `WithSkills`, `WithRAG`, `WithSubagents`, `WithSandbox`, `WithAutonomy`, `WithTool(s)`, `WithObserver`, `WithProgress`, `WithDBPath`, `WithDebug`, and `WithOptions(agent.Options{...})` for low-frequency knobs (permission policy, tool-execution policy, required skills, extra modules, observers).
+
+## Providers
+
+`pkg/providers` speaks the OpenAI-compatible API, which covers OpenAI, DeepSeek, Ollama, LM Studio, vLLM, DashScope/Qwen, and most proxies:
 
 ```go
-svc.RegisterOutputLint(agent.LintFunc{
-    NameValue: "no_planning_only_finish",
-    Fn: func(text string, ctx agent.LintContext) (bool, string) {
-        if strings.HasSuffix(strings.TrimSpace(text), "Next steps:") {
-            return false, "response reads like a plan; deliver the work or call task_blocked"
-        }
-        return true, ""
-    },
+llm, _ := providers.NewOpenAILLMProvider(&domain.OpenAIProviderConfig{
+	BaseURL:  "http://localhost:11434/v1", // Ollama
+	LLMModel: "qwen3",
 })
 ```
 
-Every service built with `agent.New(...).Build()` gets the built-ins automatically:
+Provider quirks are handled in the library, not your code: DeepSeek's reasoner rejecting pinned `tool_choice`, `response_format` fallbacks, `reasoning_content` from DeepSeek/Ollama, split streaming tool-call deltas, and servers that omit usage on streams.
 
-- `no_planning_only_finish` — reject planning-only endings
-- `file_task_must_write` — a task that asked for a file must have produced one
-- `non_empty_final_answer` — a run cannot terminate with no text
-- `task_delivery_contract` — a goal naming a delivery action (send the mail, post the message, write the file) cannot complete unless a matching tool was actually called
+**Usage and cache metering.** Every `domain.GenerationResult` carries provider-reported `Usage` (`domain.TokenUsage`): `PromptTokens`, `CompletionTokens`, and `CachedPromptTokens` — the prompt-cache-hit portion, billed at a deep discount (OpenAI ~0.5x, DeepSeek ~0.26x). Both providers cache automatically; the runtime keeps its context prefix byte-stable across turns so those hits actually happen. `Usage` is nil when the provider reported nothing.
 
-Related: a request that refuses tool use is given **zero** tools, and any tool call it makes anyway is refused. Hard constraints are enforced by the runtime, not requested in the prompt.
-
-The runtime works out what the user asked for with one small structured call per run — not by matching phrases, so it behaves the same in every language:
+**Multi-provider pool.** `pool.NewPool` load-balances across providers with selection strategies, per-provider concurrency limits, and capability levels; the pool implements the generator interface, so it drops straight into `WithLLM`:
 
 ```go
-// Declare it yourself and the extraction call is skipped entirely.
-result, _ := svc.Run(ctx, "Name the largest planet.", agent.WithToolsDisabled())
-
-// Or state what the run must deliver, and the contract lint enforces it.
-result, _ = svc.Run(ctx, goal, agent.WithRequiredDeliverables(
-    agent.DeliverableRequirement{Kind: "email", Description: "the summary"},
-))
-
-// Off entirely: only what you declared is enforced.
-result, _ = svc.Run(ctx, goal, agent.WithConstraintExtraction(false))
+brain, _ := pool.NewPool(pool.PoolConfig{
+	Enabled:  true,
+	Strategy: pool.StrategyRoundRobin,
+	Providers: []pool.Provider{
+		{Name: "fast", BaseURL: base1, Key: key1, ModelName: "deepseek-chat", MaxConcurrency: 5},
+		{Name: "local", BaseURL: "http://localhost:11434/v1", ModelName: "qwen3"},
+	},
+})
+svc, _ := agent.New("assistant").WithLLM(brain).Build()
 ```
 
-A blocked run is an outcome, not an error: `result.Err()` stays nil and `result.Text()` carries the agent's explanation, so a caller checking `err` first can't silently discard it. Branch on `result.Blocked`.
+`pkg/providers.LLMPool` is the lower-level pool over `domain.LLMProvider` instances (round-robin / random / least-load strategies, failover, health checks).
+
+## Observability
+
+Implement `agent.Observer` (embed `agent.BaseObserver`, override what you need) and register with `WithObserver` or `Options.Observers`. Callbacks fire at the model / tool / sub-agent / checkpoint seams, with stable span and call IDs for pairing start/end:
+
+```go
+type usage struct{ agent.BaseObserver }
+
+func (u *usage) OnModelEnd(ctx context.Context, info agent.ModelInfo, res *agent.ModelResult, err error) {
+	if res != nil {
+		log.Printf("round=%d tokens=%d cached=%d dur=%dms",
+			info.Round, res.TokensUsed, res.CachedTokens, res.DurationMs)
+	}
+}
+```
+
+`ModelResult.CachedTokens` is the prompt-cache-hit portion of `TokensUsed` — cache hits are heavily discounted, so `TokensUsed` alone overstates cost. `pkg/otelobserver` bridges the same callbacks to OpenTelemetry spans (`otelobserver.New(tracerProvider)`).
 
 ## Storage
 
@@ -313,20 +350,26 @@ By default AgentGo uses:
 
 Override the home directory with the `AGENTGO_HOME` environment variable.
 
-## Repository Layout
+## Repository layout
 
 ```text
-pkg/agent      framework core: agent, loop, tools, context, hooks/lints, sessions, checkpoints
-pkg/mcp        MCP tools and servers
-pkg/memory     durable memory
-pkg/rag        optional retrieval
-pkg/skills     skill loading
-pkg/providers  LLM providers (with reasoner-model fallbacks)
-pkg/pool       provider pool + token/cost accounting
-pkg/poolsvc    process-global pool service for embedders
-pkg/store      SQLite storage
-eval/          behavioral eval harness (scenarios + runner)
-examples/      runnable examples
+pkg/agent         framework core: agent, loop, tools, context, hooks/lints, sessions, checkpoints, run memory
+pkg/domain        shared types: messages, generation results, token usage, provider interfaces
+pkg/providers     OpenAI-compatible providers + LLMPool (failover, health checks)
+pkg/pool          provider pool + token/cost accounting
+pkg/poolsvc       process-global pool service for embedders
+pkg/mcp           MCP client, tools and servers
+pkg/memory        durable memory service + BaseStore
+pkg/cortexbridge  CortexDB-backed knowledge graph / RAG / RunMemory
+pkg/rag           optional retrieval
+pkg/skills        skill loading
+pkg/sandbox       local / Docker execution sandboxes
+pkg/scheduler     cron-style job scheduling
+pkg/otelobserver  Observer -> OpenTelemetry bridge
+pkg/store         SQLite storage
+pkg/worktree      git worktree helpers
+eval/             behavioral eval harness (scenarios + runner)
+examples/         runnable examples
 ```
 
 ## Development

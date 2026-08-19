@@ -1,787 +1,388 @@
 # AgentGo
 
-**面向 Agent / Team 的 Go 框架，内置本地优先 AI 能力。**
+[![CI](https://github.com/liliang-cn/agent-go/actions/workflows/ci.yml/badge.svg)](https://github.com/liliang-cn/agent-go/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/liliang-cn/agent-go/v3.svg)](https://pkg.go.dev/github.com/liliang-cn/agent-go/v3)
+[![Go Report Card](https://goreportcard.com/badge/github.com/liliang-cn/agent-go/v3)](https://goreportcard.com/report/github.com/liliang-cn/agent-go/v3)
+[![Release](https://img.shields.io/github/v/release/liliang-cn/agent-go)](https://github.com/liliang-cn/agent-go/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-[English](README.md) · [API 参考](references/API.md) · [架构文档](references/ARCHITECTURE.md)
+**本地优先的 Go Agent 框架。**
 
-AgentGo 是一个 Go 框架，用于构建 Agent / Team 系统。Team、Agent、Task、Memory、MCP/tools、Skills 和 PTC 构成核心 runtime；CLI / UI 是可选适配器。RAG 是可选的外部知识检索插件，只在配置 embedding 后才进入主路径。
+AgentGo 是一个 Go 库，用于构建本地运行、会用工具、有记忆、可互相组合的 agent。核心在 `pkg/agent`：一条透明的流式循环，一切能力皆是工具，确定性靠 lint 和运行时契约保证，而不是靠往 prompt 里加字。没有强制的 CLI、UI 或 server——它是拿来嵌入的。
 
-默认体验并不依赖 embedding model。基础 Agent runtime、MCP、skills、文件记忆、task 和 PTC 都可以在没有向量检索的情况下工作。只有在你明确需要 RAG、语义向量召回或向量型检索时，才需要配置 embedding model。
+[English](README.md)
+
+## 安装
 
 ```bash
 go get github.com/liliang-cn/agent-go/v3
 ```
 
----
-
-## 核心能力
-
-| 能力            | 说明                                                                      |
-| --------------- | ------------------------------------------------------------------------- |
-| **Agent**       | 多轮推理循环，支持规划、**自动续航 (Auto-continuation)** 和 **异步上下文分叉 (Context Forking)** |
-| **Memory**      | **认知记忆层**: Hindsight 演化 + **LLM-as-a-Judge 裁判检索** + **潜意识后台固化 (Subconscious)** |
-| **工具**        | MCP（模型上下文协议）、Skills（YAML+Markdown）、自定义内联工具            |
-| **PTC**         | LLM 写 JavaScript，工具在 Goja 沙箱中运行 — 减少模型往返次数              |
-| **Streaming**   | 逐 Token 输出；支持 **极低延迟的流式工具触发** 和 **Tombstone (墓碑) 错误恢复** |
-| **多 Provider** | OpenAI、Anthropic、Azure、DeepSeek、Ollama — 运行时可切换                 |
-| **Team**        | 团队队长/专家机制，**Actor 模式 SubAgent 通信**，异步队列与跨进程追踪 |
-| **Operator**    | 内置执行型 Agent，带文件系统/网页工具以及 PTY / coding-agent 会话能力     |
-
----
-
-## 概念模型
-
-理解 AgentGo，最简单的方法是把它看成一个 runtime core 加上可选知识插件：
-
-### 1. LLM
-
-LLM 是执行核心，其他能力都围绕它组织。
-
-- 它提供统一的生成接口，Agent、PTC、工具选择以及可选 RAG 回答都基于它工作。
-- Provider 通过全局 pool 在运行时切换。
-- standalone agent、orchestrator、specialist、built-in agent 最终都跑在同一套 LLM 抽象上。
-
-可以理解为：`prompt + tools + policy -> model call`
-
-### 2. Task
-
-Task 是一等执行单元。
-
-- Team 是 process，Agent 是 thread，Task 是 function invocation / activation frame。
-- 一个 task 可以包含多轮 LLM/tool frames，但仍然是一次逻辑调用。
-- Task 会持久化 frames、events、continuation、awaiting state 和 queue class（`task` 或 `microtask`）。
-- Task 遵守 Finish-Or-Block contract：终态应该是 `completed`、`blocked`、`failed` 或 `yielded`，而不是含糊的“下一步可以”或“我会做”。
-
-可以理解为：`input -> frames/events -> output`
-
-Finish-Or-Block 是默认 runtime prompt 和内置 agent policy 的一部分。Agent 应该持续执行直到可验证完成；如果无法继续，调用 `task_blocked` 写明具体 blocker；如果运行错误，则带 trace 失败；如果确实需要外部输入，则进入 yield。
-
-### 3. Memory
-
-Memory 是系统内部的长期上下文层。
-
-- 存储事实、偏好、观察和长期可复用的信息。
-- 它和 cache 不同，也和 RAG 文档不同。
-- 没有 embedder 时，文件记忆模式仍然可用。
-
-可以理解为：`系统长期学到了什么`
-
-### 4. MCP
-
-MCP 是工具传输层。
-
-- 统一了内置工具和外部工具的接入方式。
-- AgentGo 默认始终带有内置 filesystem 和 websearch。
-- 它是 agent 与文件、网页、外部操作能力交互的主要方式。
-
-可以理解为：`agent 怎么接触外部世界`
-
-### 5. Skills
-
-Skills 是 Markdown/YAML 形式的可复用工作流。
-
-- 它比原始工具更高层。
-- 用来承载领域经验、步骤化流程和可复用操作规范。
-- 可以配置为用户调用，也可以允许模型调用。
-
-可以理解为：`可复用的专家工作流`
-
-### 6. PTC
-
-PTC（Programmatic Tool Calling）是程序化编排层。
-
-- 模型不再一次只给一个工具调用，而是直接写 JavaScript 来编排工具。
-- 它可以减少多步工具调用时的模型往返。
-- 非常适合工具密集、需要流程控制和数据整理的任务。
-
-可以理解为：`LLM 写出来的工具编排代码`
-
-### 7. Agent
-
-Agent 是基础运行单元。
-
-- 它有自己的 instructions、工具能力、可选的 RAG / Memory / PTC / Skills，以及会话执行循环。
-- Agent 可以是 built-in，也可以是用户自定义。
-- 内置 standalone agents 当前包括 `Dispatcher`、`Responder`、`Operator`、`Evaluator`。
-
-常见定位：
-
-- `Responder`：通用直接执行
-- `Operator`：执行、验证、PTY 会话、coding-agent 调用
-- `Evaluator`：产品/业务视角
-- `Dispatcher`：入口与编排
-
-### 8. Team
-
-Team 是建立在 Agent 之上的持久化团队层。
-
-- 一个 team 有一个 `orchestrator` 和多个 `specialists`
-- `orchestrator` 本质上仍然是 agent，只是带有团队编排规则
-- orchestrator 对实现类任务优先走异步 team work
-- team task 状态会持久化，所以新的 CLI 进程也能继续查看和跟踪
-
-可以理解为：`带队列和状态的持久化多 Agent 协作`
-
-
-### 可选能力：RAG
-
-RAG 不属于默认 runtime 主路径。它是外部/项目文档的可选知识检索插件。
-
-- 负责文档摄入、分块、embedding、向量存储和检索。
-- 真正有用的向量检索路径需要 embedding。
-- 它解决外部文档和项目知识，不负责长期内部 agent memory。
-
-可以理解为：`documents + embeddings -> retrieval context`。
-
-### Agent 操作系统类比 (Microkernel OS)
-
-在架构设计上，可以把 AgentGo 映射为现代操作系统的概念：
-- **Team = 进程 (Process)**：资源隔离的边界，拥有独立的团队共享记忆和任务队列。
-- **Agent = 线程 (Thread)**：携带特定人设和技能包的执行实体，共享所属 Team 的资源。
-- **Task = 函数调用 (Function Call)**：一等 invocation frame，包含 input、output、frames、events 和 continuation 状态。
-- **SubAgent = 协程 (Coroutine)**：由主 Agent 动态 `spawn` 的轻量级执行上下文，支持异步并行和信道通信。
-- **Memory = 虚拟内存 (VFS/Paging)**：通过 LLM 裁判路由实现上下文的无缝“换页 (Page In/Out)”。
-- **Subconscious = 守护进程 (Daemon/GC)**：在对话结束后静默运行的后台进程，负责抽取经验并清理上下文垃圾。
-
-### API 形状
-
-从 API 的角度看，这 8 个概念大致映射为：
-
-- **LLM / Agent 运行时**
-  - `Ask`, `Chat`, `Run`, `RunStream`
-- **Memory**
-  - `WithMemory`, `memory_save`, `memory_recall`
-- **MCP**
-  - `WithMCP`，内置 filesystem/websearch，以及外部 MCP server
-- **Skills**
-  - `WithSkills`，skill 注册与调用
-- **PTC**
-  - `WithPTC`, `execute_javascript`, `callTool()`
-- **Task**
-  - `manager.Tasks().Get/List/Await/Yield/Resume/Cancel`, `agentgo task trace`, `agentgo task inspect`
-- **Team**
-  - `CreateTeam`, `JoinTeam`, `DispatchTask`, `SubmitTeamTask`, `GetTask`
-- **可选 RAG**
-  - `WithRAG`, `rag_query`，以及文档摄入/查询流程
-
-实际分层可以简单记成：
-
-`LLM -> tools/PTC -> Agent -> Team`
-
-而 `Memory / MCP / Skills` 是核心可挂载能力；`RAG` 是配置 embedding 后启用的可选外部知识插件。
-
----
+需要 Go 1.25+。
 
 ## 快速开始
 
-### 简单问答
+注入任意 OpenAI 兼容 provider，直接问：
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"os"
+
+	"github.com/liliang-cn/agent-go/v3/pkg/agent"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/providers"
+)
+
+func main() {
+	llm, err := providers.NewOpenAILLMProvider(&domain.OpenAIProviderConfig{
+		BaseURL:  "https://api.deepseek.com/v1",
+		APIKey:   os.Getenv("DEEPSEEK_API_KEY"),
+		LLMModel: "deepseek-chat",
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	svc, err := agent.New("assistant").
+		WithLLM(llm).
+		WithPrompt("You are a concise Go assistant.").
+		Build()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer svc.Close()
+
+	reply, err := svc.Ask(context.Background(), "What is AgentGo?")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(reply)
+}
+```
+
+不调用 `WithLLM` 时，配置从 `AGENTGO_HOME`（默认 `~/.agentgo`）加载，provider 存在 `data/agentgo.db` 里。配置驱动的版本见 `examples/quickstart`。
+
+四个入口，底下是同一条循环：
+
+- `svc.Ask(ctx, q)` — 单次问答，返回 `(string, error)`。
+- `svc.Chat(ctx, q)` — 带 session 的多轮对话，返回 `*ExecutionResult`。
+- `svc.Stream(ctx, q)` — 逐 token 输出（`<-chan string`）。
+- `svc.RunStream(ctx, goal, opts...)` — 完整运行时事件：状态更新、工具调用、工具结果、增量文本。`Run()` 就是 `RunStream()` 加一个收集器。
+
+## 核心概念
+
+- **Agent** — 有名字的运行时，带指令、工具、记忆和 session，由 `agent.New(name).With...().Build()` 组装。
+- **循环** — 一个流式状态机。子 agent 复用同一条循环，事件向上冒泡、回答被 lint、终态被 checkpoint。
+- **工具** — agent 能做的一切：内置工具、你的函数、MCP server、skill、子 agent。
+- **子 agent** — 用 `WithSubagents(...)` 注册，模型通过唯一的 `task(agent_name, prompt)` 工具触达。没有单独的 team/dispatcher/router 层。
+- **Task** — 一等执行单元，带状态、事件、frame、checkpoint 和输出，落在 SQLite 里。
+- **Memory** — 持久的本地上下文，和 cache、RAG 分开。后端可插拔。
+- **Output lint** — 输出后的确定性检查，违反就让模型重答，而不是在 prompt 里写"请记住……"。
+
+## 能力
+
+### 自定义工具
+
+注册一个 Go 函数，schema 就是普通的 JSON-Schema map：
+
+```go
+svc.AddTool("read_config", "Read a service's current configuration",
+	map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"service": map[string]interface{}{"type": "string"},
+		},
+	},
+	func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+		return loadConfig(args["service"].(string))
+	})
+```
+
+内置工具包括 web 搜索、URL 抓取、时间、scratchpad，以及（挂了 sandbox 时的）命令执行和交付物扫描。
+
+### 子 agent
+
+```go
+svc, _ := agent.New("lead").
+	WithSubagents(
+		agent.SubagentSpec{
+			Name:         "researcher",
+			Description:  "Gathers and summarises background information.",
+			Instructions: "You research a topic and return a tight, factual brief.",
+		},
+		agent.SubagentSpec{
+			Name:         "writer",
+			Description:  "Turns notes into finished prose.",
+			Instructions: "You write clear, plain prose from the notes you are given.",
+		},
+	).
+	Build()
+
+result, _ := svc.Run(ctx, "Research X and write two paragraphs about it.")
+```
+
+各种变体（basic、parallel、async、auto-delegation、filtering）见 `examples/subagent/`。
+
+### 记忆
+
+```go
+svc, _ := agent.New("assistant").WithMemory().Build()
+
+svc.Chat(ctx, "My name is Alice and I prefer short answers.")
+result, _ := svc.Chat(ctx, "What do you know about me?")
+```
+
+内置 `store_type`：`file`（不需要 embedder）、`cortex`、`memoryflow`、`graphflow`（`WithGraphMemory()`，需要 `WithEmbedder`）。另有两个随框架发布的插件：`cortex-remote`（gRPC 访问共享 CortexDB）和 `mcp-memory`（任何带记忆工具的 MCP server，用 `tool.*` / `arg.*` / `result.*` 选项做映射——不预设任何工具名）。
+
+接入自己的后端有三个接缝，框架代劳的程度依次递减：
+
+1. `agent.MustRegisterMemoryStore("redis", factory)` — 按名字注册，之后用 `agent.WithMemoryStoreType("redis")` 选择。注册并发安全且严格：重名是错误，绝不静默覆盖。
+2. `WithMemory(agent.WithMemoryStore(myStore))` — 直接注入实例。
+3. `WithMemoryService(mySvc)` — 换掉整个服务，检索和注入策略都归你。
+
+`domain.MemoryStore` 有十八个方法；嵌入 `memory.BaseStore`，只覆盖后端真能实现的那些——其余返回 `memory.ErrMemoryStoreUnsupported`，调用方按降级处理而不是报错。
+
+可运行示例：`examples/memory-custom-store`、`examples/memory-remote-cortex`、`examples/memory-mcp`。
+
+### Run memory（自动召回与捕获）
+
+`RunMemory` 在一次 run 的开始和结束挂钩外部长期记忆系统。召回结果以 "Recalled context" 段注入 system prompt（有边界：5 秒超时、约 1 万字符上限、失败只记日志）；捕获在 run 结束后异步执行——run 永远不会被自己的记忆卡住。
+
+```go
+type RunMemory interface {
+	RecallForRun(ctx context.Context, goal string) (string, error)
+	CaptureRun(ctx context.Context, goal, finalText string) error
+}
+
+svc, _ := agent.New("ops").
+	WithRunMemory(cortexbridge.NewRunMemory(cortexDB)). // 或你自己的实现
+	Build()
+```
+
+`pkg/cortexbridge.NewRunMemory` 是 CortexDB 实现：把 `DECISION:` 这类标记行和实体存进类型化图谱，供后续 run 召回。端到端演示：`examples/graph-memory-experiment`。
+
+### MCP
 
 ```go
 svc, _ := agent.New("assistant").
-    WithPrompt("你是一个智能助手。").
-    Build()
-defer svc.Close()
-
-reply, _ := svc.Ask(ctx, "什么是 Go 语言？")
-fmt.Println(reply)
+	WithMCP(agent.WithMCPConfigPaths("./mcpServers.json")).
+	Build()
 ```
 
-### 接入 RAG（文档知识库）
+Server 在 `mcpServers.json` 里声明（仓库根目录有样例），它们的工具和内置工具并列注册。可运行示例：`examples/mcp/basic`、`examples/mcp/advanced`。
+
+### Skills
+
+`WithSkills()` 从 `AGENTGO_HOME/skills`（或 `agent.WithSkillsPaths(...)`）加载可复用的 Markdown/YAML 工作流。`Options.RequiredSkills` 让 `Build()` 在指定 skill 未安装时直接失败。
+
+### RAG
+
+可选的文档检索，只有配置了 embedder 才进入主路径：
 
 ```go
 svc, _ := agent.New("assistant").
-    WithPrompt("根据提供的文档回答问题。").
-    WithRAG().
-    WithDBPath("~/.agentgo/data/agent.db").
-    Build()
-defer svc.Close()
-
-// 一次性摄入
-svc.Run(ctx, "摄入 ./docs/ 目录")
-
-// 查询
-reply, _ := svc.Ask(ctx, "规范文档里关于错误处理是怎么说的？")
+	WithEmbedder(embedder). // 例如 providers.NewOpenAIEmbedderProvider(...)
+	WithRAG().
+	Build()
 ```
 
-### 带认知记忆的多轮对话
+### 结构化输出
 
 ```go
-svc, _ := agent.New("assistant").
-    WithMemory().
-    Build()
-defer svc.Close()
-
-svc.Chat(ctx, "我叫 Alice，在 Go 团队工作。")
-reply, _ := svc.Chat(ctx, "我在哪个团队？")
-// → "你在 Go 团队，Alice。" (通过向量与索引混合搜索召回)
-```
-
-### CLI 交互
-
-运行带记忆可视化的交互式对话：
-
-```bash
-# 启动交互对话，并显示检索到的记忆和推理过程
-go run ./cmd/agentgo-cli chat --show-memory
-
-# 开启 JavaScript 沙箱用于处理复杂逻辑
-go run ./cmd/agentgo-cli chat --with-ptc
-```
-
-运行 `Team` 工作流：
-
-```bash
-# 创建一个独立 Agent
-agentgo agent add Scout --description "独立执行任务的特工" \
-  --instructions "独立工作，直接回答，必要时使用工具。"
-
-# 查看或更新 Agent
-agentgo agent show Scout
-agentgo agent update Scout --model openai/gpt-5-mini
-
-# 直接运行这个 Agent
-agentgo agent run --agent Scout "总结当前仓库结构"
-
-# 内置 standalone agents 默认可用
-agentgo agent show Dispatcher
-agentgo agent show Operator
-
-# 创建一个 team（会自动创建默认 orchestrator）
-agentgo team add "Docs Team" --description "文档和发布说明"
-
-# 让独立 Agent 加入 team
-agentgo agent join Scout --team "Docs Team" --role specialist
-
-# 通过默认领队 Agent 和某个 team agent 执行任务
-agentgo team go "@Orchestrator @Scout 总结 UI 和后端的关系，并写入 workspace/ui_backend_overview.md"
-
-# 查看 team 当前运行态；有 running/queued 任务时会自动 follow
-agentgo team status "Docs Team"
-
-# 直接通过内置 Operator 执行操作型任务
-agentgo agent run --agent Operator "在 workspace/operator_probe.txt 写入文本：OPERATOR_OK"
-
-# 让 Agent 退出 team
-agentgo agent leave Scout
-
-# 不再需要时删除这个 team
-agentgo team delete "Docs Team"
-```
-
----
-
-## 认知记忆层 (Hindsight & PageIndex)
-
-AgentGo 实现了一个受 **Hindsight** (认知分层) 和 **PageIndex** (结构化导航) 启发的演化记忆层。
-
-| 概念                    | 说明                                                                       |
-| ----------------------- | -------------------------------------------------------------------------- |
-| **事实 (Facts)**        | 从对话中提取的原子数据点（如“用户喜欢 Go”）。                              |
-| **观察 (Observations)** | 通过 **Reflect()** 将多个事实整合出的高层洞察。                            |
-| **层次化索引**          | `_index/` 目录下的 Markdown 摘要，用于极速的推理导航。                     |
-| **混合检索**            | 并行运行 **向量搜索** (相似度) 与 **索引导航** (逻辑推理)，通过 RRF 融合。 |
-| **可追溯性**            | 每条观察都追踪其 **证据 ID (EvidenceIDs)**，提供清晰的认知审计链。         |
-
-### 记忆演化流程
-
-1. **提取**: Agent 在对话中识别出一个事实。
-2. **索引**: 事实存入带 YAML 元数据（置信度、来源类型）的 Markdown 文件。
-3. **反思**: 定期（如每 5 条事实）触发后台 `Reflect()`，将事实合并为高层观察。
-4. **更迭**: 当信息变化时，旧记忆被标记为 `stale`（过时），并通过 `SupersededBy` 链接到新记忆。
-
----
-
-## Builder
-
-```go
-// 实现自己的 Module
-type Module interface {
-    ID() string
-    RegisterTools(registry *ToolRegistry) error
+type Brief struct {
+	Ticker    string   `json:"ticker"    desc:"uppercase stock symbol"`
+	KeyPoints []string `json:"key_points" desc:"3-4 short, factual takeaways"`
 }
 
-svc, _ := agent.New("agent").
-    WithModule(NewMyCustomModule()).
-    Build()
+brief, err := agent.RunTyped[Brief](ctx, svc, "Summarize NVDA.")
 ```
 
----
+`RunTyped[T]` 从结构体反射出 JSON Schema（tag 决定字段名、`desc`、可选性），返回解析好的 `T`。手写 schema 用 `agent.WithStructuredOutput(spec)` 这个 `RunOption`。两层保证：支持的 provider 走原生 `response_format`（被拒时自动回退），另有确定性 lint 校验最终文本、不合规就重答。可运行示例：`examples/structured-output`。
 
-## 带执行语义的工具注册
+### Output lint
 
-现在工具可以直接声明自己的运行时语义。这样 runtime 可以更好地处理：
-
-- 并发批处理
-- 取消行为
-- 权限策略
-- 流式状态更新
+Agent 反复犯同一个错时，别再往指令里加句子——注册一个 lint：
 
 ```go
-svc, _ := agent.New("assistant").Build()
-defer svc.Close()
-
-svc.Register(
-    agent.BuildTool("workspace_summary").
-        Description("返回当前工作区的简要摘要。").
-        ReadOnly(true).
-        InterruptBehavior(agent.InterruptBehaviorCancel).
-        Handler(func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-            return map[string]any{
-                "workspace": "current project",
-                "mode":      "demo",
-            }, nil
-        }).
-        Build(),
-)
-
-svc.AddToolWithMetadata(
-    "write_release_note",
-    "写入一份发布说明文件。",
-    map[string]interface{}{
-        "type": "object",
-        "properties": map[string]interface{}{
-            "path": map[string]interface{}{"type": "string"},
-            "body": map[string]interface{}{"type": "string"},
-        },
-        "required": []string{"path", "body"},
-    },
-    func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-        return "ok", nil
-    },
-    agent.ToolMetadata{
-        Destructive:       true,
-        InterruptBehavior: agent.InterruptBehaviorBlock,
-    },
-)
-```
-
----
-
-## Agent APIs
-
-### 运行时调用
-
-| 方法                      | 返回值                      | 会话            | 适用场景          |
-| ------------------------- | --------------------------- | --------------- | ----------------- |
-| `Ask(ctx, prompt)`        | `(string, error)`           | 无              | 单次问答          |
-| `Chat(ctx, prompt)`       | `(*ExecutionResult, error)` | 有（自动 UUID） | 对话式交互        |
-| `Run(ctx, goal, ...opts)` | `(*ExecutionResult, error)` | 可选            | 完整 Agent 循环   |
-| `Stream(ctx, prompt)`     | `<-chan string`             | 无              | 实时 Token 输出   |
-| `ChatStream(ctx, prompt)` | `<-chan string`             | 有              | 对话式 + 实时输出 |
-| `RunStream(ctx, goal)`    | `(<-chan *Event, error)`    | 可选            | 完整事件可见性    |
-
-```go
-result, _ := svc.Run(ctx, "目标",
-    agent.WithMaxTurns(20),
-    agent.WithTemperature(0.7),
-    agent.WithSessionID("my-session"),
-    agent.WithStoreHistory(true),
-)
-
-result.Text()        // 最终回答（字符串）
-result.Err()         // 非 nil 表示 Agent 报告了错误
-result.HasSources()  // true 表示使用了 RAG 检索结果
-```
-
-现在 `RunStream()` 的 `state_update` 事件里会带更多运行时字段，例如：
-
-- `turn_stage`
-- `loop_transition`
-- `transition_reason`
-- `tool_state`
-- `preferred_agent`
-- `requires_tools`
-- `transition`
-
-### Standalone Agent 管理
-
-在 manager 层，standalone agent 是持久化的命名运行单元：
-
-- `CreateAgent`, `UpdateAgent`, `DeleteAgent`
-- `GetAgentByName`, `ListAgents`, `ListStandaloneAgents`
-- `GetAgentService`
-- `GetAgentStatus`, `ListAgentStatuses`
-
-内置 standalone agents（`Dispatcher`、`Responder`、`Operator`、`Evaluator`）会自动 seed，也可以像普通命名 agent 一样直接运行和查看。
-
-### 内置 Agent 委派 APIs
-
-用户自定义的 standalone agent 默认会获得一组 built-in delegation 接口：
-
-- `list_builtin_agents`
-- `delegate_builtin_agent`
-- `submit_builtin_agent_task`
-- `get_delegated_task_status`
-
-这组接口的意义是：
-
-- 把执行类工作交给 `Operator`
-- 把通用工作交给 `Responder`
-- 把业务/范围判断交给 `Evaluator`
-
----
-
-## 程序化工具调用（PTC）
-
-使用 `WithPTC()` 时，LLM 生成 JavaScript 代码而非 JSON 工具调用。代码在 Goja 沙箱中运行，可使用 `callTool()`：
-
-```go
-svc, _ := agent.New("analyst").
-    WithPTC().
-    WithTool(teamDef, teamHandler, "data").
-    WithTool(expenseDef, expenseHandler, "data").
-    Build()
-
-// LLM 可以这样写代码：
-//   const team = callTool("get_team", { dept: "eng" });
-//   return team.members.map(m => ({
-//     name: m.name,
-//     spend: callTool("get_expenses", { id: m.id }).total
-//   }));
-```
-
-**适用场景：** 多个依赖工具调用一次完成、数据进入上下文前先转换、需要条件逻辑的工具调用。
-
----
-
-## 记忆系统
-
-`memory` 和 `cache` 在 AgentGo 里是两个不同层次：
-
-| 组件       | 存储            | 用途                                     |
-| ---------- | --------------- | ---------------------------------------- |
-| **Memory** | Markdown/SQLite | 长期、可解释、可演化的事实/观察/偏好     |
-| **Cache**  | 内存或文件      | 短期、可失效、可重建的查询/向量/响应结果 |
-
-```go
-// 启用 DB 记忆（自动从每次对话中学习）
-svc, _ := agent.New("agent").WithMemory().Build()
-
-// LongRun Agent 自动共享同一个 DB 记忆
-lr, _ := agent.NewLongRun(svc).
-    WithInterval(5 * time.Minute).
-    WithWorkDir("~/.agentgo/longrun").
-    Build()
-```
-
-对于文件型 memory store，现在还提供了 prompt 入口索引和 session 记忆辅助接口：
-
-```go
-fileStore, _ := store.NewFileMemoryStore("./memory")
-
-_ = fileStore.WriteSessionMemory("session-123", "当前草稿：保持简洁、专业。")
-sessionNote, _ := fileStore.ReadSessionMemory("session-123")
-entrypoint, _ := fileStore.ReadEntrypoint() // 读取 MEMORY.md
-headers, _ := fileStore.SelectRelevantHeaders(context.Background(), "Go 后端 简洁 风格", 3)
-
-fmt.Println(sessionNote)
-fmt.Println(entrypoint)
-fmt.Println(headers)
-```
-
-无 Embedder 时优雅降级：`memory` 默认可以直接走文件存储与索引导航。
-
-如果你只想先跑通本地优先方案，建议这样理解：
-
-- `memory` 先用文件版，保证可读、可编辑、可追踪
-- `cache` 先用文件版或内存版，保证查询加速，但不要承载长期知识
-- 文件 memory 现在会维护 `MEMORY.md`、`_session/*.md`，并支持 header selector
-
----
-
-## 自主 Agent（LongRun）
-
-LongRun 按计划运行 Agent，带有持久化任务队列：
-
-```go
-lr, _ := agent.NewLongRun(svc).
-    WithInterval(10 * time.Minute).
-    WithMaxActions(5).
-    Build()
-
-lr.AddTask(ctx, "监控 RSS 订阅并总结新条目", nil)
-lr.Start(ctx)
-// ...
-lr.Stop()
-```
-
-特性：SQLite 任务队列、心跳文件、定时调度、与父 Agent 共享 DB 记忆。
-
----
-
-## 多 Agent 协作
-
-```go
-// Handoffs — 专业 Agent 路由
-orchestrator.RegisterAgent(researchAgent)
-orchestrator.RegisterAgent(writerAgent)
-// LLM 通过 transfer_to_* 工具调用路由到对应 Agent
-
-// SubAgents — 作用域委托
-coordinator := agent.NewSubAgentCoordinator()
-resultChan  := coordinator.RunAsync(ctx, subAgent)
-results     := coordinator.WaitAll(ctx)
-```
-
-### 内置 Standalone Agents
-
-AgentGo 默认会 seed 这些 standalone agents：
-
-- `Dispatcher` — `agentgo chat` 的 intake / orchestration agent
-- `Responder` — 通用执行型 Agent
-- `Operator` — 执行导向 Agent，适合文件操作、验证、PTY 会话和 coding-agent 调用
-- `Evaluator` — 产品 / 业务代表
-
-可以直接查看：
-
-```bash
-agentgo agent show Dispatcher
-agentgo agent show Responder
-agentgo agent show Operator
-agentgo agent show Evaluator
-```
-
-### Operator
-
-`Operator` 是内置的执行型 Agent。除了常规 filesystem / web / RAG / memory 能力外，它还暴露了：
-
-- 通用 PTY 会话工具：
-  - `start_pty_session`
-  - `send_pty_input`
-  - `get_pty_session`
-  - `list_pty_sessions`
-  - `interrupt_pty_session`
-  - `stop_pty_session`
-- 面向 coding-agent 的专用工具：
-  - `start_coding_agent_session`
-  - `send_coding_agent_prompt`
-  - `get_coding_agent_session`
-  - `list_coding_agent_sessions`
-  - `interrupt_coding_agent_session`
-  - `stop_coding_agent_session`
-  - `run_coding_agent_once`
-
-直接使用示例：
-
-```bash
-agentgo agent run --agent Operator "在 workspace/operator_probe.txt 写入文本：OPERATOR_OK"
-agentgo agent run --agent Operator "调用 codex，让它输出精确文本：RES_FROM_CODEX"
-```
-
-如果只是一次性拿结果，`run_coding_agent_once` 是最稳的入口。对于 `codex`，AgentGo 会优先走非交互式 `codex exec -`，而不是让模型自己猜 shell 命令。
-
-### 自定义 Agent 委派内置 Agent
-
-用户自定义的 standalone agent 默认会拿到一组“内置 Agent 委派工具”：
-
-- `list_builtin_agents`
-- `delegate_builtin_agent`
-- `submit_builtin_agent_task`
-- `get_delegated_task_status`
-
-当前可委派的 built-in agents：
-
-- `Responder`
-- `Operator`
-- `Evaluator`
-
-这样自定义 Agent 在保留自身角色和能力的同时，可以显式把执行型工作交给 `Operator`，把业务判断交给 `Evaluator`。
-
-## Team APIs
-
-AgentGo 也提供面向 `独立 Agent / Team / Team Agent` 的持久化管理 API。`orchestrator` 只是 team 内的一种 agent 角色。
-
-```go
-store, err := agent.NewStore(filepath.Join(cfg.DataDir(), "agent.db"))
-if err != nil {
-    panic(err)
-}
-
-manager := agent.NewTeamManager(store)
-if err := manager.SeedDefaultMembers(); err != nil {
-    panic(err)
-}
-
-scout, err := manager.CreateAgent(ctx, &agent.AgentModel{
-    Name:         "Scout",
-    Kind:         agent.AgentKindAgent,
-    Description:  "独立执行任务的特工",
-    Instructions: "独立工作并直接回答。",
+svc.RegisterOutputLint(agent.LintFunc{
+	NameValue: "no_planning_only_finish",
+	Fn: func(text string, ctx agent.LintContext) (bool, string) {
+		if strings.HasSuffix(strings.TrimSpace(text), "Next steps:") {
+			return false, "response reads like a plan; deliver the work or call task_blocked"
+		}
+		return true, ""
+	},
 })
-if err != nil {
-    panic(err)
-}
-
-docsTeam, err := manager.CreateTeam(ctx, &agent.Team{
-    Name:        "Docs Team",
-    Description: "文档和发布说明",
-})
-if err != nil {
-    panic(err)
-}
-
-writer, err := manager.JoinTeam(ctx, scout.Name, docsTeam.ID, agent.AgentKindSpecialist)
-if err != nil {
-    panic(err)
-}
-
-result, err := manager.DispatchTask(ctx, writer.Name, "编写 workspace/ui_backend_overview.md")
-if err != nil {
-    panic(err)
-}
-fmt.Println(result)
 ```
 
-Orchestrator 的运行时行为：
-
-- `CreateTeam()` 或 `agentgo team add` 创建自定义 team 时，会自动生成一个默认 orchestrator。
-- Orchestrator 的 system prompt 会带上本 team 的 roster 和成员职责摘要。
-- 对于实现类任务，Orchestrator 优先使用异步团队任务（`submit_team_async`）。
-- Team shared task 会持久化，新的 CLI 进程也能通过 `get_task_status` / `list_team_tasks` 查看。
-- Orchestrator 默认不使用通用的 `delegate_to_subagent`。
-
-### 核心 Team-Manager APIs
-
-- `CreateAgent`, `UpdateAgent`, `DeleteAgent`, `GetAgentByName`, `ListAgents`, `ListStandaloneAgents`
-- `JoinTeam`, `LeaveTeam`, `GetAgentService`
-- `CreateTeam`, `ListTeams`, `GetTeamByName`
-- `AddTeamAgent`, `CreateTeamAgent`, `ListTeamAgents`, `GetTeamAgentByName`
-- `AddOrchestrator`, `AddSpecialist`, `ListOrchestrators`, `ListSpecialists`（角色化辅助方法）
-- `DispatchTask`, `DispatchTaskStream`
-- `EnqueueSharedTask`, `ListSharedTasks`
-- `SubmitAgentTask`, `SubmitTeamTask`, `GetTask`, `ListSessionTasks`
-
-### Team 运行态 / 状态 APIs
-
-面向编排和监控的常用入口：
-
-- `GetTeamStatus`, `ListTeamStatuses`
-- `GetAgentStatus`, `ListAgentStatuses`
-- `GetLeadAgentForTeam`
-- `SubscribeTask`
-- `DispatchTaskStreamWithOptions`
-- `ChatWithMemberStream`
-- `ChatWithMemberStreamWithOptions`
-
-从概念上可以把 API 分成三层：
-
-- **Standalone agent APIs**：创建、运行、查看、更新
-- **Team APIs**：建队、入队、派活、追踪异步任务
-- **Built-in delegation APIs**：让自定义 agent 明确委派 `Responder`、`Operator`、`Evaluator`
-
----
-
-## 确定性规划（Plan-Review-Execute）
+每个 `Build()` 出来的服务自带内置 lint：`no_planning_only_finish`、`file_task_must_write`、`non_empty_final_answer`、`task_delivery_contract`（目标点名了交付动作——发邮件、写文件——就必须真调过对应工具才能算完成）。运行时用每 run 一次的小结构化调用理解用户要什么，不做短语匹配，因此各种语言下行为一致。自己声明则跳过这次调用：
 
 ```go
-plan, _   := svc.Plan(ctx, "部署新服务")
-// 检查 plan.Steps，按需修改
-result, _ := svc.Execute(ctx, plan.ID)
+result, _ := svc.Run(ctx, "Name the largest planet.", agent.WithToolsDisabled())
+
+result, _ = svc.Run(ctx, goal, agent.WithRequiredDeliverables(
+	agent.DeliverableRequirement{Kind: "email", Description: "the summary"},
+))
+
+result, _ = svc.Run(ctx, goal, agent.WithConstraintExtraction(false))
 ```
 
----
+被 block 的 run 是一种结果而不是错误：`result.Err()` 保持 nil，`result.Text()` 是 agent 的解释——用 `result.Blocked` 分支。
 
-## 配置与存储
+### Task、checkpoint 与重放
 
-运行时目录布局由 `AGENTGO_HOME` 决定，默认是 `~/.agentgo`。
-结构化运行时配置存放在 `data/agentgo.db`。
+```go
+store, _ := agent.NewStore("agentgo.db")
+manager := agent.NewManager(store)
+_ = manager.SeedDefaultAgent()
 
-### 目录结构（默认 `home = ~/.agentgo`）
-
+task, _ := manager.Tasks().Submit(ctx, agent.TaskSubmitOptions{
+	SessionID: "demo-session",
+	AgentName: "Assistant",
+	Input:     "Check the current repository status.",
+})
+done, _ := manager.Tasks().Await(ctx, task.ID)
 ```
+
+每个终态都会写一份 `TaskCheckpoint`。崩溃或被取消的 task 可以从最近的快照重放：
+
+```go
+resumed, _ := manager.Tasks().ResumeFromCheckpoint(ctx, task.ID, agent.CheckpointResumeOptions{
+	FollowUp: "and now also do X",
+})
+```
+
+底层的 `RunOption` 是 `agent.WithResumeMessages`。
+
+### Sandbox 与调度
+
+`pkg/sandbox` 提供隔离执行环境（本地进程和 Docker）；`WithSandbox(sb)` 挂上后启用命令执行和交付物工具。`pkg/scheduler` 跑 cron 风格的定时任务，executor 可插拔。`pkg/worktree` 是零依赖的 git worktree 辅助。
+
+## Run 选项
+
+按次传给 `Run` / `RunStream`：
+
+| 选项 | 作用 |
+| --- | --- |
+| `WithMaxTurns(n)` | 限制循环轮数 |
+| `WithTemperature(t)` / `WithMaxTokens(n)` | 采样参数 |
+| `WithThinking(bool)` | 开关 provider 侧思维链（DeepSeek reasoner 的 `thinking.type` 形状）；工具密集的 run 上关掉能明显降延迟 |
+| `WithToolsDisabled()` | 一个工具都不给；模型硬要调也会被拒绝 |
+| `WithToolAllowlist(names)` / `WithToolDenylist(names)` | 收缩工具面 |
+| `WithStructuredOutput(spec)` / `WithStructuredOutputType[T]()` | 强制 JSON 形状 |
+| `WithRequiredDeliverables(...)` / `WithRequestedActions(...)` | 声明交付契约 |
+| `WithConstraintExtraction(bool)` | 开关每 run 的约束抽取调用 |
+| `WithSessionID(id)` / `WithTaskID(id)` / `WithRunID(id)` / `WithParentTaskID(id)` | 身份与谱系 |
+| `WithResumeMessages(msgs)` | 从历史继续（checkpoint 重放） |
+| `WithInputParts(...)` / `WithInputImages(paths...)` | 多模态输入 |
+| `WithMaxBudgetUSD(x)` | 预估花费超预算即停 |
+| `WithAutoCompaction(threshold, keep)` / `WithoutAutoCompaction()` | 上下文压缩策略 |
+| `WithDebug(bool)` | 单次 run 的详细日志 |
+
+Builder 侧选项（`agent.New(...).With...`）：`WithLLM`、`WithEmbedder`、`WithConfig`、`WithPrompt` / `WithSystemPrompt`、`WithMemory` / `WithGraphMemory` / `WithMemoryService`、`WithRunMemory`、`WithMCP`、`WithSkills`、`WithRAG`、`WithSubagents`、`WithSandbox`、`WithAutonomy`、`WithTool(s)`、`WithObserver`、`WithProgress`、`WithDBPath`、`WithDebug`，低频开关走 `WithOptions(agent.Options{...})`（权限策略、工具执行策略、必需 skill、扩展模块、observer）。
+
+## Provider
+
+`pkg/providers` 走 OpenAI 兼容 API，覆盖 OpenAI、DeepSeek、Ollama、LM Studio、vLLM、DashScope/Qwen 及多数代理：
+
+```go
+llm, _ := providers.NewOpenAILLMProvider(&domain.OpenAIProviderConfig{
+	BaseURL:  "http://localhost:11434/v1", // Ollama
+	LLMModel: "qwen3",
+})
+```
+
+Provider 的各种怪癖在库里处理，不用你操心：DeepSeek reasoner 拒绝钉死的 `tool_choice`、`response_format` 自动回退、DeepSeek/Ollama 的 `reasoning_content`、流式工具调用被拆成多个 delta、流式响应不带 usage 的 server。
+
+**用量与缓存计量。** 每个 `domain.GenerationResult` 都带 provider 上报的 `Usage`（`domain.TokenUsage`）：`PromptTokens`、`CompletionTokens`、`CachedPromptTokens`——后者是 prompt 缓存命中的部分，按深度折扣计费（OpenAI 约 0.5x，DeepSeek 约 0.26x）。两家都是自动缓存；运行时会保持上下文前缀跨轮字节级稳定，让命中真正发生。Provider 没报时 `Usage` 为 nil。
+
+**多 provider 池。** `pool.NewPool` 在多个 provider 间做负载均衡，支持选择策略、每 provider 并发上限和能力等级；池本身实现 generator 接口，可直接塞进 `WithLLM`：
+
+```go
+brain, _ := pool.NewPool(pool.PoolConfig{
+	Enabled:  true,
+	Strategy: pool.StrategyRoundRobin,
+	Providers: []pool.Provider{
+		{Name: "fast", BaseURL: base1, Key: key1, ModelName: "deepseek-chat", MaxConcurrency: 5},
+		{Name: "local", BaseURL: "http://localhost:11434/v1", ModelName: "qwen3"},
+	},
+})
+svc, _ := agent.New("assistant").WithLLM(brain).Build()
+```
+
+`pkg/providers.LLMPool` 是更底层的 `domain.LLMProvider` 池（round-robin / random / least-load 策略、故障转移、健康检查）。
+
+## 可观测性
+
+实现 `agent.Observer`（嵌入 `agent.BaseObserver`，只覆盖需要的回调），用 `WithObserver` 或 `Options.Observers` 注册。回调发生在模型 / 工具 / 子 agent / checkpoint 的接缝上，带稳定的 span 和 call ID 用于配对 start/end：
+
+```go
+type usage struct{ agent.BaseObserver }
+
+func (u *usage) OnModelEnd(ctx context.Context, info agent.ModelInfo, res *agent.ModelResult, err error) {
+	if res != nil {
+		log.Printf("round=%d tokens=%d cached=%d dur=%dms",
+			info.Round, res.TokensUsed, res.CachedTokens, res.DurationMs)
+	}
+}
+```
+
+`ModelResult.CachedTokens` 是 `TokensUsed` 里缓存命中的部分——命中部分大幅打折，只看 `TokensUsed` 会高估成本。`pkg/otelobserver` 把同一套回调桥接到 OpenTelemetry span（`otelobserver.New(tracerProvider)`）。
+
+## 存储
+
+默认布局：
+
+```text
 ~/.agentgo/
-├── mcpServers.json           ← MCP 服务器定义
 ├── data/
-│   ├── agentgo.db            ← 控制面：providers、运行时配置、agent/team 元数据
-│   ├── cortex.db             ← 大脑存储：memory、vector、graph、knowledge
-│   └── memories/             ← 文件型记忆存储（Markdown + YAML frontmatter）
-├── skills/                  ← SKILL.md 技能文件
-├── intents/                 ← Intent 意图文件
-└── workspace/               ← Agent 工作目录
+│   ├── agentgo.db     # 配置、provider、agent、task、checkpoint
+│   └── cortex.db      # 可选的记忆/向量/图存储
+├── memories/          # 启用文件记忆时
+├── skills/            # 本地 skill
+└── workspace/         # agent 工作目录
 ```
 
-### SQLite 文件说明
+用 `AGENTGO_HOME` 环境变量覆盖主目录。
 
-| 文件                  | 默认路径                        | 用途                                                     |
-| --------------------- | ------------------------------- | -------------------------------------------------------- |
-| `agentgo.db`          | `$home/data/agentgo.db`         | 运行时配置、providers、MCP/skills 路径、agent/team 元数据 |
-| `cortex.db`           | `$home/data/cortex.db`          | 大脑存储：memory、vector、graph、knowledge               |
-| `history.db` _(可选)_ | 通过 `WithHistoryDBPath()` 指定 | 详细工具调用日志，仅在 `WithStoreHistory(true)` 时创建   |
+## 仓库结构
 
-### Memory 存储类型
-
-| `store_type`           | 存储位置          | 适用场景                                      | Embedder 要求 |
-| ---------------------- | ----------------- | --------------------------------------------- | ------------- |
-| `file` _(默认)_        | `data/memories/`  | 最可靠的默认模式、本地调试、可读可改的记忆      | 不需要 |
-| `cortex`               | `data/cortex.db`  | DB-backed memory bucket、生产式本地持久化       | 可选；没有时走 lexical/text fallback |
-| `memoryflow`           | `data/cortex.db`  | CortexDB MemoryFlow 的 diary/session workflow、agent memory 生命周期 | 可选；无 embedding 也可工作 |
-| `graphflow`            | `data/cortex.db`  | 记忆内容还需要抽取实体/关系并形成图谱           | 可选；当前图抽取是确定性的 |
-
-推荐方式：
-
-| 场景 | 推荐存储类型 |
-| ---- | ------------ |
-| 未配置 embedding model | `file` — 开箱即用，人类可读，最容易排查问题 |
-| 已配置 embedding model | `graphflow` — 语义向量召回 + 实体关系图谱，综合召回质量最佳 |
-
-- **`file`** 是默认值，无需 embedding model，完全透明可读。
-- **`graphflow`** 是配置了 embedding provider 之后的推荐升级选项。记忆存储在 CortexDB（`cortex.db`），结合向量检索与确定性图抽取，召回质量最高。
-- 需要 DB 存储但不需要图抽取时使用 `cortex`。
-- 需要日记型或会话生命周期语义时使用 `memoryflow`。
-
-运行时类型建议通过 CLI/UI 设置，或直接写入 `agentgo.db` 的 `memory.store_type`。当前 CLI 的运行时配置以 `agentgo.db` 为准；一旦 DB 中存在该值，`agentgo.toml` 不再是唯一 source of truth。
-
-### 运行时设置
-
-AgentGo 会根据 `AGENTGO_HOME` 自动派生运行期存储布局：
-
-- 工作区：`$home/workspace`
-- MCP 文件系统白名单：`$home/workspace`
-- 大脑数据库：`$home/data/cortex.db`
-- 记忆存储：`file` 使用 `$home/data/memories`；`cortex`、`memoryflow`、`graphflow` 使用 `$home/data/cortex.db`
-- 缓存目录：`$home/data/cache`
-
-其余结构化运行时设置保存在 `agentgo.db`，包括：
-
-- LLM providers 和 pool strategy
-- embedding providers 和 `rag.embedding_model`
-- MCP 配置路径
-- skills 加载路径
-- 每个 agent 的 preferred provider/model
-
----
-
-## Provider 配置
-
-Providers 存放在 `agentgo.db` 中，通过 CLI/UI/runtime API 管理。
-
-支持：OpenAI · Anthropic · Azure OpenAI · DeepSeek · Ollama（本地）
-
----
-
-## 示例
-
-```
-examples/
-├── quickstart/               — 最简入门示例
-├── agent/
-│   ├── agent_usage/          — Builder 模式、工具注册
-│   ├── multi_agent_orchestration/ — Handoffs + 流式输出
-│   ├── longrun/              — 自主定时 Agent
-│   └── realtime_chat/        — WebSocket 会话
-├── rag/                      — 文档摄入 + 问答
-├── memory/
-│   ├── chat_with_memory/     — DB 记忆 + 对话
-│   └── smart_fusion/         — 记忆合并
-├── ptc/
-│   ├── custom_tools/         — JS 沙箱工具编排
-│   └── memory_chat/          — PTC + 记忆
-├── skills/                   — Skill 文件
-└── mcp/                      — MCP 工具服务器
+```text
+pkg/agent         框架核心：agent、循环、工具、上下文、hook/lint、session、checkpoint、run memory
+pkg/domain        共享类型：消息、生成结果、token 用量、provider 接口
+pkg/providers     OpenAI 兼容 provider + LLMPool（故障转移、健康检查）
+pkg/pool          provider 池 + token/成本核算
+pkg/poolsvc       进程级全局 embedder 池服务
+pkg/mcp           MCP 客户端、工具与 server
+pkg/memory        持久记忆服务 + BaseStore
+pkg/cortexbridge  CortexDB 后端的知识图谱 / RAG / RunMemory
+pkg/rag           可选检索
+pkg/skills        skill 加载
+pkg/sandbox       本地 / Docker 执行沙箱
+pkg/scheduler     cron 风格任务调度
+pkg/otelobserver  Observer -> OpenTelemetry 桥
+pkg/store         SQLite 存储
+pkg/worktree      git worktree 辅助
+eval/             行为评测（scenarios + runner）
+examples/         可运行示例
 ```
 
----
+## 开发
+
+```bash
+make test           # go test ./...
+make check          # fmt + vet + test
+make eval           # 行为评测，mock LLM，CI 安全
+make eval-live      # 行为评测，真实 provider
+```
+
+工程路线和运维指引见 `CLAUDE.md` 和 `docs/dev/PLAN.md`。
 
 ## License
 
-MIT — Copyright (c) 2024–2026 AgentGo Authors
+MIT
