@@ -731,6 +731,13 @@ func (p *OpenAILLMProvider) GenerateWithTools(ctx context.Context, messages []do
 		Finished:     true,
 		FinishReason: string(choice.FinishReason),
 	}
+	if completion.Usage.PromptTokens > 0 || completion.Usage.CompletionTokens > 0 {
+		result.Usage = &domain.TokenUsage{
+			PromptTokens:       int(completion.Usage.PromptTokens),
+			CompletionTokens:   int(completion.Usage.CompletionTokens),
+			CachedPromptTokens: int(completion.Usage.PromptTokensDetails.CachedTokens),
+		}
+	}
 
 	if len(choice.Message.ToolCalls) > 0 {
 		result.ToolCalls = make([]domain.ToolCall, len(choice.Message.ToolCalls))
@@ -786,6 +793,13 @@ func (p *OpenAILLMProvider) streamWithToolsOnce(ctx context.Context, messages []
 		return err
 	}
 
+	// Ask for the final usage chunk (choices empty, usage set). Supported by
+	// OpenAI, DeepSeek, vLLM, Ollama and LM Studio; servers that predate
+	// stream_options simply never send the chunk and Usage stays nil.
+	params.StreamOptions = openai.ChatCompletionStreamOptionsParam{
+		IncludeUsage: openai.Bool(true),
+	}
+
 	stream := p.client.Chat.Completions.NewStreaming(ctx, params, extraRequestOptions(opts)...)
 
 	// Per-call accumulator indexed by the OpenAI delta's Index field. Survives
@@ -795,6 +809,16 @@ func (p *OpenAILLMProvider) streamWithToolsOnce(ctx context.Context, messages []
 
 	for stream.Next() {
 		chunk := stream.Current()
+		if chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 {
+			usageDelta := &domain.GenerationResult{Usage: &domain.TokenUsage{
+				PromptTokens:       int(chunk.Usage.PromptTokens),
+				CompletionTokens:   int(chunk.Usage.CompletionTokens),
+				CachedPromptTokens: int(chunk.Usage.PromptTokensDetails.CachedTokens),
+			}}
+			if err := callback(usageDelta); err != nil {
+				return fmt.Errorf("callback error: %w", err)
+			}
+		}
 		if len(chunk.Choices) == 0 {
 			continue
 		}

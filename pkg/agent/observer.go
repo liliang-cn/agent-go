@@ -65,6 +65,10 @@ type ModelResult struct {
 	ToolCalls  int
 	DurationMs int64
 	TokensUsed int
+	// CachedTokens is the prompt-cache hit portion of TokensUsed, when the
+	// provider reported one (0 otherwise). Cache hits are billed at a deep
+	// discount, so TokensUsed alone overstates what the turn cost.
+	CachedTokens int
 }
 
 // ToolInfo identifies a single tool call. CallID is a stable per-call id; the

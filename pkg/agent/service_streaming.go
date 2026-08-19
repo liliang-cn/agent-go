@@ -27,6 +27,7 @@ func (s *Service) streamToolTurnWithRecovery(ctx context.Context, messages []dom
 		lastResponseID   string
 		lastFinishReason string
 		toolCallDetected bool
+		lastUsage        *domain.TokenUsage
 	)
 
 	llmCtx, cancel := withLLMTurnTimeout(ctx, s.cfg)
@@ -37,6 +38,9 @@ func (s *Service) streamToolTurnWithRecovery(ctx context.Context, messages []dom
 		}
 		if delta.FinishReason != "" {
 			lastFinishReason = delta.FinishReason
+		}
+		if delta.Usage != nil {
+			lastUsage = delta.Usage
 		}
 		for _, tc := range delta.ToolCalls {
 			if callbacks.OnToolCall != nil {
@@ -87,6 +91,7 @@ func (s *Service) streamToolTurnWithRecovery(ctx context.Context, messages []dom
 		ID:           lastResponseID,
 		Content:      fullContent.String(),
 		ToolCalls:    toolCalls,
+		Usage:        lastUsage,
 		FinishReason: lastFinishReason,
 	}, lastResponseID, recoveryMeta{}, nil
 }

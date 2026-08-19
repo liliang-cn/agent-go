@@ -490,18 +490,27 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		r.CheckpointEnd("llm_call")
 		state.noteRecovery(recovery)
 
-		// Estimate tokens for this turn, accrue cost, and emit LLM
-		// latency analytics. Split input vs output tokens so cost
-		// estimation matches provider pricing tables.
+		// Account tokens for this turn, accrue cost, and emit LLM latency
+		// analytics. Provider-reported usage wins when present (exact, and
+		// carries the prompt-cache hit split); the tokenizer estimate is the
+		// fallback for servers that don't report usage. Split input vs output
+		// tokens so cost estimation matches provider pricing tables.
 		llmDur := time.Since(llmStart)
 		turnTokens := 0
+		cachedTokens := 0
 		{
-			tc := pool.NewTokenCounter()
 			model := r.svc.Info().Model
-			inputTokens := tc.EstimateConversationTokens(genMessages, model)
-			outputTokens := 0
-			if result != nil {
-				outputTokens = tc.EstimateTokens(result.Content, model)
+			var inputTokens, outputTokens int
+			if result != nil && result.Usage != nil {
+				inputTokens = result.Usage.PromptTokens
+				outputTokens = result.Usage.CompletionTokens
+				cachedTokens = result.Usage.CachedPromptTokens
+			} else {
+				tc := pool.NewTokenCounter()
+				inputTokens = tc.EstimateConversationTokens(genMessages, model)
+				if result != nil {
+					outputTokens = tc.EstimateTokens(result.Content, model)
+				}
 			}
 			turnTokens = inputTokens + outputTokens
 			state.noteTokens(inputTokens + outputTokens)
@@ -517,10 +526,11 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			var modelRes *ModelResult
 			if result != nil {
 				modelRes = &ModelResult{
-					Content:    result.Content,
-					ToolCalls:  len(result.ToolCalls),
-					DurationMs: llmDur.Milliseconds(),
-					TokensUsed: turnTokens,
+					Content:      result.Content,
+					ToolCalls:    len(result.ToolCalls),
+					DurationMs:   llmDur.Milliseconds(),
+					TokensUsed:   turnTokens,
+					CachedTokens: cachedTokens,
 				}
 			}
 			modelErr := err

@@ -261,12 +261,27 @@ type FunctionCall struct {
 }
 
 // GenerationResult represents the result of LLM generation with potential tool calls
+// TokenUsage is the provider-reported token accounting for one call.
+// CachedPromptTokens is the cache-hit portion of PromptTokens — billed at a
+// deep discount (OpenAI ~0.5x, DeepSeek ~0.26x). Sources: OpenAI
+// `prompt_tokens_details.cached_tokens`, which DeepSeek mirrors alongside its
+// own `prompt_cache_hit_tokens`. Both providers cache automatically; the only
+// lever an agent has is keeping its context prefix byte-stable across turns.
+type TokenUsage struct {
+	PromptTokens       int `json:"prompt_tokens"`
+	CompletionTokens   int `json:"completion_tokens"`
+	CachedPromptTokens int `json:"cached_prompt_tokens,omitempty"`
+}
+
 type GenerationResult struct {
 	ID               string     `json:"id,omitempty"` // Response ID for stateful APIs
 	Content          string     `json:"content"`
 	ReasoningContent string     `json:"reasoning_content,omitempty"`
 	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
-	Finished         bool       `json:"finished"`
+	// Usage is nil when the provider did not report token accounting
+	// (some streaming paths and OpenAI-compatible servers omit it).
+	Usage    *TokenUsage `json:"usage,omitempty"`
+	Finished bool        `json:"finished"`
 	// FinishReason mirrors the provider's stop reason. Common values:
 	// "stop" (model produced a natural end), "tool_calls" (model wants a
 	// tool), "length" (hit max_tokens), "content_filter" (provider safety
