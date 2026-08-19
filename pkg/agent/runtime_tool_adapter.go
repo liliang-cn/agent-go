@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
@@ -33,6 +34,14 @@ func (c *runtimeAsyncToolCollector) collect() []ToolExecutionResult {
 
 func (r *Runtime) buildStreamingTurnCallbacks(ctx context.Context, spanID string, taskTerminalName *string, taskTerminalResult *string, collector *runtimeAsyncToolCollector) StreamTurnCallbacks {
 	toolCallDetected := false
+	// The provider re-emits the FULL accumulated tool-call snapshot on every
+	// streamed chunk (so overwrite-style consumers converge on the final
+	// state). Execution must therefore dedupe per call: once a call's args
+	// complete and it is dispatched, later snapshots re-deliver the same call
+	// — with parallel tool calls, once per remaining fragment of the other
+	// calls. Without this guard the same call runs dozens of times, which is
+	// wasteful for read-only tools and dangerous for non-idempotent ones.
+	dispatched := map[string]bool{}
 
 	return StreamTurnCallbacks{
 		OnToolCall: func(tc domain.ToolCall) error {
@@ -58,6 +67,14 @@ func (r *Runtime) buildStreamingTurnCallbacks(ctx context.Context, spanID string
 			if len(tc.Function.Arguments) == 0 {
 				return nil
 			}
+			key := tc.ID
+			if key == "" {
+				key = tc.Function.Name + "|" + fmt.Sprint(tc.Function.Arguments)
+			}
+			if dispatched[key] {
+				return nil
+			}
+			dispatched[key] = true
 
 			collector.wg.Add(1)
 			go r.executeAsyncTool(ctx, tc, &collector.wg, collector.results)
