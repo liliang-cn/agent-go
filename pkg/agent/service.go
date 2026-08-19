@@ -134,6 +134,10 @@ type Service struct {
 	thinkingMu   sync.RWMutex
 	thinkingOpts *domain.ThinkingOptions
 
+	// runMemory, when non-nil, is consulted at run start (recall) and run end
+	// (capture). See RunMemory and Builder.WithRunMemory.
+	runMemory RunMemory
+
 	// responseFormat carries the run-scoped structured-output spec set
 	// by the runtime when RunConfig.StructuredOutput is non-nil. Cleared
 	// at run end so a later run on the same Service can't inherit it.
@@ -534,6 +538,12 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 	s.setRunning(true)
 	defer s.setRunning(false)
 
+	// Recall once per run, before the loop starts; every turn of this run
+	// then carries the same recalled section in its system prompt.
+	if cfg.recalledContext == "" {
+		cfg.recalledContext = s.recallRunMemory(ctx, goal)
+	}
+
 	session, events, err := s.startRun(ctx, goal, cfg)
 	if err != nil {
 		return nil, err
@@ -595,6 +605,9 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 	result.Duration = completedAt.Sub(startedAt).String()
 	if result.EstimatedTokens == 0 {
 		result.EstimatedTokens = s.estimateRunTokens(goal, result.FinalResult)
+	}
+	if result.Success {
+		s.captureRunMemory(goal, result.Text())
 	}
 	return result, nil
 }

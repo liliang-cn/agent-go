@@ -118,6 +118,7 @@ type Builder struct {
 	memoryCfg         MemoryConfig
 	memoryService     domain.MemoryService
 	registerGraphTool bool
+	runMemory         RunMemory
 	enableSkills      bool
 	skillsPaths       []string
 	requiredSkills    []string // Build() fails if any of these aren't installed
@@ -205,6 +206,15 @@ func (b *Builder) WithGraphMemory(opts ...MemoryOption) *Builder {
 	merged := append([]MemoryOption{WithMemoryGraphFlow()}, opts...)
 	b.WithMemory(merged...)
 	b.registerGraphTool = true
+	return b
+}
+
+// WithRunMemory attaches a RunMemory: recall is injected into the system
+// prompt at run start (bounded, best-effort), and successful runs are captured
+// asynchronously at run end. See the RunMemory interface;
+// cortexbridge.NewRunMemory provides a CortexDB-backed implementation.
+func (b *Builder) WithRunMemory(rm RunMemory) *Builder {
+	b.runMemory = rm
 	return b
 }
 
@@ -563,6 +573,9 @@ func (b *Builder) build() (*Service, error) {
 	}
 	if len(b.observers) > 0 {
 		svc.RegisterObserver(b.observers...)
+	}
+	if b.runMemory != nil {
+		svc.runMemory = b.runMemory
 	}
 	if b.permissionHandler != nil {
 		svc.SetPermissionHandler(b.permissionHandler)

@@ -198,6 +198,13 @@ type RunConfig struct {
 	ToolAllowlist []string
 	ToolDenylist  []string
 
+	// recalledContext is filled by the runtime at run start when a RunMemory
+	// is attached: it is appended to the system prompt under a
+	// "Recalled context" heading on every turn of this run. Kept on the run
+	// config (not the service) so concurrent runs cannot see each other's
+	// recall.
+	recalledContext string
+
 	// ToolsDisabled attaches no tools at all to this run. Set it directly with
 	// WithToolsDisabled() when the caller already knows tools are off limits;
 	// the runtime also sets it from extracted constraints when the user's own

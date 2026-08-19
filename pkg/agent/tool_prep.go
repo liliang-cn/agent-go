@@ -188,6 +188,14 @@ func (s *Service) prepareTurnInputsWithConfig(ctx context.Context, currentAgent 
 	if cfg != nil && strings.TrimSpace(cfg.SystemPromptOverride) != "" {
 		systemMsg = cfg.SystemPromptOverride
 	}
+	// Run-memory recall rides at the END of the system prompt: it is the most
+	// run-specific content, and appending (rather than prepending) keeps the
+	// static prompt prefix byte-stable across runs for provider prompt caches.
+	if cfg != nil && cfg.recalledContext != "" {
+		systemMsg += "\n\n## Recalled context (run memory)\n" +
+			"Prior knowledge recalled for this task. Cite it when it answers the question; " +
+			"say so when it conflicts with fresh evidence.\n\n" + cfg.recalledContext
+	}
 	genMessages := append([]domain.Message{{Role: "system", Content: systemMsg}}, messages...)
 	return tools, genMessages
 }
