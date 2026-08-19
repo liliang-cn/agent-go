@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -60,8 +61,15 @@ func (s *Service) buildSystemContext() *SystemContext {
 	}
 
 	ctx := &SystemContext{
-		Date:       now.Format("2006-01-02"),
-		Time:       now.Format("15:04:05"),
+		Date: now.Format("2006-01-02"),
+		// Hour granularity, deliberately: the system prompt is the first thing
+		// in every request, and provider prefix caches (DeepSeek, OpenAI,
+		// Anthropic breakpoints) stop matching at the first changed byte. A
+		// second-level timestamp here invalidated the entire prompt + history
+		// cache on every single turn. Within a run (and across runs in the
+		// same hour) this string is now byte-stable; tasks that need the exact
+		// time should use a tool.
+		Time:       now.Format("15:00"),
 		Timezone:   now.Location().String(),
 		OS:         runtime.GOOS,
 		Arch:       runtime.GOARCH,
@@ -132,6 +140,9 @@ func (c *SystemContext) FormatForPrompt() string {
 			}
 			parts = append(parts, k+"="+v)
 		}
+		// Sorted, not map order: this line sits in the prompt prefix, and a
+		// byte-unstable ordering breaks provider prefix caching on every turn.
+		sort.Strings(parts)
 		if len(parts) > 0 {
 			sb.WriteString("Env: " + strings.Join(parts, ", ") + "\n")
 		}
