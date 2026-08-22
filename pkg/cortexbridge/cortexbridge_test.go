@@ -74,6 +74,39 @@ func TestRegisterAll(t *testing.T) {
 	}
 }
 
+// The ontology surface (cortexdb v2.67.0+) must be classified: reads are
+// ReadOnly/ConcurrencySafe, schema and data writes are Destructive.
+func TestRegisterOntologyToolClassification(t *testing.T) {
+	var defs []cortexdb.ToolDefinition
+	for _, name := range []string{
+		"ontology_save", "ontology_get", "ontology_list", "ontology_diff",
+		"ontology_delete", "object_set_resolve", "ontology_action_list", "ontology_action_apply",
+	} {
+		defs = append(defs, cortexdb.ToolDefinition{Name: name, Description: name, InputSchema: map[string]any{"type": "object"}})
+	}
+	sink := newSink()
+	if _, err := register(sink, &fakeToolbox{defs: defs}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	for _, name := range []string{"ontology_get", "ontology_list", "ontology_diff", "ontology_action_list", "object_set_resolve"} {
+		if !sink.meta[name].ReadOnly {
+			t.Errorf("%s should be ReadOnly", name)
+		}
+		if sink.meta[name].Destructive {
+			t.Errorf("%s should not be Destructive", name)
+		}
+	}
+	for _, name := range []string{"ontology_save", "ontology_delete", "ontology_action_apply"} {
+		if !sink.meta[name].Destructive {
+			t.Errorf("%s should be Destructive", name)
+		}
+		if sink.meta[name].ReadOnly {
+			t.Errorf("%s should not be ReadOnly", name)
+		}
+	}
+}
+
 func TestRegisterAllowList(t *testing.T) {
 	tb := &fakeToolbox{defs: sampleDefs()}
 	sink := newSink()

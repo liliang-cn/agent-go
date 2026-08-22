@@ -57,6 +57,10 @@ var ReadOnlyTools = map[string]bool{
 	"connector_introspect": true,
 	"connector_plan":       true,
 	"connector_unmask":     true,
+	// ontology read side: inspect schema, compare versions, resolve object
+	// sets, list available actions.
+	"ontology_get": true, "ontology_list": true, "ontology_diff": true,
+	"ontology_action_list": true, "object_set_resolve": true,
 }
 
 // DestructiveTools lists the delete-style / data-writing CortexDB tools. They
@@ -66,6 +70,10 @@ var DestructiveTools = map[string]bool{
 	"knowledge_delete": true, "memory_delete": true, "knowledge_graph_delete": true,
 	// importflow / connector tools that write data into RAG+KG.
 	"importflow_run": true, "connector_run": true,
+	// ontology write side: ontology_save overwrites the active schema that
+	// validates every graph write (ontology_diff exists because saves can be
+	// breaking), ontology_action_apply mutates data through action rules.
+	"ontology_save": true, "ontology_delete": true, "ontology_action_apply": true,
 }
 
 // Toolbox is the in-process tool surface CortexDB packages expose
