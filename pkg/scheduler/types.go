@@ -43,9 +43,12 @@ type Task struct {
 
 // TaskExecution represents a single execution of a task
 type TaskExecution struct {
-	ID        int64         `json:"id" db:"id"`
-	TaskID    string        `json:"task_id" db:"task_id"`
-	StartTime time.Time     `json:"start_time" db:"start_time"`
+	ID     int64  `json:"id" db:"id"`
+	TaskID string `json:"task_id" db:"task_id"`
+	// TaskDescription is copied from the task when the execution is recorded,
+	// so history stays readable after the task is deleted.
+	TaskDescription string        `json:"task_description,omitempty" db:"task_description"`
+	StartTime       time.Time     `json:"start_time" db:"start_time"`
 	EndTime   *time.Time    `json:"end_time,omitempty" db:"end_time"`
 	Duration  time.Duration `json:"duration" db:"duration"`
 	Status    TaskStatus    `json:"status" db:"status"`

@@ -141,18 +141,23 @@ func (s *Storage) initTables() error {
 		return fmt.Errorf("failed to create tasks table: %w", err)
 	}
 
-	// Create task_executions table
+	// Create task_executions table.
+	//
+	// There is deliberately no foreign key to tasks: an execution is the record
+	// of something that already happened, and it has to outlive the schedule
+	// that produced it. task_description carries the schedule's description so
+	// the row still says what ran after the task itself is gone.
 	executionsSQL := `
 	CREATE TABLE IF NOT EXISTS task_executions (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		task_id TEXT,
+		task_description TEXT,
 		start_time DATETIME,
 		end_time DATETIME,
 		duration INTEGER,
 		status TEXT,
 		output TEXT,
-		error TEXT,
-		FOREIGN KEY (task_id) REFERENCES tasks (id) ON DELETE CASCADE
+		error TEXT
 	);`
 
 	if _, err := s.db.Exec(executionsSQL); err != nil {
@@ -190,6 +195,20 @@ func (s *Storage) migrate() error {
 		_, err = s.db.Exec("ALTER TABLE tasks ADD COLUMN priority INTEGER DEFAULT 0")
 		if err != nil {
 			return fmt.Errorf("failed to add priority column: %w", err)
+		}
+	}
+
+	// Databases created before executions outlived their task have no
+	// task_description, so a surviving row could not say what it ran.
+	var descExists bool
+	if err := s.db.QueryRow(
+		"SELECT COUNT(*) FROM pragma_table_info('task_executions') WHERE name='task_description'",
+	).Scan(&descExists); err != nil {
+		return fmt.Errorf("failed to check task_description column: %w", err)
+	}
+	if !descExists {
+		if _, err := s.db.Exec("ALTER TABLE task_executions ADD COLUMN task_description TEXT"); err != nil {
+			return fmt.Errorf("failed to add task_description column: %w", err)
 		}
 	}
 
@@ -411,10 +430,10 @@ func (s *Storage) DeleteTask(id string) error {
 		}
 	}()
 
-	// Delete executions first (foreign key constraint)
-	if _, err := tx.Exec("DELETE FROM task_executions WHERE task_id = ?", id); err != nil {
-		return fmt.Errorf("failed to delete task executions: %w", err)
-	}
+	// Execution history is deliberately left behind. Deleting a schedule says
+	// "stop running this", not "it never ran": the answers it already produced
+	// are the reason the scheduler exists, and wiping them on delete left no way
+	// to ask what a task had been doing. CleanupOldExecutions still ages them out.
 
 	// Delete task
 	result, err := tx.Exec("DELETE FROM tasks WHERE id = ?", id)
@@ -468,16 +487,27 @@ func (s *Storage) EnableTask(id string, enabled bool) error {
 // CreateExecution records a task execution
 func (s *Storage) CreateExecution(execution *TaskExecution) error {
 	sql := `
-	INSERT INTO task_executions (task_id, start_time, end_time, duration, status, output, error)
-	VALUES (?, ?, ?, ?, ?, ?, ?)`
+	INSERT INTO task_executions (task_id, task_description, start_time, end_time, duration, status, output, error)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 
 	var durationMs int64
 	if execution.Duration > 0 {
 		durationMs = execution.Duration.Nanoseconds() / 1000000
 	}
 
+	// Copied in at write time rather than joined at read time, because the task
+	// row may be gone by the time anyone reads this execution back.
+	description := execution.TaskDescription
+	if description == "" {
+		if task, err := s.GetTask(execution.TaskID); err == nil && task != nil {
+			description = task.Description
+			execution.TaskDescription = description
+		}
+	}
+
 	result, err := s.db.Exec(sql,
 		execution.TaskID,
+		description,
 		execution.StartTime,
 		execution.EndTime,
 		durationMs,
@@ -536,10 +566,14 @@ func (s *Storage) UpdateExecution(execution *TaskExecution) error {
 
 // GetTaskExecutions retrieves execution history for a task
 func (s *Storage) GetTaskExecutions(taskID string, limit int) ([]*TaskExecution, error) {
+	// Every text and duration column is coalesced: rows written by older
+	// versions can carry NULLs, and one of them is enough to fail the whole
+	// history read.
 	sql := `
-	SELECT id, task_id, start_time, end_time, duration, status, output, error
-	FROM task_executions 
-	WHERE task_id = ? 
+	SELECT id, task_id, COALESCE(task_description, ''), start_time, end_time,
+	       COALESCE(duration, 0), COALESCE(status, ''), COALESCE(output, ''), COALESCE(error, '')
+	FROM task_executions
+	WHERE task_id = ?
 	ORDER BY start_time DESC`
 
 	if limit > 0 {
@@ -565,6 +599,7 @@ func (s *Storage) GetTaskExecutions(taskID string, limit int) ([]*TaskExecution,
 		err := rows.Scan(
 			&execution.ID,
 			&execution.TaskID,
+			&execution.TaskDescription,
 			&execution.StartTime,
 			&endTime,
 			&durationMs,

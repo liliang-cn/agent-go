@@ -399,3 +399,72 @@ func TestStorageConcurrency(t *testing.T) {
 	assert.Greater(t, len(tasks), 0, "At least some tasks should be created")
 	assert.Equal(t, successCount, len(tasks), "Created tasks should match success count")
 }
+
+// Deleting a schedule used to take its execution history with it, so there was
+// no way to ask what a task had done once you stopped it running.
+func TestDeleteTaskKeepsExecutionHistory(t *testing.T) {
+	storage, err := NewStorage(t.TempDir() + "/test.db")
+	require.NoError(t, err)
+	defer storage.Close()
+
+	task := &Task{
+		ID:          "kept-history",
+		Type:        string(TaskTypeQuery),
+		Schedule:    "0 * * * *",
+		Description: "nightly digest",
+		Enabled:     true,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+	require.NoError(t, storage.CreateTask(task))
+
+	execution := &TaskExecution{
+		TaskID:    task.ID,
+		StartTime: time.Now(),
+		Status:    TaskStatusCompleted,
+		Output:    "the answer it produced",
+	}
+	require.NoError(t, storage.CreateExecution(execution))
+	// The description is copied in at write time, because the task row will be
+	// gone by the time this row is read back.
+	assert.Equal(t, "nightly digest", execution.TaskDescription)
+
+	require.NoError(t, storage.DeleteTask(task.ID))
+
+	_, err = storage.GetTask(task.ID)
+	require.Error(t, err, "task itself should be gone")
+
+	history, err := storage.GetTaskExecutions(task.ID, 0)
+	require.NoError(t, err)
+	require.Len(t, history, 1, "execution history must outlive the task")
+	assert.Equal(t, "the answer it produced", history[0].Output)
+	assert.Equal(t, "nightly digest", history[0].TaskDescription)
+}
+
+// A database created before task_description existed must gain the column
+// rather than fail to open.
+func TestMigrateAddsTaskDescriptionColumn(t *testing.T) {
+	dbPath := t.TempDir() + "/legacy.db"
+
+	legacy, err := NewStorage(dbPath)
+	require.NoError(t, err)
+	_, err = legacy.db.Exec("ALTER TABLE task_executions DROP COLUMN task_description")
+	require.NoError(t, err)
+	// Left deliberately sparse: an old row may have NULL in every column the
+	// current writer always fills.
+	_, err = legacy.db.Exec(
+		"INSERT INTO task_executions (task_id, start_time, status, output) VALUES (?, ?, ?, ?)",
+		"old-task", time.Now(), TaskStatusCompleted, "recorded before the column existed")
+	require.NoError(t, err)
+	require.NoError(t, legacy.Close())
+
+	reopened, err := NewStorage(dbPath)
+	require.NoError(t, err)
+	defer reopened.Close()
+
+	history, err := reopened.GetTaskExecutions("old-task", 0)
+	require.NoError(t, err)
+	require.Len(t, history, 1)
+	assert.Equal(t, "recorded before the column existed", history[0].Output)
+	assert.Empty(t, history[0].TaskDescription)
+}
