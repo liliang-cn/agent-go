@@ -167,6 +167,35 @@ func (s *Store) ListTaskCheckpoints(taskID string, limit int) ([]*TaskCheckpoint
 	return out, nil
 }
 
+// LatestTaskWorkspace returns the newest workspace archive any of a task's
+// checkpoints carries, or nil when none does.
+//
+// It exists because the two kinds of snapshot carry different things. Terminal
+// checkpoints archive the sandbox; round-boundary ones deliberately do not,
+// since tarring the workspace every round would cost more than the loop. So
+// for a task interrupted mid-flight the newest checkpoint has the newest
+// conversation and no files, and the files have to be found one query further
+// back.
+//
+// A slightly older workspace with a newer history is the right trade: the
+// alternative is resuming with no files at all.
+func (s *Store) LatestTaskWorkspace(taskID string) ([]byte, error) {
+	if s == nil || s.agentGoDB == nil {
+		return nil, nil
+	}
+	var workspace []byte
+	err := s.agentGoDB.GetDB().QueryRow(`
+		SELECT workspace FROM task_checkpoints
+		WHERE task_id = ? AND workspace IS NOT NULL AND length(workspace) > 0
+		ORDER BY seq DESC LIMIT 1
+	`, taskID).Scan(&workspace)
+	if err != nil {
+		// No row is the ordinary answer for a task that never produced files.
+		return nil, nil
+	}
+	return workspace, nil
+}
+
 // PruneTaskCheckpoints keeps only the most recent maxKeep checkpoints
 // for the given task. Returns the number of rows deleted.
 func (s *Store) PruneTaskCheckpoints(taskID string, maxKeep int) (int, error) {

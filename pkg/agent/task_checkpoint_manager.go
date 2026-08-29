@@ -137,9 +137,18 @@ func (s *TaskService) ResumeFromCheckpoint(ctx context.Context, taskID string, o
 
 	// Restore the workspace snapshot into the caller-provided sandbox so the
 	// resumed run sees the files the task had produced. Best-effort.
-	if opts.RestoreWorkspace != nil && len(cp.Workspace) > 0 {
-		if err := restoreWorkspaceBytes(ctx, opts.RestoreWorkspace, cp.Workspace); err != nil {
-			return nil, fmt.Errorf("restore workspace for task %s: %w", taskID, err)
+	if opts.RestoreWorkspace != nil {
+		archive := cp.Workspace
+		if len(archive) == 0 {
+			// Round-boundary snapshots skip the archive, so the newest
+			// checkpoint of an interrupted task has its conversation and none
+			// of its files. Fall back to the newest one that does have them.
+			archive, _ = m.store.LatestTaskWorkspace(taskID)
+		}
+		if len(archive) > 0 {
+			if err := restoreWorkspaceBytes(ctx, opts.RestoreWorkspace, archive); err != nil {
+				return nil, fmt.Errorf("restore workspace for task %s: %w", taskID, err)
+			}
 		}
 	}
 
