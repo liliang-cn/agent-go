@@ -195,6 +195,14 @@ type RunConfig struct {
 	// failing that DefaultMaxRounds. Set it with WithMaxTurns.
 	MaxTurns int
 
+	// PriorToolCalls names tools that earlier segments of the same task already
+	// called. Contract lints ask "the user asked for this and you never did
+	// it", and a segment is not the task — an action carried out in segment
+	// zero is still carried out when segment five is checked. RunSegments
+	// fills this in; a single run leaves it empty. Set it with
+	// WithPriorToolCalls.
+	PriorToolCalls []string
+
 	// MaxLLMRetries is how many extra attempts a transient provider failure
 	// (a 502, a rate limit, a dropped stream) gets before the run gives up.
 	// Zero means the run has no opinion and the framework default applies;
@@ -393,6 +401,13 @@ type RunOption func(*RunConfig)
 // wants hundreds; n <= 0 leaves the budget unset.
 func WithMaxTurns(n int) RunOption {
 	return func(c *RunConfig) { c.MaxTurns = n }
+}
+
+// WithPriorToolCalls tells this run which tools earlier stretches of the same
+// task already called, so a contract lint judges the task rather than the
+// segment. RunSegments sets it; callers driving their own segments should too.
+func WithPriorToolCalls(names []string) RunOption {
+	return func(c *RunConfig) { c.PriorToolCalls = append([]string(nil), names...) }
 }
 
 // WithLLMRetries sets how many extra attempts a transient provider failure

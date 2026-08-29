@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -265,6 +266,9 @@ func (s *Service) RunSegments(ctx context.Context, goal string, cfg LongRunConfi
 	out := &LongRunResult{TaskID: taskID}
 	consecutiveFailures := 0
 	unproductive := 0
+	// What the task has done so far, across every segment. Contract lints
+	// judge the task, not the segment that happens to be running.
+	toolsUsed := map[string]struct{}{}
 
 	for i := 0; i < cfg.MaxSegments; i++ {
 		if ctx.Err() != nil {
@@ -305,7 +309,13 @@ func (s *Service) RunSegments(ctx context.Context, goal string, cfg LongRunConfi
 
 		sessionID := uuid.NewString()
 		segmentOpts := append([]RunOption{}, opts...)
+		prior := make([]string, 0, len(toolsUsed))
+		for name := range toolsUsed {
+			prior = append(prior, name)
+		}
+		sort.Strings(prior)
 		segmentOpts = append(segmentOpts,
+			WithPriorToolCalls(prior),
 			WithTaskID(taskID),
 			// A fresh session per segment is the whole point: the next
 			// segment's history starts empty and the hand-off carries the
@@ -324,6 +334,9 @@ func (s *Service) RunSegments(ctx context.Context, goal string, cfg LongRunConfi
 		}
 		if result != nil {
 			seg.Productive = s.segmentChangedSomething(result)
+			for _, name := range result.ToolsUsed {
+				toolsUsed[name] = struct{}{}
+			}
 			out.TotalCostUSD += result.EstimatedCostUSD
 			out.TotalUsage = addUsage(out.TotalUsage, result.Usage)
 			seg.StopReason = result.StopReason

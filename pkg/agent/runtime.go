@@ -115,7 +115,7 @@ func (r *Runtime) runFinalLints(content string, turn int) *LintViolation {
 		SessionID:        sessionID,
 		TurnIndex:        turn,
 		Goal:             r.goal,
-		ToolCalls:        r.toolNamesUsedSnapshot(),
+		ToolCalls:        r.toolNamesUsedForTask(),
 		AvailableTools:   r.availableToolNamesSnapshot(),
 		Deliverables:     r.runConstraints().Deliverables,
 		RequestedActions: r.runConstraints().RequestedActions,
@@ -1649,6 +1649,33 @@ func (r *Runtime) availableToolNamesSnapshot() []string {
 }
 
 // toolNamesUsedSnapshot returns the set of tool names invoked so far this run.
+// toolNamesUsedForTask is what this run called plus what earlier segments of
+// the same task called.
+//
+// Contract lints ask whether the user's request was carried out. A segment is
+// not the task: a plan created in segment zero is still there in segment five,
+// and asking that segment "you never called scratchpad_set" is asking the
+// wrong run. Measured — a live segmented run was blocked on exactly that while
+// its plan sat on disk with two steps already ticked.
+func (r *Runtime) toolNamesUsedForTask() []string {
+	names := r.toolNamesUsedSnapshot()
+	if r == nil || r.cfg == nil || len(r.cfg.PriorToolCalls) == 0 {
+		return names
+	}
+	seen := make(map[string]struct{}, len(names)+len(r.cfg.PriorToolCalls))
+	for _, n := range names {
+		seen[n] = struct{}{}
+	}
+	for _, n := range r.cfg.PriorToolCalls {
+		if _, dup := seen[n]; dup {
+			continue
+		}
+		seen[n] = struct{}{}
+		names = append(names, n)
+	}
+	return names
+}
+
 func (r *Runtime) toolNamesUsedSnapshot() []string {
 	r.pendingToolsMu.Lock()
 	defer r.pendingToolsMu.Unlock()
