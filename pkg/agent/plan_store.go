@@ -138,13 +138,19 @@ func (s *Service) PlanSummary(key string) string {
 	if len(items) == 0 {
 		return ""
 	}
-	done := 0
+	done, annotated := 0, 0
 	for _, it := range items {
 		if it.Done {
 			done++
+			continue
+		}
+		if it.Note != "" {
+			// An unfinished step someone left a note on is progress too — it
+			// is the half-done work a previous attempt got through.
+			annotated++
 		}
 	}
-	if done == 0 {
+	if done == 0 && annotated == 0 {
 		// Nothing has been attempted, so there is no progress to report and the
 		// plan is one the model is about to write for itself anyway.
 		return ""
@@ -159,12 +165,19 @@ func (s *Service) PlanSummary(key string) string {
 		out += mark + " " + itoa(i) + ". " + it.Text
 		if it.Note != "" {
 			// The note is the reason to read this at all; give it its own line
-			// so a long one does not bury the step it belongs to.
-			out += "\n      → " + it.Note
+			// so a long one does not bury the step it belongs to. On an
+			// unfinished step it is worth more still — it is where the last
+			// attempt got to, and without it the next one starts over.
+			arrow := "      → "
+			if !it.Done {
+				arrow = "      … in progress: "
+			}
+			out += "\n" + arrow + it.Note
 		}
 		out += "\n"
 	}
-	out += "Carry on from the first unchecked step. Do not repeat finished ones."
+	out += "Carry on from the first unchecked step. Do not repeat finished ones, " +
+		"and pick up an in-progress one where it was left rather than starting it again."
 	return out
 }
 

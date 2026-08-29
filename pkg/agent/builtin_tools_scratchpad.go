@@ -113,6 +113,27 @@ func (m *scratchpadManager) check(key string, index int, note string) ([]scratch
 	return append([]scratchpadItem(nil), list...), nil
 }
 
+// note records what a step is in the middle of, without claiming it is done.
+//
+// It exists because a long task hands over at segment boundaries, and the
+// hand-off could only carry finished work. A step that took a whole segment
+// and did not finish reached the next segment as a bare unchecked line: what
+// was tried, what nearly worked, what was ruled out — all of it gone, and the
+// next segment starts the same investigation from the top. Two segments of a
+// soak run went the same way on the same milestone before this existed.
+func (m *scratchpadManager) note(key string, index int, note string) ([]scratchpadItem, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ensureLoaded(key)
+	list := m.lists[key]
+	if index < 0 || index >= len(list) {
+		return nil, fmt.Errorf("index %d out of range (list has %d items)", index, len(list))
+	}
+	list[index].Note = note
+	m.savePlan(key, list)
+	return append([]scratchpadItem(nil), list...), nil
+}
+
 func (m *scratchpadManager) get(key string) []scratchpadItem {
 	// A write lock even though this reads: the first touch of a key may have to
 	// pull it in from the store.
@@ -227,6 +248,31 @@ func RegisterScratchpadTools(svc *Service) {
 			},
 			func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 				list, err := pad.check(scratchpadKey(args), toolArgInt(args, "index"), toolArgString(args, "note"))
+				if err != nil {
+					return toolErr(err.Error()), nil
+				}
+				return toolOK(map[string]interface{}{"items": scratchpadItemsPayload(list)}), nil
+			},
+			destMeta,
+		)
+	}
+
+	// --- scratchpad_note ---
+	if !has("scratchpad_note") {
+		svc.AddToolWithMetadata(
+			"scratchpad_note",
+			"Record progress on a step you have NOT finished: what you tried, what worked, what you ruled out, where you got to. Use it before a long step is interrupted — the note is all a later attempt will have to go on, and without it that attempt starts your investigation again from nothing. Use scratchpad_check instead when the step is actually done.",
+			map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"key":   map[string]interface{}{"type": "string", "description": "List identifier, default \"default\""},
+					"index": map[string]interface{}{"type": "integer", "description": "Index of the unfinished todo item (0-based)"},
+					"note":  map[string]interface{}{"type": "string", "description": "Where this step has got to: the approach you settled on, the error you are chasing, what you ruled out and why."},
+				},
+				"required": []string{"index", "note"},
+			},
+			func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+				list, err := pad.note(scratchpadKey(args), toolArgInt(args, "index"), toolArgString(args, "note"))
 				if err != nil {
 					return toolErr(err.Error()), nil
 				}
