@@ -900,6 +900,12 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 	// if the goal still isn't met (e.g. a file task with no artifact on disk)
 	// block honestly rather than report a fake success.
 	if v := r.runFinalLints(final, maxRounds); v != nil {
+		r.emitLintObserved(v, false)
+		// This path blocks without going through lintGate, so it has to report
+		// the verdict itself. Leaving it out is what made the first version of
+		// OnLint useless on the case it was built for: a run whose budget ran
+		// out and whose forced answer was then rejected ended with no record
+		// of which lint did it — the exact question that could not be answered.
 		r.blockRunWithStop(goal, "iteration budget exhausted; "+v.Reason, messages, true, StopReasonMaxTurns)
 		return
 	}

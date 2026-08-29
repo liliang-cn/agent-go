@@ -126,3 +126,53 @@ func TestNoLintVerdictWhenNothingIsRejected(t *testing.T) {
 		t.Errorf("nothing was rejected but %d verdicts were reported", n)
 	}
 }
+
+// The budget-exhaustion path blocks without going through lintGate, and that
+// is precisely the path that produced tonight's unanswerable question: a run
+// that ran out of rounds, had its forced answer rejected, and left no record
+// of which lint did it. The first version of OnLint missed this case.
+func TestLintVerdictIsReportedWhenTheBudgetRunsOut(t *testing.T) {
+	spy := &lintSpy{}
+	svc, err := New("lint-budget-exhausted").
+		WithConfig(testAgentConfig(t.TempDir())).
+		WithLLM(&toolLoopLLM{}).
+		WithObserver(spy).
+		Build()
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	defer svc.Close()
+	svc.AddTool("noop", "Does nothing.",
+		map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
+		func(context.Context, map[string]interface{}) (interface{}, error) {
+			return map[string]interface{}{"ok": true}, nil
+		})
+	svc.OutputLints().RegisterGlobal(alwaysRejects{})
+
+	// The model never stops asking for tools, so the round budget is what ends
+	// the run and the forced synthesis is what the lint rejects.
+	events, err := svc.RunStreamWithOptions(context.Background(), "Work.", WithMaxTurns(2))
+	if err != nil {
+		t.Fatalf("RunStreamWithOptions: %v", err)
+	}
+	var stop StopReason
+	for evt := range events {
+		if evt.Type == EventTypeBlocked || evt.Type == EventTypeComplete {
+			stop = evt.StopReason
+		}
+	}
+	if stop != StopReasonMaxTurns {
+		t.Fatalf("stop reason = %q, want %q — this test needs the budget path", stop, StopReasonMaxTurns)
+	}
+	seen := spy.all()
+	if len(seen) == 0 {
+		t.Fatal("the run was blocked by a lint after its budget ran out and no observer heard which one")
+	}
+	last := seen[len(seen)-1]
+	if last.Lint != "always_rejects" {
+		t.Errorf("verdict names %q", last.Lint)
+	}
+	if last.Retrying {
+		t.Error("a verdict the run is blocked on must not be reported as a retry")
+	}
+}
