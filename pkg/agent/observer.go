@@ -37,6 +37,17 @@ type Observer interface {
 
 	// OnCheckpoint fires when the runtime writes a terminal checkpoint.
 	OnCheckpoint(ctx context.Context, info CheckpointInfo)
+
+	// OnLint fires when an output lint rejects a draft answer — once per
+	// rejection, whether the run is re-prompted or blocked.
+	//
+	// It is here because the lint layer is the one part of the runtime that
+	// can end a run on its own judgement, and its verdict was the one thing
+	// nothing recorded. A soak run finished all thirteen of its milestones,
+	// passed every test, and was reported blocked; the events said which lint
+	// did it, but nothing an observer could see, so the answer was
+	// unavailable to anyone watching from outside the event stream.
+	OnLint(ctx context.Context, info LintInfo)
 }
 
 // ModelInfo identifies a single model turn. SpanID is a stable per-turn id;
@@ -94,6 +105,21 @@ type SubAgentInfo struct {
 	SessionID    string
 }
 
+// LintInfo describes one output-lint rejection.
+type LintInfo struct {
+	TaskID    string
+	SessionID string
+	AgentName string
+	Round     int
+	// Lint is the rejecting lint's name, matching its Name().
+	Lint string
+	// Reason is the rejection text, written to be read by the model.
+	Reason string
+	// Retrying is true when the run was re-prompted, false when the retry
+	// budget was spent and the run is being blocked on this rejection.
+	Retrying bool
+}
+
 // CheckpointInfo describes a terminal checkpoint snapshot.
 type CheckpointInfo struct {
 	TaskID    string
@@ -120,6 +146,7 @@ func (BaseObserver) OnToolEnd(context.Context, ToolInfo, any, error)            
 func (BaseObserver) OnSubAgentStart(context.Context, SubAgentInfo)              {}
 func (BaseObserver) OnSubAgentEnd(context.Context, SubAgentInfo, any, error)    {}
 func (BaseObserver) OnCheckpoint(context.Context, CheckpointInfo)               {}
+func (BaseObserver) OnLint(context.Context, LintInfo)                           {}
 
 // Ensure BaseObserver satisfies the interface.
 var _ Observer = BaseObserver{}

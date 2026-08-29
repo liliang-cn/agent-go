@@ -151,6 +151,7 @@ func (r *Runtime) lintGate(goal, content string, messages *[]domain.Message, sta
 		r.completeRun(goal, content, *messages, true)
 		return true
 	}
+	r.emitLintObserved(violation, r.lintRetryBudget > 0)
 	if r.lintRetryBudget > 0 {
 		r.lintRetryBudget--
 		// Recoverable: the draft answer was rejected and the model is being
@@ -174,6 +175,26 @@ func (r *Runtime) lintGate(goal, content string, messages *[]domain.Message, sta
 	r.emit(EventTypeError, fmt.Sprintf("output lint %s rejected response: %s", violation.LintName, violation.Reason))
 	r.blockRunWithStop(goal, lintExhaustedUserText(content), *messages, true, StopReasonLintExhausted)
 	return true
+}
+
+// emitLintObserved tells observers a lint rejected a draft. The lint layer is
+// the one part of the runtime that ends a run on its own judgement, so its
+// verdict has to be visible to anyone watching — not only to whoever happens
+// to be reading the event stream.
+func (r *Runtime) emitLintObserved(v *LintViolation, retrying bool) {
+	if r == nil || r.svc == nil || v == nil {
+		return
+	}
+	info := LintInfo{
+		TaskID:    currentTaskID(r.session),
+		SessionID: r.sessionID(),
+		AgentName: r.currentAgentName(),
+		Round:     r.currentRound,
+		Lint:      v.LintName,
+		Reason:    v.Reason,
+		Retrying:  retrying,
+	}
+	r.svc.emitObserver(func(o Observer) { o.OnLint(context.Background(), info) })
 }
 
 // lintExhaustedUserText is what the user sees when a run is blocked because a

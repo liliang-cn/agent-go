@@ -138,6 +138,14 @@ func (l *ActivityLog) OnSubAgentEnd(_ context.Context, info SubAgentInfo, result
 	l.line("     sub<    %s ok %s", info.Name, oneLine(fmt.Sprintf("%v", result), 100))
 }
 
+func (l *ActivityLog) OnLint(_ context.Context, info LintInfo) {
+	verdict := "BLOCKED by"
+	if info.Retrying {
+		verdict = "retry after"
+	}
+	l.line("r%-3d lint     %s %s: %s", info.Round, verdict, info.Lint, oneLine(info.Reason, 200))
+}
+
 func (l *ActivityLog) OnCheckpoint(_ context.Context, info CheckpointInfo) {
 	l.line("r%-3d ckpt     %s msgs=%d", info.Round, info.Reason, info.Messages)
 }
