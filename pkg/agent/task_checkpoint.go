@@ -52,6 +52,12 @@ const (
 	// flight. It is the whole point of writing one: a cancelled task is the
 	// case where Tasks().ResumeFromCheckpoint has something worth resuming.
 	CheckpointReasonTaskCancelled CheckpointReason = "task_cancelled"
+	// CheckpointReasonRunFailed snapshots a run the provider ended for us —
+	// an error retrying could not get past. It exists for the same reason as
+	// task_cancelled: the work up to the failure is worth keeping, and a long
+	// run that dies to a gateway outage should be resumable once the gateway
+	// is back rather than started over.
+	CheckpointReasonRunFailed CheckpointReason = "run_failed"
 )
 
 // MaxCheckpointsPerTask caps how many snapshots are kept per task. The

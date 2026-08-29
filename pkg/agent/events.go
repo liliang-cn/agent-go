@@ -68,6 +68,10 @@ const (
 	AnalyticsQueryCompleted       = "tengu_query_completed"
 	AnalyticsTokenBudgetExceeded  = "tengu_token_budget_exceeded"
 	AnalyticsRoundCompleted       = "tengu_round_completed"
+	// AnalyticsLLMRetry fires each time a transient provider failure is
+	// waited out rather than surfaced. On a long run these are the events
+	// that explain an otherwise mysterious gap in the timeline.
+	AnalyticsLLMRetry = "tengu_llm_retry"
 )
 
 // AnalyticsEvent represents structured analytics data

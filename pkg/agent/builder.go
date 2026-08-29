@@ -653,9 +653,11 @@ func (b *Builder) build() (*Service, error) {
 		RegisterDeliverableTools(svc, b.sandbox)
 	}
 	svc.promptCache = b.promptCache
-	if b.autonomy.MaxRounds > 0 || b.autonomy.LintRetryBudget > 0 || b.autonomy.Scratchpad {
+	if b.autonomy.MaxRounds > 0 || b.autonomy.LintRetryBudget > 0 || b.autonomy.Scratchpad ||
+		b.autonomy.CheckpointEveryRounds > 0 {
 		svc.defaultMaxTurns = b.autonomy.MaxRounds
 		svc.lintRetryBudgetOverride = b.autonomy.LintRetryBudget
+		svc.checkpointEveryRounds = b.autonomy.CheckpointEveryRounds
 		if b.autonomy.Scratchpad {
 			RegisterScratchpadTools(svc)
 		}

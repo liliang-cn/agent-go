@@ -480,13 +480,40 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 
 		llmStart := time.Now()
 		r.CheckpointStart("llm_call")
-		result, lastResponseID, recovery, err := r.svc.streamToolTurn(
-			ctx,
-			genMessages,
-			tools,
-			r.svc.toolGenerationOptions(r.temperature(), r.maxTokens(), ""),
-			r.buildStreamingTurnCallbacks(ctx, modelSpanID, &taskTerminalName, &taskTerminalResult, collector),
+		// Transient provider failures are waited out rather than surfaced: on
+		// a run that lasts hours, a 502 or a rate limit is weather, and one
+		// gust used to end everything. Each attempt rebuilds the callbacks so
+		// a half-streamed answer from the failed one cannot leak into the next.
+		var (
+			result         *domain.GenerationResult
+			lastResponseID string
+			recovery       recoveryMeta
+			err            error
 		)
+		maxLLMRetries := r.resolveLLMRetries()
+		for attempt := 0; ; attempt++ {
+			result, lastResponseID, recovery, err = r.svc.streamToolTurn(
+				ctx,
+				genMessages,
+				tools,
+				r.svc.toolGenerationOptions(r.temperature(), r.maxTokens(), ""),
+				r.buildStreamingTurnCallbacks(ctx, modelSpanID, &taskTerminalName, &taskTerminalResult, collector),
+			)
+			if err == nil || ctx.Err() != nil || attempt >= maxLLMRetries || !transientLLMError(err) {
+				break
+			}
+			delay := llmRetryDelay(attempt + 1)
+			r.emitLLMRetry(round+1, attempt+1, maxLLMRetries, delay, err)
+			// Whatever the failed attempt streamed is not part of any answer:
+			// clear it from the transcript, and start the next attempt from a
+			// clean collector and no half-seen terminal signal.
+			r.emitTombstone()
+			taskTerminalName, taskTerminalResult = "", ""
+			collector = newRuntimeAsyncToolCollector()
+			if !waitBeforeLLMRetry(ctx, delay) {
+				break
+			}
+		}
 		r.CheckpointEnd("llm_call")
 		state.noteRecovery(recovery)
 
@@ -605,9 +632,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 				r.cancelRun(messages)
 				return
 			}
-			r.emitTombstone()
-			r.ensureToolResultConsistency()
-			r.emit(EventTypeError, fmt.Sprintf("LLM error: %v", err))
+			r.failRun(err, messages)
 			return
 		}
 		state.noteResponse(lastResponseID)
@@ -803,6 +828,11 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		state.noteRoundCompleted()
 		r.CheckpointEnd("round_completed")
 		r.emitRoundCompletedAnalytics(state)
+		// Snapshot the round that just finished. Everything above this line
+		// either terminated the run (which writes its own) or continued
+		// without completing a round, so this is the one place where "a round
+		// of work exists that nobody has written down" is true.
+		r.persistRoundCheckpoint(state.CurrentRound, messages)
 
 		if r.svc != nil && r.svc.hooks != nil {
 			r.svc.hooks.Emit(HookEventTurnComplete, HookData{
@@ -1249,6 +1279,41 @@ func (r *Runtime) cancelRun(messages []domain.Message) {
 		AgentID:          r.currentAgent.ID(),
 		Content:          cancelledRunText,
 		StopReason:       StopReasonCancelled,
+		EstimatedCostUSD: r.currentCostUSD(),
+		Usage:            r.currentUsage(),
+		Timestamp:        time.Now(),
+	}
+	r.clearCollectedSources()
+}
+
+// failRun terminates a run that could not continue — the provider failed in a
+// way retrying will not fix, or every retry was spent.
+//
+// The point of it existing is the snapshot. The old code emitted one error
+// event and returned straight out of the loop, which skipped the terminal path
+// entirely: nothing was written, so a run that died in its nineteenth hour
+// left nothing to resume from and no record that it had ever got that far. A
+// failure is now a terminal state like any other, and the work up to it
+// survives — ResumeFromCheckpoint can pick the task back up once whatever
+// broke is fixed.
+func (r *Runtime) failRun(cause error, messages []domain.Message) {
+	// Clear the half-streamed text and close out any tool call left without a
+	// result, the same way a cancelled run does: an interrupted round would
+	// otherwise leave an inconsistent transcript in the snapshot.
+	r.emitTombstone()
+	r.ensureToolResultConsistency()
+
+	r.persistTerminalCheckpoint(currentTaskID(r.session), CheckpointReasonRunFailed, "", messages)
+	r.persistMessages(messages)
+
+	r.emitTurnState(TurnStageCompleted, "run failed", 0, 0)
+	r.eventChan <- &Event{
+		ID:               uuid.New().String(),
+		Type:             EventTypeError,
+		AgentName:        r.currentAgent.Name(),
+		AgentID:          r.currentAgent.ID(),
+		Content:          fmt.Sprintf("LLM error: %v", cause),
+		StopReason:       StopReasonErrorDuringExecution,
 		EstimatedCostUSD: r.currentCostUSD(),
 		Usage:            r.currentUsage(),
 		Timestamp:        time.Now(),

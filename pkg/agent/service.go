@@ -157,6 +157,10 @@ type Service struct {
 	// the endpoint, which only the person configuring it knows.
 	promptCache domain.PromptCacheMode
 
+	// checkpointEveryRounds is how often an in-flight run snapshots itself,
+	// in rounds. Set via WithAutonomy; 0 = the framework default.
+	checkpointEveryRounds int
+
 	// Public access to underlying services
 	LLM     domain.Generator
 	MCP     *mcp.Service // Full access to MCP service (Chat, StartServers, etc.)

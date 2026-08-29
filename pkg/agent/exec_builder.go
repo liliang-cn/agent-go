@@ -23,6 +23,14 @@ type AutonomyProfile struct {
 	// Scratchpad, when true, registers the scratchpad_* tools so the agent can
 	// maintain a persistent todo/notes list across a long run.
 	Scratchpad bool
+
+	// CheckpointEveryRounds is how often an in-flight run snapshots its
+	// history, in rounds. 1 (the default) writes at every round boundary, so
+	// a crash costs at most one round; raise it to trade resume granularity
+	// for fewer writes. Snapshots are what a supervisor resumes an
+	// interrupted long run from — see Tasks().ResumeFromCheckpoint.
+	// 0 = leave default.
+	CheckpointEveryRounds int
 }
 
 // WithSandbox attaches an execution sandbox (pkg/sandbox) and registers the
@@ -38,7 +46,7 @@ func (b *Builder) WithSandbox(sb sandbox.Sandbox) *Builder {
 }
 
 // WithAutonomy configures long-horizon execution (round budget, lint retry
-// budget, scratchpad). See AutonomyProfile.
+// budget, scratchpad, checkpoint interval). See AutonomyProfile.
 func (b *Builder) WithAutonomy(p AutonomyProfile) *Builder {
 	b.autonomy = p
 	return b

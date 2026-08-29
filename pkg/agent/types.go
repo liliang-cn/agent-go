@@ -185,6 +185,12 @@ type RunConfig struct {
 	// failing that DefaultMaxRounds. Set it with WithMaxTurns.
 	MaxTurns int
 
+	// MaxLLMRetries is how many extra attempts a transient provider failure
+	// (a 502, a rate limit, a dropped stream) gets before the run gives up.
+	// Zero means the run has no opinion and the framework default applies;
+	// a negative value means none at all. Set it with WithLLMRetries.
+	MaxLLMRetries int
+
 	// ErrorHandlers allows custom handling of specific error conditions
 	// Key: error kind (e.g., "max_turns")
 	// Value: function that returns a fallback result
@@ -359,6 +365,14 @@ type RunOption func(*RunConfig)
 // wants hundreds; n <= 0 leaves the budget unset.
 func WithMaxTurns(n int) RunOption {
 	return func(c *RunConfig) { c.MaxTurns = n }
+}
+
+// WithLLMRetries sets how many extra attempts a transient provider failure
+// gets before the run gives up, overriding the framework default. Backoff is
+// exponential and jittered between attempts. Pass a negative number to
+// disable retrying entirely; zero leaves the default in place.
+func WithLLMRetries(n int) RunOption {
+	return func(c *RunConfig) { c.MaxLLMRetries = n }
 }
 
 // WithTemperature sets the LLM temperature
