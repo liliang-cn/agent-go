@@ -599,6 +599,9 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 			usage := *evt.Usage
 			result.Usage = &usage
 		}
+		if evt.StopReason != "" {
+			result.StopReason = evt.StopReason
+		}
 		switch evt.Type {
 		case EventTypeToolCall:
 			if evt.ToolName != "" {

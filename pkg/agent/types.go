@@ -95,6 +95,11 @@ type ExecutionResult struct {
 	// answer "is this long run re-reading its whole prompt every round".
 	// Nil when no provider on the run reported usage; EstimatedTokens is
 	// the tokenizer's guess and is always populated.
+	// StopReason is why the run ended, copied from its terminal event. It is
+	// the difference between "the model finished" and "the round budget ran
+	// out and the runtime synthesised an answer from what it had" — both of
+	// which report Success, and only one of which is an answer to trust.
+	StopReason  StopReason                `json:"stop_reason,omitempty"`
 	Usage       *domain.TokenUsage        `json:"usage,omitempty"`
 	FinalResult interface{}               `json:"final_result,omitempty"`
 	Sources     []domain.Chunk            `json:"sources,omitempty"`      // RAG sources when EnableRAG is true
