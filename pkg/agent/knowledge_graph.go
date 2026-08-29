@@ -37,13 +37,13 @@ func RegisterGraphRecallTool(svc *Service) {
 	}
 	svc.AddToolWithMetadata(
 		"graph_recall",
-		"查询长期记忆与知识图谱：返回相关记忆、识别出的实体、以及实体之间的关系（知识图谱扩展）。当问题涉及"+
-			"\"谁/和谁/什么关系/相关的人或事/之前提到的某人某事\"时优先调用，比单纯关键词检索更能顺着关系找到答案。",
+		"Query long-term memory and the knowledge graph: returns the relevant memories, the entities recognised in them, and the relations between those entities (graph expansion). "+
+			"Prefer it for questions about who, with whom, how two things relate, related people or things, or someone mentioned earlier — following relations finds answers that plain keyword search misses.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"query": map[string]interface{}{"type": "string", "description": "检索问题（自然语言）"},
-				"top_k": map[string]interface{}{"type": "integer", "description": "返回条数，默认 8"},
+				"query": map[string]interface{}{"type": "string", "description": "The question to look up, in natural language"},
+				"top_k": map[string]interface{}{"type": "integer", "description": "How many results to return, default 8"},
 			},
 			"required": []string{"query"},
 		},

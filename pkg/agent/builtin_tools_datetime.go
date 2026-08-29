@@ -20,13 +20,13 @@ import (
 // no natural language — only offsets the model has already reasoned out.
 type ResolveDateTimeArgs struct {
 	Base        string `json:"base,omitempty"`         // anchor: "" / "today", or "YYYY-MM-DD"
-	DayOffset   int    `json:"day_offset,omitempty"`   // 今天0/明天1/后天2/大后天3/N天后N
-	Weekday     string `json:"weekday,omitempty"`      // monday..sunday (中文"周五"亦可)
-	WeekOffset  int    `json:"week_offset,omitempty"`  // 本周0/下周1/下下周2 (可负: 上周-1)
-	MonthOffset int    `json:"month_offset,omitempty"` // 本月0/下月1
-	DayOfMonth  int    `json:"day_of_month,omitempty"` // 几号 (1-31)
-	AvoidPast   *bool  `json:"avoid_past,omitempty"`   // 默认 true: "这周X"已过则取下一个
-	Time        string `json:"time,omitempty"`         // "HH:MM"，缺省 09:00
+	DayOffset   int    `json:"day_offset,omitempty"`   // today 0 / tomorrow 1 / day after 2 / N days out N
+	Weekday     string `json:"weekday,omitempty"`      // monday..sunday (Chinese names such as "周五" also accepted)
+	WeekOffset  int    `json:"week_offset,omitempty"`  // this week 0 / next week 1 / the week after 2 (negative for past weeks: -1)
+	MonthOffset int    `json:"month_offset,omitempty"` // this month 0 / next month 1
+	DayOfMonth  int    `json:"day_of_month,omitempty"` // day of month (1-31)
+	AvoidPast   *bool  `json:"avoid_past,omitempty"`   // default true: a weekday already past this week rolls to the next one
+	Time        string `json:"time,omitempty"`         // "HH:MM", defaults to 09:00
 }
 
 // DateTimeResult is the resolved absolute instant plus human-readable parts.
@@ -73,7 +73,8 @@ func ResolveDateTime(now time.Time, a ResolveDateTimeArgs) (DateTimeResult, erro
 	var target time.Time
 	switch {
 	case a.DayOfMonth > 0:
-		// "(下个)月几号"：定位到该月 1 号再加偏移，跨月进位交给 time 包。
+		// "the Nth of (next) month": anchor on the 1st of that month and add the
+		// offset, leaving month carry to the time package.
 		first := time.Date(base.Year(), base.Month(), 1, 0, 0, 0, 0, loc)
 		target = first.AddDate(0, a.MonthOffset, a.DayOfMonth-1)
 	case strings.TrimSpace(a.Weekday) != "":
@@ -84,7 +85,8 @@ func ResolveDateTime(now time.Time, a ResolveDateTimeArgs) (DateTimeResult, erro
 		isoIdx := (int(base.Weekday()) + 6) % 7 // Sun=0..Sat=6 → Mon=0..Sun=6
 		monday := base.AddDate(0, 0, -isoIdx)
 		target = monday.AddDate(0, 0, a.WeekOffset*7+wd)
-		// "这周X"且已过去 → 取下一个该星期几（assistant 语义；"上周X" 用 week_offset<0）。
+		// A weekday in the current week that has already passed rolls forward to
+		// the next one (assistant semantics; use week_offset<0 for a past week).
 		if avoidPast && a.WeekOffset >= 0 && target.Before(base) {
 			target = target.AddDate(0, 0, 7)
 		}
@@ -113,19 +115,19 @@ func dateTimeToolSchema() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
-			"base":         map[string]interface{}{"type": "string", "description": "锚点：today（默认）或 YYYY-MM-DD"},
-			"day_offset":   map[string]interface{}{"type": "integer", "description": "在锚点上加的天数：今天0/明天1/后天2/大后天3/N天后N"},
-			"weekday":      map[string]interface{}{"type": "string", "description": "目标星期：monday..sunday（中文'周五'亦可）"},
-			"week_offset":  map[string]interface{}{"type": "integer", "description": "相对周：本周0/下周1/下下周2；上周用 -1"},
-			"month_offset": map[string]interface{}{"type": "integer", "description": "相对月：本月0/下月1"},
-			"day_of_month": map[string]interface{}{"type": "integer", "description": "几号（1-31），用于'下个月3号'这类"},
-			"avoid_past":   map[string]interface{}{"type": "boolean", "description": "默认 true：'这周五'等若已过去则取下一个；'上周五'请用 week_offset:-1"},
-			"time":         map[string]interface{}{"type": "string", "description": "时间 HH:MM，如 10:00；缺省 09:00"},
+			"base":         map[string]interface{}{"type": "string", "description": "Anchor date: today (default) or YYYY-MM-DD"},
+			"day_offset":   map[string]interface{}{"type": "integer", "description": "Days to add to the anchor: today 0, tomorrow 1, the day after 2, three days out 3, N days out N"},
+			"weekday":      map[string]interface{}{"type": "string", "description": "Target weekday: monday..sunday (Chinese names such as '周五' are also accepted)"},
+			"week_offset":  map[string]interface{}{"type": "integer", "description": "Week offset: this week 0, next week 1, the week after 2; use -1 for last week"},
+			"month_offset": map[string]interface{}{"type": "integer", "description": "Month offset: this month 0, next month 1"},
+			"day_of_month": map[string]interface{}{"type": "integer", "description": "Day of month (1-31), for phrases like 'the 3rd of next month'"},
+			"avoid_past":   map[string]interface{}{"type": "boolean", "description": "Default true: a weekday already past in the current week rolls to the next one; for a past weekday use week_offset:-1"},
+			"time":         map[string]interface{}{"type": "string", "description": "Time of day HH:MM, e.g. 10:00; defaults to 09:00"},
 		},
 	}
 }
 
-const dateTimeToolDescription = "把相对时间换算成绝对时间（RFC3339）。不要传自然语言，先把意思拆成字段：今天=day_offset:0、明天:1、后天:2、大后天:3；本周=week_offset:0、下周:1、下下周:2（配合 weekday，上周用 -1）；下个月=month_offset:1（配合 day_of_month）。返回 rfc3339 与对应星期。模型只负责理解、不要自己算日期。"
+const dateTimeToolDescription = "Turn a relative time into an absolute one (RFC3339). Do not pass natural language: work out the meaning first and fill in the fields. today=day_offset:0, tomorrow:1, the day after:2, three days out:3; this week=week_offset:0, next week:1, the week after:2 (combine with weekday; use -1 for last week); next month=month_offset:1 (combine with day_of_month). Returns rfc3339 and the matching weekday. Understand the phrasing, but never do the date arithmetic yourself."
 
 // resolveDateTimeFromMap adapts the map-based tool args to ResolveDateTime.
 func resolveDateTimeFromMap(now time.Time, args map[string]interface{}) (DateTimeResult, error) {

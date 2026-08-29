@@ -29,7 +29,7 @@ type Config struct {
 	// MinEntityLength minimum character length for entity
 	MinEntityLength int `mapstructure:"min_entity_length" json:"min_entity_length"`
 
-	//社区检测相关配置
+	// Community detection settings
 	CommunityDetectionEnabled bool   `mapstructure:"community_detection" json:"community_detection"`
 	CommunityAlgorithm        string `mapstructure:"community_algorithm" json:"community_algorithm"` // "louvain", "leiden"
 

@@ -107,7 +107,7 @@ type PromptExecutor struct {
 //	    Type:     string(agent.TaskTypeAgentPrompt),
 //	    Schedule: "0 8 * * *",
 //	    Enabled:  true,
-//	    Parameters: map[string]string{agent.ParamPrompt: "统计我的股票收益并发消息给我"},
+//	    Parameters: map[string]string{agent.ParamPrompt: "summarize my stock returns and message me"},
 //	})
 func NewPromptExecutor(svc *Service, opts ...PromptExecutorOption) *PromptExecutor {
 	e := &PromptExecutor{

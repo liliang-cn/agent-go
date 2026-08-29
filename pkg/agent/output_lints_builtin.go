@@ -75,7 +75,7 @@ func NoPlanningOnlyFinish() OutputLint {
 			scan := strings.TrimSpace(benignClosing.ReplaceAllString(trimmed, ""))
 			for _, pat := range planningEndingPatterns {
 				if pat.MatchString(scan) {
-					return false, "response reads like a plan (\"我会... / next steps: ... / I will...\") " +
+					return false, "response reads like a plan (\"next steps: ... / I will ...\") " +
 						"instead of delivering a completed result. Either complete the work and call task_complete " +
 						"with the verified result, or call task_blocked with the concrete blocker."
 				}

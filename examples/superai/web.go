@@ -318,20 +318,20 @@ func summarizeState(db *store) (string, bool) {
 		return "", true
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "现在时间: %s\n", time.Now().Format("2006-01-02 15:04 周一"))
-	b.WriteString("日程:\n")
+	fmt.Fprintf(&b, "Now: %s\n", time.Now().Format("2006-01-02 15:04 周一"))
+	b.WriteString("Schedules:\n")
 	for _, r := range db.Schedules {
-		fmt.Fprintf(&b, "- %v @ %v %v 参与:%v\n", r["title"], r["start_at"], r["location"], r["participants"])
+		fmt.Fprintf(&b, "- %v @ %v %v participants:%v\n", r["title"], r["start_at"], r["location"], r["participants"])
 	}
-	b.WriteString("记录:\n")
+	b.WriteString("Records:\n")
 	for _, r := range db.Records {
 		fmt.Fprintf(&b, "- (%v) %v: %v\n", r["type"], r["title"], r["body"])
 	}
-	b.WriteString("人物:\n")
+	b.WriteString("People:\n")
 	for _, p := range db.Persons {
 		fmt.Fprintf(&b, "- %v(%v) %v\n", p["name"], p["relation"], p["note"])
 	}
-	b.WriteString("提醒:\n")
+	b.WriteString("Reminders:\n")
 	for _, r := range db.Reminders {
 		fmt.Fprintf(&b, "- %v @ %v (%v)\n", r["title"], r["remind_at"], r["recurrence"])
 	}
@@ -339,11 +339,11 @@ func summarizeState(db *store) (string, bool) {
 }
 
 func overviewPrompt(state string) string {
-	return "你是 SuperAI,一个有温度的助手。根据下面用户的数据,生成一个简洁、有用、有人情味的中文「概览面板」。\n" +
-		"自行决定要展示哪些区块(例如:今日重点、即将到来、待办提醒、最近动态、关系洞察、贴心建议),只保留真正有信息量的。\n" +
-		"严格只输出 JSON,不要任何额外文字、不要 markdown 代码块,格式:\n" +
-		`{"sections":[{"icon":"一个emoji","title":"短标题","items":["一行要点","..."]}]}` + "\n" +
-		"每个区块 1-4 条要点,精炼。只用中文。\n\n数据:\n" + state
+	return "You are SuperAI, a warm assistant. From the user data below, build a concise, useful, human overview panel, written in Chinese.\n" +
+		"Choose the sections yourself (e.g. today's focus, coming up, open reminders, recent activity, relationship insights, gentle suggestions) and keep only the ones that carry real information.\n" +
+		"Output JSON only - no extra text, no markdown code fence - in this shape:\n" +
+		`{"sections":[{"icon":"one emoji","title":"short title","items":["one-line point","..."]}]}` + "\n" +
+		"1-4 points per section, tightly written. Write the content in Chinese.\n\nData:\n" + state
 }
 
 func extractJSONObject(s string) string {

@@ -118,12 +118,12 @@ func RegisterScratchpadTools(svc *Service) {
 	if !has("scratchpad_set") {
 		svc.AddToolWithMetadata(
 			"scratchpad_set",
-			"用一组待办项整体替换计划清单(items 为字符串数组)。用于在开始一个多步任务时写下计划。可选 key 区分多份清单。",
+			"Replace the whole plan list with a set of todo items (items is an array of strings). Use it to write down the plan when starting a multi-step task. Optional key selects one of several lists.",
 			map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"key":   map[string]interface{}{"type": "string", "description": "清单标识,默认 default"},
-					"items": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "待办项文本数组"},
+					"key":   map[string]interface{}{"type": "string", "description": "List identifier, default \"default\""},
+					"items": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Array of todo item texts"},
 				},
 				"required": []string{"items"},
 			},
@@ -143,12 +143,12 @@ func RegisterScratchpadTools(svc *Service) {
 	if !has("scratchpad_add") {
 		svc.AddToolWithMetadata(
 			"scratchpad_add",
-			"向计划清单追加一个待办项。可选 key。",
+			"Append one todo item to the plan list. Optional key.",
 			map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"key":  map[string]interface{}{"type": "string", "description": "清单标识,默认 default"},
-					"text": map[string]interface{}{"type": "string", "description": "待办项文本"},
+					"key":  map[string]interface{}{"type": "string", "description": "List identifier, default \"default\""},
+					"text": map[string]interface{}{"type": "string", "description": "Todo item text"},
 				},
 				"required": []string{"text"},
 			},
@@ -168,12 +168,12 @@ func RegisterScratchpadTools(svc *Service) {
 	if !has("scratchpad_check") {
 		svc.AddToolWithMetadata(
 			"scratchpad_check",
-			"把清单中第 index 个待办项(0基)标记为已完成。可选 key。",
+			"Mark the todo item at position index (0-based) as done. Optional key.",
 			map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"key":   map[string]interface{}{"type": "string", "description": "清单标识,默认 default"},
-					"index": map[string]interface{}{"type": "integer", "description": "要标记完成的待办项下标(0基)"},
+					"key":   map[string]interface{}{"type": "string", "description": "List identifier, default \"default\""},
+					"index": map[string]interface{}{"type": "integer", "description": "Index of the todo item to mark done (0-based)"},
 				},
 				"required": []string{"index"},
 			},
@@ -192,11 +192,11 @@ func RegisterScratchpadTools(svc *Service) {
 	if !has("scratchpad_get") {
 		svc.AddToolWithMetadata(
 			"scratchpad_get",
-			"读取计划清单,返回带下标与完成标记的待办项列表。可选 key。",
+			"Read the plan list and return the todo items with their index and done flag. Optional key.",
 			map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"key": map[string]interface{}{"type": "string", "description": "清单标识,默认 default"},
+					"key": map[string]interface{}{"type": "string", "description": "List identifier, default \"default\""},
 				},
 			},
 			func(ctx context.Context, args map[string]interface{}) (interface{}, error) {

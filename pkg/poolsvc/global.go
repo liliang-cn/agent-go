@@ -19,7 +19,7 @@ var (
 	globalPoolMu      sync.RWMutex
 )
 
-// Service 管理全局LLM和Embedding Pools
+// Service manages the global LLM and embedding pools.
 type Service struct {
 	config        *config.Config
 	llmPool       *pool.Pool
@@ -29,7 +29,7 @@ type Service struct {
 	mu            sync.RWMutex
 }
 
-// Global 获取进程级全局 pool 服务
+// Global returns the process-wide pool service.
 func Global() *Service {
 	globalPoolMu.RLock()
 	if globalPoolService != nil {
@@ -64,7 +64,7 @@ func SetGlobal(service *Service) (previous *Service) {
 	return previous
 }
 
-// Initialize 初始化pool
+// Initialize sets the pools up.
 func (s *Service) Initialize(ctx context.Context, cfg *config.Config) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -151,7 +151,7 @@ func hintNoEmbeddingProvider() {
 	})
 }
 
-// GetLLM 获取LLM client（自动选择）
+// GetLLM returns an LLM client chosen automatically.
 func (s *Service) GetLLM() (*pool.Client, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -163,12 +163,12 @@ func (s *Service) GetLLM() (*pool.Client, error) {
 	return s.llmPool.Get()
 }
 
-// GetLLMByName 按名称获取LLM client，兼容旧调用；名称指 provider 名称。
+// GetLLMByName returns an LLM client by name (legacy alias; the name is the provider name).
 func (s *Service) GetLLMByName(name string) (*pool.Client, error) {
 	return s.GetLLMByProvider(name)
 }
 
-// GetLLMByProvider 按 provider 名称获取LLM client。
+// GetLLMByProvider returns an LLM client by provider name.
 func (s *Service) GetLLMByProvider(name string) (*pool.Client, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -192,7 +192,7 @@ func (s *Service) GetLLMByProviderAndModel(name, modelName string) (*pool.Client
 	return s.llmPool.GetByProviderAndModel(name, modelName)
 }
 
-// GetLLMByModel 按模型名获取LLM client。
+// GetLLMByModel returns an LLM client by model name.
 func (s *Service) GetLLMByModel(modelName string) (*pool.Client, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -204,7 +204,7 @@ func (s *Service) GetLLMByModel(modelName string) (*pool.Client, error) {
 	return s.llmPool.GetByModel(modelName)
 }
 
-// GetLLMByCapability 按能力等级获取LLM client
+// GetLLMByCapability returns an LLM client by capability level.
 func (s *Service) GetLLMByCapability(minCapability int) (*pool.Client, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -216,7 +216,7 @@ func (s *Service) GetLLMByCapability(minCapability int) (*pool.Client, error) {
 	return s.llmPool.GetByCapability(minCapability)
 }
 
-// ReleaseLLM 释放LLM client
+// ReleaseLLM returns an LLM client to the pool.
 func (s *Service) ReleaseLLM(client *pool.Client) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -226,7 +226,7 @@ func (s *Service) ReleaseLLM(client *pool.Client) {
 	}
 }
 
-// GetEmbedding 获取Embedding client（自动选择）
+// GetEmbedding returns an embedding client chosen automatically.
 func (s *Service) GetEmbedding() (*pool.Client, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -238,7 +238,7 @@ func (s *Service) GetEmbedding() (*pool.Client, error) {
 	return s.embeddingPool.Get()
 }
 
-// GetEmbeddingByName 按名称获取Embedding client
+// GetEmbeddingByName returns an embedding client by name.
 func (s *Service) GetEmbeddingByName(name string) (*pool.Client, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -250,7 +250,7 @@ func (s *Service) GetEmbeddingByName(name string) (*pool.Client, error) {
 	return s.embeddingPool.GetByName(name)
 }
 
-// GetEmbeddingByCapability 按能力等级获取Embedding client
+// GetEmbeddingByCapability returns an embedding client by capability level.
 func (s *Service) GetEmbeddingByCapability(minCapability int) (*pool.Client, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -262,7 +262,7 @@ func (s *Service) GetEmbeddingByCapability(minCapability int) (*pool.Client, err
 	return s.embeddingPool.GetByCapability(minCapability)
 }
 
-// ReleaseEmbedding 释放Embedding client
+// ReleaseEmbedding returns an embedding client to the pool.
 func (s *Service) ReleaseEmbedding(client *pool.Client) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -279,7 +279,7 @@ func (s *Service) GetAgentGoDB() *store.AgentGoDB {
 	return s.db
 }
 
-// ChatOptions 顶级Chat API配置选项
+// ChatOptions configures the top-level Chat API.
 type ChatOptions struct {
 	SessionID       string
 	Provider        string
@@ -292,7 +292,7 @@ type ChatOptions struct {
 	Debug           bool
 }
 
-// Chat 顶级Chat API：支持Provider指定与历史自动持久化
+// Chat is the top-level Chat API: provider selection plus automatic history persistence.
 func (s *Service) Chat(ctx context.Context, message string, opts ChatOptions) (string, error) {
 	s.mu.RLock()
 	if !s.initialized {
@@ -390,7 +390,7 @@ func (s *Service) Chat(ctx context.Context, message string, opts ChatOptions) (s
 	return answer, nil
 }
 
-// StreamChat 顶级流式Chat API：支持Provider指定与历史自动持久化
+// StreamChat is the top-level streaming Chat API: provider selection plus automatic history persistence.
 func (s *Service) StreamChat(ctx context.Context, message string, opts ChatOptions, callback func(string)) error {
 	s.mu.RLock()
 	if !s.initialized {
@@ -491,7 +491,7 @@ func (s *Service) StreamChat(ctx context.Context, message string, opts ChatOptio
 	return err
 }
 
-// Generate 使用pool生成文本（自动获取和释放）
+// Generate generates text through the pool (acquires and releases automatically).
 func (s *Service) Generate(ctx context.Context, prompt string, opts *domain.GenerationOptions) (string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -503,7 +503,7 @@ func (s *Service) Generate(ctx context.Context, prompt string, opts *domain.Gene
 	return s.llmPool.Generate(ctx, prompt, opts)
 }
 
-// GenerateWithTools 使用pool和工具生成
+// GenerateWithTools generates through the pool with tools available.
 func (s *Service) GenerateWithTools(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions) (*domain.GenerationResult, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -515,7 +515,7 @@ func (s *Service) GenerateWithTools(ctx context.Context, messages []domain.Messa
 	return s.llmPool.GenerateWithTools(ctx, messages, tools, opts)
 }
 
-// GenerateStructured 使用pool生成结构化输出
+// GenerateStructured generates structured output through the pool.
 func (s *Service) GenerateStructured(ctx context.Context, prompt string, schema interface{}, opts *domain.GenerationOptions) (*domain.StructuredResult, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -527,7 +527,7 @@ func (s *Service) GenerateStructured(ctx context.Context, prompt string, schema 
 	return s.llmPool.GenerateStructured(ctx, prompt, schema, opts)
 }
 
-// RecognizeIntent 使用pool识别意图
+// RecognizeIntent classifies intent through the pool.
 func (s *Service) RecognizeIntent(ctx context.Context, request string) (*domain.IntentResult, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -539,7 +539,7 @@ func (s *Service) RecognizeIntent(ctx context.Context, request string) (*domain.
 	return s.llmPool.RecognizeIntent(ctx, request)
 }
 
-// Stream 使用pool流式生成
+// Stream streams a generation through the pool.
 func (s *Service) Stream(ctx context.Context, prompt string, opts *domain.GenerationOptions, callback func(string)) error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -551,7 +551,7 @@ func (s *Service) Stream(ctx context.Context, prompt string, opts *domain.Genera
 	return s.llmPool.Stream(ctx, prompt, opts, callback)
 }
 
-// StreamWithTools 使用pool和工具流式生成
+// StreamWithTools streams a tool-calling generation through the pool.
 func (s *Service) StreamWithTools(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions, callback domain.ToolCallCallback) error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -563,7 +563,7 @@ func (s *Service) StreamWithTools(ctx context.Context, messages []domain.Message
 	return s.llmPool.StreamWithTools(ctx, messages, tools, opts, callback)
 }
 
-// Embed 使用pool向量化
+// Embed vectorizes a text through the pool.
 func (s *Service) Embed(ctx context.Context, text string) ([]float64, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -575,7 +575,7 @@ func (s *Service) Embed(ctx context.Context, text string) ([]float64, error) {
 	return s.embeddingPool.Embed(ctx, text)
 }
 
-// EmbedMultiple 使用pool向量化多个文本
+// EmbedMultiple vectorizes several texts through the pool.
 func (s *Service) EmbedMultiple(ctx context.Context, texts []string) ([][]float64, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -587,12 +587,12 @@ func (s *Service) EmbedMultiple(ctx context.Context, texts []string) ([][]float6
 	return s.embeddingPool.EmbedMultiple(ctx, texts)
 }
 
-// EmbedBatch 使用pool批量向量化（实现 domain.Embedder 接口）
+// EmbedBatch vectorizes a batch through the pool (implements domain.Embedder).
 func (s *Service) EmbedBatch(ctx context.Context, texts []string) ([][]float64, error) {
 	return s.EmbedMultiple(ctx, texts)
 }
 
-// GetLLMStatus 获取LLM pool状态
+// GetLLMStatus reports the LLM pool status.
 func (s *Service) GetLLMStatus() map[string]pool.ClientStatus {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -604,7 +604,7 @@ func (s *Service) GetLLMStatus() map[string]pool.ClientStatus {
 	return s.llmPool.GetStatus()
 }
 
-// GetEmbeddingStatus 获取Embedding pool状态
+// GetEmbeddingStatus reports the embedding pool status.
 func (s *Service) GetEmbeddingStatus() map[string]pool.ClientStatus {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -616,14 +616,14 @@ func (s *Service) GetEmbeddingStatus() map[string]pool.ClientStatus {
 	return s.embeddingPool.GetStatus()
 }
 
-// IsInitialized 是否已初始化
+// IsInitialized reports whether the pools are initialized.
 func (s *Service) IsInitialized() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.initialized
 }
 
-// Close 关闭pool
+// Close shuts the pools down.
 func (s *Service) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -643,7 +643,7 @@ func (s *Service) Close() error {
 	return nil
 }
 
-// Shutdown 关闭并清理全局pool
+// Shutdown closes and clears the global pool service.
 func (s *Service) Shutdown() error {
 	globalPoolMu.Lock()
 	defer globalPoolMu.Unlock()
@@ -872,9 +872,9 @@ func (s *Service) SaveEmbeddingPoolConfig(cfg EmbeddingPoolConfig) error {
 	return nil
 }
 
-// ===== 兼容层 - 让旧代码继续工作 =====
+// ===== Compatibility layer - keeps older code working =====
 
-// llmServiceWrapper 包装Pool为domain.Generator
+// llmServiceWrapper adapts a Pool to domain.Generator.
 type llmServiceWrapper struct {
 	pool *pool.Pool
 	hint pool.SelectionHint
@@ -965,7 +965,7 @@ func (w *llmServiceWrapper) ExtractMetadata(ctx context.Context, content string,
 	return w.pool.ExtractMetadataWithHint(ctx, w.hint, content, model)
 }
 
-// embeddingServiceWrapper 包装Pool为domain.Embedder
+// embeddingServiceWrapper adapts a Pool to domain.Embedder.
 type embeddingServiceWrapper struct {
 	pool *pool.Pool
 }
@@ -978,7 +978,7 @@ func (w *embeddingServiceWrapper) EmbedBatch(ctx context.Context, texts []string
 	return w.pool.EmbedMultiple(ctx, texts)
 }
 
-// GetGlobalLLM 获取全局LLM服务（兼容旧代码）
+// GetGlobalLLM returns the global LLM service (legacy).
 func GetGlobalLLM() (domain.Generator, error) {
 	service := Global()
 	if !service.IsInitialized() {
@@ -987,7 +987,7 @@ func GetGlobalLLM() (domain.Generator, error) {
 	return &llmServiceWrapper{pool: service.llmPool}, nil
 }
 
-// GetGlobalEmbeddingService 获取全局Embedding服务（兼容旧代码）
+// GetGlobalEmbeddingService returns the global embedding service (legacy).
 func GetGlobalEmbeddingService(ctx context.Context) (domain.Embedder, error) {
 	service := Global()
 	if !service.IsInitialized() {
@@ -996,13 +996,13 @@ func GetGlobalEmbeddingService(ctx context.Context) (domain.Embedder, error) {
 	return &embeddingServiceWrapper{pool: service.embeddingPool}, nil
 }
 
-// GetGlobalLLMService 获取全局LLM Service（兼容旧代码）
-// 这个函数返回Service，兼容旧的GetGlobalLLMService()调用
+// GetGlobalLLMService returns the global LLM Service (legacy).
+// It returns Service for compatibility with older GetGlobalLLMService() callers.
 func GetGlobalLLMService() *Service {
 	return Global()
 }
 
-// GetLLMService 获取LLM服务（兼容旧代码）
+// GetLLMService returns the LLM service (legacy).
 func (s *Service) GetLLMService() (domain.Generator, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -1035,7 +1035,7 @@ func (s *Service) GetLLMServiceWithHint(hint pool.SelectionHint) (domain.Generat
 	return &llmServiceWrapper{pool: s.llmPool, hint: hint}, nil
 }
 
-// GetEmbeddingService 获取Embedding服务（兼容旧代码）
+// GetEmbeddingService returns the embedding service (legacy).
 func (s *Service) GetEmbeddingService(ctx context.Context) (domain.Embedder, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

@@ -2,10 +2,10 @@
 // the SuperLeo PRD — built entirely on the AgentGo framework. It exercises
 // AgentGo end-to-end (NO multi-tenant / SaaS plumbing — just the brain):
 //
-//   - intent understanding + tool calling  (建日程 / 记事 / 记人物 / 设提醒)
+//   - intent understanding + tool calling  (schedules / notes / people / reminders)
 //   - built-in resolve_datetime so the model never miscomputes relative dates
 //   - knowledge-graph–aware memory (WithGraphMemory + graph_recall)
-//   - emotion tagging that would drive the 3D avatar  (情绪: 标签)
+//   - emotion tagging that would drive the 3D avatar  (the "情绪: <label>" tag)
 //   - persistence across restarts (graph memory + a JSON-backed store)
 //   - proactive reminders: a scheduler that makes SuperAI "speak" when due (S2)
 //   - an interactive chat mode
@@ -215,9 +215,9 @@ func main() {
 		WithLLM(brain)
 	memMode := "graphflow"
 	if embedder != nil {
-		b = b.WithEmbedder(embedder).WithGraphMemory() // 图存储 + graph_recall
+		b = b.WithEmbedder(embedder).WithGraphMemory() // graph store + graph_recall
 	} else {
-		b = b.WithMemory(agent.WithMemoryStoreType("file")) // 无 embedding → 文件记忆
+		b = b.WithMemory(agent.WithMemoryStoreType("file")) // no embeddings -> file-backed memory
 		memMode = "file (no embeddings)"
 	}
 	svc, err := b.Build()
@@ -256,19 +256,19 @@ func main() {
 }
 
 func buildPersona(now time.Time) string {
-	return fmt.Sprintf(`你是 SuperAI，一个有温度的随身 AI 生活/工作助手。
-当前系统时间：%s %s（%s），时区 %s。
-凡涉及相对时间（今天/明天/后天/大后天/这周五/下周一/下下周一/下个月3号/今晚N点…），都【必须先调用 resolve_datetime 工具】换算成绝对时间，再用返回的 rfc3339 去建日程/设提醒。绝不要自己心算日期。
+	return fmt.Sprintf(`You are SuperAI, a warm personal AI assistant for everyday life and work.
+Current system time: %s %s (%s), timezone %s.
+For anything relative (today / tomorrow / the day after / this Friday / next Monday / the Monday after next / the 3rd of next month / tonight at N ...), you MUST call the resolve_datetime tool first to turn it into an absolute time, then use the returned rfc3339 to create the schedule or reminder. Never work the date out in your head.
 
-职责：
-- 从用户的话里识别意图，主动调用工具记录：约定/会面→add_schedule；提到人→upsert_person；工作/踩坑→add_record(work,挂 project)；生活/心情→add_record(diary)；笔记→add_record(note)；打卡/习惯→add_record(habit)；要提醒→set_reminder。
-- 只要用户在陈述发生的事或要求记录/提醒，必须先调用对应工具存下来再回复；不要回答"没找到记忆"之类的话。
-- 提问且涉及"谁/和谁/什么关系/相关的人或事"时，优先用 graph_recall（知识图谱关系扩展），再结合检索工具作答。
-- 需要最新/实时信息(新闻、股价、行情、不在记忆和记录里的事实)时，调用 web_search 联网查,再据结果回答并带上来源。
-- 需要阅读/审阅/引用某个具体网址的真实页面内容时，用 fetch_url 抓取该网页正文(web_search 只给搜索摘要,读具体页面要用 fetch_url)。
-- 回答用中文，简短、自然、有人情味。每条回复最后单独一行输出情绪标签，格式严格为：情绪: <中性|开心|思考|惊讶|关心|抱歉>。
+Responsibilities:
+- Read the intent out of what the user says and call the matching tool: an appointment or meeting -> add_schedule; a person is mentioned -> upsert_person; work or a gotcha -> add_record(work, with project); life or mood -> add_record(diary); a note -> add_record(note); a check-in or habit -> add_record(habit); a reminder -> set_reminder.
+- Whenever the user states something that happened, or asks you to record or remind, call the matching tool to store it BEFORE replying; never answer with something like "no memory found".
+- For questions about who, with whom, how things relate, or related people and things, reach for graph_recall (knowledge-graph relation expansion) first, then combine it with the retrieval tools.
+- For fresh or real-time information (news, stock prices, market data, facts not in memory or records), call web_search and answer from the results, citing the sources.
+- To read, review or quote the real content of a specific URL, use fetch_url to fetch that page's body text (web_search only returns search summaries; reading a specific page needs fetch_url).
+- Reply in Chinese: short, natural, warm. End every reply with the emotion tag alone on the last line, in exactly this form: 情绪: <中性|开心|思考|惊讶|关心|抱歉>.
 
-严禁输出英文、日文或韩文，一律用中文回复。`,
+Never reply in English, Japanese or Korean - always answer in Chinese.`,
 		now.Format("2006-01-02"), now.Format("15:04:05"), weekdayCN(now), now.Format("-07:00"))
 }
 
@@ -408,7 +408,7 @@ func startReminderScheduler(db *store, fastTick bool, onDue func(title string)) 
 // announceReminder makes SuperAI proactively "speak" a due reminder (PRD S2 /
 // F-SCH-3). It prints immediately with a warm template so a reminder is never
 // dropped or delayed. (You could polish the wording via svc.Ask for a more
-// "语义化" message, but that blocks on an LLM round-trip — kept out of the hot
+// more natural-sounding message, but that blocks on an LLM round-trip — kept out of the hot
 // path here so the reminder always surfaces instantly.)
 func announceReminder(title string) {
 	fmt.Printf("\n🔔 SuperAI（主动）：到点啦～ %s\n🧑 ", title)
@@ -471,10 +471,10 @@ func registerTools(svc *agent.Service, db *store) {
 	// fetch_url: framework built-in (read a specific page's text; SSRF-guarded).
 	agent.RegisterFetchURLTool(svc)
 
-	svc.AddToolWithMetadata("add_schedule", "新建一条日程/约会。时间请用 RFC3339 绝对时间（先用 resolve_datetime 换算）。",
+	svc.AddToolWithMetadata("add_schedule", "Create a schedule entry or appointment. Give the time as an absolute RFC3339 timestamp (resolve it with resolve_datetime first).",
 		obj(map[string]any{
-			"title": s("日程标题"), "start_at": s("开始时间 RFC3339"),
-			"location": s("地点"), "participants": arr("参与人姓名"),
+			"title": s("Title of the entry"), "start_at": s("Start time, RFC3339"),
+			"location": s("Location"), "participants": arr("Names of the participants"),
 		}, "title", "start_at"),
 		func(ctx context.Context, a map[string]any) (any, error) {
 			db.mu.Lock()
@@ -488,17 +488,17 @@ func registerTools(svc *agent.Service, db *store) {
 			return ok(rec), nil
 		}, write)
 
-	svc.AddToolWithMetadata("list_schedules", "列出全部日程。", obj(map[string]any{}),
+	svc.AddToolWithMetadata("list_schedules", "List every schedule entry.", obj(map[string]any{}),
 		func(ctx context.Context, a map[string]any) (any, error) {
 			db.mu.Lock()
 			defer db.mu.Unlock()
 			return ok(db.Schedules), nil
 		}, read)
 
-	svc.AddToolWithMetadata("add_record", "记录一条内容：日记/工作/笔记/习惯。",
+	svc.AddToolWithMetadata("add_record", "Record an entry: diary, work, note or habit.",
 		obj(map[string]any{
-			"type": s("类型：diary|work|note|habit"), "title": s("简短标题"),
-			"body": s("正文内容"), "tags": arr("标签"), "project": s("所属项目（工作记录用）"),
+			"type": s("Kind: diary|work|note|habit"), "title": s("Short title"),
+			"body": s("Body text"), "tags": arr("Tags"), "project": s("Project it belongs to (for work records)"),
 		}, "type", "body"),
 		func(ctx context.Context, a map[string]any) (any, error) {
 			db.mu.Lock()
@@ -513,8 +513,8 @@ func registerTools(svc *agent.Service, db *store) {
 			return ok(rec), nil
 		}, write)
 
-	svc.AddToolWithMetadata("search_records", "按关键词检索记录，可选按 type 过滤。",
-		obj(map[string]any{"query": s("关键词"), "type": s("可选：diary|work|note|habit")}, "query"),
+	svc.AddToolWithMetadata("search_records", "Search records by keyword, optionally filtered by type.",
+		obj(map[string]any{"query": s("Keywords"), "type": s("Optional: diary|work|note|habit")}, "query"),
 		func(ctx context.Context, a map[string]any) (any, error) {
 			db.mu.Lock()
 			defer db.mu.Unlock()
@@ -532,9 +532,9 @@ func registerTools(svc *agent.Service, db *store) {
 			return ok(hits), nil
 		}, read)
 
-	svc.AddToolWithMetadata("upsert_person", "新建或更新一个人物档案（关系、偏好、最近动态）。",
+	svc.AddToolWithMetadata("upsert_person", "Create or update a person profile (relationship, preferences, recent news).",
 		obj(map[string]any{
-			"name": s("姓名"), "relation": s("关系，如同事/朋友/室友"), "note": s("偏好或最近动态"),
+			"name": s("Name"), "relation": s("Relationship, e.g. colleague / friend / roommate"), "note": s("Preferences or recent news"),
 		}, "name"),
 		func(ctx context.Context, a map[string]any) (any, error) {
 			db.mu.Lock()
@@ -555,10 +555,10 @@ func registerTools(svc *agent.Service, db *store) {
 			return ok(p), nil
 		}, write)
 
-	svc.AddToolWithMetadata("set_reminder", "设置提醒，可周期重复（到点 SuperAI 会主动提醒）。",
+	svc.AddToolWithMetadata("set_reminder", "Set a reminder, optionally recurring (SuperAI speaks up when it is due).",
 		obj(map[string]any{
-			"title": s("提醒内容"), "remind_at": s("一次性用 RFC3339；每日用 HH:MM"),
-			"recurrence": s("重复规则：daily 或 none"),
+			"title": s("What to be reminded of"), "remind_at": s("RFC3339 for a one-off; HH:MM for a daily one"),
+			"recurrence": s("Recurrence rule: daily or none"),
 		}, "title", "remind_at"),
 		func(ctx context.Context, a map[string]any) (any, error) {
 			db.mu.Lock()
@@ -572,7 +572,7 @@ func registerTools(svc *agent.Service, db *store) {
 			return ok(rec), nil
 		}, write)
 
-	svc.AddToolWithMetadata("list_reminders", "列出全部提醒。", obj(map[string]any{}),
+	svc.AddToolWithMetadata("list_reminders", "List every reminder.", obj(map[string]any{}),
 		func(ctx context.Context, a map[string]any) (any, error) {
 			db.mu.Lock()
 			defer db.mu.Unlock()

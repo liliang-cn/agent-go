@@ -32,7 +32,7 @@ func buildWebSearchBody(model, query string) map[string]any {
 		"model": model,
 		"messages": []map[string]string{{
 			"role":    "user",
-			"content": "联网搜索后用简洁的语言回答下面的问题,并在末尾附 1-3 个来源链接:\n" + query,
+			"content": "Search the web, then answer the question below concisely and list 1-3 source links at the end:\n" + query,
 		}},
 		"enable_search":      true,             // DashScope
 		"web_search_options": map[string]any{}, // OpenAI-style
@@ -103,11 +103,11 @@ func RegisterWebSearchTool(svc *Service, cfg WebSearchConfig) {
 	}
 	svc.AddToolWithMetadata(
 		"web_search",
-		"联网搜索实时信息(新闻/财经/股价/事实等),返回简要答案与来源。当用户要查最新、实时、或不在记忆与记录里的信息时调用。读取某个具体网址的正文请改用 fetch_url。",
+		"Search the web for current information (news, finance, stock prices, facts) and return a short answer with sources. Use it when the user asks for something recent, live, or absent from memory and records. To read the body text of one specific URL, use fetch_url instead.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"query": map[string]interface{}{"type": "string", "description": "搜索关键词或问题"},
+				"query": map[string]interface{}{"type": "string", "description": "Search keywords or question"},
 			},
 			"required": []string{"query"},
 		},

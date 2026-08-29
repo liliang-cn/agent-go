@@ -21,7 +21,7 @@ import (
 	taskpkg "github.com/liliang-cn/agent-go/v3/pkg/task"
 )
 
-// ProgressEvent 进度事件
+// ProgressEvent is a progress notification emitted during a run.
 type ProgressEvent struct {
 	Type    string // "thinking", "tool_call", "tool_result", "done"
 	Round   int
@@ -29,7 +29,7 @@ type ProgressEvent struct {
 	Tool    string
 }
 
-// ProgressCallback 进度回调函数
+// ProgressCallback receives progress events.
 type ProgressCallback func(ProgressEvent)
 
 // Service is the main agent service that handles planning and execution

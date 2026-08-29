@@ -14,7 +14,7 @@ import (
 	"github.com/liliang-cn/agent-go/v3/pkg/prompt"
 )
 
-// Client OpenAI兼容的LLM/Embedding Client
+// Client is an OpenAI-compatible LLM/embedding client.
 type Client struct {
 	providerName  string
 	baseURL       string
@@ -28,7 +28,7 @@ type Client struct {
 	nativeSearch *nativeSearchState
 }
 
-// NewClient 创建新client
+// NewClient creates a new client.
 func NewClient(providerName, baseURL, key, modelName string) (*Client, error) {
 	if baseURL == "" {
 		return nil, fmt.Errorf("base_url is required")
@@ -87,7 +87,7 @@ func (c *Client) Generate(ctx context.Context, prompt string, opts *domain.Gener
 		},
 	}
 
-	// 添加可选参数
+	// Add the optional parameters.
 	if opts.Temperature > 0 {
 		reqBody["temperature"] = opts.Temperature
 	}
@@ -100,7 +100,7 @@ func (c *Client) Generate(ctx context.Context, prompt string, opts *domain.Gener
 		return "", err
 	}
 
-	// 解析响应
+	// Parse the response.
 	var result struct {
 		Choices []struct {
 			Message struct {
@@ -123,7 +123,7 @@ func (c *Client) Generate(ctx context.Context, prompt string, opts *domain.Gener
 	return content, nil
 }
 
-// Stream 流式生成
+// Stream generates text incrementally.
 func (c *Client) Stream(ctx context.Context, prompt string, opts *domain.GenerationOptions, callback func(string)) error {
 	if opts == nil {
 		opts = &domain.GenerationOptions{}
@@ -170,7 +170,7 @@ func (c *Client) Stream(ctx context.Context, prompt string, opts *domain.Generat
 		return fmt.Errorf("API error: %s", string(body))
 	}
 
-	// 处理SSE流
+	// Handle the SSE stream.
 	for {
 		var line bytes.Buffer
 		for {
@@ -432,7 +432,7 @@ func buildResponseFormatBody(rf *domain.ResponseFormat) map[string]interface{} {
 	return nil
 }
 
-// GenerateWithTools 使用工具生成
+// GenerateWithTools generates a response with tools available.
 func (c *Client) GenerateWithTools(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions) (*domain.GenerationResult, error) {
 	if opts == nil {
 		opts = &domain.GenerationOptions{}
@@ -487,7 +487,7 @@ func (c *Client) GenerateWithTools(ctx context.Context, messages []domain.Messag
 		FinishReason:     choice.FinishReason,
 	}
 
-	// 解析tool calls
+	// Parse the tool calls.
 	if len(choice.Message.ToolCalls) > 0 {
 		response.ToolCalls = make([]domain.ToolCall, len(choice.Message.ToolCalls))
 		for i, tc := range choice.Message.ToolCalls {
@@ -532,9 +532,9 @@ func (c *Client) GenerateWithTools(ctx context.Context, messages []domain.Messag
 	return response, nil
 }
 
-// StreamWithTools 流式工具调用
+// StreamWithTools streams a tool-calling generation.
 func (c *Client) StreamWithTools(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions, callback domain.ToolCallCallback) error {
-	// 简化实现：先获取完整结果再流式回调
+	// Simplified implementation: fetch the whole result first, then replay it through the callback.
 	result, err := c.GenerateWithTools(ctx, messages, tools, opts)
 	if err != nil {
 		return err
@@ -543,7 +543,7 @@ func (c *Client) StreamWithTools(ctx context.Context, messages []domain.Message,
 	return callback(result)
 }
 
-// GenerateStructured 结构化生成
+// GenerateStructured generates structured (JSON) output.
 func (c *Client) GenerateStructured(ctx context.Context, prompt string, schema interface{}, opts *domain.GenerationOptions) (*domain.StructuredResult, error) {
 	if opts == nil {
 		opts = &domain.GenerationOptions{}
@@ -731,7 +731,7 @@ func extractPoolJSON(s string) string {
 	return s
 }
 
-// RecognizeIntent 意图识别
+// RecognizeIntent classifies the intent of an utterance.
 func (c *Client) RecognizeIntent(ctx context.Context, request string) (*domain.IntentResult, error) {
 	data := map[string]interface{}{
 		"Query":   request,
@@ -750,7 +750,7 @@ func (c *Client) RecognizeIntent(ctx context.Context, request string) (*domain.I
 
 	var intentResult domain.IntentResult
 	if err := json.Unmarshal([]byte(result), &intentResult); err != nil {
-		// 失败时返回默认值
+		// Fall back to the default value on failure.
 		return &domain.IntentResult{
 			Intent:     domain.IntentUnknown,
 			Confidence: 0.5,
@@ -762,7 +762,7 @@ func (c *Client) RecognizeIntent(ctx context.Context, request string) (*domain.I
 	return &intentResult, nil
 }
 
-// Embed 向量化 (返回[]float64以兼容domain.Embedder接口)
+// Embed vectorizes one text (returns []float64 to satisfy domain.Embedder).
 func (c *Client) Embed(ctx context.Context, texts []string) ([]float64, error) {
 	if len(texts) == 0 {
 		return nil, fmt.Errorf("no texts provided")
@@ -778,7 +778,7 @@ func (c *Client) Embed(ctx context.Context, texts []string) ([]float64, error) {
 	return c.embedSingle(ctx, texts[0])
 }
 
-// EmbedMultiple 向量化多个文本，返回多个向量
+// EmbedMultiple vectorizes several texts, returning one vector per text.
 func (c *Client) EmbedMultiple(ctx context.Context, texts []string) ([][]float64, error) {
 	if len(texts) == 0 {
 		return nil, fmt.Errorf("no texts provided")
@@ -817,7 +817,7 @@ func (c *Client) EmbedMultiple(ctx context.Context, texts []string) ([][]float64
 	return embeddings, nil
 }
 
-// embedSingle 向量化单个文本
+// embedSingle vectorizes a single text.
 func (c *Client) embedSingle(ctx context.Context, text string) ([]float64, error) {
 	reqBody := map[string]interface{}{
 		"model": c.modelName,
@@ -857,7 +857,7 @@ func (c *Client) embedSingle(ctx context.Context, text string) ([]float64, error
 	return vec, nil
 }
 
-// Health 健康检查
+// Health reports whether the client is reachable.
 func (c *Client) Health(ctx context.Context) error {
 	// Check if this is an embedding model by trying a simple Generate first
 	// If Generate fails, try embedding
@@ -873,13 +873,13 @@ func (c *Client) Health(ctx context.Context) error {
 	return nil
 }
 
-// Close 关闭client
+// Close releases the client.
 func (c *Client) Close() error {
 	c.http.CloseIdleConnections()
 	return nil
 }
 
-// doRequest 执行HTTP请求
+// doRequest performs the HTTP request.
 func (c *Client) doRequest(ctx context.Context, path string, body interface{}) ([]byte, error) {
 	data, err := json.Marshal(body)
 	if err != nil {

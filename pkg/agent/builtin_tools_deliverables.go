@@ -84,7 +84,7 @@ func RegisterDeliverableTools(svc *Service, sb sandbox.Sandbox) {
 	}
 	svc.AddToolWithMetadata(
 		"list_deliverables",
-		"扫描沙箱工作区,列出已产出的文件及其 {path,size,type}(type 按扩展名推断,如 md/txt/json/png)。用于在任务结束时汇总交付物。",
+		"Scan the sandbox workspace and list the files produced, each as {path,size,type} (type is inferred from the extension, e.g. md/txt/json/png). Use it to summarize the deliverables at the end of a task.",
 		map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
 		func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 			items, err := ScanDeliverables(ctx, sb)

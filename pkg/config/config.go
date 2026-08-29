@@ -18,7 +18,7 @@ import (
 
 var configLoadMu sync.Mutex
 
-// Config 是 AgentGo 的全局配置结构
+// Config is AgentGo's global configuration.
 type Config struct {
 	Home    string        `mapstructure:"home"`
 	Debug   bool          `mapstructure:"debug"`
@@ -75,7 +75,7 @@ type RAGConfig struct {
 	Embedding      EmbeddingConfig `mapstructure:"embedding"`
 }
 
-// CortexdbConfig 内部存储配置
+// CortexdbConfig configures the internal store.
 type CortexdbConfig struct {
 	DBPath    string
 	MaxConns  int
@@ -138,7 +138,7 @@ type WebSearchConfig struct {
 	SearchContextSize string `mapstructure:"search_context_size"`
 }
 
-// --- 路径推导 (Single Source of Truth) ---
+// --- Path derivation (single source of truth) ---
 
 func (c *Config) DataDir() string        { return filepath.Join(c.Home, "data") }
 func (c *Config) ConfigDir() string      { return filepath.Join(c.Home, "config") }
@@ -159,21 +159,21 @@ func (c *Config) AgentLLMTurnTimeout() time.Duration {
 	return time.Duration(seconds) * time.Second
 }
 
-// ApplyHomeLayout 唯一的路径计算枢纽
+// ApplyHomeLayout is the single place where every path is computed.
 func (c *Config) ApplyHomeLayout() {
 	c.Home = expandHomePath(c.Home)
 
-	// 1. 初始化内部存储参数
+	// 1. Initialize the internal store settings.
 	c.Internal.Storage.DBPath = c.CortexDBPath()
 	c.Internal.Storage.MaxConns = 10
 	c.Internal.Storage.BatchSize = 100
 	c.Internal.Storage.TopK = 5
 	c.Internal.Storage.IndexType = "hnsw"
 
-	// 2. 自动对齐 Memory 路径
+	// 2. Align the memory path.
 	c.applyMemoryLayout()
 
-	// 3. 自动对齐 Cache 路径
+	// 3. Align the cache path.
 	if c.Cache.Path == "" || !filepath.IsAbs(c.Cache.Path) {
 		c.Cache.Path = filepath.Join(c.DataDir(), "cache")
 	}
@@ -195,7 +195,7 @@ func (c *Config) ApplyHomeLayout() {
 	c.Skills.AllowCommandInjection = false
 	c.Skills.RequireConfirmation = true
 
-	// 6. 确保目录结构
+	// 6. Ensure the directory layout exists.
 	c.ensureLayout()
 }
 
@@ -208,13 +208,13 @@ func (c *Config) ensureLayout() {
 	ensureParentDir(c.CortexDBPath())
 }
 
-// --- 加载逻辑 ---
+// --- Loading ---
 
 func Load() (*Config, error) {
 	configLoadMu.Lock()
 	defer configLoadMu.Unlock()
 
-	// 1. 确定 AGENTGO_HOME
+	// 1. Determine AGENTGO_HOME.
 	home := os.Getenv("AGENTGO_HOME")
 	if home == "" {
 		home = "~/.agentgo"
@@ -264,7 +264,7 @@ func defaultConfig(home string) *Config {
 	return cfg
 }
 
-// --- 工具函数 ---
+// --- Helpers ---
 
 func (c *Config) resolveMCPServerPaths() {
 	unifiedPath := filepath.Join(c.Home, "mcpServers.json")

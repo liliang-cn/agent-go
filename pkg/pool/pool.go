@@ -15,7 +15,7 @@ import (
 	"github.com/liliang-cn/agent-go/v3/pkg/prompt"
 )
 
-// SelectionStrategy 选择策略
+// SelectionStrategy decides which client a Get returns.
 type SelectionStrategy string
 
 var (
@@ -31,7 +31,7 @@ const (
 	StrategyFailover   SelectionStrategy = "failover"
 )
 
-// Provider LLM Provider配置
+// Provider is the configuration of one LLM provider.
 type Provider struct {
 	Name           string   `mapstructure:"name" json:"name"`
 	BaseURL        string   `mapstructure:"base_url" json:"base_url"`
@@ -39,7 +39,7 @@ type Provider struct {
 	ModelName      string   `mapstructure:"model_name" json:"model_name"`
 	Models         []string `mapstructure:"models" json:"models,omitempty"`
 	MaxConcurrency int      `mapstructure:"max_concurrency" json:"max_concurrency"`
-	Capability     int      `mapstructure:"capability" json:"capability"` // 1-5 能力等级
+	Capability     int      `mapstructure:"capability" json:"capability"` // capability level, 1-5
 }
 
 type SelectionHint struct {
@@ -48,14 +48,14 @@ type SelectionHint struct {
 	MinCapability     int
 }
 
-// PoolConfig Pool配置
+// PoolConfig configures a Pool.
 type PoolConfig struct {
 	Enabled   bool              `mapstructure:"enabled"`
 	Strategy  SelectionStrategy `mapstructure:"strategy"`
 	Providers []Provider        `mapstructure:"providers"`
 }
 
-// clientWrapper 包装client及其状态
+// clientWrapper pairs a client with its runtime state.
 type clientWrapper struct {
 	client          *Client
 	provider        Provider
@@ -77,7 +77,7 @@ type Pool struct {
 	mu sync.RWMutex
 }
 
-// NewPool 创建pool. 允许空 providers（可后续通过 AddProvider 动态添加）.
+// NewPool creates a pool. An empty provider list is allowed; providers can be added later with AddProvider.
 func NewPool(config PoolConfig) (*Pool, error) {
 	if !config.Enabled {
 		return &Pool{config: config, clients: make(map[string]*clientWrapper)}, nil
@@ -90,12 +90,12 @@ func NewPool(config PoolConfig) (*Pool, error) {
 		promptManager: prompt.NewManager(),
 	}
 
-	// 解析策略
+	// Resolve the strategy.
 	if pool.strategy == "" {
 		pool.strategy = StrategyRoundRobin
 	}
 
-	// 初始化clients
+	// Initialize the clients.
 	for _, p := range config.Providers {
 		p = normalizeProviderConfig(p)
 		client, err := newClientForProvider(p, p.ModelName, pool.promptManager)
@@ -220,7 +220,7 @@ func (p *Pool) clientForWrapper(wrapper *clientWrapper, model string) (*Client, 
 	return derived, nil
 }
 
-// Get 获取一个client（根据策略）
+// Get returns a client chosen by the configured strategy.
 func (p *Pool) Get() (*Client, error) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -229,7 +229,7 @@ func (p *Pool) Get() (*Client, error) {
 		return nil, fmt.Errorf("no clients available")
 	}
 
-	// 获取健康的clients
+	// Collect the healthy clients.
 	healthy := p.healthyClients()
 	if len(healthy) == 0 {
 		return nil, fmt.Errorf("no healthy clients available")
@@ -245,9 +245,9 @@ func (p *Pool) Get() (*Client, error) {
 	case StrategyLeastLoad:
 		selected = p.selectLeastLoad(healthy)
 	case StrategyCapability:
-		selected = p.selectByCapability(healthy, 0) // 0表示不限制
+		selected = p.selectByCapability(healthy, 0) // 0 means no minimum
 	case StrategyFailover:
-		selected = healthy[0] // 第一个健康的
+		selected = healthy[0] // the first healthy one
 	default:
 		selected = p.selectRoundRobin(healthy)
 	}
@@ -260,12 +260,12 @@ func (p *Pool) Get() (*Client, error) {
 	return p.clientForWrapper(selected, selected.provider.ModelName)
 }
 
-// GetByName 按名称获取，兼容旧调用；名称指 provider 名称。
+// GetByName returns a client by name (legacy alias; the name is the provider name).
 func (p *Pool) GetByName(name string) (*Client, error) {
 	return p.GetByProvider(name)
 }
 
-// GetByProvider 按 provider 名称获取。
+// GetByProvider returns a client by provider name.
 func (p *Pool) GetByProvider(name string) (*Client, error) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -304,7 +304,7 @@ func (p *Pool) GetByProviderAndModel(name, modelName string) (*Client, error) {
 	return p.clientForWrapper(wrapper, resolvedModel)
 }
 
-// GetByModel 按模型名获取。
+// GetByModel returns a client by model name.
 func (p *Pool) GetByModel(modelName string) (*Client, error) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -338,7 +338,7 @@ func (p *Pool) GetByModel(modelName string) (*Client, error) {
 	return p.clientForWrapper(selected, modelName)
 }
 
-// GetByCapability 按能力等级获取（>=指定能力的最低负载）
+// GetByCapability returns the least-loaded client whose capability is >= the requested level.
 func (p *Pool) GetByCapability(minCapability int) (*Client, error) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -378,7 +378,7 @@ func (p *Pool) GetWithHint(hint SelectionHint) (*Client, error) {
 	return p.clientForWrapper(selected, selected.provider.ModelName)
 }
 
-// Release 释放client
+// Release returns a client to the pool.
 func (p *Pool) Release(client *Client) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -393,12 +393,12 @@ func (p *Pool) Release(client *Client) {
 	}
 }
 
-// healthyClients 获取健康的clients
+// healthyClients returns the currently healthy clients.
 func (p *Pool) healthyClients() []*clientWrapper {
 	healthy := make([]*clientWrapper, 0, len(p.clients))
 	for _, w := range p.clients {
 		if w.healthy {
-			// 检查并发限制
+			// Check the concurrency limit.
 			if w.provider.MaxConcurrency <= 0 ||
 				atomic.LoadInt32(&w.activeRequests) < int32(w.provider.MaxConcurrency) {
 				healthy = append(healthy, w)
@@ -408,18 +408,18 @@ func (p *Pool) healthyClients() []*clientWrapper {
 	return healthy
 }
 
-// selectRoundRobin round-robin选择
+// selectRoundRobin picks the next client round-robin.
 func (p *Pool) selectRoundRobin(healthy []*clientWrapper) *clientWrapper {
 	idx := atomic.AddUint32(&p.roundRobinIdx, 1) % uint32(len(healthy))
 	return healthy[idx]
 }
 
-// selectRandom 随机选择
+// selectRandom picks a client at random.
 func (p *Pool) selectRandom(healthy []*clientWrapper) *clientWrapper {
 	return healthy[rand.Intn(len(healthy))]
 }
 
-// selectLeastLoad 最低负载选择
+// selectLeastLoad picks the least-loaded client.
 func (p *Pool) selectLeastLoad(healthy []*clientWrapper) *clientWrapper {
 	var selected *clientWrapper
 	minLoad := int32(^uint32(0) >> 1)
@@ -435,25 +435,25 @@ func (p *Pool) selectLeastLoad(healthy []*clientWrapper) *clientWrapper {
 	return selected
 }
 
-// selectByCapability 按能力选择（>=minCapability中负载最低的）
+// selectByCapability picks the least-loaded client with capability >= minCapability.
 func (p *Pool) selectByCapability(healthy []*clientWrapper, minCapability int) *clientWrapper {
 	var selected *clientWrapper
 	maxCap := -1
 	minLoad := int32(^uint32(0) >> 1)
 
 	for _, w := range healthy {
-		// 跳过能力不足的
+		// Skip clients below the required capability.
 		if minCapability > 0 && w.provider.Capability < minCapability {
 			continue
 		}
 
-		// 优先选择高能力的
+		// Prefer the higher capability.
 		if w.provider.Capability > maxCap {
 			maxCap = w.provider.Capability
 			selected = w
 			minLoad = atomic.LoadInt32(&w.activeRequests)
 		} else if w.provider.Capability == maxCap && selected != nil {
-			// 相同能力选低负载
+			// Same capability: prefer the lower load.
 			load := atomic.LoadInt32(&w.activeRequests)
 			if load < minLoad {
 				minLoad = load
@@ -462,7 +462,7 @@ func (p *Pool) selectByCapability(healthy []*clientWrapper, minCapability int) *
 		}
 	}
 
-	// 如果没找到高能力的，直接选最低负载
+	// Nothing passed the capability filter: fall back to the least-loaded client.
 	if selected == nil && minCapability == 0 {
 		return p.selectLeastLoad(healthy)
 	}
@@ -531,7 +531,7 @@ func (p *Pool) selectWithHint(healthy []*clientWrapper, hint SelectionHint) *cli
 	}
 }
 
-// GetStatus 获取所有clients状态
+// GetStatus reports the status of every client.
 func (p *Pool) GetStatus() map[string]ClientStatus {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -550,7 +550,7 @@ func (p *Pool) GetStatus() map[string]ClientStatus {
 	return status
 }
 
-// ClientStatus 客户端状态
+// ClientStatus is the observable state of one client.
 type ClientStatus struct {
 	Healthy        bool     `json:"healthy"`
 	ActiveRequests int32    `json:"active_requests"`
@@ -560,7 +560,7 @@ type ClientStatus struct {
 	Models         []string `json:"models,omitempty"`
 }
 
-// Close 关闭pool
+// Close shuts the pool down.
 func (p *Pool) Close() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -572,7 +572,7 @@ func (p *Pool) Close() error {
 	return nil
 }
 
-// Generate Pool级别的Generate方法（自动获取和释放）
+// Generate is the pool-level Generate (acquires and releases a client automatically).
 func (p *Pool) Generate(ctx context.Context, prompt string, opts *domain.GenerationOptions) (string, error) {
 	client, err := p.Get()
 	if err != nil {
@@ -583,7 +583,7 @@ func (p *Pool) Generate(ctx context.Context, prompt string, opts *domain.Generat
 	return client.Generate(ctx, prompt, opts)
 }
 
-// GenerateWithTools Pool级别的GenerateWithTools
+// GenerateWithTools is the pool-level GenerateWithTools.
 func (p *Pool) GenerateWithTools(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions) (*domain.GenerationResult, error) {
 	client, err := p.Get()
 	if err != nil {
@@ -594,7 +594,7 @@ func (p *Pool) GenerateWithTools(ctx context.Context, messages []domain.Message,
 	return client.GenerateWithTools(ctx, messages, tools, opts)
 }
 
-// GenerateStructured Pool级别的GenerateStructured
+// GenerateStructured is the pool-level GenerateStructured.
 func (p *Pool) GenerateStructured(ctx context.Context, prompt string, schema interface{}, opts *domain.GenerationOptions) (*domain.StructuredResult, error) {
 	client, err := p.Get()
 	if err != nil {
@@ -605,7 +605,7 @@ func (p *Pool) GenerateStructured(ctx context.Context, prompt string, schema int
 	return client.GenerateStructured(ctx, prompt, schema, opts)
 }
 
-// RecognizeIntent Pool级别的RecognizeIntent
+// RecognizeIntent is the pool-level RecognizeIntent.
 func (p *Pool) RecognizeIntent(ctx context.Context, request string) (*domain.IntentResult, error) {
 	client, err := p.Get()
 	if err != nil {
@@ -616,7 +616,7 @@ func (p *Pool) RecognizeIntent(ctx context.Context, request string) (*domain.Int
 	return client.RecognizeIntent(ctx, request)
 }
 
-// Stream Pool级别的Stream
+// Stream is the pool-level Stream.
 func (p *Pool) Stream(ctx context.Context, prompt string, opts *domain.GenerationOptions, callback func(string)) error {
 	client, err := p.Get()
 	if err != nil {
@@ -627,7 +627,7 @@ func (p *Pool) Stream(ctx context.Context, prompt string, opts *domain.Generatio
 	return client.Stream(ctx, prompt, opts, callback)
 }
 
-// StreamWithTools Pool级别的StreamWithTools
+// StreamWithTools is the pool-level StreamWithTools.
 func (p *Pool) StreamWithTools(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions, callback domain.ToolCallCallback) error {
 	client, err := p.Get()
 	if err != nil {
@@ -638,7 +638,7 @@ func (p *Pool) StreamWithTools(ctx context.Context, messages []domain.Message, t
 	return client.StreamWithTools(ctx, messages, tools, opts, callback)
 }
 
-// Embed Pool级别的Embed (兼容domain.Embedder接口，返回第一个文本的向量)
+// Embed is the pool-level Embed (satisfies domain.Embedder; returns the vector of the first text).
 func (p *Pool) Embed(ctx context.Context, text string) ([]float64, error) {
 	client, err := p.Get()
 	if err != nil {
@@ -654,7 +654,7 @@ func (p *Pool) EmbedBatch(ctx context.Context, texts []string) ([][]float64, err
 	return p.EmbedMultiple(ctx, texts)
 }
 
-// EmbedMultiple Pool级别的EmbedMultiple (向量化多个文本)
+// EmbedMultiple is the pool-level EmbedMultiple (vectorizes several texts).
 func (p *Pool) EmbedMultiple(ctx context.Context, texts []string) ([][]float64, error) {
 	client, err := p.Get()
 	if err != nil {
@@ -665,7 +665,7 @@ func (p *Pool) EmbedMultiple(ctx context.Context, texts []string) ([][]float64, 
 	return client.EmbedMultiple(ctx, texts)
 }
 
-// ExtractMetadata Pool级别的ExtractMetadata
+// ExtractMetadata is the pool-level ExtractMetadata.
 func (p *Pool) ExtractMetadata(ctx context.Context, content string, model string) (*domain.ExtractedMetadata, error) {
 	return p.extractMetadataWithClient(ctx, SelectionHint{}, content, model)
 }

@@ -104,11 +104,11 @@ func RegisterFetchURLTool(svc *Service) {
 	}
 	svc.AddToolWithMetadata(
 		"fetch_url",
-		"抓取指定网址的正文文本,用于阅读/审阅/引用某个具体页面的真实内容。与网页搜索不同:搜索给摘要,fetch_url 读这个 URL 的实际页面文字。仅支持 http(s)。",
+		"Fetch the body text of a URL, so you can read, review or quote what a specific page actually says. Unlike web search, which returns summaries, fetch_url returns the page text itself. http(s) only.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"url": map[string]interface{}{"type": "string", "description": "完整网址,http:// 或 https:// 开头"},
+				"url": map[string]interface{}{"type": "string", "description": "Full URL, starting with http:// or https://"},
 			},
 			"required": []string{"url"},
 		},

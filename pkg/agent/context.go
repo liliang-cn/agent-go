@@ -12,7 +12,7 @@ import (
 	"github.com/liliang-cn/agent-go/v3/pkg/skills"
 )
 
-// SystemContext 系统上下文信息
+// SystemContext is the ambient information about host and session.
 type SystemContext struct {
 	Date       string
 	Time       string
@@ -34,7 +34,7 @@ type UserContext struct {
 	CurrentDate string
 }
 
-// buildSystemContext 收集系统上下文信息
+// buildSystemContext collects the ambient system information.
 func (s *Service) buildSystemContext() *SystemContext {
 	bgCtx := context.Background()
 	now := time.Now()
@@ -81,7 +81,7 @@ func (s *Service) buildSystemContext() *SystemContext {
 		EnvInfo:    envInfo,
 	}
 
-	// 注入记忆地图
+	// Memory map injection.
 	if s.memoryService != nil {
 		ctx.HasMemory = true
 		// Memory entries are injected via semantic search in prepareContext (RetrieveAndInject).
@@ -125,7 +125,7 @@ func (s *Service) buildUserContext() *UserContext {
 	}
 }
 
-// FormatForPrompt 格式化系统上下文为prompt字符串
+// FormatForPrompt renders the system context as a prompt string.
 func (c *SystemContext) FormatForPrompt() string {
 	var sb strings.Builder
 
@@ -172,7 +172,7 @@ func (c *UserContext) FormatForMetaMessage() string {
 	return strings.TrimSpace(c.CurrentDate)
 }
 
-// FormatCompact 紧凑格式，适合嵌入到现有prompt中
+// FormatCompact renders a one-line form suitable for embedding in an existing prompt.
 func (c *SystemContext) FormatCompact() string {
 	return fmt.Sprintf("[Context: %s %s, %s/%s, dir=%s]",
 		c.Date, c.Time, c.OS, c.Arch, shortPath(c.WorkingDir))

@@ -124,13 +124,13 @@ func RegisterSandboxTools(svc *Service, sb sandbox.Sandbox) {
 	if !has("fs_read") {
 		svc.AddToolWithMetadata(
 			"fs_read",
-			"读取工作区内某个文件的内容，返回带行号(如 \"   1\\tfoo\")的文本。可选 offset(从第几行起,0基)与 limit(最多读多少行)。",
+			"Read a file in the workspace and return its text with line numbers (e.g. \"   1\\tfoo\"). Optional offset (first line to read, 0-based) and limit (max lines to read).",
 			map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"path":   map[string]interface{}{"type": "string", "description": "工作区相对路径"},
-					"offset": map[string]interface{}{"type": "integer", "description": "起始行(0基),默认0"},
-					"limit":  map[string]interface{}{"type": "integer", "description": "最多读取行数,0表示全部"},
+					"path":   map[string]interface{}{"type": "string", "description": "Path relative to the workspace root"},
+					"offset": map[string]interface{}{"type": "integer", "description": "Start line (0-based), default 0"},
+					"limit":  map[string]interface{}{"type": "integer", "description": "Max lines to read; 0 means all"},
 				},
 				"required": []string{"path"},
 			},
@@ -154,12 +154,12 @@ func RegisterSandboxTools(svc *Service, sb sandbox.Sandbox) {
 	if !has("fs_write") {
 		svc.AddToolWithMetadata(
 			"fs_write",
-			"把内容写入工作区文件(整文件覆盖,父目录自动创建)。",
+			"Write content to a workspace file (overwrites the whole file; parent directories are created).",
 			map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"path":    map[string]interface{}{"type": "string", "description": "工作区相对路径"},
-					"content": map[string]interface{}{"type": "string", "description": "要写入的完整内容"},
+					"path":    map[string]interface{}{"type": "string", "description": "Path relative to the workspace root"},
+					"content": map[string]interface{}{"type": "string", "description": "Full content to write"},
 				},
 				"required": []string{"path", "content"},
 			},
@@ -185,13 +185,13 @@ func RegisterSandboxTools(svc *Service, sb sandbox.Sandbox) {
 	if !has("fs_edit") {
 		svc.AddToolWithMetadata(
 			"fs_edit",
-			"在文件中把唯一出现的 old_string 替换为 new_string。若 old_string 不存在或出现多次,返回 ok:false 并说明,请提供更多上下文使其唯一。",
+			"Replace the one occurrence of old_string with new_string in a file. If old_string is missing or appears more than once, returns ok:false with an explanation; add surrounding context to make it unique.",
 			map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"path":       map[string]interface{}{"type": "string", "description": "工作区相对路径"},
-					"old_string": map[string]interface{}{"type": "string", "description": "要被替换的精确文本(必须在文件中唯一)"},
-					"new_string": map[string]interface{}{"type": "string", "description": "替换后的文本"},
+					"path":       map[string]interface{}{"type": "string", "description": "Path relative to the workspace root"},
+					"old_string": map[string]interface{}{"type": "string", "description": "Exact text to replace (must be unique in the file)"},
+					"new_string": map[string]interface{}{"type": "string", "description": "Replacement text"},
 				},
 				"required": []string{"path", "old_string", "new_string"},
 			},
@@ -231,14 +231,14 @@ func RegisterSandboxTools(svc *Service, sb sandbox.Sandbox) {
 	if !has("fs_multi_edit") {
 		svc.AddToolWithMetadata(
 			"fs_multi_edit",
-			"对同一文件按顺序原子地应用多处 {old_string,new_string} 替换:一次读入、依次替换、一次写回。任一 old_string 缺失则整体失败、不写入。",
+			"Apply several {old_string,new_string} replacements to one file atomically and in order: read once, replace in sequence, write once. If any old_string is missing the whole edit fails and nothing is written.",
 			map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"path": map[string]interface{}{"type": "string", "description": "工作区相对路径"},
+					"path": map[string]interface{}{"type": "string", "description": "Path relative to the workspace root"},
 					"edits": map[string]interface{}{
 						"type":        "array",
-						"description": "替换列表,按顺序应用",
+						"description": "Replacements, applied in order",
 						"items": map[string]interface{}{
 							"type": "object",
 							"properties": map[string]interface{}{
@@ -293,11 +293,11 @@ func RegisterSandboxTools(svc *Service, sb sandbox.Sandbox) {
 	if !has("fs_list") {
 		svc.AddToolWithMetadata(
 			"fs_list",
-			"列出工作区某个目录下的直接子项(文件与目录)。",
+			"List the direct entries (files and directories) of a workspace directory.",
 			map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"path": map[string]interface{}{"type": "string", "description": "工作区相对目录路径,缺省为根"},
+					"path": map[string]interface{}{"type": "string", "description": "Directory path relative to the workspace; defaults to the root"},
 				},
 			},
 			func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
@@ -328,11 +328,11 @@ func RegisterSandboxTools(svc *Service, sb sandbox.Sandbox) {
 	if !has("fs_glob") {
 		svc.AddToolWithMetadata(
 			"fs_glob",
-			"用 shell 通配模式(如 *.go、docs/*.md)匹配工作区文件,返回相对路径列表。",
+			"Match workspace files with a shell glob pattern (e.g. *.go, docs/*.md) and return the relative paths.",
 			map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"pattern": map[string]interface{}{"type": "string", "description": "通配模式"},
+					"pattern": map[string]interface{}{"type": "string", "description": "Glob pattern"},
 				},
 				"required": []string{"pattern"},
 			},
@@ -355,14 +355,14 @@ func RegisterSandboxTools(svc *Service, sb sandbox.Sandbox) {
 	if !has("fs_grep") {
 		svc.AddToolWithMetadata(
 			"fs_grep",
-			"在工作区文件内容中按正则搜索,返回命中的 {path,line,text}。可选 glob 限定文件、ignore_case、max_hits。",
+			"Search workspace file contents with a regular expression and return the matching {path,line,text}. Optional glob to restrict the files, ignore_case, max_hits.",
 			map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"pattern":     map[string]interface{}{"type": "string", "description": "正则表达式"},
-					"glob":        map[string]interface{}{"type": "string", "description": "限定搜索的文件通配,如 *.go"},
-					"ignore_case": map[string]interface{}{"type": "boolean", "description": "忽略大小写"},
-					"max_hits":    map[string]interface{}{"type": "integer", "description": "最大命中数,0为不限"},
+					"pattern":     map[string]interface{}{"type": "string", "description": "Regular expression"},
+					"glob":        map[string]interface{}{"type": "string", "description": "Glob restricting which files are searched, e.g. *.go"},
+					"ignore_case": map[string]interface{}{"type": "boolean", "description": "Match case-insensitively"},
+					"max_hits":    map[string]interface{}{"type": "integer", "description": "Max number of hits; 0 means unlimited"},
 				},
 				"required": []string{"pattern"},
 			},
@@ -393,12 +393,12 @@ func RegisterSandboxTools(svc *Service, sb sandbox.Sandbox) {
 	if !has("fs_move") {
 		svc.AddToolWithMetadata(
 			"fs_move",
-			"在工作区内移动/重命名文件或目录。",
+			"Move or rename a file or directory inside the workspace.",
 			map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"src": map[string]interface{}{"type": "string", "description": "源路径"},
-					"dst": map[string]interface{}{"type": "string", "description": "目标路径"},
+					"src": map[string]interface{}{"type": "string", "description": "Source path"},
+					"dst": map[string]interface{}{"type": "string", "description": "Destination path"},
 				},
 				"required": []string{"src", "dst"},
 			},
@@ -421,12 +421,12 @@ func RegisterSandboxTools(svc *Service, sb sandbox.Sandbox) {
 	if !has("fs_remove") {
 		svc.AddToolWithMetadata(
 			"fs_remove",
-			"删除工作区内的文件或目录。删除非空目录需 recursive:true。",
+			"Delete a file or directory in the workspace. Deleting a non-empty directory requires recursive:true.",
 			map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"path":      map[string]interface{}{"type": "string", "description": "要删除的路径"},
-					"recursive": map[string]interface{}{"type": "boolean", "description": "递归删除目录"},
+					"path":      map[string]interface{}{"type": "string", "description": "Path to delete"},
+					"recursive": map[string]interface{}{"type": "boolean", "description": "Delete directories recursively"},
 				},
 				"required": []string{"path"},
 			},
@@ -448,11 +448,11 @@ func RegisterSandboxTools(svc *Service, sb sandbox.Sandbox) {
 	if !has("fs_mkdir") {
 		svc.AddToolWithMetadata(
 			"fs_mkdir",
-			"在工作区内创建目录(含缺失的父目录)。",
+			"Create a directory in the workspace, including any missing parents.",
 			map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"path": map[string]interface{}{"type": "string", "description": "要创建的目录路径"},
+					"path": map[string]interface{}{"type": "string", "description": "Directory path to create"},
 				},
 				"required": []string{"path"},
 			},
@@ -474,12 +474,12 @@ func RegisterSandboxTools(svc *Service, sb sandbox.Sandbox) {
 	if !has("bash") {
 		svc.AddToolWithMetadata(
 			"bash",
-			"在沙箱工作区里执行一条 shell 命令(经 sh -c),返回 stdout/stderr/exit_code。可选 timeout_seconds(默认120)。",
+			"Run one shell command in the sandbox workspace (via sh -c) and return stdout/stderr/exit_code. Optional timeout_seconds (default 120).",
 			map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"command":         map[string]interface{}{"type": "string", "description": "要执行的 shell 命令"},
-					"timeout_seconds": map[string]interface{}{"type": "integer", "description": "超时秒数,默认120"},
+					"command":         map[string]interface{}{"type": "string", "description": "Shell command to run"},
+					"timeout_seconds": map[string]interface{}{"type": "integer", "description": "Timeout in seconds, default 120"},
 				},
 				"required": []string{"command"},
 			},
@@ -529,11 +529,11 @@ func RegisterSandboxTools(svc *Service, sb sandbox.Sandbox) {
 	if !has("shell_start") {
 		svc.AddToolWithMetadata(
 			"shell_start",
-			"启动一个持久 shell 会话(PTY),返回 session_id。后续用 shell_send/shell_read 与之交互。可选 command,默认 sh。",
+			"Start a persistent shell session (PTY) and return its session_id. Interact with it via shell_send/shell_read. Optional command, default sh.",
 			map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"command": map[string]interface{}{"type": "string", "description": "要启动的 shell,默认 sh"},
+					"command": map[string]interface{}{"type": "string", "description": "Shell to start, default sh"},
 				},
 			},
 			func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
@@ -556,12 +556,12 @@ func RegisterSandboxTools(svc *Service, sb sandbox.Sandbox) {
 	if !has("shell_send") {
 		svc.AddToolWithMetadata(
 			"shell_send",
-			"向持久 shell 会话发送一行输入(自动追加换行)。",
+			"Send one line of input to a persistent shell session (a newline is appended).",
 			map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"session_id": map[string]interface{}{"type": "string", "description": "shell_start 返回的会话 id"},
-					"input":      map[string]interface{}{"type": "string", "description": "要发送的输入"},
+					"session_id": map[string]interface{}{"type": "string", "description": "Session id returned by shell_start"},
+					"input":      map[string]interface{}{"type": "string", "description": "Input to send"},
 				},
 				"required": []string{"session_id", "input"},
 			},
@@ -584,12 +584,12 @@ func RegisterSandboxTools(svc *Service, sb sandbox.Sandbox) {
 	if !has("shell_read") {
 		svc.AddToolWithMetadata(
 			"shell_read",
-			"读取持久 shell 会话的最近输出(尾部)。可选 tail_chars 限定字符数。",
+			"Read the most recent output (the tail) of a persistent shell session. Optional tail_chars caps how many characters come back.",
 			map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"session_id": map[string]interface{}{"type": "string", "description": "会话 id"},
-					"tail_chars": map[string]interface{}{"type": "integer", "description": "返回的尾部字符数,默认4000"},
+					"session_id": map[string]interface{}{"type": "string", "description": "Session id"},
+					"tail_chars": map[string]interface{}{"type": "integer", "description": "How many trailing characters to return, default 4000"},
 				},
 				"required": []string{"session_id"},
 			},
@@ -616,11 +616,11 @@ func RegisterSandboxTools(svc *Service, sb sandbox.Sandbox) {
 	if !has("shell_interrupt") {
 		svc.AddToolWithMetadata(
 			"shell_interrupt",
-			"向持久 shell 会话发送中断信号(等同 Ctrl-C)。",
+			"Send an interrupt signal (the equivalent of Ctrl-C) to a persistent shell session.",
 			map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"session_id": map[string]interface{}{"type": "string", "description": "会话 id"},
+					"session_id": map[string]interface{}{"type": "string", "description": "Session id"},
 				},
 				"required": []string{"session_id"},
 			},
@@ -642,12 +642,12 @@ func RegisterSandboxTools(svc *Service, sb sandbox.Sandbox) {
 	if !has("shell_stop") {
 		svc.AddToolWithMetadata(
 			"shell_stop",
-			"终止持久 shell 会话。force:true 用 SIGKILL,否则 SIGINT。",
+			"Terminate a persistent shell session. force:true uses SIGKILL, otherwise SIGINT.",
 			map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"session_id": map[string]interface{}{"type": "string", "description": "会话 id"},
-					"force":      map[string]interface{}{"type": "boolean", "description": "强制 KILL"},
+					"session_id": map[string]interface{}{"type": "string", "description": "Session id"},
+					"force":      map[string]interface{}{"type": "boolean", "description": "Force SIGKILL"},
 				},
 				"required": []string{"session_id"},
 			},
