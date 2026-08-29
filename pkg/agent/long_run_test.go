@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -629,6 +630,115 @@ func TestRunSegmentsKeepsGoingAfterABudgetBlock(t *testing.T) {
 		if seg.StopReason != StopReasonMaxTurns {
 			t.Errorf("segment %d stopped with %q, expected the budget to run out",
 				seg.Index, seg.StopReason)
+		}
+	}
+}
+
+// readOnlyLLM asks for the same read every round and never writes anything —
+// a segment too small to get past working out where it is.
+type readOnlyLLM struct{ turns int32 }
+
+func (l *readOnlyLLM) reply(tools []domain.ToolDefinition) *domain.GenerationResult {
+	if len(tools) == 0 {
+		return &domain.GenerationResult{Content: "Still orienting.", FinishReason: "stop"}
+	}
+	n := atomic.AddInt32(&l.turns, 1)
+	return &domain.GenerationResult{
+		ToolCalls: []domain.ToolCall{{
+			ID: fmt.Sprintf("r-%d", n), Type: "function",
+			Function: domain.FunctionCall{
+				Name:      "look",
+				Arguments: map[string]interface{}{"n": float64(n)},
+			},
+		}},
+		FinishReason: "tool_calls",
+	}
+}
+
+func (l *readOnlyLLM) Generate(context.Context, string, *domain.GenerationOptions) (string, error) {
+	return "", nil
+}
+func (l *readOnlyLLM) Stream(context.Context, string, *domain.GenerationOptions, func(string)) error {
+	return nil
+}
+func (l *readOnlyLLM) GenerateWithTools(_ context.Context, _ []domain.Message, t []domain.ToolDefinition, _ *domain.GenerationOptions) (*domain.GenerationResult, error) {
+	return l.reply(t), nil
+}
+func (l *readOnlyLLM) StreamWithTools(_ context.Context, _ []domain.Message, t []domain.ToolDefinition, _ *domain.GenerationOptions, cb domain.ToolCallCallback) error {
+	return cb(l.reply(t))
+}
+func (l *readOnlyLLM) GenerateStructured(context.Context, string, interface{}, *domain.GenerationOptions) (*domain.StructuredResult, error) {
+	return &domain.StructuredResult{Valid: true, Raw: "{}"}, nil
+}
+func (l *readOnlyLLM) RecognizeIntent(context.Context, string) (*domain.IntentResult, error) {
+	return nil, nil
+}
+
+// Measured on a real run: at 15 rounds a segment spent everything it had
+// re-reading the workspace and wrote not one byte, twice in a row, and the
+// supervisor would have bought seventy-five more of them. A segment that
+// changes nothing has not failed — it succeeded at doing nothing — so the
+// failure budget never sees it.
+func TestRunSegmentsStopsBuyingUnproductiveSegments(t *testing.T) {
+	llm := &readOnlyLLM{}
+	svc, err := New("segments-unproductive").
+		WithConfig(testAgentConfig(t.TempDir())).
+		WithLLM(llm).
+		Build()
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	defer svc.Close()
+	svc.AddToolWithMetadata("look", "Looks at something.",
+		map[string]interface{}{"type": "object", "properties": map[string]interface{}{
+			"n": map[string]interface{}{"type": "number"}}},
+		func(context.Context, map[string]interface{}) (interface{}, error) { return "seen", nil },
+		ToolMetadata{ReadOnly: true, ConcurrencySafe: true})
+
+	res, err := svc.RunSegments(context.Background(), "Work.", LongRunConfig{
+		MaxSegments:             40,
+		RoundsPerSegment:        2,
+		MaxUnproductiveSegments: 3,
+	})
+	if err != nil {
+		t.Fatalf("RunSegments: %v", err)
+	}
+	if res.Stop != LongRunStopUnproductive {
+		t.Fatalf("stop = %q, want %q after segments that changed nothing", res.Stop, LongRunStopUnproductive)
+	}
+	if len(res.Segments) != 3 {
+		t.Errorf("bought %d segments, want to stop after 3 unproductive ones", len(res.Segments))
+	}
+	for _, seg := range res.Segments {
+		if seg.Productive {
+			t.Errorf("segment %d only read, and was counted as productive", seg.Index)
+		}
+	}
+}
+
+// A segment that writes resets the count, so an occasional orienting segment
+// in a long task is not mistaken for a stall.
+func TestOneQuietSegmentDoesNotEndTheTask(t *testing.T) {
+	llm := &scriptedLLM{finishAt: 99}
+	svc := buildSegmentedService(t, "segments-productive", llm, nil)
+	defer svc.Close()
+
+	res, err := svc.RunSegments(context.Background(), "Work.", LongRunConfig{
+		MaxSegments:             4,
+		RoundsPerSegment:        2,
+		MaxUnproductiveSegments: 2,
+	})
+	if err != nil {
+		t.Fatalf("RunSegments: %v", err)
+	}
+	// scriptedLLM calls a tool that is not declared read-only, so every
+	// segment changes something and the count never builds.
+	if res.Stop == LongRunStopUnproductive {
+		t.Fatal("segments that called a state-changing tool were counted as unproductive")
+	}
+	for _, seg := range res.Segments {
+		if !seg.Productive {
+			t.Errorf("segment %d called a state-changing tool and was marked unproductive", seg.Index)
 		}
 	}
 }

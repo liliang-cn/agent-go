@@ -75,6 +75,20 @@ type LongRunConfig struct {
 	// Zero = no limit.
 	MaxTotalCostUSD float64
 
+	// MaxUnproductiveSegments ends the task after this many segments in a row
+	// change nothing.
+	//
+	// A segment that runs out of rounds having called only read-only tools has
+	// not failed — it succeeded at doing nothing, and the failure budget never
+	// sees it. Measured on a real run: with segments of 15 rounds, segments 3
+	// and 4 spent every round re-reading the workspace and wrote not one byte,
+	// and the supervisor would happily have bought seventy-five more of them.
+	//
+	// Below some segment size, rediscovery costs more than the segment is
+	// worth. This is how the task notices rather than paying for it eighty
+	// times. Default 3; 0 = the default.
+	MaxUnproductiveSegments int
+
 	// SegmentRetryBackoff is how long to wait after a failed segment before
 	// starting the next one, doubling with each consecutive failure.
 	//
@@ -90,6 +104,10 @@ const (
 	defaultMaxSegments            = 20
 	defaultRoundsPerSegment       = 100
 	defaultMaxConsecutiveFailures = 3
+
+	// defaultMaxUnproductiveSegments is how many segments in a row may change
+	// nothing before the task gives up on the segment size it was given.
+	defaultMaxUnproductiveSegments = 3
 
 	// defaultSegmentRetryBackoff starts the wait after a failed segment.
 	// Doubling from five minutes, three consecutive failures sit out roughly
@@ -111,6 +129,11 @@ type SegmentOutcome struct {
 	Error      string
 	Rounds     int
 	Duration   time.Duration
+	// Productive is false when the segment called nothing that could change
+	// state — no writes, no commands, only reads. Such a segment did not fail;
+	// it succeeded at doing nothing, which the failure budget cannot see.
+	Productive bool
+
 	// WaitedBefore is how long the supervisor sat out a provider outage
 	// before starting this segment. Non-zero only after a failure, and worth
 	// reporting: it is the difference between a task that took eleven hours
@@ -141,6 +164,9 @@ const (
 	LongRunStopTimeLimit LongRunStop = "time_limit"
 	// LongRunStopCostLimit means MaxTotalCostUSD ran out with work left.
 	LongRunStopCostLimit LongRunStop = "cost_limit"
+	// LongRunStopUnproductive means several segments in a row changed nothing,
+	// which usually means each one is too small to get past rediscovery.
+	LongRunStopUnproductive LongRunStop = "unproductive_segments"
 )
 
 // LongRunResult is the whole task's outcome.
@@ -182,6 +208,9 @@ func (c LongRunConfig) resolved() LongRunConfig {
 	}
 	if strings.TrimSpace(c.PlanKey) == "" {
 		c.PlanKey = scratchpadDefaultKey
+	}
+	if c.MaxUnproductiveSegments <= 0 {
+		c.MaxUnproductiveSegments = defaultMaxUnproductiveSegments
 	}
 	if c.SegmentRetryBackoff <= 0 {
 		c.SegmentRetryBackoff = defaultSegmentRetryBackoff
@@ -235,6 +264,7 @@ func (s *Service) RunSegments(ctx context.Context, goal string, cfg LongRunConfi
 
 	out := &LongRunResult{TaskID: taskID}
 	consecutiveFailures := 0
+	unproductive := 0
 
 	for i := 0; i < cfg.MaxSegments; i++ {
 		if ctx.Err() != nil {
@@ -293,6 +323,7 @@ func (s *Service) RunSegments(ctx context.Context, goal string, cfg LongRunConfi
 			WaitedBefore: waited,
 		}
 		if result != nil {
+			seg.Productive = s.segmentChangedSomething(result)
 			out.TotalCostUSD += result.EstimatedCostUSD
 			out.TotalUsage = addUsage(out.TotalUsage, result.Usage)
 			seg.StopReason = result.StopReason
@@ -330,8 +361,18 @@ func (s *Service) RunSegments(ctx context.Context, goal string, cfg LongRunConfi
 			out.Stop = LongRunStopBlocked
 		default:
 			consecutiveFailures = 0
-			if s.segmentFinishedTheTask(result, cfg) {
+			if seg.Productive {
+				unproductive = 0
+			} else {
+				unproductive++
+			}
+			switch {
+			case s.segmentFinishedTheTask(result, cfg):
 				out.Stop = LongRunStopFinished
+			case unproductive >= cfg.MaxUnproductiveSegments:
+				// Each segment is spending everything it has on working out
+				// where it is. Buying more of them buys more of that.
+				out.Stop = LongRunStopUnproductive
 			}
 		}
 		if out.Stop != "" {
@@ -401,4 +442,24 @@ func addUsage(total, seg *domain.TokenUsage) *domain.TokenUsage {
 	total.CachedPromptTokens += seg.CachedPromptTokens
 	total.CacheWriteTokens += seg.CacheWriteTokens
 	return total
+}
+
+// segmentChangedSomething reports whether a segment called anything that could
+// change state.
+//
+// Read-only is declared by the tool, so this asks the registry rather than
+// guessing from names — the same question the duplicate-call check asks, for
+// the same reason. A segment that only read did not fail and did not finish;
+// it did nothing, and that is a third outcome the supervisor has to be able to
+// see.
+func (s *Service) segmentChangedSomething(result *ExecutionResult) bool {
+	if result == nil {
+		return false
+	}
+	for _, name := range result.ToolsUsed {
+		if s.toolCallChangesState(name) {
+			return true
+		}
+	}
+	return false
 }
