@@ -117,6 +117,20 @@ Two gates decide a segment *finished the task* rather than merely ending: `StopR
 
 Transient-vs-permanent classification lives in `transientLLMError` (`llm_retry.go`). It reads a **provider's error**, which is the output side and therefore fair game — a permanent rejection beats a transient word inside it, so a 400 mentioning "timeout" is still a 400, and `context.Canceled` is never transient.
 
+### Watching a long run, and what a soak found
+
+A run in flight is nearly invisible: its conversation reaches the store only when it ends, its events go to whoever called `RunStream`, and the framework logs nothing of its own accord. `agent.NewActivityLog(w)` is an `Observer` that narrates it — one line per model turn, tool call, sub-agent and checkpoint, flat and greppable because what you do with a long run's log is `grep` and `awk` it. Attach it to anything you cannot watch interactively.
+
+Three bugs found by pointing a real coding task (a RISC-V kernel, then an e-commerce API) at the loop for half an hour. All three are invisible to unit tests and all three only bite an agent that edits its own files for many rounds:
+
+- **A tool call that returns nothing is one the model can only repeat.** `prepareToolRound` used to overwrite `result.ToolCalls` with the deduped list, deleting the repeated call from the transcript. Its result — real or the "already called" note — is addressed to that call's id, so both became orphans and the pairing sanitiser dropped them. The model asked and *nothing came back*: it repeated the same `fs_read` 124 times. Keep every call the model made in the assistant message; every one must have exactly one result.
+- **A re-read after a write is a different read.** The duplicate record is per-run and nothing invalidated it, so re-reading a file the agent had just written was answered "its result is unchanged". Any state-changing call in a batch now clears the record.
+- **Compaction and the duplicate record deadlock.** At the default `CompactionDefaultThresholdTokens` (8000) a coding agent compacts nearly every round — reading a small workspace once is already ~6k tokens. Compaction deleted the result, the model re-read, the dedupe refused it as a repeat. Compaction now clears the record too, for the same reason a write does.
+
+Two things worth knowing before running one of these yourself: **verify the toolchain by hand first** (a broken build environment burns hours of agent time and tests nothing), and **make every milestone binary** — `go test ./...` exiting 0, a banner appearing under QEMU. A model's own report of its progress is not evidence; on the first kernel soak it was accurate, and it is the one time you would not have known.
+
+`PlanItem.Note` is the whole bandwidth of a segment hand-off, and the soak measured what that costs. Notes naming test functions and files ("Passed AUTH-OK. Tests: TestAuthService in internal/auth/auth_test.go") let the next segment open two files and carry on. Notes naming only files sent it re-reading all thirteen, one per round, spending most of a 20-round segment on rediscovery.
+
 ### Task checkpoint + replay
 
 Every terminal `completeRun` / `blockRun` writes a `TaskCheckpoint` snapshot of the message history to `task_checkpoints` (capped at `MaxCheckpointsPerTask=32`, pruned by `checkpointWriter`). The wiring lives in `pkg/agent/task_checkpoint.go` + `task_checkpoint_manager.go`; `Service.SetCheckpointSink(...)` is what the runtime calls — `Manager.buildServiceForModel` auto-wires this, services built directly via `agent.New(...).Build()` skip persistence.
