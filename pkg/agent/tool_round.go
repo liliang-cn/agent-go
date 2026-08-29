@@ -99,6 +99,22 @@ func (s *Service) handleDuplicateToolCalls(messages []domain.Message, result *do
 	filtered := make([]domain.ToolCall, 0, len(result.ToolCalls))
 	duplicates := make([]ToolExecutionResult, 0)
 
+	// A read only repeats an earlier read while nothing has changed underneath
+	// it. `seen` persists for the whole run, so without this a re-read after a
+	// write was collapsed and the agent was handed its own pre-edit content,
+	// with the claim that it was current — the worst of both.
+	//
+	// So a batch containing anything that is not declared read-only clears the
+	// record afterwards, and every read is open again.
+	//
+	// Coarse on purpose: any write reopens every read, not just reads of the
+	// same path. Working out which argument of an arbitrary tool is a path, and
+	// whether another tool's write aliases it, is knowledge the framework does
+	// not have and should not guess at. The cost of being coarse is an
+	// occasional re-read; the cost of being clever and wrong is an agent
+	// building on a file it thinks it has, and has not.
+	sawWrite := false
+
 	for _, tc := range result.ToolCalls {
 		// Search-tool keys are normalized here so casing/word-order variants
 		// collapse. The discovery *budget* is enforced further down, at the
@@ -107,6 +123,10 @@ func (s *Service) handleDuplicateToolCalls(messages []domain.Message, result *do
 		// pass through.
 		key := toolCallSignature(tc)
 		seen[key]++
+		if s.toolCallChangesState(tc.Function.Name) {
+			// This call may change what every later read would see.
+			sawWrite = true
+		}
 		if seen[key] <= 1 {
 			filtered = append(filtered, tc)
 			continue
@@ -138,13 +158,18 @@ func (s *Service) handleDuplicateToolCalls(messages []domain.Message, result *do
 		// status). Collapse it to a reuse hint — the earlier result is already in
 		// context. Only tools explicitly flagged ReadOnly qualify; everything else
 		// is still re-executed (a re-read after a write, an incrementing counter…).
-		if s.toolRegistry != nil && s.toolRegistry.MetadataOf(tc.Function.Name).ReadOnly {
-			log.Printf("[Agent] Duplicate read-only tool call collapsed: %s", key)
+		if s.toolCallIsReadOnly(tc.Function.Name) {
+			log.Printf("[Agent] Duplicate read-only tool call collapsed: %s (x%d)", key, seen[key])
 			duplicates = append(duplicates, ToolExecutionResult{
 				ToolCallID: tc.ID,
 				ToolName:   tc.Function.Name,
 				ToolType:   "tool",
-				Result:     "This read-only tool was already called with identical arguments this turn; its result is unchanged — reuse the earlier result instead of calling it again.",
+				Result: fmt.Sprintf(
+					"You have called %s with these exact arguments %d times, and nothing has been "+
+						"written since the first one, so the answer has not changed. Its result is "+
+						"already above — read it there. Repeating this call cannot make progress: "+
+						"take a different action, or say what is blocking you.",
+					tc.Function.Name, seen[key]),
 			})
 			continue
 		}
@@ -159,6 +184,12 @@ func (s *Service) handleDuplicateToolCalls(messages []domain.Message, result *do
 		filtered = append(filtered, tc)
 	}
 
+	if sawWrite {
+		// Done after the batch rather than during it, so a repeat inside this
+		// same batch is still collapsed — two identical reads in one turn
+		// cannot have a write between them.
+		clear(seen)
+	}
 	return filtered, duplicates, ""
 }
 
@@ -282,4 +313,29 @@ type ToolExecutionResult struct {
 	Result     interface{} `json:"result"`
 	Error      string      `json:"error,omitempty"`
 	Blocked    bool        `json:"blocked,omitempty"`
+}
+
+// toolCallIsReadOnly reports whether a tool is declared as making no changes.
+// An unregistered tool is not: assuming a tool nobody described is safe to
+// skip is the wrong way round.
+func (s *Service) toolCallIsReadOnly(name string) bool {
+	if s == nil || s.toolRegistry == nil {
+		return false
+	}
+	return s.toolRegistry.MetadataOf(name).ReadOnly
+}
+
+// toolCallChangesState reports whether a call could change what a later read
+// would see, which is the question that decides whether earlier collapses may
+// still be reused.
+//
+// Searching the tool catalogue and signalling the task is over change nothing
+// on disk whatever the registry says about them — the first is a lookup, the
+// second is a control signal — so neither reopens the reads. Everything else
+// that is not declared read-only does, including a tool nobody registered.
+func (s *Service) toolCallChangesState(name string) bool {
+	if isSearchToolName(name) || isTaskTerminalToolName(name) {
+		return false
+	}
+	return !s.toolCallIsReadOnly(name)
 }
