@@ -95,7 +95,7 @@ func TaskDeliveryContract() OutputLint {
 				// A named target file is checkable directly: prefer the
 				// artifact over the attempt.
 				if strings.EqualFold(strings.TrimSpace(want.Kind), "file") && want.Path != "" {
-					if fileArtifactExists(want.Path) {
+					if fileArtifactExistsIn(want.Path, ctx.Workspace) {
 						continue
 					}
 					return false, "the task asked you to produce " + want.Path +
@@ -176,11 +176,6 @@ func unmetToolContract(ctx LintContext, tool, description, verb string) string {
 		", and the tool " + tool + " that does it was available to you, but you never called it. " +
 		"Do not tell the user it is done when it is not. Call " + tool + " now and report what it " +
 		"returned, or call task_blocked stating plainly that you did not do it and why."
-}
-
-// fileArtifactExists reports whether path names a non-empty regular file.
-func fileArtifactExists(path string) bool {
-	return fileArtifactExistsIn(path, "")
 }
 
 // fileArtifactExistsIn reports whether the artifact exists, looking inside the
