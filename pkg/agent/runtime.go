@@ -302,7 +302,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		r.emitDebug(0, "config", sb.String())
 	}
 
-	const maxRounds = 20
+	maxRounds := r.resolveMaxRounds()
 	resuming := r.cfg != nil && len(r.cfg.ResumeMessages) > 0
 
 	// UserPromptSubmit hook: handlers may rewrite the goal or inject

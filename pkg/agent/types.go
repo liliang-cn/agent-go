@@ -174,7 +174,9 @@ func (r *ExecutionResult) HasSources() bool {
 
 // RunConfig holds configuration for a single agent run
 type RunConfig struct {
-	// MaxTurns limits the number of agent loop iterations (default: 20)
+	// MaxTurns limits the number of agent loop iterations. Zero means the
+	// run has no opinion: the service's WithAutonomy budget applies, and
+	// failing that DefaultMaxRounds. Set it with WithMaxTurns.
 	MaxTurns int
 
 	// ErrorHandlers allows custom handling of specific error conditions
@@ -332,7 +334,11 @@ type ErrorHandlerResult struct {
 // DefaultRunConfig returns the default run configuration
 func DefaultRunConfig() *RunConfig {
 	return &RunConfig{
-		MaxTurns:    20,
+		// Left unset on purpose: the budget is resolved per run, so that a
+		// service configured for long-horizon work (WithAutonomy) is not
+		// silently capped at the interactive default by a config the caller
+		// never touched. See resolveMaxRounds.
+		MaxTurns:    0,
 		Temperature: 0.3,
 		MaxTokens:   2000,
 		Debug:       false,
@@ -342,7 +348,9 @@ func DefaultRunConfig() *RunConfig {
 // RunOption modifies RunConfig
 type RunOption func(*RunConfig)
 
-// WithMaxTurns sets the maximum number of turns (default: 20)
+// WithMaxTurns sets this run's tool-round budget, overriding both the
+// service's WithAutonomy setting and DefaultMaxRounds. A long-horizon run
+// wants hundreds; n <= 0 leaves the budget unset.
 func WithMaxTurns(n int) RunOption {
 	return func(c *RunConfig) { c.MaxTurns = n }
 }

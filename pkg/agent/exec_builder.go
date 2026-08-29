@@ -11,7 +11,8 @@ import (
 type AutonomyProfile struct {
 	// MaxRounds is the default per-run tool-round budget used when a run does
 	// not set RunConfig.MaxTurns (via WithMaxTurns). Autonomous tasks often
-	// need dozens of rounds; the framework default is 20. 0 = leave default.
+	// need hundreds of rounds; the framework default is DefaultMaxRounds.
+	// 0 = leave default.
 	MaxRounds int
 
 	// LintRetryBudget overrides how many times a single turn may be rejected by
