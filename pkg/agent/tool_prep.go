@@ -196,6 +196,14 @@ func (s *Service) prepareTurnInputsWithConfig(ctx context.Context, currentAgent 
 			"Prior knowledge recalled for this task. Cite it when it answers the question; " +
 			"say so when it conflicts with fresh evidence.\n\n" + cfg.recalledContext
 	}
+	// The plan an earlier run left behind, for the same reason and in the same
+	// place. Persisting a plan and never telling the model about it is a
+	// process that comes back holding the answer and starts over anyway.
+	if cfg != nil && cfg.resumedPlan != "" {
+		systemMsg += "\n\n## Work already done on this task\n" +
+			"An earlier run was interrupted partway. This is where it got to, " +
+			"and what each finished step produced.\n\n" + cfg.resumedPlan
+	}
 	genMessages := append([]domain.Message{{Role: "system", Content: systemMsg}}, messages...)
 	return tools, genMessages
 }

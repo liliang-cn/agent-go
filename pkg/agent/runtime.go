@@ -1203,6 +1203,12 @@ func (r *Runtime) completeRunWithStop(goal, content string, messages []domain.Me
 	// directory the caller has already torn down.
 	r.svc.goBackground(func() { r.saveToMemory(context.Background(), goal, content) })
 
+	// Run-memory capture belongs here, at the one place a run completes, for
+	// the same reason recall moved to startRun: it used to live in
+	// runWithConfig, so a host driving its runs with RunStream captured
+	// nothing and the long-term memory only ever learned about the runs that
+	// happened to go through Run.
+	r.svc.captureRunMemory(goal, content)
 }
 
 func (r *Runtime) blockRun(goal, blocker string, messages []domain.Message, persistHistory bool) {

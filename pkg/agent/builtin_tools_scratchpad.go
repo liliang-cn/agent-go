@@ -122,11 +122,15 @@ func (m *scratchpadManager) get(key string) []scratchpadItem {
 	return append([]scratchpadItem(nil), m.lists[key]...)
 }
 
+// scratchpadDefaultKey is the list a plan lands in when the model does not
+// name one, which is most of the time.
+const scratchpadDefaultKey = "default"
+
 func scratchpadKey(args map[string]interface{}) string {
 	if k := toolArgString(args, "key"); k != "" {
 		return k
 	}
-	return "default"
+	return scratchpadDefaultKey
 }
 
 func scratchpadItemsPayload(list []scratchpadItem) []map[string]interface{} {

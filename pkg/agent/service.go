@@ -507,6 +507,24 @@ func (s *Service) startRun(ctx context.Context, goal string, cfg *RunConfig) (*S
 	}
 	s.rememberMemoryQueryContext(session, s.resolveMemoryQueryContext(session))
 	taskID := ensureTaskID(session, cfg)
+
+	// Recall and the plan hand-off are resolved here, once per run, because
+	// startRun is the single entry into the loop. Doing it in runWithConfig
+	// meant RunStream — the API a host actually drives a long run with — got
+	// neither: WithRunMemory documented recall "at run start" and the
+	// streaming path silently skipped it.
+	//
+	// Once per run, not once per round, is also what keeps the prompt prefix
+	// byte-stable: both ride at the end of the system prompt, and a section
+	// that changed every round would invalidate the provider's cache of
+	// everything after it on every single turn.
+	if cfg.recalledContext == "" {
+		cfg.recalledContext = s.recallRunMemory(ctx, goal)
+	}
+	if cfg.resumedPlan == "" {
+		cfg.resumedPlan = s.planSummaryForRun(taskID)
+	}
+
 	startedAt := time.Now()
 	s.persistRunTaskState(session, taskID, taskRunStateOptions{
 		status:    taskpkg.StatusRunning,
@@ -554,12 +572,6 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 	s.resetRunMemorySaved()
 	s.setRunning(true)
 	defer s.setRunning(false)
-
-	// Recall once per run, before the loop starts; every turn of this run
-	// then carries the same recalled section in its system prompt.
-	if cfg.recalledContext == "" {
-		cfg.recalledContext = s.recallRunMemory(ctx, goal)
-	}
 
 	session, events, err := s.startRun(ctx, goal, cfg)
 	if err != nil {
@@ -628,9 +640,6 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 	result.Duration = completedAt.Sub(startedAt).String()
 	if result.EstimatedTokens == 0 {
 		result.EstimatedTokens = s.estimateRunTokens(goal, result.FinalResult)
-	}
-	if result.Success {
-		s.captureRunMemory(goal, result.Text())
 	}
 	return result, nil
 }

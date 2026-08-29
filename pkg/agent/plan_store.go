@@ -188,3 +188,29 @@ func (s *Service) SetPlanStore(store PlanStore) {
 	s.planStore = store
 	s.scratchpad = newScratchpadManager(store)
 }
+
+// planSummaryForRun renders the plan a previous run left for this task, or ""
+// when there is nothing to hand over.
+//
+// Which key to read is the awkward part. The scratchpad tools key their lists
+// by an argument the model supplies, defaulting to "default" — so a plan
+// written by an earlier run of this task is under the task id only if that run
+// chose to say so, and under "default" otherwise. Both are checked, task first,
+// because a task-scoped plan is the more specific statement of the same thing.
+//
+// It is read once per run rather than once per round on purpose. The summary
+// rides at the end of the system prompt, and a section that changed as steps
+// were ticked off would invalidate the provider's cache of the entire
+// conversation after it, every turn — paying for the hand-off over and over.
+// What an earlier run got through is a fact about the start of this one.
+func (s *Service) planSummaryForRun(taskID string) string {
+	if s == nil {
+		return ""
+	}
+	if taskID != "" {
+		if summary := s.PlanSummary(taskID); summary != "" {
+			return summary
+		}
+	}
+	return s.PlanSummary(scratchpadDefaultKey)
+}

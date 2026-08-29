@@ -219,6 +219,13 @@ type RunConfig struct {
 	// recall.
 	recalledContext string
 
+	// resumedPlan is filled by the runtime at run start with the summary of
+	// whatever plan the PlanStore already holds for this task — what an
+	// earlier, interrupted run got through and what each finished step turned
+	// out to be. Empty when there is no plan or nothing has been attempted.
+	// Injected alongside recalledContext at the end of the system prompt.
+	resumedPlan string
+
 	// ToolsDisabled attaches no tools at all to this run. Set it directly with
 	// WithToolsDisabled() when the caller already knows tools are off limits;
 	// the runtime also sets it from extracted constraints when the user's own
