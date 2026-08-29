@@ -162,8 +162,13 @@ func (l *ActivityLog) formatArgs(args map[string]any) string {
 }
 
 // oneLine flattens and truncates text so a line stays a line.
+//
+// Newlines become a literal backslash-n rather than a prettier ↵ or ⏎: the log
+// exists to be run through grep and awk, and a multi-byte character in it makes
+// awk fail outright under a C locale — which is the locale a log-processing
+// script is most likely to be running in.
 func oneLine(s string, max int) string {
-	s = strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(s, "\n", "⏎"), "\r", ""))
+	s = strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(s, "\n", "\\n"), "\r", ""))
 	if max > 0 && len(s) > max {
 		return s[:max] + "…"
 	}

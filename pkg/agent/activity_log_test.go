@@ -116,6 +116,25 @@ func TestActivityLogTruncatesHugeArguments(t *testing.T) {
 	}
 }
 
+// The log is meant to be grepped and awked. A multi-byte character in it makes
+// awk fail under a C locale, which is exactly where a log-processing script
+// tends to run — this bit me on the first log I tried to summarise.
+func TestActivityLogIsASCIISafe(t *testing.T) {
+	t.Parallel()
+	out := oneLine("first line\nsecond line\r\nthird", 0)
+	for i, r := range out {
+		if r > 127 {
+			t.Fatalf("non-ASCII rune %q at %d in %q", r, i, out)
+		}
+	}
+	if !strings.Contains(out, `\n`) {
+		t.Errorf("newlines should survive as an escape, got %q", out)
+	}
+	if strings.Contains(out, "\n") {
+		t.Errorf("a real newline leaked into a one-line rendering: %q", out)
+	}
+}
+
 func TestShortDuration(t *testing.T) {
 	t.Parallel()
 	cases := map[time.Duration]string{
