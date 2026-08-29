@@ -47,3 +47,9 @@ examples/superai/web/node_modules/
 # Stray example binaries (from `go build ./examples/X` in repo root — use bin/)
 /autonomous-agent
 /superai
+
+# Built example binaries, which land in the repo root when someone runs
+# `go build ./examples/<name>` from here. They are ~70MB each.
+/deep-research
+/graph-memory-experiment
+/cortex-data-import

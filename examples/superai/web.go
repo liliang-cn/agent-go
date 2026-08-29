@@ -318,7 +318,7 @@ func summarizeState(db *store) (string, bool) {
 		return "", true
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "Now: %s\n", time.Now().Format("2006-01-02 15:04 周一"))
+	fmt.Fprintf(&b, "Now: %s\n", time.Now().Format("2006-01-02 15:04 Monday"))
 	b.WriteString("Schedules:\n")
 	for _, r := range db.Schedules {
 		fmt.Fprintf(&b, "- %v @ %v %v participants:%v\n", r["title"], r["start_at"], r["location"], r["participants"])

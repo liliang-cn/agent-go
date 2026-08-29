@@ -84,3 +84,31 @@ func TestResolveDateTimeErrors(t *testing.T) {
 		t.Fatal("expected error for bad time")
 	}
 }
+
+// The weekday reported back is the real one, in English like everything else
+// the model reads. Chinese names are still accepted on the way in.
+func TestResolveDateTimeReportsTheRealWeekdayInEnglish(t *testing.T) {
+	base := time.Date(2026, 6, 13, 9, 0, 0, 0, time.UTC) // a Saturday
+	for _, tc := range []struct{ in, want string }{
+		{"monday", "Monday"},
+		{"周三", "Wednesday"},
+		{"friday", "Friday"},
+	} {
+		got, err := ResolveDateTime(base, ResolveDateTimeArgs{Weekday: tc.in, WeekOffset: 1, Time: "10:00"})
+		if err != nil {
+			t.Fatalf("%s: %v", tc.in, err)
+		}
+		if got.Weekday != tc.want {
+			t.Errorf("asked for %q, got weekday %q, want %q", tc.in, got.Weekday, tc.want)
+		}
+		// The name must match the date, not merely be a weekday name — a
+		// literal in a format string prints the same word every day.
+		parsed, perr := time.Parse(time.RFC3339, got.RFC3339)
+		if perr != nil {
+			t.Fatalf("unparseable rfc3339 %q: %v", got.RFC3339, perr)
+		}
+		if parsed.Weekday().String() != got.Weekday {
+			t.Errorf("%s resolves to %s but reports weekday %q", tc.in, parsed.Weekday(), got.Weekday)
+		}
+	}
+}

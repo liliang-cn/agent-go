@@ -48,8 +48,14 @@ var dateToolWeekdayMap = map[string]int{
 	"sunday": 6, "sun": 6, "周日": 6, "星期日": 6, "星期天": 6, "礼拜天": 6, "礼拜日": 6,
 }
 
-func dateToolWeekdayCN(t time.Time) string {
-	return "周" + []string{"日", "一", "二", "三", "四", "五", "六"}[int(t.Weekday())]
+// dateToolWeekdayName is the weekday this tool reports back.
+//
+// English, like everything else the model reads. Chinese weekday names are
+// still accepted on the way in — see dateToolWeekdayMap — because a model
+// asking for "周五" is a model doing the right thing with a Chinese request.
+// What it gets back is the same either way.
+func dateToolWeekdayName(t time.Time) string {
+	return t.Weekday().String()
 }
 
 // ResolveDateTime does the deterministic arithmetic. `now` is injectable for
@@ -105,7 +111,7 @@ func ResolveDateTime(now time.Time, a ResolveDateTimeArgs) (DateTimeResult, erro
 	return DateTimeResult{
 		RFC3339: target.Format(time.RFC3339),
 		Date:    target.Format("2006-01-02"),
-		Weekday: dateToolWeekdayCN(target),
+		Weekday: dateToolWeekdayName(target),
 		Time:    target.Format("15:04"),
 	}, nil
 }

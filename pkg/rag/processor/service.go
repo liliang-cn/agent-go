@@ -37,6 +37,14 @@ type Service struct {
 	graphRAG      *graphrag.Service
 }
 
+// NoAnswerFallback is what a query answers with when retrieval found nothing.
+//
+// A package-level var rather than a literal because it is shown to a person,
+// and a framework has no business deciding which language that person reads.
+// It used to be a Chinese sentence baked into the library; applications that
+// want one can set this.
+var NoAnswerFallback = "I could not find anything in the knowledge base to answer that."
+
 func New(
 	embedder domain.Embedder,
 	generator domain.Generator,
@@ -288,7 +296,7 @@ func (s *Service) Query(ctx context.Context, req domain.QueryRequest) (domain.Qu
 
 	if len(chunks) == 0 && memoryContext == "" {
 		return domain.QueryResponse{
-				Answer:  "很抱歉，我在知识库中找不到相关信息来回答您的问题。",
+				Answer:  NoAnswerFallback,
 				Sources: []domain.Chunk{},
 				Elapsed: time.Since(start).String(),
 			},
@@ -410,7 +418,7 @@ func (s *Service) StreamQuery(ctx context.Context, req domain.QueryRequest, call
 	}
 
 	if len(chunks) == 0 {
-		callback("很抱歉，我在知识库中找不到相关信息来回答您的问题。")
+		callback(NoAnswerFallback)
 		return nil
 	}
 
