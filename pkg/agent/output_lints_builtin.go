@@ -157,7 +157,7 @@ func FileTaskMustWrite() OutputLint {
 			// Prefer verifying the actual artifact (result, not attempt).
 			if len(paths) > 0 {
 				for _, p := range paths {
-					if fileArtifactExists(p) {
+					if fileArtifactExistsIn(p, ctx.Workspace) {
 						return true, ""
 					}
 				}

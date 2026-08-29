@@ -109,6 +109,7 @@ func (r *Runtime) runFinalLints(content string, turn int) *LintViolation {
 		sessionID = r.session.GetID()
 	}
 	lintCtx := LintContext{
+		Workspace:        r.svc.workspaceRoot(),
 		AgentName:        agentName,
 		TaskID:           taskID,
 		SessionID:        sessionID,

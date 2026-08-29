@@ -45,8 +45,14 @@ type LintContext struct {
 	// (reminder, calendar entry, note). Resolved alongside Deliverables in
 	// constraints.go; the requested-action contract lint reads them.
 	RequestedActions []RequestedAction
-	IsRetry          bool
-	RetryCount       int
+	// Workspace is the sandbox root, when the run has one. A sandboxed agent
+	// writes every file inside it, so a lint checking for a produced artifact
+	// has to look there — the process's own working directory is the one place
+	// the file will never be.
+	Workspace string
+
+	IsRetry    bool
+	RetryCount int
 }
 
 // LintFunc adapts a plain function into an OutputLint. Useful for inline

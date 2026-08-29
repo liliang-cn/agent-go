@@ -2,6 +2,7 @@ package agent
 
 import (
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -179,6 +180,22 @@ func unmetToolContract(ctx LintContext, tool, description, verb string) string {
 
 // fileArtifactExists reports whether path names a non-empty regular file.
 func fileArtifactExists(path string) bool {
+	return fileArtifactExistsIn(path, "")
+}
+
+// fileArtifactExistsIn reports whether the artifact exists, looking inside the
+// sandbox workspace as well as wherever the path resolves on its own.
+//
+// A relative path used to be resolved against the process's working directory,
+// which for a sandboxed agent is the one place the file will never be: it
+// writes everything into its workspace. So a run told to produce REPORT.md,
+// which produced REPORT.md, was blocked by the lint demanding REPORT.md — and
+// writing it again could not help.
+//
+// Both places are checked rather than only the workspace, because a task can
+// legitimately name an absolute path or one outside the sandbox, and a service
+// without a sandbox has no workspace at all.
+func fileArtifactExistsIn(path, workspace string) bool {
 	expanded := strings.TrimSpace(path)
 	if expanded == "" {
 		return false
@@ -190,11 +207,20 @@ func fileArtifactExists(path string) bool {
 		}
 		expanded = home + expanded[1:]
 	}
-	info, err := os.Stat(expanded)
-	if err != nil || info.IsDir() {
-		return false
+	candidates := []string{expanded}
+	if ws := strings.TrimSpace(workspace); ws != "" && !filepath.IsAbs(expanded) {
+		candidates = append(candidates, filepath.Join(ws, expanded))
 	}
-	return info.Size() > 0
+	for _, c := range candidates {
+		info, err := os.Stat(c)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		if info.Size() > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // --- no_tool_scaffolding_answer -------------------------------------------------
@@ -248,3 +274,17 @@ var toolScaffoldingStrings = []string{
 // scaffoldingSlackChars allows a little surrounding punctuation or whitespace
 // before we stop calling the reply "just the scaffolding".
 const scaffoldingSlackChars = 40
+
+// workspaceRoot returns the sandbox workspace path, or "" when the service has
+// no sandbox. Lints that check for produced artifacts resolve relative paths
+// against it: a sandboxed agent writes its files there and nowhere else.
+func (s *Service) workspaceRoot() string {
+	if s == nil {
+		return ""
+	}
+	sb := s.Sandbox()
+	if sb == nil {
+		return ""
+	}
+	return sb.Workspace()
+}
