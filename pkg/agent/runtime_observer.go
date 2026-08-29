@@ -7,12 +7,24 @@ import (
 	"github.com/google/uuid"
 )
 
-func (r *Runtime) emitLLMLatency(round int, tokens int, duration time.Duration) {
-	r.eventChan <- NewAnalyticsEvent(AnalyticsLLMLatency, map[string]interface{}{
+// emitLLMLatency reports one model turn. totalTokens is the run's running
+// total (what the analytics payload has always carried); turnTokens is this
+// turn's own, and rides on the event field so a collector can sum it.
+//
+// That field existed and was never set by anything, which made the collector's
+// `result.EstimatedTokens += evt.TokensUsed` dead code — every run fell
+// through to the tokenizer's guess and no caller could tell.
+func (r *Runtime) emitLLMLatency(round int, totalTokens, turnTokens int, duration time.Duration) {
+	evt := NewAnalyticsEvent(AnalyticsLLMLatency, map[string]interface{}{
 		"round":       round,
-		"tokens":      tokens,
+		"tokens":      totalTokens,
+		"turn_tokens": turnTokens,
 		"duration_ms": duration.Milliseconds(),
 	})
+	evt.Round = round
+	evt.TokensUsed = turnTokens
+	evt.DurationMs = duration.Milliseconds()
+	r.eventChan <- evt
 }
 
 func (r *Runtime) emitRoundCompletedAnalytics(state *queryLoopState) {

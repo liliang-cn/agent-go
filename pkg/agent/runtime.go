@@ -555,7 +555,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			state.noteTokens(inputTokens + outputTokens)
 			state.noteCost(inputTokens, outputTokens, pool.CalculateCost(model, inputTokens, outputTokens))
 		}
-		r.emitLLMLatency(round+1, state.Budget.EstimatedTokens, llmDur)
+		r.emitLLMLatency(round+1, state.Budget.EstimatedTokens, turnTokens, llmDur)
 
 		// Observer seam: model turn finished. errTaskTerminal is the internal
 		// "the model called task_complete/task_blocked" control signal, not a
