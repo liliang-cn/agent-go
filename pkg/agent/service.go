@@ -524,6 +524,9 @@ func (s *Service) startRun(ctx context.Context, goal string, cfg *RunConfig) (*S
 	if cfg.resumedPlan == "" {
 		cfg.resumedPlan = s.planSummaryForRun(taskID)
 	}
+	if cfg.resumedWorkspace == "" {
+		cfg.resumedWorkspace = s.workspaceSummaryForRun(ctx)
+	}
 
 	startedAt := time.Now()
 	s.persistRunTaskState(session, taskID, taskRunStateOptions{
@@ -601,6 +604,9 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 		}
 		if evt.StopReason != "" {
 			result.StopReason = evt.StopReason
+		}
+		if evt.EstimatedCostUSD > result.EstimatedCostUSD {
+			result.EstimatedCostUSD = evt.EstimatedCostUSD
 		}
 		switch evt.Type {
 		case EventTypeToolCall:

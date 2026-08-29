@@ -99,15 +99,20 @@ type ExecutionResult struct {
 	// the difference between "the model finished" and "the round budget ran
 	// out and the runtime synthesised an answer from what it had" — both of
 	// which report Success, and only one of which is an answer to trust.
-	StopReason  StopReason                `json:"stop_reason,omitempty"`
-	Usage       *domain.TokenUsage        `json:"usage,omitempty"`
-	FinalResult interface{}               `json:"final_result,omitempty"`
-	Sources     []domain.Chunk            `json:"sources,omitempty"`      // RAG sources when EnableRAG is true
-	Memories    []*domain.MemoryWithScore `json:"memories,omitempty"`     // Retrieved long-term memories
-	MemoryLogic string                    `json:"memory_logic,omitempty"` // IndexNavigator's reasoning for memory selection
-	Error       string                    `json:"error,omitempty"`
-	Duration    string                    `json:"duration"`
-	Metadata    map[string]interface{}    `json:"metadata,omitempty"`
+	StopReason StopReason `json:"stop_reason,omitempty"`
+	// EstimatedCostUSD is the run's cost estimate, copied from its terminal
+	// event. RunConfig.MaxBudgetUSD enforces a cap on it; a caller that wants
+	// to know what a run actually cost, or to budget across many runs, needs
+	// to be able to read it back.
+	EstimatedCostUSD float64                   `json:"estimated_cost_usd,omitempty"`
+	Usage            *domain.TokenUsage        `json:"usage,omitempty"`
+	FinalResult      interface{}               `json:"final_result,omitempty"`
+	Sources          []domain.Chunk            `json:"sources,omitempty"`      // RAG sources when EnableRAG is true
+	Memories         []*domain.MemoryWithScore `json:"memories,omitempty"`     // Retrieved long-term memories
+	MemoryLogic      string                    `json:"memory_logic,omitempty"` // IndexNavigator's reasoning for memory selection
+	Error            string                    `json:"error,omitempty"`
+	Duration         string                    `json:"duration"`
+	Metadata         map[string]interface{}    `json:"metadata,omitempty"`
 }
 
 // AgentInfo contains information about an agent's status and configuration
@@ -230,6 +235,12 @@ type RunConfig struct {
 	// out to be. Empty when there is no plan or nothing has been attempted.
 	// Injected alongside recalledContext at the end of the system prompt.
 	resumedPlan string
+
+	// resumedWorkspace is filled at run start with an inventory of the sandbox
+	// workspace — the files an earlier segment left behind. On a coding task
+	// those files are most of the state, and a segment that starts a fresh
+	// session has no other way to know they exist.
+	resumedWorkspace string
 
 	// ToolsDisabled attaches no tools at all to this run. Set it directly with
 	// WithToolsDisabled() when the caller already knows tools are off limits;

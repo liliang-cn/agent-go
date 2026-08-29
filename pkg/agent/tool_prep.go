@@ -204,6 +204,11 @@ func (s *Service) prepareTurnInputsWithConfig(ctx context.Context, currentAgent 
 			"An earlier run was interrupted partway. This is where it got to, " +
 			"and what each finished step produced.\n\n" + cfg.resumedPlan
 	}
+	// And what is on disk, which on a coding task is most of what an earlier
+	// segment actually produced.
+	if cfg != nil && cfg.resumedWorkspace != "" {
+		systemMsg += "\n\n## Files already in the workspace\n" + cfg.resumedWorkspace
+	}
 	genMessages := append([]domain.Message{{Role: "system", Content: systemMsg}}, messages...)
 	return tools, genMessages
 }

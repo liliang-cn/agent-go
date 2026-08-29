@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 )
 
 // Running one task across many segments.
@@ -60,6 +61,28 @@ type LongRunConfig struct {
 	// PlanKey is the scratchpad list the plan lives under. Empty means the
 	// one the scratchpad tools write to when the model does not name one.
 	PlanKey string
+
+	// MaxDuration stops starting new segments once the task has been running
+	// this long. It is not a deadline on the work in flight — a segment that
+	// has started is allowed to finish, so the task ends at a hand-off point
+	// with its plan and workspace consistent, rather than being cut in half.
+	// Zero = no limit; the context's own deadline still applies and does cut.
+	MaxDuration time.Duration
+
+	// MaxTotalCostUSD stops starting new segments once the task has cost this
+	// much, summed over every segment. RunConfig.MaxBudgetUSD only ever bounded
+	// one run, which on a task made of forty of them bounds nothing.
+	// Zero = no limit.
+	MaxTotalCostUSD float64
+
+	// SegmentRetryBackoff is how long to wait after a failed segment before
+	// starting the next one, doubling with each consecutive failure.
+	//
+	// It exists because a failed segment used to restart instantly, which
+	// spent the whole MaxConsecutiveFailures budget in seconds and made it
+	// useless against the outage it was meant for: a provider cooldown is
+	// measured in tens of minutes, not seconds. Zero = the default ladder.
+	SegmentRetryBackoff time.Duration
 }
 
 // Defaults for a segmented run.
@@ -67,6 +90,16 @@ const (
 	defaultMaxSegments            = 20
 	defaultRoundsPerSegment       = 100
 	defaultMaxConsecutiveFailures = 3
+
+	// defaultSegmentRetryBackoff starts the wait after a failed segment.
+	// Doubling from five minutes, three consecutive failures sit out roughly
+	// half an hour of provider trouble before the task gives up — the right
+	// order of magnitude for a cooldown, where the per-call retry ladder
+	// (capped at a minute) is not.
+	defaultSegmentRetryBackoff = 5 * time.Minute
+
+	// segmentRetryMaxBackoff caps that doubling.
+	segmentRetryMaxBackoff = 30 * time.Minute
 )
 
 // SegmentOutcome is what one segment of a long run did.
@@ -78,6 +111,11 @@ type SegmentOutcome struct {
 	Error      string
 	Rounds     int
 	Duration   time.Duration
+	// WaitedBefore is how long the supervisor sat out a provider outage
+	// before starting this segment. Non-zero only after a failure, and worth
+	// reporting: it is the difference between a task that took eleven hours
+	// and one that took eleven hours of which two were waiting.
+	WaitedBefore time.Duration
 }
 
 // LongRunStop says why the supervisor stopped starting segments. It is
@@ -99,6 +137,10 @@ const (
 	// Retrying a considered refusal in a fresh segment would just spend the
 	// budget arriving at it again.
 	LongRunStopBlocked LongRunStop = "blocked"
+	// LongRunStopTimeLimit means MaxDuration ran out with work left.
+	LongRunStopTimeLimit LongRunStop = "time_limit"
+	// LongRunStopCostLimit means MaxTotalCostUSD ran out with work left.
+	LongRunStopCostLimit LongRunStop = "cost_limit"
 )
 
 // LongRunResult is the whole task's outcome.
@@ -115,6 +157,12 @@ type LongRunResult struct {
 	// of how far an unfinished task got.
 	PlanSummary string
 	Duration    time.Duration
+	// TotalCostUSD is what every segment cost together, which is the only
+	// figure that means anything for a task made of dozens of runs.
+	TotalCostUSD float64
+	// TotalUsage sums the provider-reported tokens across segments. Nil when
+	// no segment's provider reported any.
+	TotalUsage *domain.TokenUsage
 }
 
 // Done reports whether the task actually finished.
@@ -135,7 +183,26 @@ func (c LongRunConfig) resolved() LongRunConfig {
 	if strings.TrimSpace(c.PlanKey) == "" {
 		c.PlanKey = scratchpadDefaultKey
 	}
+	if c.SegmentRetryBackoff <= 0 {
+		c.SegmentRetryBackoff = defaultSegmentRetryBackoff
+	}
 	return c
+}
+
+// segmentRetryDelay is how long to wait before the next attempt after n
+// consecutive failures, doubling and capped.
+func segmentRetryDelay(base time.Duration, consecutiveFailures int) time.Duration {
+	if consecutiveFailures < 1 {
+		consecutiveFailures = 1
+	}
+	d := base
+	for i := 1; i < consecutiveFailures && d < segmentRetryMaxBackoff; i++ {
+		d *= 2
+	}
+	if d > segmentRetryMaxBackoff {
+		d = segmentRetryMaxBackoff
+	}
+	return d
 }
 
 // RunSegments drives one goal across as many runs as it takes.
@@ -174,6 +241,37 @@ func (s *Service) RunSegments(ctx context.Context, goal string, cfg LongRunConfi
 			out.Stop = LongRunStopCancelled
 			break
 		}
+		// Budgets are checked between segments, never inside one. A segment
+		// that has started is allowed to finish so the task stops at a
+		// hand-off point, with its plan and workspace consistent, rather than
+		// being cut in half by a clock.
+		if cfg.MaxDuration > 0 && time.Since(began) >= cfg.MaxDuration {
+			out.Stop = LongRunStopTimeLimit
+			break
+		}
+		if cfg.MaxTotalCostUSD > 0 && out.TotalCostUSD >= cfg.MaxTotalCostUSD {
+			out.Stop = LongRunStopCostLimit
+			break
+		}
+
+		// Sit out a provider outage rather than spending the failure budget
+		// on it in seconds.
+		var waited time.Duration
+		if consecutiveFailures > 0 {
+			delay := segmentRetryDelay(cfg.SegmentRetryBackoff, consecutiveFailures)
+			if cfg.MaxDuration > 0 {
+				if left := cfg.MaxDuration - time.Since(began); left < delay {
+					delay = left
+				}
+			}
+			if delay > 0 {
+				if !waitBeforeLLMRetry(ctx, delay) {
+					out.Stop = LongRunStopCancelled
+					break
+				}
+				waited = delay
+			}
+		}
 
 		sessionID := uuid.NewString()
 		segmentOpts := append([]RunOption{}, opts...)
@@ -189,11 +287,14 @@ func (s *Service) RunSegments(ctx context.Context, goal string, cfg LongRunConfi
 		segStart := time.Now()
 		result, err := s.Run(ctx, goal, segmentOpts...)
 		seg := SegmentOutcome{
-			Index:     i,
-			SessionID: sessionID,
-			Duration:  time.Since(segStart),
+			Index:        i,
+			SessionID:    sessionID,
+			Duration:     time.Since(segStart),
+			WaitedBefore: waited,
 		}
 		if result != nil {
+			out.TotalCostUSD += result.EstimatedCostUSD
+			out.TotalUsage = addUsage(out.TotalUsage, result.Usage)
 			seg.StopReason = result.StopReason
 			seg.Text = result.Text()
 			seg.Error = result.Error
@@ -274,4 +375,22 @@ func (s *Service) planHasUnfinishedSteps(key string) bool {
 		}
 	}
 	return false
+}
+
+// addUsage sums a segment's token accounting into the task's running total.
+// Nil in means nothing to add; nil out stays nil, so a task whose providers
+// never reported usage reports none rather than a fabricated zero.
+func addUsage(total, seg *domain.TokenUsage) *domain.TokenUsage {
+	if seg == nil {
+		return total
+	}
+	if total == nil {
+		copied := *seg
+		return &copied
+	}
+	total.PromptTokens += seg.PromptTokens
+	total.CompletionTokens += seg.CompletionTokens
+	total.CachedPromptTokens += seg.CachedPromptTokens
+	total.CacheWriteTokens += seg.CacheWriteTokens
+	return total
 }

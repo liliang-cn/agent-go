@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 )
@@ -231,6 +232,7 @@ func TestRunSegmentsSurvivesAFailedSegment(t *testing.T) {
 		MaxSegments:            5,
 		RoundsPerSegment:       2,
 		MaxConsecutiveFailures: 3,
+		SegmentRetryBackoff:    time.Millisecond,
 	})
 	if err != nil {
 		t.Fatalf("RunSegments: %v", err)
@@ -265,6 +267,7 @@ func TestRunSegmentsGivesUpOnConsecutiveFailures(t *testing.T) {
 		MaxSegments:            10,
 		RoundsPerSegment:       2,
 		MaxConsecutiveFailures: 2,
+		SegmentRetryBackoff:    time.Millisecond,
 	})
 	if err != nil {
 		t.Fatalf("RunSegments: %v", err)
@@ -432,5 +435,130 @@ func TestLongRunConfigDefaults(t *testing.T) {
 	}
 	if got.PlanKey != scratchpadDefaultKey {
 		t.Errorf("PlanKey = %q, want %q", got.PlanKey, scratchpadDefaultKey)
+	}
+}
+
+// Budgets are checked between segments, so a task stops at a hand-off point
+// with its plan and workspace consistent rather than being cut in half.
+func TestRunSegmentsStopsOnTheTimeLimit(t *testing.T) {
+	llm := &scriptedLLM{finishAt: 99}
+	svc := buildSegmentedService(t, "segments-time-limit", llm, nil)
+	defer svc.Close()
+
+	res, err := svc.RunSegments(context.Background(), "Work forever.", LongRunConfig{
+		MaxSegments:      50,
+		RoundsPerSegment: 2,
+		// Long enough that the first segment starts, far too short for fifty.
+		MaxDuration: 50 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("RunSegments: %v", err)
+	}
+	if res.Stop != LongRunStopTimeLimit {
+		t.Errorf("stop = %q, want %q", res.Stop, LongRunStopTimeLimit)
+	}
+	if res.Done() {
+		t.Error("a task stopped by the clock has not finished")
+	}
+	// At least one, because the limit is checked between segments and never
+	// inside one — a segment that started is allowed to finish. Nowhere near
+	// fifty, because the limit did stop it.
+	if n := len(res.Segments); n < 1 || n >= 50 {
+		t.Errorf("ran %d segments, want at least 1 and well short of the 50 allowed", n)
+	}
+	for _, seg := range res.Segments {
+		if seg.StopReason == "" && seg.Error == "" {
+			t.Errorf("segment %d was cut off rather than allowed to finish", seg.Index)
+		}
+	}
+}
+
+// A per-run MaxBudgetUSD bounds one run, which on a task made of forty of them
+// bounds nothing. This is the total.
+func TestRunSegmentsStopsOnTheCostLimit(t *testing.T) {
+	llm := &scriptedLLM{finishAt: 99}
+	svc := buildSegmentedService(t, "segments-cost-limit", llm, nil)
+	defer svc.Close()
+	svc.modelName = "gpt-4" // a model the pricing table knows, so cost is non-zero
+
+	res, err := svc.RunSegments(context.Background(), "Work forever.", LongRunConfig{
+		MaxSegments:      50,
+		RoundsPerSegment: 2,
+		MaxTotalCostUSD:  0.0000001,
+	})
+	if err != nil {
+		t.Fatalf("RunSegments: %v", err)
+	}
+	if res.Stop != LongRunStopCostLimit {
+		t.Errorf("stop = %q, want %q (cost so far %f)", res.Stop, LongRunStopCostLimit, res.TotalCostUSD)
+	}
+	if res.TotalCostUSD <= 0 {
+		t.Error("the task reported no cost at all; the per-segment figure is not reaching the total")
+	}
+}
+
+// The wait after a failed segment is what makes MaxConsecutiveFailures mean
+// anything: without it three failures are spent in seconds, against outages
+// measured in tens of minutes.
+func TestSegmentRetryDelayGrowsAndIsCapped(t *testing.T) {
+	t.Parallel()
+	base := 5 * time.Minute
+	if got := segmentRetryDelay(base, 1); got != base {
+		t.Errorf("first retry waits %s, want %s", got, base)
+	}
+	if got := segmentRetryDelay(base, 2); got != 2*base {
+		t.Errorf("second retry waits %s, want %s", got, 2*base)
+	}
+	if got := segmentRetryDelay(base, 99); got != segmentRetryMaxBackoff {
+		t.Errorf("a long outage waits %s, want the cap %s", got, segmentRetryMaxBackoff)
+	}
+	// Three consecutive failures should sit out enough time to be worth
+	// calling patience — the whole point against a provider cooldown.
+	total := segmentRetryDelay(base, 1) + segmentRetryDelay(base, 2) + segmentRetryDelay(base, 3)
+	if total < 30*time.Minute {
+		t.Errorf("three failures wait %s in total; a provider cooldown outlasts that", total)
+	}
+}
+
+// The backoff must not turn a cancelled task into a half-hour sleep.
+func TestRunSegmentsBackoffHonoursCancellation(t *testing.T) {
+	llm := &scriptedLLM{finishAt: 99, failAt: map[int]error{0: errors.New("401 Unauthorized")}}
+	svc := buildSegmentedService(t, "segments-backoff-cancel", llm, nil)
+	defer svc.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		cancel()
+	}()
+
+	began := time.Now()
+	res, err := svc.RunSegments(ctx, "Work.", LongRunConfig{
+		MaxSegments:            5,
+		RoundsPerSegment:       2,
+		MaxConsecutiveFailures: 5,
+		SegmentRetryBackoff:    time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("RunSegments: %v", err)
+	}
+	if elapsed := time.Since(began); elapsed > 30*time.Second {
+		t.Fatalf("the cancelled task sat in the backoff for %s", elapsed)
+	}
+	if res.Stop != LongRunStopCancelled {
+		t.Errorf("stop = %q, want %q", res.Stop, LongRunStopCancelled)
+	}
+}
+
+func TestAddUsageKeepsNilWhenNothingWasReported(t *testing.T) {
+	t.Parallel()
+	if got := addUsage(nil, nil); got != nil {
+		t.Errorf("got %+v, want nil", got)
+	}
+	total := addUsage(nil, &domain.TokenUsage{PromptTokens: 10, CachedPromptTokens: 4})
+	total = addUsage(total, &domain.TokenUsage{PromptTokens: 5, CacheWriteTokens: 2})
+	total = addUsage(total, nil)
+	if total.PromptTokens != 15 || total.CachedPromptTokens != 4 || total.CacheWriteTokens != 2 {
+		t.Errorf("summed to %+v", total)
 	}
 }
