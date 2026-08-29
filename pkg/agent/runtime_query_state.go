@@ -15,6 +15,20 @@ type queryLoopBudget struct {
 	RecoveryCount    int
 	RemainingRounds  int
 
+	// The prompt-cache half of the accounting, summed over the run's rounds
+	// and reported by the provider rather than estimated. On a long run this
+	// is the number that says whether the prompt is being re-read at full
+	// price every round: CachedPromptTokens is the part of InputTokens that
+	// came back warm, CacheWriteTokens the premium paid to make it so.
+	CachedPromptTokens int
+	CacheWriteTokens   int
+	// ProviderReportedUsage records that at least one round came back with
+	// real accounting. Without it the totals are indistinguishable from the
+	// tokenizer's estimate, which the runtime substitutes for providers that
+	// report nothing — and reporting an estimate as a measurement is how a
+	// prompt-cache experiment reads "0 cached" and concludes the wrong thing.
+	ProviderReportedUsage bool
+
 	// Diminishing returns detection
 	continuationCount int   // rounds without meaningful progress
 	tokensPerRound    []int // rolling window of tokens per round
@@ -130,6 +144,20 @@ func (s *queryLoopState) noteCost(inputTokens, outputTokens int, costUSD float64
 	}
 	if costUSD > 0 {
 		s.Budget.EstimatedCostUSD += costUSD
+	}
+}
+
+// noteCacheUsage adds one round's provider-reported prompt-cache numbers to
+// the run totals. Only called when the provider actually reported usage —
+// an estimate cannot know what was cached, and a zero invented here would be
+// indistinguishable from a measured miss.
+func (s *queryLoopState) noteCacheUsage(cachedTokens, cacheWriteTokens int) {
+	s.Budget.ProviderReportedUsage = true
+	if cachedTokens > 0 {
+		s.Budget.CachedPromptTokens += cachedTokens
+	}
+	if cacheWriteTokens > 0 {
+		s.Budget.CacheWriteTokens += cacheWriteTokens
 	}
 }
 

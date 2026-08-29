@@ -81,22 +81,28 @@ type ExecutionResult struct {
 	// finished. Like Blocked this is an outcome, not a failure — Err() stays
 	// nil and Text() holds whatever had been produced — so a caller that
 	// branches on err cannot mistake its own stop button for a crash.
-	Cancelled       bool                      `json:"cancelled,omitempty"`
-	StepsTotal      int                       `json:"steps_total"`
-	StepsDone       int                       `json:"steps_done"`
-	StepsFailed     int                       `json:"steps_failed"`
-	StartedAt       *time.Time                `json:"started_at,omitempty"`
-	CompletedAt     *time.Time                `json:"completed_at,omitempty"`
-	ToolCalls       int                       `json:"tool_calls"`
-	ToolsUsed       []string                  `json:"tools_used,omitempty"`
-	EstimatedTokens int                       `json:"estimated_tokens"`
-	FinalResult     interface{}               `json:"final_result,omitempty"`
-	Sources         []domain.Chunk            `json:"sources,omitempty"`      // RAG sources when EnableRAG is true
-	Memories        []*domain.MemoryWithScore `json:"memories,omitempty"`     // Retrieved long-term memories
-	MemoryLogic     string                    `json:"memory_logic,omitempty"` // IndexNavigator's reasoning for memory selection
-	Error           string                    `json:"error,omitempty"`
-	Duration        string                    `json:"duration"`
-	Metadata        map[string]interface{}    `json:"metadata,omitempty"`
+	Cancelled       bool       `json:"cancelled,omitempty"`
+	StepsTotal      int        `json:"steps_total"`
+	StepsDone       int        `json:"steps_done"`
+	StepsFailed     int        `json:"steps_failed"`
+	StartedAt       *time.Time `json:"started_at,omitempty"`
+	CompletedAt     *time.Time `json:"completed_at,omitempty"`
+	ToolCalls       int        `json:"tool_calls"`
+	ToolsUsed       []string   `json:"tools_used,omitempty"`
+	EstimatedTokens int        `json:"estimated_tokens"`
+	// Usage is what the provider actually billed, summed over the run's
+	// rounds — including the prompt-cache split, which is the only way to
+	// answer "is this long run re-reading its whole prompt every round".
+	// Nil when no provider on the run reported usage; EstimatedTokens is
+	// the tokenizer's guess and is always populated.
+	Usage       *domain.TokenUsage        `json:"usage,omitempty"`
+	FinalResult interface{}               `json:"final_result,omitempty"`
+	Sources     []domain.Chunk            `json:"sources,omitempty"`      // RAG sources when EnableRAG is true
+	Memories    []*domain.MemoryWithScore `json:"memories,omitempty"`     // Retrieved long-term memories
+	MemoryLogic string                    `json:"memory_logic,omitempty"` // IndexNavigator's reasoning for memory selection
+	Error       string                    `json:"error,omitempty"`
+	Duration    string                    `json:"duration"`
+	Metadata    map[string]interface{}    `json:"metadata,omitempty"`
 }
 
 // AgentInfo contains information about an agent's status and configuration

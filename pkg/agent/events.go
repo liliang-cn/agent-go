@@ -125,6 +125,13 @@ type Event struct {
 	// pricing). Populated on terminal events; zero elsewhere.
 	EstimatedCostUSD float64 `json:"estimated_cost_usd,omitempty"`
 
+	// Usage carries the run's provider-reported token accounting, summed
+	// over its rounds. Populated on terminal events alongside the cost, and
+	// nil when no provider on the run reported any — which is a different
+	// thing from a run that used no tokens, and worth being able to tell
+	// apart when the question is whether the prompt cache is working.
+	Usage *domain.TokenUsage `json:"usage,omitempty"`
+
 	Timestamp time.Time `json:"timestamp"`
 }
 

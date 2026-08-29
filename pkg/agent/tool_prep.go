@@ -556,6 +556,10 @@ func (s *Service) toolGenerationOptions(temperature float64, maxTokens int, tool
 	if t := s.currentThinkingOptions(); t != nil {
 		opts.Thinking = t
 	}
+	// Forward the prompt-cache mode (set via WithPromptCache) onto every
+	// tool round. A long run only benefits if every round is marked: one
+	// unmarked round pays full prefill and leaves the next one cold.
+	opts.PromptCache = s.promptCacheMode()
 	// Forward the per-run ResponseFormat (set via WithStructuredOutput).
 	// Tool calls bypass response_format on the provider side; this is
 	// only enforced when the model emits a text response.

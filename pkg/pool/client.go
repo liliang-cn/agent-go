@@ -261,6 +261,13 @@ func buildPoolGenerateWithToolsRequest(modelName string, messages []domain.Messa
 		}
 	}
 
+	// Cache markers go on last, once messages and tools are both built: they
+	// rewrite two of them, and only a finished entry can be asked whether it
+	// has anything to mark.
+	if opts != nil && opts.PromptCache == domain.PromptCacheExplicit {
+		markPromptCacheBreakpoints(apiMessages, apiTools)
+	}
+
 	reqBody := map[string]interface{}{
 		"model":    modelName,
 		"messages": apiMessages,
@@ -393,6 +400,10 @@ func applyPoolRetryFallbacks(opts *domain.GenerationOptions, err error) *domain.
 		cur.ResponseFormat = nil
 		changed = true
 	}
+	if shouldRetryPoolWithoutPromptCache(&cur, err) {
+		cur.PromptCache = domain.PromptCacheOff
+		changed = true
+	}
 	if !changed {
 		return nil
 	}
@@ -485,6 +496,7 @@ func (c *Client) GenerateWithTools(ctx context.Context, messages []domain.Messag
 		Content:          cleanContent,
 		ReasoningContent: reasoning,
 		FinishReason:     choice.FinishReason,
+		Usage:            parsePoolUsage(resp),
 	}
 
 	// Parse the tool calls.

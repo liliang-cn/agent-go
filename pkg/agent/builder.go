@@ -133,6 +133,7 @@ type Builder struct {
 	sandbox       sandbox.Sandbox
 	enableDeliver bool
 	autonomy      AutonomyProfile
+	promptCache   domain.PromptCacheMode
 
 	// cached result
 	svc *Service
@@ -651,6 +652,7 @@ func (b *Builder) build() (*Service, error) {
 	if b.enableDeliver && b.sandbox != nil {
 		RegisterDeliverableTools(svc, b.sandbox)
 	}
+	svc.promptCache = b.promptCache
 	if b.autonomy.MaxRounds > 0 || b.autonomy.LintRetryBudget > 0 || b.autonomy.Scratchpad {
 		svc.defaultMaxTurns = b.autonomy.MaxRounds
 		svc.lintRetryBudgetOverride = b.autonomy.LintRetryBudget

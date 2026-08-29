@@ -505,6 +505,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 				inputTokens = result.Usage.PromptTokens
 				outputTokens = result.Usage.CompletionTokens
 				cachedTokens = result.Usage.CachedPromptTokens
+				state.noteCacheUsage(cachedTokens, result.Usage.CacheWriteTokens)
 			} else {
 				tc := pool.NewTokenCounter()
 				inputTokens = tc.EstimateConversationTokens(genMessages, model)
@@ -1163,6 +1164,7 @@ func (r *Runtime) completeRunWithStop(goal, content string, messages []domain.Me
 		Sources:          r.collectAllSources(),
 		StopReason:       reason,
 		EstimatedCostUSD: r.currentCostUSD(),
+		Usage:            r.currentUsage(),
 		Timestamp:        time.Now(),
 	}
 	r.clearCollectedSources()
@@ -1206,6 +1208,7 @@ func (r *Runtime) blockRunWithStop(goal, blocker string, messages []domain.Messa
 		Sources:          r.collectAllSources(),
 		StopReason:       reason,
 		EstimatedCostUSD: r.currentCostUSD(),
+		Usage:            r.currentUsage(),
 		Timestamp:        time.Now(),
 	}
 	if persistHistory {
@@ -1247,6 +1250,7 @@ func (r *Runtime) cancelRun(messages []domain.Message) {
 		Content:          cancelledRunText,
 		StopReason:       StopReasonCancelled,
 		EstimatedCostUSD: r.currentCostUSD(),
+		Usage:            r.currentUsage(),
 		Timestamp:        time.Now(),
 	}
 	r.clearCollectedSources()
@@ -1274,6 +1278,25 @@ func (r *Runtime) currentCostUSD() float64 {
 		return 0
 	}
 	return r.budgetSnapshot.EstimatedCostUSD
+}
+
+// currentUsage returns the run's provider-reported token totals, or nil when
+// no round of it reported any. Nil is the honest answer for a provider that
+// does not account: a zeroed struct would read as "measured, and it was zero".
+func (r *Runtime) currentUsage() *domain.TokenUsage {
+	if r == nil || r.budgetSnapshot == nil {
+		return nil
+	}
+	b := r.budgetSnapshot
+	if !b.ProviderReportedUsage {
+		return nil
+	}
+	return &domain.TokenUsage{
+		PromptTokens:       b.InputTokens,
+		CompletionTokens:   b.OutputTokens,
+		CachedPromptTokens: b.CachedPromptTokens,
+		CacheWriteTokens:   b.CacheWriteTokens,
+	}
 }
 
 func (r *Runtime) emitLoopState(state *queryLoopState) {

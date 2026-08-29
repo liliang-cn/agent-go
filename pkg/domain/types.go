@@ -170,6 +170,13 @@ type GenerationOptions struct {
 	// the provider default. Sent verbatim as-is to the upstream API.
 	Thinking *ThinkingOptions
 
+	// PromptCache asks the provider to cache the prompt prefix explicitly,
+	// for providers that require a marker rather than caching a stable
+	// prefix on their own. Empty = off, which is the right default: on a
+	// provider that caches automatically the markers buy nothing and change
+	// the bytes being cached. See PromptCacheMode.
+	PromptCache PromptCacheMode
+
 	// ResponseFormat constrains the model's text output to a JSON shape
 	// (OpenAI structured outputs / DeepSeek json_object). Only affects
 	// turns where the model returns plain content; tool calls bypass this
@@ -178,6 +185,34 @@ type GenerationOptions struct {
 	// the provider default.
 	ResponseFormat *ResponseFormat
 }
+
+// PromptCacheMode selects whether the client marks cache breakpoints in the
+// request.
+//
+// There are two families of prompt cache. OpenAI and DeepSeek cache
+// automatically: the only lever is keeping the prefix byte-stable across
+// turns, and a marker would be noise. Anthropic — and the gateways that front
+// it behind an OpenAI-shaped API — cache only what is explicitly marked, so
+// without a marker a long run re-pays for its entire history every round.
+//
+// The mode is named, never guessed. There is no model-name table here and
+// there must not be one: a gateway's model string says nothing about whether
+// the server behind it honours a marker. What the marker did is answered
+// afterwards by TokenUsage.CacheWriteTokens / CachedPromptTokens, which are
+// reported by the provider rather than assumed by us.
+type PromptCacheMode string
+
+const (
+	// PromptCacheOff sends no markers. Automatic caches are unaffected.
+	PromptCacheOff PromptCacheMode = ""
+
+	// PromptCacheExplicit marks up to two breakpoints per request: one at
+	// the end of the system prefix (the part that is identical every round)
+	// and one at the end of the history (so the next round only pays to
+	// prefill what it appended). A provider that rejects the marker gets a
+	// second request without it — see applyPoolRetryFallbacks.
+	PromptCacheExplicit PromptCacheMode = "explicit"
+)
 
 // ResponseFormat mirrors the OpenAI-shape response_format parameter. Set
 // Type to "json_schema" with a Schema for strict validation, or to
@@ -267,10 +302,17 @@ type FunctionCall struct {
 // `prompt_tokens_details.cached_tokens`, which DeepSeek mirrors alongside its
 // own `prompt_cache_hit_tokens`. Both providers cache automatically; the only
 // lever an agent has is keeping its context prefix byte-stable across turns.
+// CacheWriteTokens is the part of PromptTokens billed at a premium for
+// *establishing* a cache entry, which only providers with explicit
+// breakpoints (Anthropic and gateways fronting it) charge and report. It is
+// what makes a first pass look more expensive than an uncached one, and it is
+// the number that says a breakpoint was actually honoured rather than
+// silently ignored.
 type TokenUsage struct {
 	PromptTokens       int `json:"prompt_tokens"`
 	CompletionTokens   int `json:"completion_tokens"`
 	CachedPromptTokens int `json:"cached_prompt_tokens,omitempty"`
+	CacheWriteTokens   int `json:"cache_write_tokens,omitempty"`
 }
 
 type GenerationResult struct {

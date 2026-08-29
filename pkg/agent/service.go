@@ -151,6 +151,12 @@ type Service struct {
 	responseFormatMu sync.RWMutex
 	responseFormat   *domain.ResponseFormat
 
+	// promptCache asks the provider to mark cache breakpoints in every
+	// request this service makes. Off unless WithPromptCache says otherwise:
+	// whether a marker helps, does nothing, or is rejected is a property of
+	// the endpoint, which only the person configuring it knows.
+	promptCache domain.PromptCacheMode
+
 	// Public access to underlying services
 	LLM     domain.Generator
 	MCP     *mcp.Service // Full access to MCP service (Chat, StartServers, etc.)
@@ -570,6 +576,12 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 		}
 		if evt.TokensUsed > 0 {
 			result.EstimatedTokens += evt.TokensUsed
+		}
+		// Terminal events carry the run's total, not a delta, so the last
+		// one wins rather than accumulating.
+		if evt.Usage != nil {
+			usage := *evt.Usage
+			result.Usage = &usage
 		}
 		switch evt.Type {
 		case EventTypeToolCall:
