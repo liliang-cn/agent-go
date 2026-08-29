@@ -119,6 +119,7 @@ type Builder struct {
 	memoryService     domain.MemoryService
 	registerGraphTool bool
 	runMemory         RunMemory
+	planStore         PlanStore
 	enableSkills      bool
 	skillsPaths       []string
 	requiredSkills    []string // Build() fails if any of these aren't installed
@@ -215,6 +216,18 @@ func (b *Builder) WithGraphMemory(opts ...MemoryOption) *Builder {
 // cortexbridge.NewRunMemory provides a CortexDB-backed implementation.
 func (b *Builder) WithRunMemory(rm RunMemory) *Builder {
 	b.runMemory = rm
+	return b
+}
+
+// WithPlanStore makes the scratchpad plan survive the process.
+//
+// Without one, a long task that is interrupted loses the plan it was working
+// through — which is the moment the plan is the only thing worth keeping. With
+// one, the plan and what each finished step produced are written through on
+// every change and read back on the first touch of the key, so a restarted run
+// can carry on instead of starting over. See PlanStore and Service.PlanSummary.
+func (b *Builder) WithPlanStore(ps PlanStore) *Builder {
+	b.planStore = ps
 	return b
 }
 
@@ -579,6 +592,9 @@ func (b *Builder) build() (*Service, error) {
 	}
 	if b.permissionHandler != nil {
 		svc.SetPermissionHandler(b.permissionHandler)
+	}
+	if b.planStore != nil {
+		svc.SetPlanStore(b.planStore)
 	}
 	if b.permissionPolicy != nil {
 		svc.SetPermissionPolicy(b.permissionPolicy)

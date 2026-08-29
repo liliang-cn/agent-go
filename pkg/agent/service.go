@@ -134,6 +134,13 @@ type Service struct {
 	thinkingMu   sync.RWMutex
 	thinkingOpts *domain.ThinkingOptions
 
+	// scratchpad holds this service's plan lists. Per service rather than per
+	// process so two tasks cannot overwrite each other's plan, and carrying an
+	// optional PlanStore so a plan outlives the run that wrote it.
+	scratchpadMu sync.Mutex
+	scratchpad   *scratchpadManager
+	planStore    PlanStore
+
 	// runMemory, when non-nil, is consulted at run start (recall) and run end
 	// (capture). See RunMemory and Builder.WithRunMemory.
 	runMemory RunMemory
