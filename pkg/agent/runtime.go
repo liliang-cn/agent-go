@@ -420,6 +420,17 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 				messages = newMsgs
 				state.setMessages(newMsgs)
 				state.noteRecovery(recoveryMeta{Compacted: true})
+				clear(state.PrevToolCalls)
+				// Compaction removed results the duplicate-call record still
+				// believes are in context. Left standing, the next identical
+				// read is collapsed and answered with "its result is already
+				// above" — pointing at something compaction has just deleted.
+				// The model cannot see it, so it reads again, is refused
+				// again, and the run spins until its round budget is gone.
+				//
+				// Compaction changes what the model can see, exactly as a
+				// write changes what a read would return, so it clears the
+				// record for the same reason.
 			}
 		}
 

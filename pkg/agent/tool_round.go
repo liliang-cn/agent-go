@@ -30,7 +30,20 @@ func (s *Service) prepareToolRound(ctx context.Context, messages *[]domain.Messa
 	result.ToolCalls = normalizeToolCalls(result.ToolCalls)
 
 	filteredToolCalls, duplicateToolResults, fallback := s.handleDuplicateToolCalls(*messages, result, prevToolCalls)
-	result.ToolCalls = filteredToolCalls
+	// result.ToolCalls stays as the model sent it, and only the filtered list
+	// decides what still needs executing.
+	//
+	// It used to be overwritten with the filtered list, which quietly deleted
+	// the duplicate from the assistant message that goes into the transcript.
+	// The hint written for that duplicate is addressed to its call id, so with
+	// the call gone the hint was an orphan and the pairing sanitiser dropped
+	// it. From the model's side its tool call simply vanished: no result, no
+	// error, no explanation. The only sane response to that is to ask again,
+	// which is exactly what a soak run did a hundred and twenty-four times.
+	//
+	// Keeping every call also keeps the transcript valid: providers expect one
+	// result per tool call, and now every call has one — the real result, or
+	// the reason it was not run again.
 	return currentAgent, nil, filteredToolCalls, duplicateToolResults, fallback, false
 }
 
@@ -42,7 +55,36 @@ type toolRoundOutcome struct {
 	AwaitAnswer bool
 }
 
+// dropSupersededDuplicateHints removes a "not run again" hint for any call
+// that did run.
+//
+// The streaming path executes tool calls as they arrive, before the duplicate
+// check ever sees them, so on that path the work is already done and the real
+// result exists. Emitting the hint as well would put two tool messages under
+// one tool call id — malformed for the provider, and confusing for the model,
+// which would be handed an answer and a note saying it was not given one.
+//
+// The hint still matters on the paths where filtering does prevent execution.
+func dropSupersededDuplicateHints(duplicates, executed []ToolExecutionResult) []ToolExecutionResult {
+	if len(duplicates) == 0 || len(executed) == 0 {
+		return duplicates
+	}
+	ran := make(map[string]struct{}, len(executed))
+	for _, r := range executed {
+		ran[r.ToolCallID] = struct{}{}
+	}
+	kept := duplicates[:0:0]
+	for _, d := range duplicates {
+		if _, done := ran[d.ToolCallID]; done {
+			continue
+		}
+		kept = append(kept, d)
+	}
+	return kept
+}
+
 func (s *Service) buildToolRoundOutcome(messages []domain.Message, taskID string, result *domain.GenerationResult, duplicateToolResults, toolResults []ToolExecutionResult, filteredToolCalls []domain.ToolCall) toolRoundOutcome {
+	duplicateToolResults = dropSupersededDuplicateHints(duplicateToolResults, toolResults)
 	allResults := append(append([]ToolExecutionResult(nil), duplicateToolResults...), toolResults...)
 	nextMessages := s.appendToolRoundToMessages(messages, taskID, result, allResults)
 	outcome := toolRoundOutcome{
@@ -165,11 +207,11 @@ func (s *Service) handleDuplicateToolCalls(messages []domain.Message, result *do
 				ToolName:   tc.Function.Name,
 				ToolType:   "tool",
 				Result: fmt.Sprintf(
-					"You have called %s with these exact arguments %d times, and nothing has been "+
-						"written since the first one, so the answer has not changed. Its result is "+
-						"already above — read it there. Repeating this call cannot make progress: "+
-						"take a different action, or say what is blocking you.",
-					tc.Function.Name, seen[key]),
+					"Not run again: you have called %s with these exact arguments %d times and "+
+						"nothing has been written since the first one, so the answer is the same "+
+						"as the one you already received. Asking a %dth time cannot make progress "+
+						"— take a different action, or say plainly what is blocking you.",
+					tc.Function.Name, seen[key], seen[key]+1),
 			})
 			continue
 		}
