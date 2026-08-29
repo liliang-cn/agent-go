@@ -92,6 +92,31 @@ Tool execution has its own state model — `ReadOnly`, `ConcurrencySafe`, `Destr
 
 Tasks (`task_id` in `pkg/domain/types.go` and `pkg/agent/types.go`) are propagated through async dispatch and used for history filtering. Treat `task_id` as load-bearing — when adding a new piece of state (history, memory, discovered tools, retries), scope it by task where possible.
 
+### A long task is many runs, not a long run
+
+`Service.RunSegments(ctx, goal, LongRunConfig{...})` (`pkg/agent/long_run.go`) drives one task across many runs. It is **not** a second engine and not orchestration — it calls `Run`, reads why it stopped, and calls `Run` again. The rule that there is exactly one loop is unchanged.
+
+What it does *not* carry across segments is the conversation. Each segment gets a **fresh session id** (one **task id** spans them all, so checkpoints and the plan stay coherent), which is what keeps context length from growing across a task that runs for hours. Continuity comes from what was actually established:
+
+- the plan, injected at run start by `planSummaryForRun` — `PlanItem.Note` is its whole bandwidth, so an agent that records lazily pays to re-walk ground it covered;
+- the workspace — same sandbox, same `Service`;
+- run memory, recalled per segment like any other run.
+
+Two gates decide a segment *finished the task* rather than merely ending: `StopReason != max_turns`, and (unless `AllowIncompletePlan`) the stored plan has no unchecked steps. `ExecutionResult.StopReason` exists for the first one — `Success` is true both when the model concluded and when the round budget ran out and `forceFinalSynthesis` assembled something from however far it got, and only one of those is an answer.
+
+`LongRunStop` is a separate type from `StopReason` on purpose: "the task finished" and "I stopped asking" are different statements, and only `LongRunStopFinished` (`result.Done()`) means the work is done.
+
+### Long-horizon knobs, and the failure each one answers
+
+| knob | what used to happen without it |
+|---|---|
+| `AutonomyProfile.MaxRounds` / `WithMaxTurns` | `const maxRounds = 20` sat in the loop and both options were dead; a run stopped at 20 rounds and synthesised an answer that looked like success |
+| `WithLLMRetries` | one 502 or rate limit ended the run, with no checkpoint written |
+| `AutonomyProfile.CheckpointEveryRounds` | `round_end` snapshots were declared but never written by a live run — the run worth resuming was the only one not on disk |
+| `WithPromptCache` | no explicit cache breakpoints at all; on a marker-only provider every round re-paid for the whole history |
+
+Transient-vs-permanent classification lives in `transientLLMError` (`llm_retry.go`). It reads a **provider's error**, which is the output side and therefore fair game — a permanent rejection beats a transient word inside it, so a 400 mentioning "timeout" is still a 400, and `context.Canceled` is never transient.
+
 ### Task checkpoint + replay
 
 Every terminal `completeRun` / `blockRun` writes a `TaskCheckpoint` snapshot of the message history to `task_checkpoints` (capped at `MaxCheckpointsPerTask=32`, pruned by `checkpointWriter`). The wiring lives in `pkg/agent/task_checkpoint.go` + `task_checkpoint_manager.go`; `Service.SetCheckpointSink(...)` is what the runtime calls — `Manager.buildServiceForModel` auto-wires this, services built directly via `agent.New(...).Build()` skip persistence.
