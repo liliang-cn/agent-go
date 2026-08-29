@@ -242,6 +242,11 @@ type RunConfig struct {
 	// session has no other way to know they exist.
 	resumedWorkspace string
 
+	// resumedNotes is filled at run start with the contents of the workspace
+	// notes file — the one file whose text, not just its name, is carried
+	// across segments. See notes_handoff.go.
+	resumedNotes string
+
 	// ToolsDisabled attaches no tools at all to this run. Set it directly with
 	// WithToolsDisabled() when the caller already knows tools are off limits;
 	// the runtime also sets it from extracted constraints when the user's own

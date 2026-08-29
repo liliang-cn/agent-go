@@ -134,6 +134,7 @@ type Builder struct {
 	enableDeliver bool
 	autonomy      AutonomyProfile
 	promptCache   domain.PromptCacheMode
+	notesFile     string
 
 	// cached result
 	svc *Service
@@ -653,6 +654,7 @@ func (b *Builder) build() (*Service, error) {
 		RegisterDeliverableTools(svc, b.sandbox)
 	}
 	svc.promptCache = b.promptCache
+	svc.notesFile = b.notesFile
 	if b.autonomy.MaxRounds > 0 || b.autonomy.LintRetryBudget > 0 || b.autonomy.Scratchpad ||
 		b.autonomy.CheckpointEveryRounds > 0 {
 		svc.defaultMaxTurns = b.autonomy.MaxRounds

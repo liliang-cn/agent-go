@@ -157,6 +157,10 @@ type Service struct {
 	// the endpoint, which only the person configuring it knows.
 	promptCache domain.PromptCacheMode
 
+	// notesFile is the workspace file whose contents ride in every later run's
+	// hand-off. Empty means DefaultNotesFile. See notes_handoff.go.
+	notesFile string
+
 	// checkpointEveryRounds is how often an in-flight run snapshots itself,
 	// in rounds. Set via WithAutonomy; 0 = the framework default.
 	checkpointEveryRounds int
@@ -526,6 +530,9 @@ func (s *Service) startRun(ctx context.Context, goal string, cfg *RunConfig) (*S
 	}
 	if cfg.resumedWorkspace == "" {
 		cfg.resumedWorkspace = s.workspaceSummaryForRun(ctx)
+	}
+	if cfg.resumedNotes == "" {
+		cfg.resumedNotes = s.notesForRun(ctx)
 	}
 
 	startedAt := time.Now()

@@ -316,9 +316,17 @@ func (s *Service) RunSegments(ctx context.Context, goal string, cfg LongRunConfi
 			if consecutiveFailures >= cfg.MaxConsecutiveFailures {
 				out.Stop = LongRunStopFailing
 			}
-		case result.Blocked:
+		case result.Blocked && result.StopReason != StopReasonMaxTurns:
 			// A considered "I cannot proceed" is an answer. Starting another
 			// segment would spend the budget arriving at it again.
+			//
+			// The stop reason is what separates that from running out of road.
+			// A segment that exhausts its rounds is forced to synthesise an
+			// answer, and if that answer fails a final lint the runtime blocks
+			// it — with StopReasonMaxTurns, because the budget is what ran
+			// out. Reading that as a refusal ended a soak run at 9 of 13
+			// milestones while it was still making progress: it had not decided
+			// anything, it had simply not finished.
 			out.Stop = LongRunStopBlocked
 		default:
 			consecutiveFailures = 0

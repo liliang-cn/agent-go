@@ -562,3 +562,73 @@ func TestAddUsageKeepsNilWhenNothingWasReported(t *testing.T) {
 		t.Errorf("summed to %+v", total)
 	}
 }
+
+// blockedOnBudgetLLM never concludes, so every segment exhausts its rounds and
+// the forced synthesis is what the run ends on.
+type blockedOnBudgetLLM struct{ toolLoopLLM }
+
+// A segment that runs out of rounds is blocked with StopReasonMaxTurns when its
+// forced synthesis fails a final lint. That is not a refusal — it is a segment
+// that did not finish — and treating it as one ended a soak run at 9 of 13
+// milestones while it was still making progress.
+func TestBudgetExhaustionIsNotARefusal(t *testing.T) {
+	t.Parallel()
+	cfg := LongRunConfig{}.resolved()
+	svc := &Service{}
+
+	exhausted := &ExecutionResult{Success: false, Blocked: true, StopReason: StopReasonMaxTurns}
+	if svc.segmentFinishedTheTask(exhausted, cfg) {
+		t.Error("a segment that ran out of rounds has not finished the task")
+	}
+
+	// The supervisor's own branch: only a block that is *not* a budget
+	// exhaustion ends the task.
+	if exhausted.Blocked && exhausted.StopReason != StopReasonMaxTurns {
+		t.Error("budget exhaustion must not be read as a considered refusal")
+	}
+	refusal := &ExecutionResult{Success: false, Blocked: true, StopReason: StopReasonLintExhausted}
+	if !(refusal.Blocked && refusal.StopReason != StopReasonMaxTurns) {
+		t.Error("a genuine block should still end the task")
+	}
+}
+
+// End to end, with a lint that refuses everything so the forced synthesis at
+// the end of each segment really does block. Before the fix the first segment
+// ended the whole task; a soak run stopped that way at 9 of 13 milestones
+// while it was still making progress.
+type alwaysRejects struct{}
+
+func (alwaysRejects) Name() string { return "always_rejects" }
+func (alwaysRejects) Check(string, LintContext) (bool, string) {
+	return false, "this lint refuses every answer"
+}
+
+func TestRunSegmentsKeepsGoingAfterABudgetBlock(t *testing.T) {
+	llm := &scriptedLLM{finishAt: 99}
+	svc := buildSegmentedService(t, "segments-budget-block", llm, nil)
+	defer svc.Close()
+	svc.OutputLints().RegisterGlobal(alwaysRejects{})
+
+	res, err := svc.RunSegments(context.Background(), "Work forever.", LongRunConfig{
+		MaxSegments:      3,
+		RoundsPerSegment: 2,
+	})
+	if err != nil {
+		t.Fatalf("RunSegments: %v", err)
+	}
+	// Every segment here blocks on StopReasonMaxTurns. None of them refused
+	// anything, so none of them should end the task.
+	if res.Stop == LongRunStopBlocked {
+		t.Fatalf("a segment that ran out of rounds ended the whole task as blocked "+
+			"(segments run: %d)", len(res.Segments))
+	}
+	if len(res.Segments) != 3 {
+		t.Errorf("ran %d segments, want all 3", len(res.Segments))
+	}
+	for _, seg := range res.Segments {
+		if seg.StopReason != StopReasonMaxTurns {
+			t.Errorf("segment %d stopped with %q, expected the budget to run out",
+				seg.Index, seg.StopReason)
+		}
+	}
+}

@@ -209,6 +209,11 @@ func (s *Service) prepareTurnInputsWithConfig(ctx context.Context, currentAgent 
 	if cfg != nil && cfg.resumedWorkspace != "" {
 		systemMsg += "\n\n## Files already in the workspace\n" + cfg.resumedWorkspace
 	}
+	// And the notes the agent left itself: the one file whose contents, not
+	// just its name, survive into later stretches of the same task.
+	if cfg != nil && cfg.resumedNotes != "" {
+		systemMsg += "\n\n## Notes carried across this task\n" + cfg.resumedNotes
+	}
 	genMessages := append([]domain.Message{{Role: "system", Content: systemMsg}}, messages...)
 	return tools, genMessages
 }
