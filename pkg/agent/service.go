@@ -578,6 +578,21 @@ func (s *Service) Run(ctx context.Context, goal string, opts ...RunOption) (*Exe
 // runWithConfig runs the loop and collects its event stream into an
 // ExecutionResult. There is no separate non-streaming implementation.
 func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig) (*ExecutionResult, error) {
+	return s.runWithConfigTee(ctx, goal, cfg, nil)
+}
+
+// runWithConfigTee is runWithConfig with somewhere to copy the events to as
+// they arrive.
+//
+// It exists for RunSegmentsStream: a supervised task's segments each run
+// through here, and without a tee every event they produce is collected into
+// a result and thrown away, leaving a host with a window nothing to draw for
+// however many hours the task lasts.
+//
+// sink may be nil. A send that cannot complete is dropped rather than allowed
+// to wedge the loop — a consumer that stopped reading must not be able to stop
+// the run.
+func (s *Service) runWithConfigTee(ctx context.Context, goal string, cfg *RunConfig, sink chan<- *Event) (*ExecutionResult, error) {
 	startedAt := time.Now()
 	s.resetRunMemorySaved()
 	s.setRunning(true)
@@ -599,6 +614,12 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 	for evt := range events {
 		if evt == nil {
 			continue
+		}
+		if sink != nil {
+			select {
+			case sink <- evt:
+			case <-ctx.Done():
+			}
 		}
 		if evt.TokensUsed > 0 {
 			result.EstimatedTokens += evt.TokensUsed

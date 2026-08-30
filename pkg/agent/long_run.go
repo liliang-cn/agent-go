@@ -253,6 +253,12 @@ func segmentRetryDelay(base time.Duration, consecutiveFailures int) time.Duratio
 // are overridden — those are the supervisor's to set — so pass
 // RoundsPerSegment instead of the former.
 func (s *Service) RunSegments(ctx context.Context, goal string, cfg LongRunConfig, opts ...RunOption) (*LongRunResult, error) {
+	return s.runSegments(ctx, goal, cfg, nil, opts...)
+}
+
+// runSegments is RunSegments with somewhere to forward its segments' events.
+// sink may be nil; RunSegmentsStream supplies one.
+func (s *Service) runSegments(ctx context.Context, goal string, cfg LongRunConfig, sink chan<- *Event, opts ...RunOption) (*LongRunResult, error) {
 	if s == nil {
 		return nil, fmt.Errorf("agent: RunSegments on a nil service")
 	}
@@ -351,7 +357,11 @@ func (s *Service) RunSegments(ctx context.Context, goal string, cfg LongRunConfi
 		s.emitSegmentObserved(ctx, SegmentInfo{
 			TaskID: taskID, Index: i, Total: cfg.MaxSegments, SessionID: sessionID,
 		})
-		result, err := s.Run(ctx, goal, segmentOpts...)
+		segCfg := DefaultRunConfig()
+		for _, opt := range segmentOpts {
+			opt(segCfg)
+		}
+		result, err := s.runWithConfigTee(ctx, goal, segCfg, sink)
 		seg := SegmentOutcome{
 			Index:        i,
 			SessionID:    sessionID,
