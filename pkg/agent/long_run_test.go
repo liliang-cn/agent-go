@@ -298,6 +298,9 @@ func TestRunSegmentsKeepsGoingWhileThePlanHasUncheckedSteps(t *testing.T) {
 	res, err := svc.RunSegments(context.Background(), "Work.", LongRunConfig{
 		MaxSegments:      3,
 		RoundsPerSegment: 2,
+		// Named explicitly: an unnamed key is now scoped to the task id, so a
+		// pre-seeded plan has to say which key it seeded.
+		PlanKey: scratchpadDefaultKey,
 	})
 	if err != nil {
 		t.Fatalf("RunSegments: %v", err)

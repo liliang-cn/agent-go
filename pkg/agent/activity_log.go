@@ -170,6 +170,36 @@ func (l *ActivityLog) OnCompaction(_ context.Context, info CompactionInfo) {
 		info.Round, info.Trigger, info.MessagesBefore, info.MessagesAfter, info.ContextTokens)
 }
 
+// OnError records what went wrong. A long run's tool failures reach nobody
+// otherwise: its events go to whoever called RunStream, and on a run that
+// lasts hours that is a channel nobody is reading.
+func (l *ActivityLog) OnError(_ context.Context, info ErrorInfo) {
+	marker := info.Marker
+	if marker == "" {
+		marker = "error"
+	}
+	l.line("     ERROR    %s: %s", marker, oneLine(info.Message, 240))
+}
+
+// OnSegment brackets a segment of a long run, so the boundaries are in the log
+// rather than inferred from round numbers restarting at 1.
+func (l *ActivityLog) OnSegment(_ context.Context, info SegmentInfo) {
+	if !info.Ending {
+		l.line("──── segment %d/%d start  session=%s", info.Index, info.Total, shortSessionID(info.SessionID))
+		return
+	}
+	status := string(info.StopReason)
+	if info.Err != "" {
+		status = "FAILED: " + oneLine(info.Err, 80)
+	}
+	productive := ""
+	if !info.Productive {
+		productive = " (changed nothing)"
+	}
+	l.line("──── segment %d/%d end    %s %s $%.4f%s",
+		info.Index, info.Total, status, shortDuration(info.Duration), info.CostUSD, productive)
+}
+
 func (l *ActivityLog) OnCheckpoint(_ context.Context, info CheckpointInfo) {
 	l.line("r%-3d ckpt     %s msgs=%d", info.Round, info.Reason, info.Messages)
 }
@@ -219,4 +249,13 @@ func shortDuration(d time.Duration) string {
 	default:
 		return fmt.Sprintf("%dh%02dm", int(d.Hours()), int(d.Minutes())%60)
 	}
+}
+
+// shortSessionID trims a UUID to its first block: enough to tell two segments
+// apart in a log, short enough not to dominate the line.
+func shortSessionID(id string) string {
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
 }

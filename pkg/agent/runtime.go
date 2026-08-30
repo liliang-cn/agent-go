@@ -1505,6 +1505,7 @@ func (r *Runtime) emitTurnState(stage, reason string, round int, toolCount int) 
 
 // Helpers to emit events
 func (r *Runtime) emit(t EventType, content string) {
+	r.observeError(t, "", content)
 	r.eventChan <- &Event{
 		ID:        uuid.New().String(),
 		Type:      t,
@@ -1515,9 +1516,29 @@ func (r *Runtime) emit(t EventType, content string) {
 	}
 }
 
+// observeError fans an error event out to observers. It sits in emit rather
+// than at each call site so a new error path cannot be added without being
+// visible — which is how EventTypeError came to have a dozen producers and no
+// observer at all.
+func (r *Runtime) observeError(t EventType, marker, content string) {
+	if r == nil || r.svc == nil || t != EventTypeError {
+		return
+	}
+	info := ErrorInfo{
+		TaskID:    currentTaskID(r.session),
+		SessionID: r.sessionID(),
+		AgentName: r.currentAgentName(),
+		Marker:    marker,
+		Message:   content,
+	}
+	ctx := context.Background()
+	r.svc.emitObserver(func(o Observer) { o.OnError(ctx, info) })
+}
+
 // emitMarked is emit() with a DebugType marker, letting consumers distinguish
 // sub-kinds of an event (e.g. a recoverable "lint_retry" vs a fatal error).
 func (r *Runtime) emitMarked(t EventType, marker, content string) {
+	r.observeError(t, marker, content)
 	r.eventChan <- &Event{
 		ID:        uuid.New().String(),
 		Type:      t,

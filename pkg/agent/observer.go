@@ -75,6 +75,24 @@ type Observer interface {
 	// event stream, but a run's events go to whoever called RunStream, and
 	// the thing you attach to a run you cannot watch is an Observer.
 	OnCompaction(ctx context.Context, info CompactionInfo)
+
+	// OnError fires for every error the runtime puts on its event stream:
+	// a tool that failed, a compaction that could not summarise, a history
+	// write that did not land.
+	//
+	// These were the events most worth seeing and the ones with no observer
+	// at all — eighteen event types against twelve callbacks, and this was
+	// the gap. A run nobody is watching interactively is exactly the run
+	// whose tool failures need to reach a log file.
+	OnError(ctx context.Context, info ErrorInfo)
+
+	// OnSegment fires at the start and end of each RunSegments segment.
+	//
+	// long_run.go emitted nothing at all: a supervisor driving a task across
+	// eleven segments and an hour was, from outside, one opaque call. Segment
+	// boundaries had to be reverse-engineered from round numbers restarting
+	// at 1.
+	OnSegment(ctx context.Context, info SegmentInfo)
 }
 
 // ModelInfo identifies a single model turn. SpanID is a stable per-turn id;
@@ -194,6 +212,37 @@ type CompactionInfo struct {
 	EstimatedTokens int
 }
 
+// ErrorInfo describes one error the runtime reported.
+type ErrorInfo struct {
+	TaskID    string
+	SessionID string
+	AgentName string
+	Round     int
+	// Marker distinguishes sub-kinds that share EventTypeError — "lint_retry",
+	// "history_persist_failed", "workflow_error" — and is empty for the rest.
+	Marker  string
+	Message string
+}
+
+// SegmentInfo describes one segment of a long run.
+type SegmentInfo struct {
+	TaskID string
+	// Index is 0-based, matching LongRunResult.Segments.
+	Index int
+	// Total is the configured segment budget.
+	Total int
+	// SessionID is this segment's own session; every segment gets a new one.
+	SessionID string
+	// Ending is false at the start of a segment and true at its end.
+	Ending bool
+	// The rest are set only when Ending.
+	StopReason StopReason
+	Duration   time.Duration
+	Productive bool
+	CostUSD    float64
+	Err        string
+}
+
 // CheckpointInfo describes a terminal checkpoint snapshot.
 type CheckpointInfo struct {
 	TaskID    string
@@ -223,6 +272,8 @@ func (BaseObserver) OnCheckpoint(context.Context, CheckpointInfo)               
 func (BaseObserver) OnLint(context.Context, LintInfo)                           {}
 func (BaseObserver) OnModelRetry(context.Context, ModelRetryInfo)               {}
 func (BaseObserver) OnCompaction(context.Context, CompactionInfo)               {}
+func (BaseObserver) OnError(context.Context, ErrorInfo)                         {}
+func (BaseObserver) OnSegment(context.Context, SegmentInfo)                     {}
 
 // Ensure BaseObserver satisfies the interface.
 var _ Observer = BaseObserver{}

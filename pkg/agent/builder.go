@@ -612,6 +612,13 @@ func (b *Builder) build() (*Service, error) {
 			svc.SetPlanStore(ps)
 		}
 	}
+	if svc.checkpointSink == nil && svc.store != nil {
+		// Same reason as the plan above: the checkpoint machinery was fully
+		// built and wired to nothing. Manager was the only caller of
+		// SetCheckpointSink, so an ordinary Build() wrote no snapshots and
+		// CheckpointEveryRounds was a knob attached to a missing sink.
+		svc.SetCheckpointSink(newServiceCheckpointSink(svc.store))
+	}
 	if b.permissionPolicy != nil {
 		svc.SetPermissionPolicy(b.permissionPolicy)
 	}

@@ -249,6 +249,7 @@ func (s *Service) RunSegments(ctx context.Context, goal string, cfg LongRunConfi
 	if s == nil {
 		return nil, fmt.Errorf("agent: RunSegments on a nil service")
 	}
+	callerNamedPlanKey := strings.TrimSpace(cfg.PlanKey) != ""
 	cfg = cfg.resolved()
 
 	began := time.Now()
@@ -261,6 +262,16 @@ func (s *Service) RunSegments(ctx context.Context, goal string, cfg LongRunConfi
 	}
 	if named := strings.TrimSpace(probe.TaskID); named != "" {
 		taskID = named
+	}
+
+	// Scope the plan to the task. PlanKey defaulted to a single shared
+	// constant, which was harmless while a plan lived in memory for the
+	// lifetime of one Service — and became cross-task contamination the
+	// moment plans were persisted: two long tasks against one database would
+	// read and overwrite each other's steps. A caller who names PlanKey keeps
+	// their name, including when they name the default one.
+	if !callerNamedPlanKey {
+		cfg.PlanKey = scratchpadDefaultKey + ":" + taskID
 	}
 
 	out := &LongRunResult{TaskID: taskID}
@@ -325,6 +336,9 @@ func (s *Service) RunSegments(ctx context.Context, goal string, cfg LongRunConfi
 		)
 
 		segStart := time.Now()
+		s.emitSegmentObserved(ctx, SegmentInfo{
+			TaskID: taskID, Index: i, Total: cfg.MaxSegments, SessionID: sessionID,
+		})
 		result, err := s.Run(ctx, goal, segmentOpts...)
 		seg := SegmentOutcome{
 			Index:        i,
@@ -349,6 +363,11 @@ func (s *Service) RunSegments(ctx context.Context, goal string, cfg LongRunConfi
 		}
 		out.Segments = append(out.Segments, seg)
 		out.Text = seg.Text
+		s.emitSegmentObserved(ctx, SegmentInfo{
+			TaskID: taskID, Index: i, Total: cfg.MaxSegments, SessionID: sessionID,
+			Ending: true, StopReason: seg.StopReason, Duration: seg.Duration,
+			Productive: seg.Productive, CostUSD: out.TotalCostUSD, Err: seg.Error,
+		})
 
 		switch {
 		case ctx.Err() != nil || (result != nil && result.Cancelled):
@@ -475,4 +494,16 @@ func (s *Service) segmentChangedSomething(result *ExecutionResult) bool {
 		}
 	}
 	return false
+}
+
+// emitSegmentObserved reports a segment boundary.
+//
+// RunSegments emitted nothing at all before this: a supervisor driving a task
+// across eleven segments and an hour was one opaque call from outside, and its
+// boundaries had to be reverse-engineered from round numbers restarting at 1.
+func (s *Service) emitSegmentObserved(ctx context.Context, info SegmentInfo) {
+	if s == nil {
+		return
+	}
+	s.emitObserver(func(o Observer) { o.OnSegment(ctx, info) })
 }
