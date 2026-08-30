@@ -183,10 +183,14 @@ type CompactionInfo struct {
 	// MessagesBefore / MessagesAfter bracket what was folded away.
 	MessagesBefore int
 	MessagesAfter  int
-	// EstimatedTokens is the runtime's own estimate that crossed the
-	// threshold. It is an estimate, not the provider's count — the two
-	// disagree, and a reader comparing this against a usage figure should
-	// know which one they are holding.
+	// ContextTokens is the runtime's own estimate of the conversation being
+	// folded — the number that crossed the threshold. It is an estimate, not
+	// the provider's count.
+	ContextTokens int
+	// EstimatedTokens is the run's cumulative token spend so far. It is a
+	// different quantity from ContextTokens and much larger; they were the
+	// same field once, and the log line read "est 317280 tokens" while
+	// compacting a 25k conversation.
 	EstimatedTokens int
 }
 

@@ -145,10 +145,73 @@ func (tc *TokenCounter) EstimateMessagesTokens(messages []domain.Message, model 
 		totalTokens += 2
 		// Add tokens for content
 		totalTokens += tc.EstimateTokens(msg.Content, model)
+
+		// Everything else a message can carry. This used to count Content
+		// alone, and Content is empty on exactly the messages a tool-using
+		// agent makes largest: an assistant turn whose payload is a tool
+		// call. An fs_write carries a whole source file in its arguments and
+		// estimated at five tokens.
+		//
+		// The consequence was not a slightly-off number. Auto-compaction
+		// fires when this estimate crosses CompactionDefaultThresholdTokens,
+		// so on a coding history the estimate read ~1.5% of the truth and the
+		// threshold was never reached: measured on a real run, twenty-five
+		// rounds grew the prompt from 5.5k to 30.6k provider-reported tokens
+		// and compacted zero times. Compaction was not misconfigured, it was
+		// unreachable.
+		totalTokens += tc.EstimateTokens(msg.ReasoningContent, model)
+		for _, part := range msg.Parts {
+			totalTokens += tc.EstimateTokens(part.Text, model)
+		}
+		for _, call := range msg.ToolCalls {
+			totalTokens += tc.EstimateTokens(call.Function.Name, model)
+			totalTokens += estimateToolArgumentTokens(tc, call.Function.Arguments, model)
+			// id + type + the JSON scaffolding the provider serialises around
+			// every call.
+			totalTokens += 8
+		}
+		if msg.ToolCallID != "" {
+			totalTokens += 4
+		}
+
 		// Add separator tokens (usually 3-4 tokens)
 		totalTokens += 3
 	}
 	return totalTokens
+}
+
+// estimateToolArgumentTokens sizes a tool call's arguments. Values arrive as
+// decoded JSON, so it walks the structure rather than guessing from the map's
+// length — a single string value can be an entire file.
+func estimateToolArgumentTokens(tc *TokenCounter, args map[string]interface{}, model string) int {
+	total := 0
+	var walk func(v interface{})
+	walk = func(v interface{}) {
+		switch t := v.(type) {
+		case string:
+			total += tc.EstimateTokens(t, model)
+		case map[string]interface{}:
+			for k, sub := range t {
+				total += tc.EstimateTokens(k, model) + 2
+				walk(sub)
+			}
+		case []interface{}:
+			for _, sub := range t {
+				walk(sub)
+			}
+		case nil:
+			total++
+		default:
+			// Numbers and booleans serialise short; one token each is close
+			// enough and cannot be wrong by much.
+			total++
+		}
+	}
+	for k, v := range args {
+		total += tc.EstimateTokens(k, model) + 2
+		walk(v)
+	}
+	return total
 }
 
 // EstimateConversationTokens estimates tokens for a conversation

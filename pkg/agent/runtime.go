@@ -1039,6 +1039,7 @@ func (r *Runtime) runCompactionRound(ctx context.Context, state *queryLoopState,
 		Trigger:         string(reason),
 		MessagesBefore:  len(messages),
 		MessagesAfter:   len(newMsgs),
+		ContextTokens:   r.svc.estimateConversationTokens(messages),
 		EstimatedTokens: state.Budget.EstimatedTokens,
 	}
 	r.svc.emitObserver(func(o Observer) { o.OnCompaction(ctx, info) })

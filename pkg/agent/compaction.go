@@ -58,6 +58,20 @@ func (s *Service) shouldCompactByTokens(msgs []domain.Message, model string, thr
 //	[ last keepRecent messages   ]
 //
 // keepRecent <= 0 falls back to CompactionDefaultKeepRecent.
+// estimateConversationTokens sizes a message slice the same way the
+// compaction trigger does, so a reported number and the decision that
+// produced it can never disagree.
+func (s *Service) estimateConversationTokens(msgs []domain.Message) int {
+	if s == nil || s.tokenCounter == nil {
+		return 0
+	}
+	model := ""
+	if info := s.Info(); info.Model != "" {
+		model = info.Model
+	}
+	return s.tokenCounter.EstimateConversationTokens(msgs, model)
+}
+
 func (s *Service) compactMessages(ctx context.Context, msgs []domain.Message, keepRecent int) ([]domain.Message, error) {
 	if s == nil || len(msgs) == 0 {
 		return msgs, nil
