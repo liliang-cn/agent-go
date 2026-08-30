@@ -163,7 +163,12 @@ func (s *Store) SaveTaskFramesFromSession(session *Session) error {
 		return nil
 	}
 	framesByTask := make(map[string][]taskpkg.Frame)
-	for _, message := range session.Messages {
+	// Same rule as SaveSession above, and this is the caller that was missing
+	// it: the run-stream observer appends to the session on its own goroutine
+	// while the loop persists it, so ranging session.Messages directly is a
+	// data race — and on a long run, one that has hours to hit an
+	// index-out-of-range as the slice grows mid-iteration.
+	for _, message := range session.GetMessages() {
 		taskID := strings.TrimSpace(message.TaskID)
 		if taskID == "" {
 			continue
@@ -311,7 +316,7 @@ func (s *Store) ListMessagesForTask(taskID string, limit int) ([]UnifiedTaskMess
 		if session == nil {
 			continue
 		}
-		for _, message := range session.Messages {
+		for _, message := range session.GetMessages() {
 			if strings.TrimSpace(message.TaskID) == taskID {
 				out = append(out, UnifiedTaskMessage{SessionID: session.ID, Message: message})
 				if len(out) >= limit {
