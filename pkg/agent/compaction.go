@@ -180,19 +180,47 @@ func (s *Service) summarizeForCompaction(ctx context.Context, middle []domain.Me
 		"are not in the transcript.\n\n" +
 		"<transcript>\n" + transcript + "\n</transcript>"
 
-	summary, err := s.llmService.Generate(ctx, prompt, &domain.GenerationOptions{
-		Temperature: 0.2,
-		MaxTokens:   800,
-	})
-	if err != nil {
-		return "", fmt.Errorf("compaction: summary LLM call failed: %w", err)
+	// Ask, and ask again with more room if nothing came back.
+	//
+	// This call had a fixed 800-token budget and treated an empty answer as a
+	// hard error. On a model that reasons before it writes, 800 tokens is
+	// spent thinking and the visible answer is empty — the same failure the
+	// main loop already handles by escalating (see token_budget.go), except
+	// here the consequence was worse: compaction returned an error, the
+	// runtime kept the unfolded history, and the context grew without bound.
+	//
+	// It was also invisible. The failure went to EventTypeError, which had no
+	// observer, so a run compacting on every round and failing on every round
+	// looked exactly like a run that never needed to compact. A synthetic
+	// transcript summarised fine at 800; the real ones did not.
+	budget := compactionSummaryMaxTokens
+	var lastErr error
+	for attempt := 0; attempt <= compactionSummaryEscalations; attempt++ {
+		summary, err := s.llmService.Generate(ctx, prompt, &domain.GenerationOptions{
+			Temperature: 0.2,
+			MaxTokens:   budget,
+		})
+		if err != nil {
+			return "", fmt.Errorf("compaction: summary LLM call failed: %w", err)
+		}
+		if summary = strings.TrimSpace(summary); summary != "" {
+			return summary, nil
+		}
+		lastErr = fmt.Errorf("compaction: summary LLM returned empty content at %d tokens", budget)
+		budget *= 4
 	}
-	summary = strings.TrimSpace(summary)
-	if summary == "" {
-		return "", fmt.Errorf("compaction: summary LLM returned empty content")
-	}
-	return summary, nil
+	return "", lastErr
 }
+
+const (
+	// compactionSummaryMaxTokens is the first budget a summary is asked for.
+	// A folded slice summarises into bullet points; what needs the room is a
+	// reasoning model's thinking, which is billed against the same cap.
+	compactionSummaryMaxTokens = 4096
+	// compactionSummaryEscalations is how many times to quadruple it before
+	// giving up — 4k to 64k, past any single summary a model should need.
+	compactionSummaryEscalations = 2
+)
 
 // renderMessagesForSummary flattens a slice of domain.Message into a
 // plain-text transcript suitable for feeding to the summary prompt.
