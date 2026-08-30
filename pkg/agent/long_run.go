@@ -391,6 +391,14 @@ func (s *Service) RunSegments(ctx context.Context, goal string, cfg LongRunConfi
 			if consecutiveFailures >= cfg.MaxConsecutiveFailures {
 				out.Stop = LongRunStopFailing
 			}
+		case result != nil && result.StopReason == StopReasonMaxBudgetUSD:
+			// The segment stopped because the task ran out of money, which is
+			// the task's outcome and not the segment's verdict. Before the
+			// remainder was handed down, this could only happen between
+			// segments and the loop labelled it itself; now that a segment can
+			// hit the ceiling mid-flight, the label has to survive the trip
+			// back up or a task that spent its budget reports "blocked".
+			out.Stop = LongRunStopCostLimit
 		case result.Blocked && result.StopReason != StopReasonMaxTurns:
 			// A considered "I cannot proceed" is an answer. Starting another
 			// segment would spend the budget arriving at it again.
