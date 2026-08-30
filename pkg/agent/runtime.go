@@ -1031,6 +1031,17 @@ func (r *Runtime) runCompactionRound(ctx context.Context, state *queryLoopState,
 		"Compacted %d → %d messages (%s)",
 		len(messages), len(newMsgs), reason,
 	))
+	info := CompactionInfo{
+		TaskID:          currentTaskID(r.session),
+		SessionID:       r.sessionID(),
+		AgentName:       r.currentAgentName(),
+		Round:           state.CurrentRound,
+		Trigger:         string(reason),
+		MessagesBefore:  len(messages),
+		MessagesAfter:   len(newMsgs),
+		EstimatedTokens: state.Budget.EstimatedTokens,
+	}
+	r.svc.emitObserver(func(o Observer) { o.OnCompaction(ctx, info) })
 	return newMsgs, true
 }
 

@@ -61,6 +61,20 @@ type Observer interface {
 	// escalates its token budget every round is paying for reasoning it
 	// never uses, and its operator could not see it happening.
 	OnModelRetry(ctx context.Context, info ModelRetryInfo)
+
+	// OnCompaction fires when the runtime folds older history into a
+	// summary.
+	//
+	// This is the largest thing that happens to a run without anyone
+	// watching being told. Compaction deletes the model's working memory
+	// mid-segment: tool results it was about to use, files it had already
+	// read. A soak showed a segment's prompt halving twice in forty-six
+	// rounds, each drop followed by the agent re-reading the same seven
+	// files — and the only way to see it was to plot the token counts and
+	// infer backwards. `EventTypeCompactBoundary` has always been on the
+	// event stream, but a run's events go to whoever called RunStream, and
+	// the thing you attach to a run you cannot watch is an Observer.
+	OnCompaction(ctx context.Context, info CompactionInfo)
 }
 
 // ModelInfo identifies a single model turn. SpanID is a stable per-turn id;
@@ -157,6 +171,25 @@ type ModelRetryInfo struct {
 	Delay time.Duration
 }
 
+// CompactionInfo describes one history-folding step.
+type CompactionInfo struct {
+	TaskID    string
+	SessionID string
+	AgentName string
+	Round     int
+	// Trigger is why compaction ran: the token threshold, or the budget's
+	// diminishing-returns signal.
+	Trigger string
+	// MessagesBefore / MessagesAfter bracket what was folded away.
+	MessagesBefore int
+	MessagesAfter  int
+	// EstimatedTokens is the runtime's own estimate that crossed the
+	// threshold. It is an estimate, not the provider's count — the two
+	// disagree, and a reader comparing this against a usage figure should
+	// know which one they are holding.
+	EstimatedTokens int
+}
+
 // CheckpointInfo describes a terminal checkpoint snapshot.
 type CheckpointInfo struct {
 	TaskID    string
@@ -185,6 +218,7 @@ func (BaseObserver) OnSubAgentEnd(context.Context, SubAgentInfo, any, error)    
 func (BaseObserver) OnCheckpoint(context.Context, CheckpointInfo)               {}
 func (BaseObserver) OnLint(context.Context, LintInfo)                           {}
 func (BaseObserver) OnModelRetry(context.Context, ModelRetryInfo)               {}
+func (BaseObserver) OnCompaction(context.Context, CompactionInfo)               {}
 
 // Ensure BaseObserver satisfies the interface.
 var _ Observer = BaseObserver{}

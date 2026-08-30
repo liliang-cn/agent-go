@@ -162,6 +162,14 @@ func (l *ActivityLog) OnModelRetry(_ context.Context, info ModelRetryInfo) {
 	}
 }
 
+// OnCompaction records history being folded away. Read this line as "the
+// model just forgot everything older than the last few messages": the
+// re-reads that follow it are not the agent being redundant.
+func (l *ActivityLog) OnCompaction(_ context.Context, info CompactionInfo) {
+	l.line("r%-3d compact  %s msgs %d -> %d (est %d tokens)",
+		info.Round, info.Trigger, info.MessagesBefore, info.MessagesAfter, info.EstimatedTokens)
+}
+
 func (l *ActivityLog) OnCheckpoint(_ context.Context, info CheckpointInfo) {
 	l.line("r%-3d ckpt     %s msgs=%d", info.Round, info.Reason, info.Messages)
 }
