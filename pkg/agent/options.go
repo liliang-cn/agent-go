@@ -88,3 +88,42 @@ func (b *Builder) WithSubagents(specs ...SubagentSpec) *Builder {
 	b.subagents = append(b.subagents, specs...)
 	return b
 }
+
+// WithDelegation decides whether the three built-in delegation tools —
+// delegate_to_subagent, delegate_async and subagent_send_message — go into the
+// schema the model sees.
+//
+// The default is derived, not fixed: they are offered when named sub-agents
+// exist (WithSubagents) and withheld when they do not. That is a change from
+// the old behaviour, where all three were registered at construction and
+// offered on every request whatever the caller had configured — a four-tool
+// agent with no sub-agents was billed for nine tool schemas per turn, and the
+// model could call tools that only re-run a clone of itself.
+//
+// Pass true to get them without configuring sub-agents: running a sub-goal in
+// an isolated context and getting only its result back is a real capability,
+// and the generic tool is the only way to reach it. Pass false to withhold them
+// even from an agent that has sub-agents, when the named `task` tool is the
+// only route you want the model to take.
+//
+// Either way the handlers stay in the registry and remain callable by name;
+// this governs exposure to the model, not registration.
+func (b *Builder) WithDelegation(enabled bool) *Builder {
+	b.delegation = &enabled
+	return b
+}
+
+// WithLengthLimits decides whether the system prompt carries the numeric length
+// anchors: "keep text between tool calls to ≤25 words. Keep final responses to
+// ≤100 words unless the task requires more detail."
+//
+// The default is on, and stays on — agents in production are tuned against
+// those numbers and silently lifting the cap would change everyone's output
+// length. But it is an opinion about the answer, not a rule about the runtime,
+// and it can contradict the caller's own instructions: an agent told to cite a
+// source for every statement cannot also stay under 100 words, and the caller
+// never opted into the cap. Pass false when your own prompt owns the length.
+func (b *Builder) WithLengthLimits(enabled bool) *Builder {
+	b.omitLengthLimits = !enabled
+	return b
+}

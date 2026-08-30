@@ -197,8 +197,16 @@ func (s *Service) constraintToolCatalog() []toolCatalogEntry {
 	}
 	names := s.toolRegistry.Names()
 	sort.Strings(names)
+	// A tool this service will never offer must not appear here either. The
+	// catalogue is what the extraction names in satisfied_by, and a constraint
+	// naming a withheld tool would put it straight back into the schema through
+	// ensureRequiredToolsVisible — undoing the gate through the back door.
+	hideDelegation := !s.offersDelegationTools()
 	out := make([]toolCatalogEntry, 0, len(names))
 	for _, name := range names {
+		if hideDelegation && subagentDelegationToolNames[name] {
+			continue
+		}
 		def, ok := s.toolRegistry.DefinitionOf(name)
 		desc := ""
 		if ok {

@@ -193,17 +193,26 @@ func (s *Service) buildSystemPromptSections(ctx context.Context, agent *Agent, o
 	if s.promptManager == nil {
 		return nil
 	}
-	resolved, err := s.promptManager.ResolveSections(ctx, []string{
+	names := []string{
 		"identity",
 		"operational",
 		"system_context",
 		"frc",
-		"numeric_length_anchors",
+	}
+	// The length anchors are on by default and only leave the prompt when the
+	// caller says so. Dropping the name here rather than emptying the section
+	// keeps the section registry itself untouched, so nothing else that resolves
+	// sections changes behaviour. See Builder.WithLengthLimits.
+	if !s.omitLengthLimits {
+		names = append(names, "numeric_length_anchors")
+	}
+	names = append(names,
 		"memory",
 		"messaging",
 		"tool_catalog",
 		"web_search",
-	}, sectionData)
+	)
+	resolved, err := s.promptManager.ResolveSections(ctx, names, sectionData)
 
 	if err == nil && len(resolved) > 0 {
 		sections := make([]systemPromptSection, 0, len(resolved))

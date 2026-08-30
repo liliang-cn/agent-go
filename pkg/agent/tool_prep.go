@@ -29,6 +29,7 @@ func (s *Service) buildToolPreparationPolicy(ctx context.Context) toolPreparatio
 		ExposeSearchTools:     s.shouldExposeSearchTools(),
 		HideNativeWebSearch:   s.shouldHideMCPWebSearchTools(),
 		HideRegistryWebSearch: s.shouldHideRegistryWebSearchTool(),
+		HideDelegationTools:   !s.offersDelegationTools(),
 	}
 	if session := getCurrentSession(ctx); session != nil {
 		policy.SessionID = strings.TrimSpace(session.GetID())
@@ -292,6 +293,9 @@ func (s *Service) collectTools(ctx context.Context, currentAgent *Agent, policy 
 			if policy.HideRegistryWebSearch && d.Function.Name == registryWebSearchToolName {
 				continue
 			}
+			if policy.HideDelegationTools && subagentDelegationToolNames[d.Function.Name] {
+				continue
+			}
 			toolsMap[d.Function.Name] = d
 		}
 	}
@@ -454,6 +458,42 @@ func (s *Service) collectTools(ctx context.Context, currentAgent *Agent, policy 
 // decision to actually use it is made by catalogue size in
 // collectAllAvailableToolsWithPolicy; this only lets an operator switch the
 // mechanism off entirely.
+// subagentDelegationToolNames are the three built-in tools whose only purpose
+// is handing work to a sub-agent.
+var subagentDelegationToolNames = map[string]bool{
+	"delegate_to_subagent":  true,
+	"delegate_async":        true,
+	"subagent_send_message": true,
+}
+
+// offersDelegationTools reports whether this service has anything to delegate
+// to, and therefore whether the three delegation tools belong in the schema.
+//
+// They used to be registered unconditionally at construction and offered on
+// every request. For a caller with four tools of their own and no sub-agents
+// that meant nine tool schemas per request instead of six — paid on every turn
+// of every run, and the model could call them. What it got for the money is the
+// point: with nothing configured, delegate_to_subagent runs a clone of the same
+// agent with the same tools on a sub-goal. That is a context-isolation trick,
+// not delegation, and nobody asked for it.
+//
+// So the tools follow the configuration: named sub-agents (WithSubagents) make
+// delegation mean something, and WithDelegation is the way to say you want the
+// generic tools anyway — the isolation trick is a real capability and removing
+// the only way to reach it would be a regression, not a saving.
+//
+// They are only withheld from the schema, never unregistered: the handlers stay
+// callable by name for PTC's callTool() and for a host driving dispatch itself.
+func (s *Service) offersDelegationTools() bool {
+	if s == nil {
+		return false
+	}
+	if s.delegationTools != nil {
+		return *s.delegationTools
+	}
+	return s.subagentsConfigured
+}
+
 func (s *Service) shouldExposeSearchTools() bool {
 	if s == nil || s.cfg == nil {
 		return true

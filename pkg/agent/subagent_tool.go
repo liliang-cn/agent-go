@@ -126,6 +126,10 @@ func RegisterSubagentTool(svc *Service, specs ...SubagentSpec) {
 	if svc == nil || len(specs) == 0 {
 		return
 	}
+	// Named sub-agents are the thing the built-in delegation tools delegate TO,
+	// so installing them is also what earns those tools their place in the
+	// schema. See Service.offersDelegationTools.
+	svc.subagentsConfigured = true
 	byName := make(map[string]SubagentSpec, len(specs))
 	names := make([]string, 0, len(specs))
 	var catalog strings.Builder

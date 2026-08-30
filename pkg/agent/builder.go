@@ -129,6 +129,12 @@ type Builder struct {
 	extraModules []Module
 	subagents    []SubagentSpec
 
+	// delegation is nil unless WithDelegation was called; nil means the built-in
+	// delegation tools follow whether sub-agents were configured.
+	delegation *bool
+	// omitLengthLimits drops the numeric length anchors from the system prompt.
+	omitLengthLimits bool
+
 	// Execution capabilities (all optional, zero-value = disabled)
 	sandbox       sandbox.Sandbox
 	enableDeliver bool
@@ -691,6 +697,10 @@ func (b *Builder) build() (*Service, error) {
 	if len(b.subagents) > 0 {
 		RegisterSubagentTool(svc, b.subagents...)
 	}
+	// Applied after RegisterSubagentTool so an explicit WithDelegation still
+	// wins over what the sub-agent configuration implies.
+	svc.delegationTools = b.delegation
+	svc.omitLengthLimits = b.omitLengthLimits
 	return svc, nil
 }
 

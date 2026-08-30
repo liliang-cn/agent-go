@@ -165,6 +165,22 @@ type Service struct {
 	// in rounds. Set via WithAutonomy; 0 = the framework default.
 	checkpointEveryRounds int
 
+	// subagentsConfigured records that named sub-agents were installed
+	// (WithSubagents / RegisterSubagentTool). It is what makes the built-in
+	// delegation tools worth their schema bytes: without a sub-agent to hand
+	// work to, delegate_to_subagent only re-runs a clone of this same agent.
+	subagentsConfigured bool
+
+	// delegationTools overrides that derivation when the caller has an opinion.
+	// nil means "follow subagentsConfigured"; see Builder.WithDelegation, and
+	// offersDelegationTools below for the whole rule.
+	delegationTools *bool
+
+	// omitLengthLimits drops the numeric length anchors from the system prompt.
+	// The zero value keeps them, because they are the long-standing default and
+	// other callers' outputs are shaped by them. See Builder.WithLengthLimits.
+	omitLengthLimits bool
+
 	// Public access to underlying services
 	LLM     domain.Generator
 	MCP     *mcp.Service // Full access to MCP service (Chat, StartServers, etc.)
@@ -268,7 +284,11 @@ func NewService(
 	return s, nil
 }
 
-// registerBuiltInTools registers core tools that are always available
+// registerBuiltInTools registers the core tools. Registration is what makes a
+// tool callable by name; it is not what puts it in the schema the model sees.
+// The three delegation tools below are registered here for every service but
+// only offered to the model when there is something to delegate to — see
+// Service.offersDelegationTools.
 func (s *Service) registerBuiltInTools() {
 	// 1. delegate_to_subagent
 	delegateDef := domain.ToolDefinition{

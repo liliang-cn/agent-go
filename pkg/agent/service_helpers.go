@@ -29,7 +29,11 @@ type toolPreparationPolicy struct {
 	// the MCP route is the configured one and is actually present. Offering
 	// both is how one question turned into two searches.
 	HideRegistryWebSearch bool
-	RelevantSkillNames    []string
+	// HideDelegationTools drops the three built-in sub-agent tools when the
+	// service has nothing to delegate to. See Service.offersDelegationTools for
+	// why an unconfigured delegate_to_subagent is schema bytes for nothing.
+	HideDelegationTools bool
+	RelevantSkillNames  []string
 	// ForceSkillFirst promotes the matched skills' tools to the front of the
 	// schema while they are still outstanding. It used to remove every other
 	// tool instead; see promoteRelevantSkillTools for why a lexical match is

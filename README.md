@@ -128,6 +128,17 @@ result, _ := svc.Run(ctx, "Research X and write two paragraphs about it.")
 
 Runnable variants (basic, parallel, async, auto-delegation, filtering): `examples/subagent/`.
 
+Configuring sub-agents is also what puts the generic delegation tools —
+`delegate_to_subagent`, `delegate_async`, `subagent_send_message` — in the schema
+the model sees. An agent with no sub-agents is not offered them, because
+delegating with nothing configured only re-runs a clone of the same agent: three
+tool schemas (~1.9 KB) on every request for a capability nobody asked for.
+`WithDelegation(true)` asks for them anyway (running a sub-goal in an isolated
+context and getting back only its result is a real use); `WithDelegation(false)`
+withholds them even from an agent that has sub-agents, leaving `task` as the only
+route. Either way they stay registered and callable by name — this is exposure,
+not registration.
+
 ### Memory
 
 ```go
@@ -232,6 +243,13 @@ result, _ = svc.Run(ctx, goal, agent.WithRequiredDeliverables(
 result, _ = svc.Run(ctx, goal, agent.WithConstraintExtraction(false))
 ```
 
+Constraint extraction is **on by default** and costs one extra structured model
+call before the first turn of every run — a small one (temperature 0, 400 output
+tokens, 20s cap), but a real round trip. Declaring the contract yourself with
+`WithToolsDisabled` / `WithRequiredDeliverables` / `WithRequestedActions` skips
+it, and `WithConstraintExtraction(false)` turns it off outright, leaving only
+what you declared in force.
+
 A blocked run is an outcome, not an error: `result.Err()` stays nil, `result.Text()` carries the explanation — branch on `result.Blocked`.
 
 ### Tasks, checkpoint and replay
@@ -259,6 +277,17 @@ resumed, _ := manager.Tasks().ResumeFromCheckpoint(ctx, task.ID, agent.Checkpoin
 
 `agent.WithResumeMessages` is the low-level `RunOption` underneath.
 
+### System prompt length limits
+
+Every system prompt carries a length anchor by default — "keep text between tool
+calls to ≤25 words. Keep final responses to ≤100 words unless the task requires
+more detail." It is on by default and stays on, because agents in production are
+tuned against those numbers. It is an opinion about the answer rather than a rule
+about the runtime, though, and it can contradict your own instructions: an agent
+told to cite a source for every statement cannot also stay under 100 words.
+`agent.New(...).WithLengthLimits(false)` drops the section when your own prompt
+owns the length.
+
 ### Sandbox and scheduler
 
 `pkg/sandbox` provides isolated execution environments (local process and Docker); attach one with `WithSandbox(sb)` to enable the command-execution and deliverable tools. `pkg/scheduler` runs cron-style scheduled jobs with pluggable executors. `pkg/worktree` has dependency-free helpers for isolated git worktrees.
@@ -276,7 +305,7 @@ Passed to `Run` / `RunStream` per call:
 | `WithToolAllowlist(names)` / `WithToolDenylist(names)` | restrict the tool surface |
 | `WithStructuredOutput(spec)` / `WithStructuredOutputType[T]()` | enforce a JSON shape |
 | `WithRequiredDeliverables(...)` / `WithRequestedActions(...)` | declare the delivery contract |
-| `WithConstraintExtraction(bool)` | toggle the per-run constraint-extraction call |
+| `WithConstraintExtraction(bool)` | toggle the per-run constraint-extraction call (default on; off saves one model call per run) |
 | `WithSessionID(id)` / `WithTaskID(id)` / `WithRunID(id)` / `WithParentTaskID(id)` | identity and lineage |
 | `WithResumeMessages(msgs)` | continue from prior history (checkpoint replay) |
 | `WithInputParts(...)` / `WithInputImages(paths...)` | multimodal input |
@@ -284,7 +313,7 @@ Passed to `Run` / `RunStream` per call:
 | `WithAutoCompaction(threshold, keep)` / `WithoutAutoCompaction()` | context compaction policy |
 | `WithDebug(bool)` | verbose logging for one run |
 
-Builder-side options (`agent.New(...).With...`): `WithLLM`, `WithEmbedder`, `WithConfig`, `WithPrompt` / `WithSystemPrompt`, `WithMemory` / `WithGraphMemory` / `WithMemoryService`, `WithRunMemory`, `WithMCP`, `WithSkills`, `WithRAG`, `WithSubagents`, `WithSandbox`, `WithAutonomy`, `WithTool(s)`, `WithObserver`, `WithProgress`, `WithDBPath`, `WithDebug`, and `WithOptions(agent.Options{...})` for low-frequency knobs (permission policy, tool-execution policy, required skills, extra modules, observers).
+Builder-side options (`agent.New(...).With...`): `WithLLM`, `WithEmbedder`, `WithConfig`, `WithPrompt` / `WithSystemPrompt`, `WithMemory` / `WithGraphMemory` / `WithMemoryService`, `WithRunMemory`, `WithMCP`, `WithSkills`, `WithRAG`, `WithSubagents`, `WithDelegation`, `WithLengthLimits`, `WithSandbox`, `WithAutonomy`, `WithTool(s)`, `WithObserver`, `WithProgress`, `WithDBPath`, `WithDebug`, and `WithOptions(agent.Options{...})` for low-frequency knobs (permission policy, tool-execution policy, required skills, extra modules, observers).
 
 ## Providers
 

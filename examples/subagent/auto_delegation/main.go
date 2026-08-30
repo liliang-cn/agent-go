@@ -2,8 +2,11 @@
 // built-in "delegate_to_subagent" tool when facing a complex task.
 //
 // How it works:
-//   - Every Agent (non-PTC) gets "delegate_to_subagent" injected into its
-//     tool list automatically by collectAllAvailableTools().
+//   - WithDelegation(true) puts "delegate_to_subagent" in the tool list the
+//     model sees. It is not there by default: an agent with no sub-agents
+//     configured is not offered the delegation tools, because delegating with
+//     nothing configured only re-runs a clone of the same agent — schema bytes
+//     on every request for a capability the caller never asked for.
 //   - When the main Agent encounters a task that benefits from isolated
 //     sub-execution, the LLM calls the tool on its own.
 //   - The SubAgent runs with the parent Service's tools (filtered by
@@ -141,6 +144,9 @@ func main() {
 				"After all research is done, use write_report to produce the final document.").
 		WithTool(searchTool).
 		WithTool(reportTool).
+		// This example is about the generic delegation tool itself, so it asks
+		// for it outright rather than declaring named sub-agents.
+		WithDelegation(true).
 		WithProgress(func(e agent.ProgressEvent) {
 			switch e.Type {
 			case "tool_call":
