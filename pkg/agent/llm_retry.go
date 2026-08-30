@@ -176,4 +176,11 @@ func (r *Runtime) emitLLMRetry(round, attempt, maxAttempts int, delay time.Durat
 		"delay_ms":     delay.Milliseconds(),
 		"error":        err.Error(),
 	})
+	r.emitModelRetryObserved(ModelRetryInfo{
+		Round:   round,
+		Kind:    "transient_error",
+		Attempt: attempt,
+		Reason:  err.Error(),
+		Delay:   delay,
+	})
 }

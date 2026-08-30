@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 )
@@ -48,6 +49,18 @@ type Observer interface {
 	// did it, but nothing an observer could see, so the answer was
 	// unavailable to anyone watching from outside the event stream.
 	OnLint(ctx context.Context, info LintInfo)
+
+	// OnModelRetry fires when the runtime asks the model again for the same
+	// turn — because the provider erred transiently, or because the answer
+	// came back truncated before it produced anything.
+	//
+	// Both retries happen inside a single model span, so from the outside a
+	// turn that took three attempts looked exactly like one that took one:
+	// the span opened, time passed, an answer arrived. That is the same gap
+	// OnLint was added to close, one layer down. A run that silently
+	// escalates its token budget every round is paying for reasoning it
+	// never uses, and its operator could not see it happening.
+	OnModelRetry(ctx context.Context, info ModelRetryInfo)
 }
 
 // ModelInfo identifies a single model turn. SpanID is a stable per-turn id;
@@ -120,6 +133,30 @@ type LintInfo struct {
 	Retrying bool
 }
 
+// ModelRetryInfo describes one re-ask of a model turn.
+type ModelRetryInfo struct {
+	TaskID    string
+	SessionID string
+	AgentName string
+	Round     int
+	// SpanID matches the OnModelStart / OnModelEnd pair this retry happened
+	// inside, so a listener can attribute it to the right turn.
+	SpanID string
+	// Kind is why: "transient_error" or "max_tokens_truncation".
+	Kind string
+	// Attempt is 1-based within its kind.
+	Attempt int
+	// Reason carries the provider error text, or the finish_reason that
+	// showed the answer had been cut off.
+	Reason string
+	// MaxTokensFrom / MaxTokensTo are set for a budget escalation and zero
+	// otherwise.
+	MaxTokensFrom int
+	MaxTokensTo   int
+	// Delay is how long the runtime waited before re-asking.
+	Delay time.Duration
+}
+
 // CheckpointInfo describes a terminal checkpoint snapshot.
 type CheckpointInfo struct {
 	TaskID    string
@@ -147,6 +184,7 @@ func (BaseObserver) OnSubAgentStart(context.Context, SubAgentInfo)              
 func (BaseObserver) OnSubAgentEnd(context.Context, SubAgentInfo, any, error)    {}
 func (BaseObserver) OnCheckpoint(context.Context, CheckpointInfo)               {}
 func (BaseObserver) OnLint(context.Context, LintInfo)                           {}
+func (BaseObserver) OnModelRetry(context.Context, ModelRetryInfo)               {}
 
 // Ensure BaseObserver satisfies the interface.
 var _ Observer = BaseObserver{}

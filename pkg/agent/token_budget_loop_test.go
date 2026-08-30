@@ -126,3 +126,53 @@ func TestTruncationEscalationIsBounded(t *testing.T) {
 		t.Fatalf("escalated %d times, bounded at %d: %v", grew, maxTokenEscalations, seen)
 	}
 }
+
+// recordingRetryObserver captures OnModelRetry.
+type recordingRetryObserver struct {
+	BaseObserver
+	mu   sync.Mutex
+	seen []ModelRetryInfo
+}
+
+func (o *recordingRetryObserver) OnModelRetry(_ context.Context, info ModelRetryInfo) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.seen = append(o.seen, info)
+}
+
+// A retry inside a model span is invisible from the outside unless something
+// reports it: the span opens, time passes, an answer arrives. A run silently
+// escalating its budget every round must be visible to whoever is watching.
+func TestBudgetEscalationIsObservable(t *testing.T) {
+	llm := &truncatingLLM{minTokens: 20000}
+	obs := &recordingRetryObserver{}
+	svc, err := New("truncation-observed").
+		WithConfig(testAgentConfig(t.TempDir())).
+		WithLLM(llm).
+		WithObserver(obs).
+		Build()
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	defer svc.Close()
+
+	if _, err := svc.Run(context.Background(), "Say something.", WithConstraintExtraction(false)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	obs.mu.Lock()
+	defer obs.mu.Unlock()
+	if len(obs.seen) == 0 {
+		t.Fatal("budget escalation was not reported to observers")
+	}
+	got := obs.seen[0]
+	if got.Kind != "max_tokens_truncation" {
+		t.Fatalf("kind = %q, want max_tokens_truncation", got.Kind)
+	}
+	if got.MaxTokensTo <= got.MaxTokensFrom {
+		t.Fatalf("reported budget did not grow: %d -> %d", got.MaxTokensFrom, got.MaxTokensTo)
+	}
+	if got.SessionID == "" {
+		t.Error("retry carries no session id; it cannot be attributed to a run")
+	}
+}

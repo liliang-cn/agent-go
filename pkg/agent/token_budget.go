@@ -18,6 +18,7 @@
 package agent
 
 import (
+	"context"
 	"strings"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
@@ -84,6 +85,27 @@ func (r *Runtime) emitTokenBudgetEscalation(round, from, to int, finishReason st
 		"from_tokens":   from,
 		"to_tokens":     to,
 	})
+	r.emitModelRetryObserved(ModelRetryInfo{
+		Round:         round,
+		Kind:          "max_tokens_truncation",
+		Attempt:       1,
+		Reason:        finishReason,
+		MaxTokensFrom: from,
+		MaxTokensTo:   to,
+	})
+}
+
+// emitModelRetryObserved fills in the run-scoped identity every observer
+// callback carries and fans the retry out.
+func (r *Runtime) emitModelRetryObserved(info ModelRetryInfo) {
+	if r == nil || r.svc == nil {
+		return
+	}
+	info.TaskID = currentTaskID(r.session)
+	info.SessionID = r.sessionID()
+	info.AgentName = r.currentAgentName()
+	ctx := context.Background()
+	r.svc.emitObserver(func(o Observer) { o.OnModelRetry(ctx, info) })
 }
 
 // warnUnpricedModel says so, once per run, when nothing could price the model

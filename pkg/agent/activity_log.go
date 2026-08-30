@@ -146,6 +146,22 @@ func (l *ActivityLog) OnLint(_ context.Context, info LintInfo) {
 	l.line("r%-3d lint     %s %s: %s", info.Round, verdict, info.Lint, oneLine(info.Reason, 200))
 }
 
+// OnModelRetry records a re-ask inside a model turn. Without it a turn that
+// took three attempts is indistinguishable from one that took one — the span
+// opens, time passes, an answer arrives — and a run quietly paying for two
+// extra calls every round looks merely slow.
+func (l *ActivityLog) OnModelRetry(_ context.Context, info ModelRetryInfo) {
+	switch info.Kind {
+	case "max_tokens_truncation":
+		l.line("r%-3d retry    truncated (%s), max_tokens %d -> %d",
+			info.Round, info.Reason, info.MaxTokensFrom, info.MaxTokensTo)
+	default:
+		l.line("r%-3d retry    %s attempt=%d wait=%s: %s",
+			info.Round, info.Kind, info.Attempt,
+			shortDuration(info.Delay), oneLine(info.Reason, 160))
+	}
+}
+
 func (l *ActivityLog) OnCheckpoint(_ context.Context, info CheckpointInfo) {
 	l.line("r%-3d ckpt     %s msgs=%d", info.Round, info.Reason, info.Messages)
 }
