@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -14,6 +15,16 @@ import (
 // Store provides persistent storage for agent plans and sessions by wrapping AgentGoDB
 type Store struct {
 	agentGoDB *store.AgentGoDB
+}
+
+// DB exposes the underlying handle so components that need their own tables
+// can share the one database a Service already opens, rather than opening a
+// second one beside it.
+func (s *Store) DB() *sql.DB {
+	if s == nil || s.agentGoDB == nil {
+		return nil
+	}
+	return s.agentGoDB.GetDB()
 }
 
 // NewStore creates a new storage backend for agent data using the unified database

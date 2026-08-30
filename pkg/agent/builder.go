@@ -597,6 +597,20 @@ func (b *Builder) build() (*Service, error) {
 	}
 	if b.planStore != nil {
 		svc.SetPlanStore(b.planStore)
+	} else if db := svc.store.DB(); db != nil {
+		// A plan with nowhere to live is the default otherwise, and it is the
+		// wrong default for the thing RunSegments uses to decide whether a
+		// task is finished: the framework shipped no durable implementation at
+		// all, so a run that died at hour nine left no record of which steps
+		// it had reached. The Service already owns this database; the plan
+		// belongs in it.
+		if ps, err := NewSQLitePlanStore(db); err != nil {
+			agentgolog.WithModule("agent.builder").Warn(
+				"plan persistence unavailable; the plan will not survive this process",
+				"error", err)
+		} else {
+			svc.SetPlanStore(ps)
+		}
 	}
 	if b.permissionPolicy != nil {
 		svc.SetPermissionPolicy(b.permissionPolicy)
