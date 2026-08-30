@@ -74,7 +74,7 @@ func (s *Service) buildSystemContext() *SystemContext {
 		OS:         runtime.GOOS,
 		Arch:       runtime.GOARCH,
 		Hostname:   hostname,
-		WorkingDir: getCwd(),
+		WorkingDir: s.promptWorkingDir(),
 		HomeDir:    getHomeDir(),
 		User:       user,
 		GoVersion:  runtime.Version(),
@@ -211,4 +211,30 @@ func shortPath(path string) string {
 		return "..." + path[len(path)-27:]
 	}
 	return path
+}
+
+// promptWorkingDir is the directory the system prompt tells the model it is
+// working in.
+//
+// It used to be os.Getwd() unconditionally — the *host process's* directory,
+// which has nothing to do with where the agent's tools run. When a sandbox is
+// configured, every file tool is jailed under its workspace and bash executes
+// with that workspace as its cwd, so the prompt was naming a directory the
+// agent's own tools could not reach.
+//
+// A model does what it is told. Given "Dir: /path/to/some/other/repo" as its
+// first line of context, a coding agent opens a run with
+// `cd /path/to/some/other/repo` — and from there it is reading, building and
+// writing in whatever directory the host binary happened to be started from,
+// with the sandbox jail bypassed by a single shell builtin. Observed exactly
+// that: a soak agent created its project inside the framework's own checkout.
+//
+// So the sandbox wins when there is one. Without a sandbox the process
+// directory is still the honest answer, because then it really is where the
+// tools run.
+func (s *Service) promptWorkingDir() string {
+	if ws := strings.TrimSpace(s.workspaceRoot()); ws != "" {
+		return ws
+	}
+	return getCwd()
 }
