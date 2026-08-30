@@ -64,6 +64,10 @@ type Runtime struct {
 	// refusals on the terminal event.
 	lastFinishReason string
 
+	// warnedUnpriced keeps the "nothing can price this model" warning to
+	// once per run rather than once per round.
+	warnedUnpriced bool
+
 	// budgetSnapshot is a pointer to the per-run budget block, kept on
 	// the runtime so terminal-event emitters can read the running cost
 	// without threading state through every call site.
@@ -524,28 +528,49 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			err            error
 		)
 		maxLLMRetries := r.resolveLLMRetries()
-		for attempt := 0; ; attempt++ {
-			result, lastResponseID, recovery, err = r.svc.streamToolTurn(
-				ctx,
-				genMessages,
-				tools,
-				r.svc.toolGenerationOptions(r.temperature(), r.maxTokens(), ""),
-				r.buildStreamingTurnCallbacks(ctx, modelSpanID, &taskTerminalName, &taskTerminalResult, collector),
-			)
-			if err == nil || ctx.Err() != nil || attempt >= maxLLMRetries || !transientLLMError(err) {
+		turnMaxTokens := r.maxTokens()
+		// Two nested retries, answering two different failures. The inner one
+		// waits out a provider that erred; the outer one asks again with a
+		// larger budget when the provider succeeded but we cut the answer off
+		// before it began (see token_budget.go).
+		for escalation := 0; ; escalation++ {
+			for attempt := 0; ; attempt++ {
+				result, lastResponseID, recovery, err = r.svc.streamToolTurn(
+					ctx,
+					genMessages,
+					tools,
+					r.svc.toolGenerationOptions(r.temperature(), turnMaxTokens, ""),
+					r.buildStreamingTurnCallbacks(ctx, modelSpanID, &taskTerminalName, &taskTerminalResult, collector),
+				)
+				if err == nil || ctx.Err() != nil || attempt >= maxLLMRetries || !transientLLMError(err) {
+					break
+				}
+				delay := llmRetryDelay(attempt + 1)
+				r.emitLLMRetry(round+1, attempt+1, maxLLMRetries, delay, err)
+				// Whatever the failed attempt streamed is not part of any answer:
+				// clear it from the transcript, and start the next attempt from a
+				// clean collector and no half-seen terminal signal.
+				r.emitTombstone()
+				taskTerminalName, taskTerminalResult = "", ""
+				collector = newRuntimeAsyncToolCollector()
+				if !waitBeforeLLMRetry(ctx, delay) {
+					break
+				}
+			}
+			if ctx.Err() != nil {
 				break
 			}
-			delay := llmRetryDelay(attempt + 1)
-			r.emitLLMRetry(round+1, attempt+1, maxLLMRetries, delay, err)
-			// Whatever the failed attempt streamed is not part of any answer:
-			// clear it from the transcript, and start the next attempt from a
-			// clean collector and no half-seen terminal signal.
+			next, grow := escalateMaxTokens(result, err, turnMaxTokens, escalation)
+			if !grow {
+				break
+			}
+			r.emitTokenBudgetEscalation(round+1, turnMaxTokens, next, result.FinishReason)
+			turnMaxTokens = next
+			// The severed turn contributed nothing; drop it so the retry is
+			// not appended to a fragment of itself.
 			r.emitTombstone()
 			taskTerminalName, taskTerminalResult = "", ""
 			collector = newRuntimeAsyncToolCollector()
-			if !waitBeforeLLMRetry(ctx, delay) {
-				break
-			}
 		}
 		r.CheckpointEnd("llm_call")
 		state.noteRecovery(recovery)
@@ -575,7 +600,13 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			}
 			turnTokens = inputTokens + outputTokens
 			state.noteTokens(inputTokens + outputTokens)
-			state.noteCost(inputTokens, outputTokens, pool.CalculateCost(model, inputTokens, outputTokens))
+			// Price the cache split, not just the totals: on a long run most
+			// prompt tokens are hits, billed at a fraction of the fresh rate.
+			cost, priced := pool.CalculateCostDetailed(model, inputTokens, cachedTokens, outputTokens)
+			if !priced {
+				r.warnUnpricedModel(model)
+			}
+			state.noteCost(inputTokens, outputTokens, cost)
 		}
 		r.emitLLMLatency(round+1, state.Budget.EstimatedTokens, turnTokens, llmDur)
 
@@ -1792,7 +1823,14 @@ func (r *Runtime) maxTokens() int {
 
 const (
 	defaultRunTemperature = 0.3
-	defaultRunMaxTokens   = 2000
+	// defaultRunMaxTokens is the per-response cap when a run does not set one.
+	//
+	// It was 2000, chosen when a turn meant a paragraph. It is the wrong size
+	// twice over for an agent that writes code: a single source file goes past
+	// it, and on a model that reasons before answering the whole budget can be
+	// consumed before the first visible character. 8192 leaves room for both,
+	// and escalateMaxTokens covers the turns that still need more.
+	defaultRunMaxTokens = 8192
 )
 
 // resolveConstraints computes the run's constraints once and caches them on the
