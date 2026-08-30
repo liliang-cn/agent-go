@@ -12,9 +12,25 @@ import (
 // WithAutoCompaction(threshold, keep).
 const (
 	// CompactionDefaultThresholdTokens is the rough context-budget the
-	// runtime starts compacting at. Sized for ~16K-window models with
-	// generous headroom; bump for larger models via WithAutoCompaction.
-	CompactionDefaultThresholdTokens = 8000
+	// runtime starts compacting at.
+	//
+	// This was 8000, chosen for 16K-window models — and then chosen again by
+	// nobody, because the estimator it is compared against counted only
+	// message content and read about 1.5% of a tool-using agent's history.
+	// For years of runs it was effectively a threshold of half a million and
+	// compaction never fired at all.
+	//
+	// With the estimator fixed the number became real, and 8000 turned out to
+	// be far too small: a coding agent crossed it every round and spent a
+	// summary call folding thirteen messages into nine, over and over,
+	// freeing almost nothing. Meanwhile two runs that completed a
+	// thirteen-milestone task in an hour peaked at 60-65k prompt tokens with
+	// compaction switched off entirely and were fine.
+	//
+	// 60000 is sized from that measurement: it leaves a working set that big
+	// intact, and still bounds a run that would otherwise grow without limit.
+	// Models with smaller windows should lower it via WithAutoCompaction.
+	CompactionDefaultThresholdTokens = 60000
 
 	// CompactionDefaultKeepRecent is the number of trailing messages
 	// preserved verbatim. Six covers a typical "tool call → tool result

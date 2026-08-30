@@ -95,7 +95,11 @@ func TestCompactionIsObservable(t *testing.T) {
 			return map[string]interface{}{"text": strings.Repeat("lorem ipsum dolor sit amet ", 500)}, nil
 		})
 
-	if _, err := svc.Run(context.Background(), "Read everything.", WithConstraintExtraction(false)); err != nil {
+	// Name the threshold rather than lean on the default: the production
+	// default is sized for real runs (60k), and a test that depends on it
+	// silently changes meaning whenever that number is retuned.
+	if _, err := svc.Run(context.Background(), "Read everything.",
+		WithConstraintExtraction(false), WithAutoCompaction(8000, 6)); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 
