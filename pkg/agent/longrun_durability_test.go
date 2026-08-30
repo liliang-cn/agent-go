@@ -149,3 +149,48 @@ func TestSegmentBoundariesAreObservable(t *testing.T) {
 		t.Errorf("ActivityLog shows no segment boundary:\n%s", log.String())
 	}
 }
+
+// MaxTotalCostUSD was checked only between segments, so the real ceiling was
+// "the limit, plus one whole segment" — fine at sixty rounds, meaningless at
+// six hundred. Each segment now carries the remainder as its own
+// MaxBudgetUSD, which the runtime already enforced per round and which
+// RunSegments never passed down.
+func TestSegmentCostCeilingIsWhatTheTaskHasLeft(t *testing.T) {
+	cases := []struct {
+		name  string
+		total float64
+		spent float64
+		want  float64
+		ok    bool
+	}{
+		{"unconfigured means uncapped", 0, 0, 0, false},
+		{"first segment gets the whole budget", 5, 0, 5, true},
+		{"later segments get the remainder", 5, 3.25, 1.75, true},
+		{"nothing left", 5, 5, 0, false},
+		{"overspent", 5, 6, 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := segmentCostCeiling(LongRunConfig{MaxTotalCostUSD: tc.total}, tc.spent)
+			if ok != tc.ok {
+				t.Fatalf("ok = %v, want %v", ok, tc.ok)
+			}
+			if ok && got != tc.want {
+				t.Fatalf("ceiling = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// And the option must actually reach a segment's RunConfig.
+func TestSegmentCeilingReachesRunConfig(t *testing.T) {
+	cfg := &RunConfig{}
+	left, ok := segmentCostCeiling(LongRunConfig{MaxTotalCostUSD: 2}, 0.5)
+	if !ok {
+		t.Fatal("expected a ceiling")
+	}
+	WithMaxBudgetUSD(left)(cfg)
+	if cfg.MaxBudgetUSD != 1.5 {
+		t.Fatalf("segment budget = %v, want 1.5", cfg.MaxBudgetUSD)
+	}
+}

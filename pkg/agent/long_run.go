@@ -70,9 +70,16 @@ type LongRunConfig struct {
 	// Zero = no limit; the context's own deadline still applies and does cut.
 	MaxDuration time.Duration
 
-	// MaxTotalCostUSD stops starting new segments once the task has cost this
-	// much, summed over every segment. RunConfig.MaxBudgetUSD only ever bounded
-	// one run, which on a task made of forty of them bounds nothing.
+	// MaxTotalCostUSD caps what the whole task may spend, summed over every
+	// segment. RunConfig.MaxBudgetUSD only ever bounded one run, which on a
+	// task made of forty of them bounds nothing.
+	//
+	// It is enforced twice: no new segment starts once the total is reached,
+	// and each segment is given the remainder as its own MaxBudgetUSD so it
+	// stops mid-flight rather than overrunning the ceiling by however much a
+	// segment happens to cost. Checking only between segments made the real
+	// bound "the limit, plus one whole segment" — fine at sixty rounds,
+	// meaningless at six hundred.
 	// Zero = no limit.
 	MaxTotalCostUSD float64
 
@@ -334,6 +341,11 @@ func (s *Service) RunSegments(ctx context.Context, goal string, cfg LongRunConfi
 			WithSessionID(sessionID),
 			WithMaxTurns(cfg.RoundsPerSegment),
 		)
+		// Hand the segment what is left of the task's budget, so the ceiling
+		// holds inside a segment and not merely between them.
+		if left, ok := segmentCostCeiling(cfg, out.TotalCostUSD); ok {
+			segmentOpts = append(segmentOpts, WithMaxBudgetUSD(left))
+		}
 
 		segStart := time.Now()
 		s.emitSegmentObserved(ctx, SegmentInfo{
@@ -506,4 +518,20 @@ func (s *Service) emitSegmentObserved(ctx context.Context, info SegmentInfo) {
 		return
 	}
 	s.emitObserver(func(o Observer) { o.OnSegment(ctx, info) })
+}
+
+// segmentCostCeiling is what one segment may spend: whatever the task has left.
+//
+// Reported as (amount, ok) rather than a bare float so "no ceiling configured"
+// and "nothing left" stay distinguishable — the first must not cap a segment,
+// and the second never reaches here because the loop stops first.
+func segmentCostCeiling(cfg LongRunConfig, spent float64) (float64, bool) {
+	if cfg.MaxTotalCostUSD <= 0 {
+		return 0, false
+	}
+	left := cfg.MaxTotalCostUSD - spent
+	if left <= 0 {
+		return 0, false
+	}
+	return left, true
 }
