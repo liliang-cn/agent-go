@@ -49,11 +49,11 @@ type TaskExecution struct {
 	// so history stays readable after the task is deleted.
 	TaskDescription string        `json:"task_description,omitempty" db:"task_description"`
 	StartTime       time.Time     `json:"start_time" db:"start_time"`
-	EndTime   *time.Time    `json:"end_time,omitempty" db:"end_time"`
-	Duration  time.Duration `json:"duration" db:"duration"`
-	Status    TaskStatus    `json:"status" db:"status"`
-	Output    string        `json:"output,omitempty" db:"output"`
-	Error     string        `json:"error,omitempty" db:"error"`
+	EndTime         *time.Time    `json:"end_time,omitempty" db:"end_time"`
+	Duration        time.Duration `json:"duration" db:"duration"`
+	Status          TaskStatus    `json:"status" db:"status"`
+	Output          string        `json:"output,omitempty" db:"output"`
+	Error           string        `json:"error,omitempty" db:"error"`
 }
 
 // TaskResult represents the result of a task execution
