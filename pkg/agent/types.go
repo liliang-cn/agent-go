@@ -386,9 +386,13 @@ func DefaultRunConfig() *RunConfig {
 		// service configured for long-horizon work (WithAutonomy) is not
 		// silently capped at the interactive default by a config the caller
 		// never touched. See resolveMaxRounds.
-		MaxTurns:    0,
+		MaxTurns: 0,
+		// Unset for the same reason, and it was not: a hardcoded 2000 here
+		// shadowed defaultRunMaxTokens entirely, so raising that constant
+		// changed nothing a run could see. Two defaults for one knob, the
+		// nearer one silently winning — the same shape as MaxTurns above.
+		MaxTokens:   0,
 		Temperature: 0.3,
-		MaxTokens:   2000,
 		Debug:       false,
 	}
 }
