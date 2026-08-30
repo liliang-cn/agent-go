@@ -9,6 +9,7 @@ package agent
 import (
 	"context"
 	"slices"
+	"sort"
 	"strings"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
@@ -422,11 +423,26 @@ func (s *Service) collectTools(ctx context.Context, currentAgent *Agent, policy 
 		}
 	}
 
-	// 4. Convert map back to slice
+	// 4. Convert map back to slice, in a fixed order.
+	//
+	// The order matters far more than it looks. A request is serialised
+	// system, then tools, then messages, and a prompt cache matches on a
+	// prefix — so the tool schemas sit inside the prefix that every round of
+	// a run is trying to reuse. Ranging a Go map yields a different order
+	// every time, which rewrote that prefix on every single turn: measured
+	// against DeepSeek, a run whose history grew from 5.6k to 10.9k tokens
+	// held its cache hits at exactly 1024 tokens — the head of the system
+	// prompt, and not one byte past the first tool.
+	//
+	// Sorting by name costs nothing and makes the whole prefix stable, so a
+	// round pays prefill only for what it actually added.
 	tools := make([]domain.ToolDefinition, 0, len(toolsMap))
 	for _, tool := range toolsMap {
 		tools = append(tools, tool)
 	}
+	sort.Slice(tools, func(i, j int) bool {
+		return tools[i].Function.Name < tools[j].Function.Name
+	})
 
 	if policy.ForceSkillFirst {
 		tools = promoteRelevantSkillTools(tools, relevantSkillNames)
