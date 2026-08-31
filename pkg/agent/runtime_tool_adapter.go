@@ -11,6 +11,20 @@ import (
 type runtimeAsyncToolCollector struct {
 	results chan ToolExecutionResult
 	wg      sync.WaitGroup
+
+	// collapsed holds the answers for calls that were not executed because an
+	// identical read-only call in the same turn already was. They are kept
+	// beside the channel rather than pushed through it because nothing waits
+	// on them: the channel is closed when the running tools finish, and a send
+	// into a full buffer from the stream callback would block the stream.
+	mu        sync.Mutex
+	collapsed []ToolExecutionResult
+}
+
+func (c *runtimeAsyncToolCollector) addCollapsed(res ToolExecutionResult) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.collapsed = append(c.collapsed, res)
 }
 
 func newRuntimeAsyncToolCollector() *runtimeAsyncToolCollector {
@@ -29,7 +43,12 @@ func (c *runtimeAsyncToolCollector) collect() []ToolExecutionResult {
 	for tr := range c.results {
 		toolResults = append(toolResults, tr)
 	}
-	return toolResults
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// Every collapsed call still gets a result under its own id. The provider
+	// requires one tool message per tool call id, and a caller that skipped
+	// them would send a malformed turn.
+	return append(toolResults, c.collapsed...)
 }
 
 func (r *Runtime) buildStreamingTurnCallbacks(ctx context.Context, spanID string, taskTerminalName *string, taskTerminalResult *string, collector *runtimeAsyncToolCollector) StreamTurnCallbacks {
@@ -42,6 +61,24 @@ func (r *Runtime) buildStreamingTurnCallbacks(ctx context.Context, spanID string
 	// calls. Without this guard the same call runs dozens of times, which is
 	// wasteful for read-only tools and dangerous for non-idempotent ones.
 	dispatched := map[string]bool{}
+	// And a second guard, on a different question. `dispatched` answers "have I
+	// already started THIS call", which is about the provider re-sending one
+	// call; this answers "have I already run a call with these exact arguments",
+	// which is about the model emitting the same call several times in one
+	// batch. They are different keys because a model emits duplicates under
+	// DIFFERENT call ids, so an id-keyed map cannot see them.
+	//
+	// Measured on a graph-backed agent: one turn emitted ten tool calls inside
+	// ten milliseconds, four of them identical, and across the run twenty-five
+	// calls were thirteen distinct questions. handleDuplicateToolCalls has
+	// collapsed exactly this since it was written, and on the streaming path it
+	// runs after execution -- so the policy existed and the work was already
+	// done by the time it applied.
+	//
+	// The policy is the same one, deliberately: only tools declared ReadOnly,
+	// because a tool nobody described as safe to skip is not, and a repeated
+	// write may be a read-modify-write loop rather than a mistake.
+	seen := map[string]int{}
 
 	return StreamTurnCallbacks{
 		OnToolCall: func(tc domain.ToolCall) error {
@@ -75,6 +112,18 @@ func (r *Runtime) buildStreamingTurnCallbacks(ctx context.Context, spanID string
 				return nil
 			}
 			dispatched[key] = true
+
+			sig := toolCallSignature(tc)
+			seen[sig]++
+			if seen[sig] > 1 && r.svc.toolCallIsReadOnly(tc.Function.Name) {
+				collector.addCollapsed(ToolExecutionResult{
+					ToolCallID: tc.ID,
+					ToolName:   tc.Function.Name,
+					ToolType:   "tool",
+					Result:     duplicateReadOnlyHint(tc.Function.Name, seen[sig]),
+				})
+				return nil
+			}
 
 			collector.wg.Add(1)
 			go r.executeAsyncTool(ctx, tc, &collector.wg, collector.results)

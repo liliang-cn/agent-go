@@ -206,12 +206,7 @@ func (s *Service) handleDuplicateToolCalls(messages []domain.Message, result *do
 				ToolCallID: tc.ID,
 				ToolName:   tc.Function.Name,
 				ToolType:   "tool",
-				Result: fmt.Sprintf(
-					"Not run again: you have called %s with these exact arguments %d times and "+
-						"nothing has been written since the first one, so the answer is the same "+
-						"as the one you already received. Asking a %dth time cannot make progress "+
-						"— take a different action, or say plainly what is blocking you.",
-					tc.Function.Name, seen[key], seen[key]+1),
+				Result:     duplicateReadOnlyHint(tc.Function.Name, seen[key]),
 			})
 			continue
 		}
@@ -380,4 +375,21 @@ func (s *Service) toolCallChangesState(name string) bool {
 		return false
 	}
 	return !s.toolCallIsReadOnly(name)
+}
+
+// duplicateReadOnlyHint is what a collapsed read-only duplicate is answered
+// with, and it is one function because two paths produce it.
+//
+// The streaming path executes calls as they arrive and so has to apply this
+// policy at dispatch; handleDuplicateToolCalls applies it to a whole batch.
+// Written twice they would drift, and the model would be told two different
+// things about the same situation depending on a transport detail it cannot
+// see.
+func duplicateReadOnlyHint(name string, times int) string {
+	return fmt.Sprintf(
+		"Not run again: you have called %s with these exact arguments %d times and "+
+			"nothing has been written since the first one, so the answer is the same "+
+			"as the one you already received. Asking a %dth time cannot make progress "+
+			"— take a different action, or say plainly what is blocking you.",
+		name, times, times+1)
 }
