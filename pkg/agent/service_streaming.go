@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
@@ -70,7 +71,7 @@ func (s *Service) streamToolTurnWithRecovery(ctx context.Context, messages []dom
 		}
 		return nil
 	})
-	if err != nil {
+	if err != nil && !errors.Is(err, errTaskTerminal) {
 		// Check if error is withholdable and we haven't already retried
 		if attempt == 0 && IsWithholdable(err) {
 			// Try to compact messages and retry once
@@ -87,11 +88,20 @@ func (s *Service) streamToolTurnWithRecovery(ctx context.Context, messages []dom
 		}
 		return nil, lastResponseID, recoveryMeta{}, err
 	}
+	// The task-terminal sentinel rides back WITH the assembled result rather
+	// than instead of it. Aborting the stream on task_complete used to return
+	// (nil, errTaskTerminal), which threw away everything the turn had
+	// already produced — the streamed content, the tool-call list, and the
+	// provider's usage report. The run recovered (the terminal handler works
+	// from the callback's captured result), but every observer saw the
+	// concluding turn of every task as a nil ModelResult: no tokens, no
+	// content, on exactly the turn that carries the answer. A chat that
+	// wraps up in one turn measured as zero model turns.
 	return &domain.GenerationResult{
 		ID:           lastResponseID,
 		Content:      fullContent.String(),
 		ToolCalls:    toolCalls,
 		Usage:        lastUsage,
 		FinishReason: lastFinishReason,
-	}, lastResponseID, recoveryMeta{}, nil
+	}, lastResponseID, recoveryMeta{}, err
 }
