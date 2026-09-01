@@ -244,6 +244,12 @@ type RunConfig struct {
 	// Injected alongside recalledContext at the end of the system prompt.
 	resumedPlan string
 
+	// resumedTask is filled by the runtime at run start with what the
+	// TaskStore remembers about this task — the resume brief, how earlier
+	// runs ended, the lessons they left. Empty for a task the store has
+	// never seen. Injected alongside resumedPlan.
+	resumedTask string
+
 	// resumedWorkspace is filled at run start with an inventory of the sandbox
 	// workspace — the files an earlier segment left behind. On a coding task
 	// those files are most of the state, and a segment that starts a fresh

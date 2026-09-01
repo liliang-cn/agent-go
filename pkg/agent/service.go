@@ -145,6 +145,13 @@ type Service struct {
 	// (capture). See RunMemory and Builder.WithRunMemory.
 	runMemory RunMemory
 
+	// taskStore, when non-nil, is the task's episodic memory: resume briefs,
+	// per-run summaries, the journal, lessons. Read at run start
+	// (taskResumeForRun) and written by RunSegments at segment boundaries.
+	// See TaskStore and Builder.WithTaskStore.
+	taskStoreMu sync.RWMutex
+	taskStore   TaskStore
+
 	// responseFormat carries the run-scoped structured-output spec set
 	// by the runtime when RunConfig.StructuredOutput is non-nil. Cleared
 	// at run end so a later run on the same Service can't inherit it.
@@ -547,6 +554,9 @@ func (s *Service) startRun(ctx context.Context, goal string, cfg *RunConfig) (*S
 	}
 	if cfg.resumedPlan == "" {
 		cfg.resumedPlan = s.planSummaryForRun(taskID)
+	}
+	if cfg.resumedTask == "" {
+		cfg.resumedTask = s.taskResumeForRun(ctx, taskID)
 	}
 	if cfg.resumedWorkspace == "" {
 		cfg.resumedWorkspace = s.workspaceSummaryForRun(ctx)

@@ -27,7 +27,9 @@ import (
 //   - the plan, with PlanItem.Note saying what each finished step produced,
 //     injected into the next segment's system prompt (see planSummaryForRun);
 //   - the workspace, which is the same sandbox on the same Service;
-//   - run memory, recalled at the start of every segment like any other run.
+//   - run memory, recalled at the start of every segment like any other run;
+//   - task memory, when a TaskStore is attached: how earlier segments ended
+//     and the resume brief a previous process left (see taskResumeForRun).
 //
 // That is the whole trick, and it is why the segments do not degrade: segment
 // forty reads the same kind of prompt segment two did.
@@ -287,6 +289,11 @@ func (s *Service) runSegments(ctx context.Context, goal string, cfg LongRunConfi
 		cfg.PlanKey = scratchpadDefaultKey + ":" + taskID
 	}
 
+	// Task memory brackets the whole thing: mark the task running now (keeping
+	// any brief an earlier process left), record each segment as one run, and
+	// write the final status and a fresh brief on the way out.
+	s.taskMemoryBeginTask(taskID, goal)
+
 	out := &LongRunResult{TaskID: taskID}
 	consecutiveFailures := 0
 	unproductive := 0
@@ -357,6 +364,7 @@ func (s *Service) runSegments(ctx context.Context, goal string, cfg LongRunConfi
 		s.emitSegmentObserved(ctx, SegmentInfo{
 			TaskID: taskID, Index: i, Total: cfg.MaxSegments, SessionID: sessionID,
 		})
+		runRecID := s.taskMemoryBeginRun(taskID)
 		segCfg := DefaultRunConfig()
 		for _, opt := range segmentOpts {
 			opt(segCfg)
@@ -390,6 +398,7 @@ func (s *Service) runSegments(ctx context.Context, goal string, cfg LongRunConfi
 			Ending: true, StopReason: seg.StopReason, Duration: seg.Duration,
 			Productive: seg.Productive, CostUSD: out.TotalCostUSD, Err: seg.Error,
 		})
+		s.taskMemoryEndRun(runRecID, taskID, seg, result)
 
 		switch {
 		case ctx.Err() != nil || (result != nil && result.Cancelled):
@@ -447,6 +456,7 @@ func (s *Service) runSegments(ctx context.Context, goal string, cfg LongRunConfi
 	}
 	out.PlanSummary = s.PlanSummary(cfg.PlanKey)
 	out.Duration = time.Since(began)
+	s.taskMemoryFinish(taskID, goal, cfg.PlanKey, out)
 	return out, nil
 }
 

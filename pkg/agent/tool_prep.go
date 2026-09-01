@@ -198,6 +198,12 @@ func (s *Service) prepareTurnInputsWithConfig(ctx context.Context, currentAgent 
 			"Prior knowledge recalled for this task. Cite it when it answers the question; " +
 			"say so when it conflicts with fresh evidence.\n\n" + cfg.recalledContext
 	}
+	// What the task remembers about itself — the brief a previous run wrote,
+	// how earlier runs ended, the lessons they left. Broader than the plan,
+	// so it rides just before it: the account first, then the checklist.
+	if cfg != nil && cfg.resumedTask != "" {
+		systemMsg += "\n\n## Task memory\n" + cfg.resumedTask
+	}
 	// The plan an earlier run left behind, for the same reason and in the same
 	// place. Persisting a plan and never telling the model about it is a
 	// process that comes back holding the answer and starts over anyway.

@@ -120,6 +120,7 @@ type Builder struct {
 	registerGraphTool bool
 	runMemory         RunMemory
 	planStore         PlanStore
+	taskStore         TaskStore
 	enableSkills      bool
 	skillsPaths       []string
 	requiredSkills    []string // Build() fails if any of these aren't installed
@@ -236,6 +237,17 @@ func (b *Builder) WithRunMemory(rm RunMemory) *Builder {
 // can carry on instead of starting over. See PlanStore and Service.PlanSummary.
 func (b *Builder) WithPlanStore(ps PlanStore) *Builder {
 	b.planStore = ps
+	return b
+}
+
+// WithTaskStore attaches the task's episodic memory: resume briefs, per-run
+// summaries, an idempotent journal, lessons. Read at run start and injected
+// as a "Task memory" prompt section; written by RunSegments at segment
+// boundaries. Build() wires a SQLite one over the service's own database
+// when none is given, so this is for substituting an implementation, not for
+// turning the feature on.
+func (b *Builder) WithTaskStore(ts TaskStore) *Builder {
+	b.taskStore = ts
 	return b
 }
 
@@ -616,6 +628,20 @@ func (b *Builder) build() (*Service, error) {
 				"error", err)
 		} else {
 			svc.SetPlanStore(ps)
+		}
+	}
+	if b.taskStore != nil {
+		svc.SetTaskStore(b.taskStore)
+	} else if db := svc.store.DB(); db != nil {
+		// Same reasoning as the plan store above: the Service already owns a
+		// database, and task memory with nowhere durable to live is the wrong
+		// default for the thing a resumed process reads first.
+		if ts, err := NewSQLiteTaskStore(db); err != nil {
+			agentgolog.WithModule("agent.builder").Warn(
+				"task memory unavailable; runs will not leave a resumable record",
+				"error", err)
+		} else {
+			svc.SetTaskStore(ts)
 		}
 	}
 	if svc.checkpointSink == nil && svc.store != nil {
