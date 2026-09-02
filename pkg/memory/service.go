@@ -890,6 +890,12 @@ func (s *Service) fileMemoryPromptContext(ctx context.Context, query string, que
 	if !ok {
 		return "", "", nil
 	}
+	// Which memories this query is allowed to see. The ranked path has always
+	// applied this (filterMemoriesByScopes); the two below did not, and they
+	// are prepended to the prompt — so one conversation's memories were shown
+	// to another, in the default backend. Found by the conformance suite.
+	scopes := DefaultScopeChain(queryContext.SessionID, queryContext.AgentID, queryContext.TeamID, queryContext.UserID).ToSlice()
+
 	if content, err := fileStore.ReadEntrypoint(); err == nil && strings.TrimSpace(content) != "" {
 		entrypoint = strings.TrimSpace(content)
 	}
@@ -910,11 +916,88 @@ func (s *Service) fileMemoryPromptContext(ctx context.Context, query string, que
 	}
 
 	if len(headers) == 0 {
-		if selected, err := fileStore.SelectRelevantHeaders(ctx, query, limit); err == nil {
+		// Ask for more than the cap, because the ones this query may not see
+		// are about to be removed and a filter applied after a top-K leaves
+		// the answer short.
+		if selected, err := fileStore.SelectRelevantHeaders(ctx, query, limit*4); err == nil {
 			headers = selected
 		}
 	}
+	headers = filterHeadersByScopes(headers, scopes)
+	if len(headers) > limit {
+		headers = headers[:limit]
+	}
+	// The index is rendered markdown, one line per memory, each naming its
+	// id. Keeping only the lines whose id survived the filter is exact — no
+	// re-rendering, and nothing a summary line says can leak past it.
+	entrypoint = filterEntrypointByHeaders(entrypoint, headers)
 	return entrypoint, sessionMemory, headers
+}
+
+// filterHeadersByScopes keeps the headers this query is allowed to see.
+func filterHeadersByScopes(headers []store.FileMemoryHeader, scopes []domain.MemoryScope) []store.FileMemoryHeader {
+	if len(headers) == 0 || len(scopes) == 0 {
+		return headers
+	}
+	out := make([]store.FileMemoryHeader, 0, len(headers))
+	for _, h := range headers {
+		probe := &domain.Memory{ScopeType: h.ScopeType, ScopeID: h.ScopeID}
+		if memoryMatchesAnyScope(probe, scopes) {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
+// filterEntrypointByHeaders trims the rendered index to the memories that
+// survived the scope filter.
+//
+// Structural lines — the title, the blurb, the type headings — are kept, and
+// any line naming a memory id is kept only if that id is allowed. A file with
+// no id-bearing lines left is dropped entirely rather than rendered as an
+// empty index nobody can act on.
+func filterEntrypointByHeaders(entrypoint string, allowed []store.FileMemoryHeader) string {
+	if strings.TrimSpace(entrypoint) == "" {
+		return ""
+	}
+	ids := make(map[string]struct{}, len(allowed))
+	for _, h := range allowed {
+		if id := strings.TrimSpace(h.ID); id != "" {
+			ids[id] = struct{}{}
+		}
+	}
+	var kept []string
+	entries := 0
+	for _, line := range strings.Split(entrypoint, "\n") {
+		id, isEntry := entrypointLineID(line)
+		if !isEntry {
+			kept = append(kept, line)
+			continue
+		}
+		if _, ok := ids[id]; ok {
+			kept = append(kept, line)
+			entries++
+		}
+	}
+	if entries == 0 {
+		return ""
+	}
+	return strings.TrimSpace(strings.Join(kept, "\n"))
+}
+
+// entrypointLineID pulls the memory id out of an index line, which is
+// rendered as "- [<id>] (scope, importance=…) summary".
+func entrypointLineID(line string) (string, bool) {
+	trimmed := strings.TrimSpace(line)
+	if !strings.HasPrefix(trimmed, "- [") {
+		return "", false
+	}
+	rest := trimmed[len("- ["):]
+	end := strings.Index(rest, "]")
+	if end <= 0 {
+		return "", false
+	}
+	return strings.TrimSpace(rest[:end]), true
 }
 
 func filterMemoriesByScopes(memories []*domain.MemoryWithScore, scopes []domain.MemoryScope) []*domain.MemoryWithScore {

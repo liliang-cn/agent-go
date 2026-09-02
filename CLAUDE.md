@@ -645,10 +645,29 @@ into the new; check `ActiveRuns()` first, or swap between turns.
 
 The discipline: **an honest `ErrMemoryStoreUnsupported` beats a fake
 implementation.** If a backend cannot do something, say so and let the caller
-degrade. And when you add a memory backend, test it through
-`memory.Service.RetrieveAndInject` with `embedder = nil`, asserting on the
-injected *text* — a store-level Store/Search round trip passes while the agent
-sees nothing.
+degrade.
+
+**Do not hand-write that test any more — run the suite.**
+`pkg/memory/memorystoretest.Run(t, factory, opts)` is the conformance suite
+every backend has to pass. It asserts on the injected *text*, with
+`embedder = nil`, because a store-level Store/Search round trip passes while
+the agent sees nothing; it checks scope isolation in both directions, that an
+unsupported operation returns the sentinel rather than saying so in prose, and
+it tolerates an index that is only eventually searchable. The built-in file
+backend runs it too, so the suite cannot quietly drift into passing anything.
+
+It earned its keep on the first run. **The file backend — the default — was
+leaking one session's memories into another's prompt.** The ranked path had
+always applied `filterMemoriesByScopes`; the two other things that reach the
+prompt did not. `ReadEntrypoint` returned the whole `MEMORY.md` index and
+`SelectRelevantHeaders` called `ListHeaders(ctx, 0)`, and both are prepended
+above the ranked memories. `FileMemoryHeader` carries `ScopeType` and
+`ScopeID` — the scope was known and simply never consulted. Harmless on a
+desktop with one user; a cross-session leak on anything serving several.
+`fileMemoryPromptContext` now resolves the query's scope chain once and
+applies it to both, trimming the rendered index by memory id (each line names
+one) and over-fetching headers before the filter so a top-K does not come back
+short.
 
 ### Memory ≠ cache ≠ RAG
 
