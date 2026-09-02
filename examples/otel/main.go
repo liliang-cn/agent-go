@@ -9,6 +9,10 @@
 // Usage:
 //
 //	go run ./examples/otel
+//
+// For the cross-check version — in-memory exporters, a printed span tree, and
+// every counter compared against the run's own ExecutionResult.Usage and
+// EstimatedCostUSD — see examples/otel-probe.
 package main
 
 import (
