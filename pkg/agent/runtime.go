@@ -48,6 +48,8 @@ type Runtime struct {
 	// goal is the task input for this run, kept so completion-time lints can
 	// check whether the agent actually satisfied what was asked.
 	goal string
+	// startedAt is when loop() began, for the run's reported duration.
+	startedAt time.Time
 
 	// Observability: current round (1-indexed, set at loop start)
 	currentRound int
@@ -273,6 +275,7 @@ func (r *Runtime) RunStream(ctx context.Context, goal string) <-chan *Event {
 
 // loop is the core event loop
 func (r *Runtime) loop(ctx context.Context, goal string) {
+	r.startedAt = time.Now()
 	defer func() {
 		close(r.eventChan)
 	}()
@@ -342,6 +345,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		submitData := HookData{
 			SessionID:  r.session.GetID(),
 			AgentID:    currentAgentID(r.currentAgent, r.svc.agent),
+			TaskID:     currentTaskID(r.session),
 			Goal:       goal,
 			UserPrompt: goal,
 		}
@@ -513,6 +517,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			SpanID:    modelSpanID,
 			Messages:  len(genMessages),
 			Tools:     len(tools),
+			Model:     r.svc.Info().Model,
 		}
 		r.svc.emitObserver(func(o Observer) { o.OnModelStart(ctx, modelInfo) })
 
@@ -584,6 +589,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		llmDur := time.Since(llmStart)
 		turnTokens := 0
 		cachedTokens := 0
+		promptTokens, completionTokens := 0, 0
 		{
 			model := r.svc.Info().Model
 			var inputTokens, outputTokens int
@@ -600,6 +606,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 				}
 			}
 			turnTokens = inputTokens + outputTokens
+			promptTokens, completionTokens = inputTokens, outputTokens
 			state.noteTokens(inputTokens + outputTokens)
 			// Price the cache split, not just the totals: on a long run most
 			// prompt tokens are hits, billed at a fraction of the fresh rate.
@@ -619,11 +626,13 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			var modelRes *ModelResult
 			if result != nil {
 				modelRes = &ModelResult{
-					Content:      result.Content,
-					ToolCalls:    len(result.ToolCalls),
-					DurationMs:   llmDur.Milliseconds(),
-					TokensUsed:   turnTokens,
-					CachedTokens: cachedTokens,
+					Content:          result.Content,
+					ToolCalls:        len(result.ToolCalls),
+					DurationMs:       llmDur.Milliseconds(),
+					TokensUsed:       turnTokens,
+					CachedTokens:     cachedTokens,
+					PromptTokens:     promptTokens,
+					CompletionTokens: completionTokens,
 				}
 			}
 			modelErr := err
@@ -1293,6 +1302,7 @@ func (r *Runtime) completeRunWithStop(goal, content string, messages []domain.Me
 	// nothing and the long-term memory only ever learned about the runs that
 	// happened to go through Run.
 	r.svc.captureRunMemory(goal, content)
+	r.emitRunEnd(goal, reason, content, false, false)
 }
 
 func (r *Runtime) blockRun(goal, blocker string, messages []domain.Message, persistHistory bool) {
@@ -1335,6 +1345,7 @@ func (r *Runtime) blockRunWithStop(goal, blocker string, messages []domain.Messa
 		r.persistMessages(messages)
 	}
 	r.clearCollectedSources()
+	r.emitRunEnd(goal, reason, strings.TrimSpace(blocker), true, false)
 }
 
 // cancelledRunText is what a stopped run reports as its final content. Kept
@@ -1374,6 +1385,7 @@ func (r *Runtime) cancelRun(messages []domain.Message) {
 		Timestamp:        time.Now(),
 	}
 	r.clearCollectedSources()
+	r.emitRunEnd(r.goal, StopReasonCancelled, cancelledRunText, false, true)
 }
 
 // failRun terminates a run that could not continue — the provider failed in a
@@ -1802,7 +1814,7 @@ func (r *Runtime) executeAsyncTool(ctx context.Context, tc domain.ToolCall, wg *
 		results <- ToolExecutionResult{
 			ToolCallID: tc.ID,
 			ToolName:   tc.Function.Name,
-			Result:     res,
+			Result:     toolResultForModel(res, err),
 			Error:      errorString(err),
 			Blocked:    isBlockedError(err),
 		}
@@ -1918,4 +1930,42 @@ func (r *Runtime) planKey() string {
 		return ""
 	}
 	return r.cfg.PlanKey
+}
+
+// emitRunEnd tells hooks how the run ended. It is the one place every
+// terminal path — completed, blocked, cancelled — passes through, so a
+// RunLifecycle extension sees each run exactly once.
+func (r *Runtime) emitRunEnd(goal string, reason StopReason, text string, blocked, cancelled bool) {
+	if r.svc == nil || r.svc.hooks == nil {
+		return
+	}
+	var dur time.Duration
+	if !r.startedAt.IsZero() {
+		dur = time.Since(r.startedAt)
+	}
+	_, _ = r.svc.hooks.EmitWithResult(context.Background(), HookEventPostExecution, HookData{
+		SessionID:  r.session.GetID(),
+		AgentID:    currentAgentID(r.currentAgent, r.svc.agent),
+		TaskID:     currentTaskID(r.session),
+		Goal:       goal,
+		Result:     text,
+		StopReason: string(reason),
+		Duration:   dur,
+		Metadata:   map[string]interface{}{"blocked": blocked, "cancelled": cancelled},
+	})
+}
+
+// toolResultForModel is what the model reads for a call that returned res and
+// err. A failed call must say so where the model reads: Error rode alongside
+// Result in ToolExecutionResult but only Result reached the tool message, so
+// a refused or crashed call arrived as an empty result — the one thing a model
+// can only respond to by repeating the call.
+func toolResultForModel(res interface{}, err error) interface{} {
+	if err == nil {
+		return res
+	}
+	if strings.TrimSpace(toolResultToString(res)) == "" {
+		return "Error: " + err.Error()
+	}
+	return toolResultToString(res) + "\nError: " + err.Error()
 }

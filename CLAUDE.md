@@ -169,6 +169,37 @@ Every service built through `agent.New(...).Build()` gets the built-in set autom
 
 The discipline: when a model keeps making the same mistake, **don't add another sentence to the prompt — write a lint** in `output_lints_builtin.go` / `output_lints_delivery.go` and the runtime will reject + retry deterministically.
 
+### Extensions are bundles over the seams, not a middleware chain
+
+`pkg/agent/extension.go`. An `Extension` is one concern (PII, usage metering,
+logging, a budget gate) that implements `Name()` plus whichever optional
+capabilities it needs — `Observer`, `OutputLint`, `Module`, `HookProvider`,
+`ContextContributor`, `ToolCallFilter`, `ToolResultFilter`, `RunLifecycle`,
+`Lifecycle`. `Build()` detects each by type assertion and wires it into the
+existing seam (`installExtensions`); nothing new was added to the loop. Order
+is registration order at every seam (hook sorting is stable now; extension
+hooks sit at priority 1000+i, after user hooks at 100).
+
+Two rules keep this from becoming v2 again. **There is no `next()`**: an
+extension cannot wrap the loop, skip a stage or call the model, so the loop
+stays one loop. **Context contribution is additive**: an extension appends
+system messages and never rewrites the goal, because rewriting is one phrase
+table away from deciding behaviour from the user's wording.
+
+Two seams were changed to make this honest. `post_tool_use` now runs through
+`EmitWithResult`, so a handler can replace the result the model sees and an
+erroring handler fails closed; `HookEventPostExecution` is now actually
+emitted, once, on every terminal path (`emitRunEnd`), carrying stop reason,
+text and duration. And a bug found by the refusal test: a tool call that
+returned an error reached the model as an *empty* result — `Error` rode
+alongside `Result` in `ToolExecutionResult` but only `Result` was written into
+the tool message. `toolResultForModel` fixes that; an empty tool result is the
+one thing a model can only respond to by repeating the call.
+
+Shipped extensions live in `pkg/extensions/{logging,pii,usage}`; a `Service`
+runs many tasks concurrently and shares its extensions between them, so an
+extension's methods must be safe for that (`extension_concurrency_test.go`).
+
 ### Hard constraints live in the runtime, not the prompt
 
 A user who refuses tool use is obeyed by *withholding the tools* — `prepareTurnInputsWithConfig` empties the list, including `search_available_tools` — and any tool call the model emits anyway is refused with structured feedback. Forbidding a capability means not offering it, not offering it and then arguing about it.

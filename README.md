@@ -309,6 +309,46 @@ request; verdicts do not. Checks on the *model's* output — the lints above, re
 detection, planning-only endings — are the output side, which is where deterministic
 checks belong.
 
+## Extensions
+
+One concern often touches several seams. PII handling masks tool results,
+rejects a final answer that leaks, and wants to appear in the run's telemetry —
+three interfaces, three registrations, and nothing that says they belong
+together. An `Extension` is that bundle:
+
+```go
+svc, _ := agent.New("support").
+	WithExtensions(
+		logging.New(os.Stderr), // pkg/extensions/logging — the activity log
+		pii.New(),              // pkg/extensions/pii     — mask tool results, lint the answer
+		usage.New(),            // pkg/extensions/usage   — tokens by model, priced
+	).
+	Build()
+```
+
+An extension implements `Name()` and whichever of the optional capabilities it
+needs; `Build()` detects each one by type assertion and wires it into the right
+seam. Extensions run in the order listed, at every seam.
+
+| capability | seam | what it may do |
+| --- | --- | --- |
+| `Observer` | model turns, tool calls, retries, compaction, checkpoints, segments | see |
+| `OutputLint` | the final answer | reject and force a retry |
+| `Module` | the tool registry | add tools |
+| `ContextContributor` | before the first turn | append system messages — additive only, never rewrite the goal |
+| `ToolCallFilter` | before a tool runs | rewrite its arguments, or refuse it with a reason the model sees |
+| `ToolResultFilter` | after a tool runs | replace what the model sees; an error fails closed |
+| `RunLifecycle` | run start / run end | veto a run before its first turn; see how every run ended |
+| `Lifecycle` | `Build()` / `Close()` | open and release a resource, started in order and stopped in reverse |
+| `HookProvider` | any `HookEvent` | the escape hatch for `stop`, `pre_compact`, sub-agent events |
+
+This is deliberately not a middleware chain. There is no `next()`: an extension
+cannot wrap the loop, skip a stage, or call the model itself, which is what keeps
+one loop one loop. A `Service` runs many tasks at once and every extension is
+shared by all of them, so its methods must be safe to call concurrently; the
+three shipped ones are, and `go test -race` covers twelve runs through every
+seam of one extension. Runnable: `examples/extensions`.
+
 ## Long-running work
 
 A run that must last hours is not a longer run. It is many runs, and the framework is
@@ -442,8 +482,8 @@ Builder options: `WithLLM`, `WithEmbedder`, `WithConfig`, `WithPrompt` /
 `WithSystemPrompt`, `WithMemory` / `WithGraphMemory` / `WithMemoryService`,
 `WithRunMemory`, `WithMCP`, `WithSkills`, `WithRAG`, `WithSubagents`, `WithDelegation`,
 `WithLengthLimits`, `WithSandbox`, `WithAutonomy`, `WithPlanStore`, `WithTaskStore`,
-`WithPromptCache`, `WithTool(s)`, `WithObserver`, `WithProgress`, `WithDBPath`,
-`WithDebug`, and `WithOptions(agent.Options{...})` for the low-frequency knobs
+`WithPromptCache`, `WithExtensions`, `WithTool(s)`, `WithObserver`, `WithProgress`,
+`WithDBPath`, `WithDebug`, and `WithOptions(agent.Options{...})` for the low-frequency knobs
 (permission policy, tool-execution policy, required skills, extra modules, observers).
 
 ## Providers
@@ -517,7 +557,8 @@ Identity is the session UUID. There is no user id in the chat or task APIs.
 ## Repository layout
 
 ```text
-pkg/agent         the framework: agent, loop, tools, context, hooks/lints, sessions, checkpoints, long runs
+pkg/agent         the framework: agent, loop, tools, context, hooks/lints, extensions, sessions, checkpoints, long runs
+pkg/extensions    shipped extensions: logging, pii, usage
 pkg/domain        shared types: messages, generation results, token usage, provider and store interfaces
 pkg/providers     OpenAI-compatible providers + LLMPool
 pkg/pool          provider pool, token estimation, pricing and cost

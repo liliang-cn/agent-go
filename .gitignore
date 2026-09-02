@@ -53,3 +53,6 @@ examples/superai/web/node_modules/
 /deep-research
 /graph-memory-experiment
 /cortex-data-import
+
+# go build output of examples/extensions when run from the root
+/extensions

@@ -106,6 +106,9 @@ type ModelInfo struct {
 	SpanID    string
 	Messages  int // number of messages sent to the model
 	Tools     int // number of tools offered to the model
+	// Model is the model name the turn was sent to, so an observer can
+	// price it without asking the service.
+	Model string
 }
 
 // ModelDelta carries a streamed fragment. Kind is "reasoning" or "partial".
@@ -125,6 +128,11 @@ type ModelResult struct {
 	// provider reported one (0 otherwise). Cache hits are billed at a deep
 	// discount, so TokensUsed alone overstates what the turn cost.
 	CachedTokens int
+	// PromptTokens and CompletionTokens are the two halves of TokensUsed,
+	// which is all a price list needs: input and output are billed at
+	// different rates, and the cached share of the input at a third.
+	PromptTokens     int
+	CompletionTokens int
 }
 
 // ToolInfo identifies a single tool call. CallID is a stable per-call id; the

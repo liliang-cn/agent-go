@@ -95,6 +95,8 @@ type Service struct {
 
 	// Hook system for lifecycle events
 	hooks *HookRegistry
+	// extensions, in the order they run at every seam.
+	extensions []Extension
 
 	// Async sub-agent coordinator
 

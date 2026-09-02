@@ -66,13 +66,18 @@ func (s *Service) Close() error {
 		// Wait for work a run left running (memory extraction) before closing
 		// the store underneath it.
 		s.waitBackground()
+		if stopErr := s.stopExtensions(context.Background()); stopErr != nil {
+			err = stopErr
+		}
 		// The memory service owns a worker goroutine and a write queue; closing
 		// it drains pending writes rather than leaving them to land after the
 		// caller has torn its directory down.
 		if closer, ok := s.memoryService.(interface{ Close() error }); ok && closer != nil {
 			_ = closer.Close()
 		}
-		err = s.store.Close()
+		if closeErr := s.store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
 	})
 	return err
 }

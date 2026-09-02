@@ -74,7 +74,15 @@ func (s *Service) executeDirectToolCall(ctx context.Context, currentAgent *Agent
 	hookData.ToolResult = result
 	hookData.ToolError = execErr
 	if s.hooks != nil {
-		s.hooks.Emit(HookEventPostToolUse, hookData)
+		// A post-tool handler may replace what the model sees as the result
+		// (a redaction, a truncation). One that fails replaces it with the
+		// failure, so a filter that could not inspect a result never lets it
+		// through by accident.
+		modified, hookErr := s.hooks.EmitWithResult(ctx, HookEventPostToolUse, hookData)
+		if hookErr != nil {
+			return nil, hookErr, false
+		}
+		result = modified.ToolResult
 	}
 
 	return result, execErr, false

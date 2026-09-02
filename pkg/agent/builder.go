@@ -128,6 +128,7 @@ type Builder struct {
 
 	tools        []*Tool // pre-registered via WithTool/WithTools
 	extraModules []Module
+	extensions   []Extension
 	subagents    []SubagentSpec
 
 	// delegation is nil unless WithDelegation was called; nil means the built-in
@@ -305,6 +306,14 @@ func (b *Builder) WithProgress(cb ProgressCallback) *Builder {
 // service. Observers bracket model turns, tool calls, sub-agent runs, and
 // terminal checkpoints with paired Start/End callbacks (see Observer). They
 // cannot mutate or block a run — use hooks for that. Zero-overhead when unused.
+// WithExtensions installs extensions — bundles of behaviour at the loop's
+// seams (observe, lint, add tools, contribute context, filter tool calls and
+// results). They run in the order given. See Extension.
+func (b *Builder) WithExtensions(exts ...Extension) *Builder {
+	b.extensions = append(b.extensions, exts...)
+	return b
+}
+
 func (b *Builder) WithObserver(obs ...Observer) *Builder {
 	for _, o := range obs {
 		if o != nil {
@@ -546,6 +555,9 @@ func (b *Builder) build() (*Service, error) {
 			return nil, fmt.Errorf("module %q registration failed: %w", mod.ID(), err)
 		}
 	}
+	if err := installExtensions(svc, b.extensions); err != nil {
+		return nil, err
+	}
 
 	// Register search_available_tools built-in tool
 	searchToolDef := domain.ToolDefinition{
@@ -727,6 +739,10 @@ func (b *Builder) build() (*Service, error) {
 	// wins over what the sub-agent configuration implies.
 	svc.delegationTools = b.delegation
 	svc.omitLengthLimits = b.omitLengthLimits
+	if err := svc.startExtensions(context.Background()); err != nil {
+		_ = svc.store.Close()
+		return nil, err
+	}
 	return svc, nil
 }
 

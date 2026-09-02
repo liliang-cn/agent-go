@@ -72,6 +72,7 @@ type HookData struct {
 	SubagentID   string        `json:"subagent_id,omitempty"`
 	SubagentName string        `json:"subagent_name,omitempty"`
 	Goal         string        `json:"goal,omitempty"`
+	TaskID       string        `json:"task_id,omitempty"`
 	Result       interface{}   `json:"result,omitempty"`
 	Error        error         `json:"error,omitempty"`
 	Duration     time.Duration `json:"duration,omitempty"`
@@ -373,7 +374,9 @@ func (r *HookRegistry) Clear() {
 
 // sortHooks sorts hooks by priority (lower = higher priority)
 func sortHooks(hooks []*Hook) {
-	sort.Slice(hooks, func(i, j int) bool {
+	// Stable, so hooks of equal priority run in registration order — the
+	// order extensions were listed in is the order they run in.
+	sort.SliceStable(hooks, func(i, j int) bool {
 		return hooks[i].Priority < hooks[j].Priority
 	})
 }

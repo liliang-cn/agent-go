@@ -251,6 +251,36 @@ svc.Run(ctx, goal, agent.WithConstraintExtraction(false)) // 完全关闭
 
 这条规则是普遍的:**框架里任何地方都没有一张硬编码的短语或正则表,去读用户的请求并改变行为。** 排序(工具搜索、BM25)可以读请求;判决不行。对*模型输出*的检查——上面的 lint、拒答检测、只列计划的结尾——是输出侧,确定性检查就该在那里。
 
+## 扩展
+
+一个关注点常常同时碰到好几个接缝。PII 处理要遮蔽工具结果、拒绝泄露的最终答案、还想出现在运行的遥测里——三个接口、三次注册,却没有任何东西说明它们是一体的。`Extension` 就是这个捆绑:
+
+```go
+svc, _ := agent.New("support").
+	WithExtensions(
+		logging.New(os.Stderr), // pkg/extensions/logging — 活动日志
+		pii.New(),              // pkg/extensions/pii     — 遮蔽工具结果、检查答案
+		usage.New(),            // pkg/extensions/usage   — 按模型计 token,能定价的定价
+	).
+	Build()
+```
+
+扩展实现 `Name()` 和它需要的那几个可选能力;`Build()` 用类型断言逐个识别,接到对应的接缝上。扩展按列出的顺序在每个接缝运行。
+
+| 能力 | 接缝 | 能做什么 |
+| --- | --- | --- |
+| `Observer` | 模型轮次、工具调用、重试、压缩、检查点、分段 | 看 |
+| `OutputLint` | 最终答案 | 拒绝并强制重试 |
+| `Module` | 工具注册表 | 加工具 |
+| `ContextContributor` | 第一轮之前 | 追加系统消息——只能追加,不能改写 goal |
+| `ToolCallFilter` | 工具执行前 | 改写参数,或带理由拒绝(模型看得到理由) |
+| `ToolResultFilter` | 工具执行后 | 替换模型看到的结果;出错则关闭式失败 |
+| `RunLifecycle` | 运行开始 / 结束 | 第一轮前否决一次运行;看到每次运行的结局 |
+| `Lifecycle` | `Build()` / `Close()` | 打开和释放资源,按顺序启动、反序停止 |
+| `HookProvider` | 任意 `HookEvent` | 兜底口:`stop`、`pre_compact`、子 agent 事件 |
+
+这刻意不是中间件链。没有 `next()`:扩展不能包住循环、跳过阶段、或自己调模型——这正是"一条循环"能保持一条的原因。一个 `Service` 同时跑很多任务,每个扩展被所有任务共享,所以它的方法必须能并发调用;自带的三个都满足,`go test -race` 覆盖了十二个运行同时穿过同一个扩展全部接缝的情况。可运行:`examples/extensions`。
+
 ## 长时程运行
 
 必须跑几个小时的运行,不是一次更长的运行,而是很多次运行;框架的构造方式是让"活下来"所需的部件成为运行时的职责,而不是调用方的。
@@ -347,7 +377,7 @@ resumed, _ := manager.Tasks().ResumeFromCheckpoint(ctx, task.ID,
 | `WithAutoCompaction(threshold, keep)` / `WithoutAutoCompaction()` | 压缩策略 |
 | `WithDebug(bool)` | 单次运行的详细日志 |
 
-Builder 选项:`WithLLM`、`WithEmbedder`、`WithConfig`、`WithPrompt` / `WithSystemPrompt`、`WithMemory` / `WithGraphMemory` / `WithMemoryService`、`WithRunMemory`、`WithMCP`、`WithSkills`、`WithRAG`、`WithSubagents`、`WithDelegation`、`WithLengthLimits`、`WithSandbox`、`WithAutonomy`、`WithPlanStore`、`WithTaskStore`、`WithPromptCache`、`WithTool(s)`、`WithObserver`、`WithProgress`、`WithDBPath`、`WithDebug`,以及装低频旋钮的 `WithOptions(agent.Options{...})`(权限策略、工具执行策略、必需 skill、额外模块、observer)。
+Builder 选项:`WithLLM`、`WithEmbedder`、`WithConfig`、`WithPrompt` / `WithSystemPrompt`、`WithMemory` / `WithGraphMemory` / `WithMemoryService`、`WithRunMemory`、`WithMCP`、`WithSkills`、`WithRAG`、`WithSubagents`、`WithDelegation`、`WithLengthLimits`、`WithSandbox`、`WithAutonomy`、`WithPlanStore`、`WithTaskStore`、`WithPromptCache`、`WithExtensions`、`WithTool(s)`、`WithObserver`、`WithProgress`、`WithDBPath`、`WithDebug`,以及装低频旋钮的 `WithOptions(agent.Options{...})`(权限策略、工具执行策略、必需 skill、额外模块、observer)。
 
 ## Provider
 
@@ -400,7 +430,8 @@ func (u *usage) OnModelEnd(ctx context.Context, info agent.ModelInfo, res *agent
 ## 仓库布局
 
 ```text
-pkg/agent         框架本体:agent、循环、工具、上下文、hook/lint、会话、检查点、长跑
+pkg/agent         框架本体:agent、循环、工具、上下文、hook/lint、扩展、会话、检查点、长跑
+pkg/extensions    自带扩展:logging、pii、usage
 pkg/domain        共享类型:消息、生成结果、token 用量、provider 与 store 接口
 pkg/providers     OpenAI 兼容 provider + LLMPool
 pkg/pool          provider 池、token 估算、定价与成本
