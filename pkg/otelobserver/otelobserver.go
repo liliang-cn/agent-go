@@ -1,6 +1,8 @@
 // Package otelobserver bridges agent-go's agent.Observer callbacks to
 // OpenTelemetry spans that follow the OpenInference semantic conventions, so
-// agent runs render as trace trees in Arize Phoenix (or any OTLP backend).
+// agent runs render as trace trees in Arize Phoenix (or any OTLP backend), and
+// — when a MeterProvider is supplied — to a small set of metrics that answer
+// the questions a trace cannot: how much, how often, how much did it cost.
 //
 // All OpenTelemetry imports are confined to this package; the framework core
 // (pkg/agent) stays dependency-lean. Wire an Observer onto a Service with
@@ -8,10 +10,129 @@
 //
 // The Observer API exposes no explicit run-start/run-end hook, so this bridge
 // lazily opens a ROOT span the first time it sees any event for a TaskID and
-// closes it on OnCheckpoint (which fires on terminal complete/blocked). Every
-// model / tool / sub-agent span is created as a CHILD of that root so Phoenix
-// shows a correct trace tree. Tasks that never checkpoint are cleaned up by
-// Shutdown.
+// closes it on the first TERMINAL OnCheckpoint. Every model / tool /
+// sub-agent span is created as a CHILD of that root so Phoenix shows a correct
+// trace tree. Tasks that never checkpoint are cleaned up by Shutdown.
+//
+// # What the bridge emits
+//
+// Everything below is stable enough to build a dashboard on. The scope name on
+// both the tracer and the meter is
+// "github.com/liliang-cn/agent-go/v3/pkg/otelobserver".
+//
+// ## Spans
+//
+//	name                 kind    opened by            closed by
+//	"task <task_id>"     CHAIN   first event of a run terminal OnCheckpoint (or Shutdown)
+//	"segment <index>"    CHAIN   OnSegment            OnSegment(Ending)
+//	"llm.<agent>"        LLM     OnModelStart         OnModelEnd
+//	"tool.<tool>"        TOOL    OnToolStart          OnToolEnd
+//	"agent.<name>"       AGENT   OnSubAgentStart      OnSubAgentEnd
+//
+// The kind is carried in openinference.span.kind; WithRootKind swaps the root's
+// CHAIN for AGENT. While a segment span is open it — not the root — is the
+// parent of the model, tool and sub-agent spans, so a long task reads as
+// task → segment → turns. One trace is emitted per segment rather than one per
+// task: a span exports nothing until it ends, and a task-wide root would show
+// nothing for the hours it ran. Segments correlate through agentgo.task_id.
+//
+// Span attributes, by span:
+//
+//	root      openinference.span.kind, session.id, agentgo.task_id,
+//	          agentgo.checkpoint.reason, agentgo.round, agentgo.messages,
+//	          output.value (the final answer)
+//	segment   openinference.span.kind, agentgo.task_id, session.id,
+//	          agentgo.segment.index, .total, .stop_reason, .duration_ms,
+//	          .productive, .cost_usd, .error
+//	llm       openinference.span.kind, llm.model_name, session.id,
+//	          agentgo.agent_name, agentgo.round, output.value,
+//	          llm.token_count.total, .prompt, .completion,
+//	          llm.token_count.prompt_details.cache_read, llm.tool_calls
+//	tool      openinference.span.kind, tool.name, tool.parameters,
+//	          input.value, output.value, session.id, agentgo.agent_name,
+//	          agentgo.tool.inner
+//	agent     openinference.span.kind, session.id, agentgo.agent_name,
+//	          agentgo.goal, input.value, output.value
+//
+// A span whose callback carried an error gets RecordError plus status Error;
+// everything else ends Ok. The root is deliberately left Unset: most runtime
+// errors are recovered, and the terminal verdict is agentgo.checkpoint.reason.
+//
+// ## Span events
+//
+//	event                on          attributes
+//	"model.delta"        llm         delta.kind ("reasoning"|"partial"), delta.text
+//	"model.retry"        llm         retry.kind ("transient_error"|"max_tokens_truncation"),
+//	                                 retry.attempt, retry.delay_ms, retry.reason,
+//	                                 retry.max_tokens.from/.to (budget escalation only),
+//	                                 agentgo.agent_name, agentgo.round
+//	"lint.rejected"      root        lint.name, lint.verdict ("retrying"|"blocked"),
+//	                                 lint.reason, agentgo.agent_name, agentgo.round
+//	"context.compaction" root        compaction.trigger, compaction.messages.before/.after,
+//	                                 compaction.tokens.context/.estimated,
+//	                                 agentgo.agent_name, agentgo.round
+//	"agentgo.error"      root        error.kind (ErrorInfo.Marker, "unmarked" when empty),
+//	                                 error.message, agentgo.agent_name, agentgo.round
+//	"checkpoint"         root        reason; plus agentgo.round and agentgo.messages
+//	                                 on the non-terminal ones
+//
+// model.delta is one event per streamed fragment and carries the fragment text:
+// it is by far the highest-volume thing here, and a backend with an event cap
+// will drop the rest of a turn's events before it drops these.
+//
+// ## Metrics
+//
+//	name                            instrument  unit      attributes
+//	agentgo.model.calls             counter     1         agent, model, status
+//	agentgo.model.duration          histogram   s         agent, model
+//	agentgo.model.retries           counter     1         agent, kind
+//	agentgo.model.unpriced_turns    counter     1         agent, model
+//	agentgo.tool.calls              counter     1         agent, tool, inner, status
+//	agentgo.tool.duration           histogram   s         agent, tool, inner
+//	agentgo.lint.rejections         counter     1         agent, lint, verdict
+//	agentgo.compactions             counter     1         agent, trigger
+//	agentgo.errors                  counter     1         agent, kind
+//	agentgo.tokens.prompt           counter     {token}   agent, model
+//	agentgo.tokens.completion       counter     {token}   agent, model
+//	agentgo.tokens.cached           counter     {token}   agent, model
+//	agentgo.cost.usd                counter     {USD}     agent, model
+//
+// Attribute keys are prefixed agentgo.: agentgo.agent, .model, .tool, .status
+// ("ok"|"error"), .lint, .verdict, .kind, .trigger, .inner.
+//
+// No metric carries a task, session, run or span id, and none ever should: a
+// metric's cost is the product of its label cardinalities, and a per-run label
+// turns one time series into one per run — which is a trace, badly, at a
+// hundred times the storage.
+//
+// ## What the numbers are guaranteed to add up to
+//
+// Verified against a live provider by examples/otel-probe, which runs the loop
+// and compares these counters with the run's own accounting:
+//
+//   - tokens.prompt / .completion / .cached sum, over a run, to
+//     ExecutionResult.Usage.PromptTokens / CompletionTokens / CachedPromptTokens
+//     — and over a RunSegments task to LongRunResult.TotalUsage.
+//   - cost.usd sums to ExecutionResult.EstimatedCostUSD (LongRunResult.TotalCostUSD),
+//     for every turn whose model pool.CalculateCostDetailed can price. A turn
+//     it cannot price is counted in model.unpriced_turns and contributes no
+//     cost, because a silent zero is indistinguishable from free.
+//   - model.duration's count equals model.calls, and tool.duration's equals
+//     tool.calls: a turn that errored with no result is still timed, by the
+//     bridge's own clock.
+//
+// Three things are outside those sums, by construction:
+//
+//   - Cache WRITE tokens. agent.ModelResult carries no equivalent of
+//     TokenUsage.CacheWriteTokens, so the bridge cannot report the premium paid
+//     to establish a cache entry. Read it from ExecutionResult.Usage.
+//   - The terminal control tools. task_complete / task_blocked are intercepted
+//     in the stream and never dispatched, so they produce no tool span and no
+//     tool.calls — which is why ExecutionResult.ToolCalls can exceed the tool
+//     counters by one.
+//   - agentgo.model is only as good as Service.Info().Model. A generator
+//     injected with Builder.WithLLM that implements neither GetModelName nor
+//     GetBaseURL leaves it empty, which also makes every turn unpriced.
 package otelobserver
 
 import (
@@ -257,8 +378,8 @@ func (o *Observer) OnModelEnd(ctx context.Context, info agent.ModelInfo, res *ag
 	if o == nil {
 		return
 	}
-	o.recordModelEnd(ctx, info, res, err)
-	span := o.pop(info.SpanID)
+	span, elapsed := o.popTimed(info.SpanID)
+	o.recordModelEnd(ctx, info, res, elapsed, err)
 	if span == nil {
 		return
 	}
@@ -351,9 +472,44 @@ func (o *Observer) OnSubAgentEnd(_ context.Context, info agent.SubAgentInfo, res
 	finish(span, err)
 }
 
-// OnCheckpoint is the run-end signal: it closes the task root span.
+// checkpointEndsRun reports whether a checkpoint reason is a terminal one.
+//
+// Not every checkpoint is the end of a run. AutonomyProfile.CheckpointEveryRounds
+// writes a round_end snapshot mid-run, and the after_tool sink writes one after
+// a tool — both reach OnCheckpoint with the same shape as task_complete. Ending
+// the root on those splits one run into a fresh trace per snapshot: a live probe
+// with checkpoints every round produced two "task <id>" roots for a two-round
+// run, the second holding the answer and neither holding the whole thing.
+//
+// Unknown reasons are treated as terminal on purpose. A root that is never
+// ended exports nothing at all, so the failure mode of guessing wrong in this
+// direction is a split trace; the other direction is no trace.
+func checkpointEndsRun(reason string) bool {
+	switch reason {
+	case string(agent.CheckpointReasonRoundEnd), string(agent.CheckpointReasonAfterTool):
+		return false
+	}
+	return true
+}
+
+// OnCheckpoint is the run-end signal: a terminal checkpoint closes the task
+// root span. A non-terminal one only marks the timeline.
 func (o *Observer) OnCheckpoint(_ context.Context, info agent.CheckpointInfo) {
 	if o == nil {
+		return
+	}
+	if !checkpointEndsRun(info.Reason) {
+		o.mu.Lock()
+		root := o.roots[info.TaskID]
+		o.mu.Unlock()
+		if root == nil {
+			return
+		}
+		root.span.AddEvent("checkpoint", trace.WithAttributes(
+			attribute.String("reason", info.Reason),
+			attribute.Int(attrRound, info.Round),
+			attribute.Int("agentgo.messages", info.Messages),
+		))
 		return
 	}
 	o.mu.Lock()

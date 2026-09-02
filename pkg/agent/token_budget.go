@@ -74,7 +74,11 @@ func escalateMaxTokens(result *domain.GenerationResult, err error, current, esca
 // budget. It is an analytics event rather than a silent retry because a run
 // that escalates every round is paying for reasoning it never uses, and that
 // is a configuration problem its operator should be able to see.
-func (r *Runtime) emitTokenBudgetEscalation(round, from, to int, finishReason string) {
+//
+// spanID names the turn being re-asked, so the escalation lands on that turn's
+// span instead of on the run — the difference between seeing which round paid
+// for the extra budget and knowing only that some round did.
+func (r *Runtime) emitTokenBudgetEscalation(spanID string, round, from, to int, finishReason string) {
 	if r == nil || r.eventChan == nil {
 		return
 	}
@@ -87,6 +91,7 @@ func (r *Runtime) emitTokenBudgetEscalation(round, from, to int, finishReason st
 	})
 	r.emitModelRetryObserved(ModelRetryInfo{
 		Round:         round,
+		SpanID:        spanID,
 		Kind:          "max_tokens_truncation",
 		Attempt:       1,
 		Reason:        finishReason,

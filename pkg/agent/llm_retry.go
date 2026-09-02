@@ -181,7 +181,10 @@ func waitBeforeLLMRetry(ctx context.Context, d time.Duration) bool {
 // analytics event rather than an error because nothing has gone wrong yet —
 // but it must be visible, or a run that pauses ninety seconds mid-task looks
 // to a watching host exactly like one that hung.
-func (r *Runtime) emitLLMRetry(round, attempt, maxAttempts int, delay time.Duration, err error) {
+// spanID is the turn this retry happened inside, so an observer can attach the
+// retry to that turn rather than to the run. Passing it was the whole point of
+// ModelRetryInfo.SpanID and it was never filled in.
+func (r *Runtime) emitLLMRetry(spanID string, round, attempt, maxAttempts int, delay time.Duration, err error) {
 	if r == nil || r.eventChan == nil {
 		return
 	}
@@ -194,6 +197,7 @@ func (r *Runtime) emitLLMRetry(round, attempt, maxAttempts int, delay time.Durat
 	})
 	r.emitModelRetryObserved(ModelRetryInfo{
 		Round:   round,
+		SpanID:  spanID,
 		Kind:    "transient_error",
 		Attempt: attempt,
 		Reason:  err.Error(),

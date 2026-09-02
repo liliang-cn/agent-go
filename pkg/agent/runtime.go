@@ -253,21 +253,55 @@ func (r *Runtime) forceFinalSynthesis(ctx context.Context, state *queryLoopState
 			"above, give your best final answer to the original task now. If the goal was not " +
 			"fully achieved, state clearly what was completed and what still remains.",
 	})
+	// Observer seam: the synthesis pass is a model turn like every other one,
+	// and it was the only one that emitted nothing. Its tokens and cost go
+	// into the run's budget — and therefore into ExecutionResult.Usage and
+	// EstimatedCostUSD — so an observer's totals disagreed with the run's own
+	// on exactly the runs that ended at the round ceiling, which are the runs
+	// most worth measuring. Measured on a live probe: the run reported 3141
+	// prompt tokens and the metrics 1867.
+	modelInfo := ModelInfo{
+		TaskID:    currentTaskID(r.session),
+		RunID:     r.runID(),
+		SessionID: r.sessionID(),
+		AgentName: r.currentAgentName(),
+		Round:     r.currentRound,
+		SpanID:    uuid.NewString(),
+		Messages:  len(synth),
+		Model:     r.svc.Info().Model,
+	}
+	r.svc.emitObserver(func(o Observer) { o.OnModelStart(ctx, modelInfo) })
+	synthStart := time.Now()
+
 	// tools=nil + no tool_choice → the provider must return plain text.
 	res, err := r.svc.llmService.GenerateWithTools(ctx, sanitizeToolPairing(synth), nil, r.svc.toolGenerationOptions(r.temperature(), r.maxTokens(), ""))
+	synthDur := time.Since(synthStart)
 	if err != nil || res == nil {
+		r.svc.emitObserver(func(o Observer) { o.OnModelEnd(ctx, modelInfo, nil, err) })
 		return ""
 	}
+
 	// Accrue this out-of-loop call's tokens/cost so budget reporting isn't
-	// undercounted by the synthesis pass.
+	// undercounted by the synthesis pass. The observer is told the same
+	// numbers the budget was told, estimates included, because two accounts of
+	// one turn that do not match are worse than one rough account.
+	tc := pool.NewTokenCounter()
+	model := r.svc.Info().Model
+	inputTokens := tc.EstimateConversationTokens(synth, model)
+	outputTokens := tc.EstimateTokens(res.Content, model)
 	if state != nil {
-		tc := pool.NewTokenCounter()
-		model := r.svc.Info().Model
-		inputTokens := tc.EstimateConversationTokens(synth, model)
-		outputTokens := tc.EstimateTokens(res.Content, model)
 		state.noteTokens(inputTokens + outputTokens)
 		state.noteCost(inputTokens, outputTokens, pool.CalculateCost(model, inputTokens, outputTokens))
 	}
+	r.svc.emitObserver(func(o Observer) {
+		o.OnModelEnd(ctx, modelInfo, &ModelResult{
+			Content:          res.Content,
+			DurationMs:       synthDur.Milliseconds(),
+			TokensUsed:       inputTokens + outputTokens,
+			PromptTokens:     inputTokens,
+			CompletionTokens: outputTokens,
+		}, nil)
+	})
 	return strings.TrimSpace(res.Content)
 }
 
@@ -552,7 +586,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 					break
 				}
 				delay := llmRetryDelay(attempt + 1)
-				r.emitLLMRetry(round+1, attempt+1, maxLLMRetries, delay, err)
+				r.emitLLMRetry(modelSpanID, round+1, attempt+1, maxLLMRetries, delay, err)
 				// Whatever the failed attempt streamed is not part of any answer:
 				// clear it from the transcript, and start the next attempt from a
 				// clean collector and no half-seen terminal signal.
@@ -570,7 +604,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			if !grow {
 				break
 			}
-			r.emitTokenBudgetEscalation(round+1, turnMaxTokens, next, result.FinishReason)
+			r.emitTokenBudgetEscalation(modelSpanID, round+1, turnMaxTokens, next, result.FinishReason)
 			turnMaxTokens = next
 			// The severed turn contributed nothing; drop it so the retry is
 			// not appended to a fragment of itself.

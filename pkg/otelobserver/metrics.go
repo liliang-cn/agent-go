@@ -120,7 +120,13 @@ func newInstruments(mp metric.MeterProvider) *instruments {
 // priced at zero. That distinction is the whole reason CalculateCostDetailed
 // reports `known`: a silent 0 is indistinguishable from free, and a cost
 // counter that quietly under-reports is worse than one that admits a gap.
-func (o *Observer) recordModelEnd(ctx context.Context, info agent.ModelInfo, res *agent.ModelResult, err error) {
+//
+// elapsed is the bridge's own measurement of the turn, from OnModelStart to
+// OnModelEnd. It is the fallback for the case the runtime reports no result at
+// all — a turn the provider failed still took time, and a histogram that skips
+// those no longer counts one observation per turn, which is the first thing
+// anyone divides by.
+func (o *Observer) recordModelEnd(ctx context.Context, info agent.ModelInfo, res *agent.ModelResult, elapsed time.Duration, err error) {
 	m := o.instrumentsOrNil()
 	if m == nil {
 		return
@@ -131,10 +137,16 @@ func (o *Observer) recordModelEnd(ctx context.Context, info agent.ModelInfo, res
 		attribute.String(mAttrModel, info.Model),
 	}
 	addInt(ctx, m.modelCalls, 1, append(base, attribute.String(mAttrStatus, statusOf(err)))...)
+	// The runtime's own timing wins when it reported one: it brackets the
+	// retries, which is the number the histogram's description promises.
+	seconds := elapsed.Seconds()
+	if res != nil && res.DurationMs > 0 {
+		seconds = float64(res.DurationMs) / 1000.0
+	}
+	recordFloat(ctx, m.modelDuration, seconds, base...)
 	if res == nil {
 		return
 	}
-	recordFloat(ctx, m.modelDuration, float64(res.DurationMs)/1000.0, base...)
 	addInt(ctx, m.promptTokens, int64(res.PromptTokens), base...)
 	addInt(ctx, m.completionTokens, int64(res.CompletionTokens), base...)
 	addInt(ctx, m.cachedTokens, int64(res.CachedTokens), base...)
