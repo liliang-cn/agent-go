@@ -456,6 +456,40 @@ svc, _ := agent.New("assistant").
 - **本地时间是最容易错的一处。** 锚点在交给模型之前先转成用户所在时区,提示词同时给出偏移量**和** IANA 时区名(偏移量表达不了夏令时规则),日历天的比较会把两端都先转过去——东京的 23:30 是维也纳同一天下午的 16:30。
 - **降级是设计的一部分。** 没有模型、超时、答案解不开,记忆就保持未解析状态,但仍然带着"写于何时",这在任何语言里都成立。可运行:`examples/timeaware`。
 
+## 记忆后端
+
+除了四个内置的,还随包发七个插件,用一个字符串选:
+
+```go
+svc, _ := agent.New("assistant").
+	WithMemory(
+		agent.WithMemoryStoreType("qdrant"),
+		agent.WithMemoryDSN("http://192.168.1.10:6333"),
+	).Build()
+```
+
+| store_type | 要 embedding 吗 | 要另一个服务吗 |
+| --- | --- | --- |
+| `qdrant` | 不要,服务端 BM25 | 不要 |
+| `meilisearch` | 不要 | 不要 |
+| `weaviate` | 不要,`vectorizer: none` | 不要 |
+| `surrealdb` | 不要 | 不要 |
+| `mem0` | 要,任意 OpenAI 兼容地址 | Postgres |
+| `cortex-remote` | 不要,服务端自己有 | 一个 CortexDB |
+| `mcp-memory` | 看服务端 | 一个 MCP server |
+
+前四个各自都是**一个下载下来就能跑的二进制**,不需要任何 API key。七个全部对着真实服务器跑过 `pkg/memory/memorystoretest`——它断言的是 agent **实际被喂进提示词的文本**,因为 store 层往返能过而 agent 什么都看不到,正是这类 bug 的共同形状。
+
+接自己的后端是**注册**,不是往 switch 里加 case:
+
+```go
+agent.RegisterMemoryStore("my-store", func(cfg domain.MemoryStoreConfig) (domain.MemoryStore, error) {
+	return newMyStore(cfg.DSN), nil
+})
+```
+
+只实现你能做到的:内嵌 `memory.BaseStore`,其余方法返回 `ErrMemoryStoreUnsupported`,调用方会据此降级。**诚实的「做不到」好过假实现。**
+
 ## 运行中切换记忆后端
 
 用哪个后端原本只在构造时决定一次。想把一个用户从本地文件记忆挪到共享大脑,只能重建一个 Service,把旧的连同它的对话和在跑的任务一起扔掉。

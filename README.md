@@ -638,6 +638,45 @@ svc, _ := agent.New("assistant").
   leaves the memory unresolved and still carrying when it was written, which is
   true in every language. Runnable: `examples/timeaware`.
 
+## Memory backends
+
+Seven shipped plugins besides the four built-ins, selected by one string:
+
+```go
+svc, _ := agent.New("assistant").
+	WithMemory(
+		agent.WithMemoryStoreType("qdrant"),
+		agent.WithMemoryDSN("http://192.168.1.10:6333"),
+	).Build()
+```
+
+| store_type | needs an embedder? | needs another service? |
+| --- | --- | --- |
+| `qdrant` | no, BM25 server-side | no |
+| `meilisearch` | no | no |
+| `weaviate` | no, `vectorizer: none` | no |
+| `surrealdb` | no | no |
+| `mem0` | yes, any OpenAI-compatible URL | Postgres |
+| `cortex-remote` | no, the server owns it | a CortexDB |
+| `mcp-memory` | depends on the server | an MCP server |
+
+The four in the first block are a single downloaded binary each and need no API
+key of any kind. All seven were verified against a live server through
+`pkg/memory/memorystoretest`, which asserts on the text the agent is actually
+shown — a Store/Search round trip passes while the agent sees nothing.
+
+Adding your own is a registration, never a new case in a switch:
+
+```go
+agent.RegisterMemoryStore("my-store", func(cfg domain.MemoryStoreConfig) (domain.MemoryStore, error) {
+	return newMyStore(cfg.DSN), nil
+})
+```
+
+Implement only what your backend can do: embed `memory.BaseStore` and the rest
+return `ErrMemoryStoreUnsupported`, which callers degrade past. An honest
+unsupported beats a fake implementation.
+
 ## Swapping memory at runtime
 
 Which backend a service uses was decided once, at construction. Moving a user

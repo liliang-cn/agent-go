@@ -185,10 +185,9 @@ func storeLevelRoundTrip(t *testing.T, newStore Factory, opts Options) {
 	ctx := context.Background()
 	st := newStore(t)
 	tok := marker()
-	id := uuid.NewString()
 
 	mem := &domain.Memory{
-		ID: id, Type: domain.MemoryTypeFact, ScopeType: domain.MemoryScopeGlobal,
+		ID: uuid.NewString(), Type: domain.MemoryTypeFact, ScopeType: domain.MemoryScopeGlobal,
 		Content: "The " + tok + " service listens on 47600.", CreatedAt: time.Now(), Importance: 0.8,
 	}
 	if err := st.Store(ctx, mem); err != nil {
@@ -196,6 +195,16 @@ func storeLevelRoundTrip(t *testing.T, newStore Factory, opts Options) {
 			t.Skip("backend cannot Store")
 		}
 		t.Fatalf("Store: %v", err)
+	}
+
+	// The id belongs to the store, not to the caller. A server-backed
+	// backend mints its own and writes it back onto the memory; reading the
+	// id we proposed instead is how an integration ends up addressing
+	// something that does not exist on every later Get and Delete — which is
+	// exactly what this suite caught the first time it met one.
+	id := strings.TrimSpace(mem.ID)
+	if id == "" {
+		t.Fatal("Store left the memory with no id; nothing can address it afterwards")
 	}
 
 	if got, err := st.Get(ctx, id); err == nil && got != nil {

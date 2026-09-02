@@ -574,6 +574,12 @@ behaviour. Keep it that way.
 
 Built-in `store_type` values: `file`, `cortex`, `memoryflow`, `graphflow`.
 
+Shipped plugins, all registered in `init()` and all verified against a real
+server through `memorystoretest`: `cortex-remote`, `mcp-memory`, `mem0`,
+`qdrant`, `meilisearch`, `weaviate`, `surrealdb`. The last four need **no
+embedding model and no API key** — each does lexical ranking server-side, so a
+memory backend is one binary and a `store_type` string.
+
 Shipped plugin 1: `cortex-remote` (`pkg/store/memory_cortex_remote.go`) — a
 shared CortexDB over gRPC, the "shared brain". It covers Store/StoreWithScope/
 Get/Update/Delete/SearchByText/List; vector `Search`/`SearchByScope`/
@@ -668,6 +674,44 @@ desktop with one user; a cross-session leak on anything serving several.
 applies it to both, trimming the rendered index by memory id (each line names
 one) and over-fetching headers before the filter so a top-K does not come back
 short.
+
+### Five third-party memory backends, and what each one taught
+
+`mem0`, `qdrant`, `meilisearch`, `weaviate`, `surrealdb` — all deployed on the
+data VM, all through `memorystoretest`, all carrying a fact across two sessions
+of a real agent. Four of them need no embedder at all: Qdrant does BM25 with
+`"model": "qdrant/bm25"` server-side (true of the plain OSS binary, not just
+Cloud), Meilisearch and SurrealDB rank lexically by default, and Weaviate does
+BM25 with `vectorizer: "none"`.
+
+Each had one thing that a fake server would never have shown:
+
+- **mem0 partitions by owner, and a session-scoped memory has no user_id.**
+  agent-go writes a session memory under mem0's `run_id`; the first
+  implementation searched with a `user_id` filter and therefore could not see
+  a single one of them. Store worked, the store looked healthy, and the next
+  turn had never heard of the fact. The filter is `agent_id` now — the one key
+  on every record whatever its scope. **The conformance suite missed this**
+  because each case configured an agent id; there is now a defaults-only case.
+- **mem0 mints its own ids** and the caller must adopt them, or every later
+  Get and Delete addresses nothing. This one the suite caught — by failing
+  itself: it was reading back the id it proposed rather than the one Store
+  wrote. An id belongs to the store.
+- **Meilisearch writes are asynchronous.** 202 plus a task id; the document is
+  not searchable until that task succeeds. `Store` waits for its own task, so
+  the backend is read-your-writes from the caller's side even though the API
+  is not. Without that, storing a fact and asking about it in the same breath
+  finds nothing.
+- **Weaviate's search is GraphQL**, not REST — there is no REST search
+  endpoint — and a class name must start with a capital letter or it is
+  silently a different class.
+- **SurrealDB selects its namespace by header** (`surreal-ns`/`surreal-db`),
+  creates neither for you, and spells the full-text index `FULLTEXT` in 3.x
+  where 2.x said `SEARCH` — a parse error, not a fallback.
+
+The pattern across all five: **the store layer passes while the agent sees
+nothing.** That is why the suite asserts on the injected prompt text, and why
+every one of these was run against a live server before it was believed.
 
 ### Memory ≠ cache ≠ RAG
 
