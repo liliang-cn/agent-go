@@ -281,6 +281,8 @@ svc, _ := agent.New("support").
 
 这刻意不是中间件链。没有 `next()`:扩展不能包住循环、跳过阶段、或自己调模型——这正是"一条循环"能保持一条的原因。一个 `Service` 同时跑很多任务,每个扩展被所有任务共享,所以它的方法必须能并发调用;自带的三个都满足,`go test -race` 覆盖了十二个运行同时穿过同一个扩展全部接缝的情况。可运行:`examples/extensions`。
 
+也不一定非得是 Go。`pkg/extensions/exec` 把插件当子进程跑,用 stdio 上的 JSON 行协议(协议 1,握手声明能力)把同一组接缝问过去:`exec.New("redact", []string{"python3", "plugins/redact.py"})` 就是一个普通的 `agent.Extension`。每一种失败都是那个接缝自己的关闭式答案——`after_tool` 超时或断管,模型就看不到那个结果;`before_tool` 拒绝调用;`lint` 拒绝答案;`run_start` 阻塞运行。协议细节在 `docs/extensions.md` 的 "Out-of-process plugins" 一节,可运行:`examples/extensions-exec`(自带 Python 参考插件)。
+
 任何人都能写:它就是你自己模块里的一个 Go 类型,框架不需要知道它的存在。能力接口和它们的参数类型就是扩展 API,跟随模块的语义化版本。`pkg/extensiontest` 用脚本化的模型建一个真实的 service,让扩展在循环真正调用的接缝上被测试,背后不需要真模型。[docs/extensions.md](docs/extensions.md) 是契约;`examples/extensions-thirdparty` 是一个独立模块里的完整扩展。
 
 ## 长时程运行
