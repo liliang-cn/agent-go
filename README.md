@@ -6,9 +6,18 @@
 [![Release](https://img.shields.io/github/v/release/liliang-cn/agent-go)](https://github.com/liliang-cn/agent-go/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**Agent framework for Go with local-first AI capabilities.**
+**A Go library for running an agent loop that can be trusted to run for a long time.**
 
-AgentGo is a Go library for building agents that run locally, use tools, keep memory, and compose with each other. It is centered on `pkg/agent`: one transparent streaming loop, everything-is-a-tool, and determinism enforced by lints and runtime contracts rather than by longer prompts. There is no required CLI, UI, or server — you embed it.
+AgentGo is not a chat wrapper and not an orchestration product. It is one streaming
+loop — assemble context, call the model, execute tools, lint the answer, terminate —
+with everything an agent can do exposed to that loop as a tool, and with the things a
+prompt cannot guarantee (a file that must exist, an email that must have been sent, a
+tool the user forbade) enforced by the runtime instead. Around the loop sit the parts a
+run needs to survive hours rather than minutes: sessions and replayable checkpoints,
+context compaction, a persisted plan, retries, cost ceilings, and a supervisor that
+drives one task across many runs.
+
+There is no CLI, no UI and no server. You embed `pkg/agent` in your own program.
 
 [中文文档](README_zh-CN.md)
 
@@ -21,8 +30,6 @@ go get github.com/liliang-cn/agent-go/v3
 Requires Go 1.25+.
 
 ## Quick start
-
-Inject any OpenAI-compatible provider and ask:
 
 ```go
 package main
@@ -65,28 +72,65 @@ func main() {
 }
 ```
 
-If you skip `WithLLM`, configuration is loaded from `AGENTGO_HOME` (default `~/.agentgo`), where providers live in `data/agentgo.db`. See `examples/quickstart` for the config-driven variant.
+Without `WithLLM`, the provider comes from `AGENTGO_HOME` (default `~/.agentgo`), where
+providers live in `data/agentgo.db`. `examples/quickstart` is the config-driven variant.
 
-Four entry points, one loop underneath:
+Every entry point runs the same loop:
 
-- `svc.Ask(ctx, q)` — one shot, returns `(string, error)`.
-- `svc.Chat(ctx, q)` — multi-turn with session state, returns `*ExecutionResult`.
-- `svc.Stream(ctx, q)` — token channel (`<-chan string`).
-- `svc.RunStream(ctx, goal, opts...)` — full runtime events: state updates, tool calls, tool results, partials. `Run()` is `RunStream()` plus a collector.
+| call | returns | use when |
+| --- | --- | --- |
+| `svc.Ask(ctx, q)` | `(string, error)` | one question, one answer |
+| `svc.Chat(ctx, q)` | `*ExecutionResult` | multi-turn, session state kept |
+| `svc.Stream(ctx, q)` | `<-chan string` | tokens as they arrive |
+| `svc.Run(ctx, goal, opts...)` | `*ExecutionResult` | a goal, with tools and run options |
+| `svc.RunStream(ctx, goal)` / `RunStreamWithOptions(ctx, goal, opts...)` | `<-chan *Event` | every runtime event: state, tool calls, tool results, partials, checkpoints |
+| `svc.RunSegments(ctx, goal, LongRunConfig{...})` | `*LongRunResult` | one task that needs many runs |
 
-## Core concepts
+`Run` is `RunStream` plus a collector. There is no second, non-streaming implementation.
 
-- **Agent** — a named runtime with instructions, tools, memory, and sessions, assembled by `agent.New(name).With...().Build()`.
-- **Loop** — one streaming state machine. Sub-agents reuse the same loop, so their events bubble up, their answers are linted, and their terminal states are checkpointed.
-- **Tool** — everything the agent can do: built-ins, your functions, MCP servers, skills, and sub-agents.
-- **Sub-agent** — registered with `WithSubagents(...)`, reached by the model through a single `task(agent_name, prompt)` tool. There is no separate team/dispatcher/router layer.
-- **Task** — a first-class unit of work with status, events, frames, checkpoints, and output, persisted in SQLite.
-- **Memory** — durable local context, separate from cache and RAG. Pluggable backends.
-- **Output lints** — deterministic post-output checks that re-prompt the model on violation, instead of "please remember to..." paragraphs.
+## The seven concepts
+
+`pkg/agent` deliberately contains exactly seven things. A change that does not fit one of
+them probably does not belong there.
+
+| concept | what it is |
+| --- | --- |
+| **Agent** | a name, a system prompt, a model, a tool set, optional sub-agents — `agent.New(name).With...().Build()` |
+| **Loop** | one streaming state machine: assemble context → call the model → execute tools → lint the answer → terminate. `Runtime.loop` is the only implementation; sub-agents run a child runtime over the same service |
+| **Tool** | everything the agent can do: built-ins, your Go functions, MCP servers, skills, sub-agents. Each declares `ReadOnly` / `ConcurrencySafe` / `Destructive` / `InterruptBehavior`, which is what batching, permissioning and cancel act on |
+| **Context** | what the model sees each turn: message assembly, task-scoped history, the recent/older split, compaction, skill reminders, recalled memory |
+| **Hooks + Lints** | the deterministic layer. Hooks bracket the run and each tool call; a lint rejects a final answer and forces a retry |
+| **Session + Checkpoint** | a session UUID owns a conversation; every terminal state writes a replayable checkpoint, and a long run can write one every N rounds |
+| **Events** | the single output channel. Observers, activity logs and UIs all read the same stream |
+
+There is no team, dispatcher, router, handoff or role hierarchy. Composition is
+`WithSubagents(...)`, which gives the model one tool: `task(agent_name, prompt)`.
+
+## How a run ends
+
+A run has outcomes, and only some of them are errors:
+
+```go
+result, err := svc.Run(ctx, goal)
+switch {
+case err != nil:                       // the runtime itself failed
+case result.Cancelled:                 // someone pressed stop; err is nil
+case result.Blocked:                   // the agent could not proceed; result.Text() says why
+case result.StopReason == agent.StopReasonMaxTurns:
+	// the round budget ran out; Success may still be true because the
+	// runtime synthesised an answer from what it had — not the same thing
+case result.Success:
+}
+```
+
+`StopReason` distinguishes `end_turn`, `max_turns`, `max_tokens`, `max_budget_usd`,
+`refusal`, `lint_exhausted`, `stop_hook`, `error_during_execution` and `cancelled`.
+`result.Usage` carries the provider's token accounting including the prompt-cache split;
+`result.EstimatedCostUSD` prices it.
 
 ## Capabilities
 
-### Custom tools
+### Tools
 
 Register a Go function; the schema is a plain JSON-Schema map:
 
@@ -103,7 +147,11 @@ svc.AddTool("read_config", "Read a service's current configuration",
 	})
 ```
 
-Built-in tools include web search, URL fetch, datetime, a scratchpad, and (when a sandbox is attached) command execution and deliverable scanning.
+Built-ins cover web search, URL fetch, date/time resolution, a scratchpad plan, tool
+search and, with a sandbox attached (`WithSandbox`), shell and file access inside that
+sandbox plus deliverable scanning. Tools are offered to the model sorted by name, because
+tool schemas sit inside the prompt prefix and a prefix that changes between rounds
+defeats the provider's prompt cache.
 
 ### Sub-agents
 
@@ -126,18 +174,12 @@ svc, _ := agent.New("lead").
 result, _ := svc.Run(ctx, "Research X and write two paragraphs about it.")
 ```
 
-Runnable variants (basic, parallel, async, auto-delegation, filtering): `examples/subagent/`.
-
-Configuring sub-agents is also what puts the generic delegation tools —
-`delegate_to_subagent`, `delegate_async`, `subagent_send_message` — in the schema
-the model sees. An agent with no sub-agents is not offered them, because
-delegating with nothing configured only re-runs a clone of the same agent: three
-tool schemas (~1.9 KB) on every request for a capability nobody asked for.
-`WithDelegation(true)` asks for them anyway (running a sub-goal in an isolated
-context and getting back only its result is a real use); `WithDelegation(false)`
-withholds them even from an agent that has sub-agents, leaving `task` as the only
-route. Either way they stay registered and callable by name — this is exposure,
-not registration.
+A sub-agent is a child runtime over the same `Service`: its own session, a narrower tool
+surface, a different event sink. It returns only its final answer; its events bubble up
+nested. Configuring sub-agents also exposes the generic delegation tools
+(`delegate_to_subagent`, `delegate_async`, `subagent_send_message`); an agent with none
+configured is not offered them. `WithDelegation(bool)` overrides that either way.
+Runnable variants: `examples/subagent/`.
 
 ### Memory
 
@@ -148,21 +190,34 @@ svc.Chat(ctx, "My name is Alice and I prefer short answers.")
 result, _ := svc.Chat(ctx, "What do you know about me?")
 ```
 
-Built-in `store_type` values: `file` (no embedder needed), `cortex`, `memoryflow`, and `graphflow` (`WithGraphMemory()`, needs `WithEmbedder`). Two more ship as plugins: `cortex-remote` (a shared CortexDB over gRPC) and `mcp-memory` (any MCP server with memory tools, mapped via `tool.*` / `arg.*` / `result.*` options — no tool name is assumed).
+Both sides of memory run on every turn and each has exactly one switch:
+`WithMemoryRetrieval(false)` and `WithMemoryAutoStore(false)` (as `MemoryOption`s).
+Auto-store asks the model once whether the turn is worth keeping; nothing inspects the
+wording of the request to decide either side.
 
-Three seams for your own backend, in decreasing order of what the framework still does for you:
+Built-in `store_type` values: `file` (no embedder needed), `cortex`, `memoryflow`,
+`graphflow` (`WithGraphMemory()`, needs `WithEmbedder`). Two more ship as plugins:
+`cortex-remote` (a shared CortexDB over gRPC) and `mcp-memory` (any MCP server with
+memory tools, mapped entirely by `tool.*` / `arg.*` / `result.*` options — no tool name
+is assumed and there is no synonym table).
 
-1. `agent.MustRegisterMemoryStore("redis", factory)` — register by name, then select with `agent.WithMemoryStoreType("redis")`. Registration is concurrency-safe and strict; duplicates are errors, never silent overwrites.
+Your own backend, in decreasing order of what the framework still does for you:
+
+1. `agent.MustRegisterMemoryStore("redis", factory)`, then `WithMemoryStoreType("redis")`.
+   Registration is strict: duplicates and built-in names are errors.
 2. `WithMemory(agent.WithMemoryStore(myStore))` — inject an instance.
-3. `WithMemoryService(mySvc)` — replace the whole service; you own retrieval and injection policy.
+3. `WithMemoryService(mySvc)` — replace the whole service; retrieval and injection are yours.
 
-`domain.MemoryStore` has eighteen methods; embed `memory.BaseStore` and override only what your backend can serve — the rest return `memory.ErrMemoryStoreUnsupported`, which callers degrade on rather than fail.
+`domain.MemoryStore` has eighteen methods; embed `memory.BaseStore` and implement what
+your backend can serve — the rest return `ErrMemoryStoreUnsupported`, and callers degrade
+on it instead of failing. Runnable: `examples/memory-custom-store`,
+`examples/memory-remote-cortex`, `examples/memory-mcp`.
 
-Runnable: `examples/memory-custom-store`, `examples/memory-remote-cortex`, `examples/memory-mcp`.
+### Run memory
 
-### Run memory (automatic recall and capture)
-
-`RunMemory` hooks a run's start and end for an external long-term memory system. Recall injects a "Recalled context" section into the system prompt (bounded: 5s timeout, ~10k chars, failures only log); capture runs asynchronously after the run completes, so a run is never blocked by its memory.
+`RunMemory` brackets a run for an external long-term memory: recall injects a "Recalled
+context" section into the system prompt (bounded: 5s, ~10k chars, failures only log);
+capture runs after the run completes and never blocks it.
 
 ```go
 type RunMemory interface {
@@ -171,36 +226,27 @@ type RunMemory interface {
 }
 
 svc, _ := agent.New("ops").
-	WithRunMemory(cortexbridge.NewRunMemory(cortexDB)). // or your own impl
+	WithRunMemory(cortexbridge.NewRunMemory(cortexDB)). // or your own
 	Build()
 ```
 
-`pkg/cortexbridge.NewRunMemory` is the CortexDB implementation: it captures `DECISION:`-style marker lines and entities into a typed graph and recalls them for later runs. End-to-end demo: `examples/graph-memory-experiment`.
+`pkg/cortexbridge.NewRunMemory` is the CortexDB implementation. Demo:
+`examples/graph-memory-experiment`.
 
-### MCP
+### MCP, skills, RAG
 
 ```go
 svc, _ := agent.New("assistant").
-	WithMCP(agent.WithMCPConfigPaths("./mcpServers.json")).
+	WithMCP(agent.WithMCPConfigPaths("./mcpServers.json")). // tools from MCP servers
+	WithSkills().                                          // SKILL.md workflows from AGENTGO_HOME/skills
+	WithEmbedder(embedder).WithRAG().                      // document retrieval; only active with an embedder
 	Build()
 ```
 
-Servers are declared in `mcpServers.json` (see the sample at the repo root); their tools register alongside built-ins. Runnable: `examples/mcp/basic`, `examples/mcp/advanced`.
-
-### Skills
-
-`WithSkills()` loads reusable Markdown/YAML workflows from `AGENTGO_HOME/skills` (or `agent.WithSkillsPaths(...)`). `Options.RequiredSkills` makes `Build()` fail unless every named skill is installed.
-
-### RAG
-
-Optional document retrieval, only in the path when an embedder is configured:
-
-```go
-svc, _ := agent.New("assistant").
-	WithEmbedder(embedder). // e.g. providers.NewOpenAIEmbedderProvider(...)
-	WithRAG().
-	Build()
-```
+Skills are not all dumped into the prompt: the runtime surfaces a small relevant subset
+per turn through `<skill-discovery>` reminders and activates the matching `skill_*`
+tools. RAG is optional everywhere — an install with no embedding model still has agent,
+tools, MCP and file memory. Runnable: `examples/mcp/basic`, `examples/mcp/advanced`.
 
 ### Structured output
 
@@ -213,11 +259,16 @@ type Brief struct {
 brief, err := agent.RunTyped[Brief](ctx, svc, "Summarize NVDA.")
 ```
 
-`RunTyped[T]` derives a JSON Schema from the struct (tags drive names, `desc`, optionality) and returns a parsed `T`. `agent.WithStructuredOutput(spec)` is the hand-written-schema `RunOption`. Enforced two ways: natively via `response_format` on providers that support it (with automatic fallback), and by a deterministic post-validation lint that re-prompts on mismatch. Runnable: `examples/structured-output`.
+`RunTyped[T]` derives the JSON Schema from the struct and returns a parsed `T`;
+`WithStructuredOutput(spec)` / `WithStructuredOutputType[T]()` are the run options.
+Enforced natively through `response_format` where the provider supports it (with
+fallback), and by a post-validation lint that re-prompts on mismatch. Runnable:
+`examples/structured-output`.
 
-### Output lints
+## The deterministic layer
 
-When an agent keeps making the same mistake, don't add another instruction sentence — register a lint:
+When a model keeps making the same mistake, the fix is not another sentence in the
+prompt. It is a lint the runtime enforces:
 
 ```go
 svc.RegisterOutputLint(agent.LintFunc{
@@ -231,28 +282,120 @@ svc.RegisterOutputLint(agent.LintFunc{
 })
 ```
 
-Every built service gets the built-ins: `no_planning_only_finish`, `file_task_must_write`, `non_empty_final_answer`, and `task_delivery_contract` (a goal naming a delivery action cannot complete unless a matching tool was actually called). The runtime works out what a run must deliver with one small structured call — not phrase matching, so it behaves the same in every language. Declare it yourself and the extraction call is skipped:
+A failing lint appends structured feedback and re-prompts, bounded by a retry budget;
+exhaustion blocks the run. Every service gets four built-ins: `no_planning_only_finish`,
+`file_task_must_write`, `non_empty_final_answer` and `task_delivery_contract` (a goal
+that names a delivery action cannot complete unless a matching tool was actually called
+*and* such a tool was available). `LintContext` carries both what ran and what could
+have run, so a lint can tell "skipped a capability it had" from "never had it".
+
+**Hard constraints live in the runtime, not the prompt.** A user who forbids tools is
+obeyed by offering none — the tool list is emptied, and any call the model emits anyway
+is refused with structured feedback. What a run must deliver is resolved once, at the
+start of the loop, by one small temperature-0 structured model call with a keyword-free
+prompt. It is never decided by matching phrases in the goal, so it behaves the same in
+every language. Declare the contract yourself and that call is skipped:
 
 ```go
-result, _ := svc.Run(ctx, "Name the largest planet.", agent.WithToolsDisabled())
-
-result, _ = svc.Run(ctx, goal, agent.WithRequiredDeliverables(
-	agent.DeliverableRequirement{Kind: "email", Description: "the summary"},
-))
-
-result, _ = svc.Run(ctx, goal, agent.WithConstraintExtraction(false))
+svc.Run(ctx, "Name the largest planet.", agent.WithToolsDisabled())
+svc.Run(ctx, goal, agent.WithRequiredDeliverables(
+	agent.DeliverableRequirement{Kind: "email", Description: "the summary"}))
+svc.Run(ctx, goal, agent.WithConstraintExtraction(false)) // off entirely
 ```
 
-Constraint extraction is **on by default** and costs one extra structured model
-call before the first turn of every run — a small one (temperature 0, 400 output
-tokens, 20s cap), but a real round trip. Declaring the contract yourself with
-`WithToolsDisabled` / `WithRequiredDeliverables` / `WithRequestedActions` skips
-it, and `WithConstraintExtraction(false)` turns it off outright, leaving only
-what you declared in force.
+The rule generalises: **no hardcoded phrase or regexp table anywhere in the framework
+reads the user's request and changes behaviour.** Ranking (tool search, BM25) reads the
+request; verdicts do not. Checks on the *model's* output — the lints above, refusal
+detection, planning-only endings — are the output side, which is where deterministic
+checks belong.
 
-A blocked run is an outcome, not an error: `result.Err()` stays nil, `result.Text()` carries the explanation — branch on `result.Blocked`.
+## Long-running work
 
-### Tasks, checkpoint and replay
+A run that must last hours is not a longer run. It is many runs, and the framework is
+built so that the parts which make that survivable are the runtime's job rather than the
+caller's.
+
+### One task, many runs
+
+```go
+result, err := svc.RunSegments(ctx,
+	"Work through this in steps. Keep a scratchpad plan, and when you finish a "+
+		"step record what it produced as its note — that note is all the next "+
+		"stretch of work will have to go on.",
+	agent.LongRunConfig{
+		MaxSegments:            40,
+		RoundsPerSegment:       60,
+		MaxConsecutiveFailures: 3,
+		MaxTotalCostUSD:        5,
+		MaxDuration:            8 * time.Hour,
+	})
+if result.Done() { /* LongRunStopFinished: the task itself is complete */ }
+```
+
+`RunSegments` is not a second engine: it calls `Run`, reads why the run stopped, and
+calls `Run` again. Each segment gets a **fresh session** — that is what keeps context
+from growing across a task that runs all day — while one **task id** spans them all, so
+checkpoints and the plan stay coherent. What carries across segments is what was actually
+established: the plan (persisted through `PlanStore`, SQLite by default when a store is
+present), the workspace, and run memory.
+
+Two gates decide that a segment *finished the task* rather than merely ended: its
+`StopReason` was not `max_turns`, and (unless `AllowIncompletePlan`) the stored plan has
+no unchecked steps. `LongRunStop` is a separate type from `StopReason` on purpose: "the
+task finished" and "the supervisor stopped asking" are different statements. The
+supervisor also stops on `consecutive_failures`, `time_limit`, `cost_limit`, `blocked`,
+`cancelled`, `segment_budget_exhausted`, and `unproductive_segments` — segments that ran
+out of rounds having changed nothing, which a failure budget never sees.
+`RunSegmentsStream` is the same with the event channel exposed.
+
+### What a long run needs from the runtime
+
+| concern | mechanism |
+| --- | --- |
+| round budget | `AutonomyProfile.MaxRounds` / `WithMaxTurns`; a run that hits it reports `max_turns`, not success |
+| provider blinks | `WithLLMRetries(n)` — 502s, rate limits and region refusals are retried; a permanent 4xx that merely mentions "timeout" is not, and `context.Canceled` never is |
+| truncation | a reasoning model can spend the whole output budget before writing a byte. An empty turn with `finish_reason=length` is its own outcome, and the budget is raised and asked again (bounded), instead of being judged a refusal |
+| context growth | compaction at a token threshold (default 60k, counting tool arguments), with a summary budget that escalates when the summary would not fit |
+| prompt cache | `WithPromptCache(true)` places explicit breakpoints on the prefix and the history tail; independently, the system context and the tool list are kept byte-stable across rounds so implicit caches hit |
+| crash | `AutonomyProfile.CheckpointEveryRounds` writes snapshots while the run is still going; `ResumeFromCheckpoint` continues from the latest with the same task id |
+| money | `WithMaxBudgetUSD` per run, `MaxTotalCostUSD` across a task. Pricing comes from `pool.RegisterModelPricing` (yours) over a bundled table (fallible); an unpriced model is reported as *unknown*, not as free, and the run warns once |
+| duplicate calls | a repeated identical tool call is answered "unchanged" — and the record is cleared by any state-changing call and by compaction, because a re-read after a write is a different read |
+
+`examples/long-run` configures one run for hours; `examples/segmented-run` drives a task
+across many.
+
+### Watching it
+
+A run in flight is nearly invisible by default: its conversation reaches the store when it
+ends and its events go to whoever called `RunStream`. `agent.NewActivityLog(w)` is an
+`Observer` that narrates a run as flat, greppable lines — one per model turn, tool call,
+sub-agent, retry, compaction and checkpoint:
+
+```go
+logf, _ := os.Create("run.log")
+svc, _ := agent.New("worker").WithObserver(agent.NewActivityLog(logf)).Build()
+```
+
+Attach it to anything you cannot watch interactively. A model's own report of its
+progress is not evidence; the log is.
+
+## Cancellation and lifecycle
+
+A stop is an outcome, not an error. `Cancel()` stops every run on the service,
+`CancelRun(id)` one run (name it with `WithRunID`), `CancelSession(id)` one conversation;
+`ActiveRuns()` lists what is in flight. The run terminates with `workflow_cancelled`,
+writes a checkpoint so it can be resumed, and returns `result.Cancelled = true` with a nil
+error. All three defer while a tool declared `InterruptBehavior: block` is mid-execution.
+Scheduled executions (`pkg/scheduler`) have their own per-execution registry so one run
+can be stopped without touching the timers. Runnable: `examples/cancel`.
+
+A `Service` owns exactly one long-lived resource, its store. `Close()` is idempotent,
+cancels in-flight runs, and every entry point afterwards fails with `ErrServiceClosed` —
+a scheduler pointed at a closed service cannot keep firing turns whose history silently
+fails to persist. A failed history write is an ERROR log plus an `EventTypeError` event,
+not a warning.
+
+## Tasks, checkpoints and replay
 
 ```go
 store, _ := agent.NewStore("agentgo.db")
@@ -265,59 +408,48 @@ task, _ := manager.Tasks().Submit(ctx, agent.TaskSubmitOptions{
 	Input:     "Check the current repository status.",
 })
 done, _ := manager.Tasks().Await(ctx, task.ID)
+
+resumed, _ := manager.Tasks().ResumeFromCheckpoint(ctx, task.ID,
+	agent.CheckpointResumeOptions{FollowUp: "and now also do X"})
 ```
 
-Every terminal state writes a `TaskCheckpoint`. A crashed or cancelled task can be re-played from the latest snapshot:
-
-```go
-resumed, _ := manager.Tasks().ResumeFromCheckpoint(ctx, task.ID, agent.CheckpointResumeOptions{
-	FollowUp: "and now also do X",
-})
-```
-
-`agent.WithResumeMessages` is the low-level `RunOption` underneath.
-
-### System prompt length limits
-
-Every system prompt carries a length anchor by default — "keep text between tool
-calls to ≤25 words. Keep final responses to ≤100 words unless the task requires
-more detail." It is on by default and stays on, because agents in production are
-tuned against those numbers. It is an opinion about the answer rather than a rule
-about the runtime, though, and it can contradict your own instructions: an agent
-told to cite a source for every statement cannot also stay under 100 words.
-`agent.New(...).WithLengthLimits(false)` drops the section when your own prompt
-owns the length.
-
-### Sandbox and scheduler
-
-`pkg/sandbox` provides isolated execution environments (local process and Docker); attach one with `WithSandbox(sb)` to enable the command-execution and deliverable tools. `pkg/scheduler` runs cron-style scheduled jobs with pluggable executors. `pkg/worktree` has dependency-free helpers for isolated git worktrees.
+`Manager` is the application-level host, not an orchestrator: it owns the store, caches
+one `Service` per named agent, and exposes the task surface. Every terminal state writes a
+`TaskCheckpoint` (capped per task and pruned); `WithResumeMessages` is the run option
+underneath replay. Task history, plan, memory and discovered tools are all scoped by
+`task_id`. Runnable: `examples/task-store`.
 
 ## Run options
 
-Passed to `Run` / `RunStream` per call:
+Passed to `Run` / `RunStreamWithOptions` / `RunSegments` per call:
 
-| Option | Effect |
+| option | effect |
 | --- | --- |
-| `WithMaxTurns(n)` | cap loop iterations |
-| `WithTemperature(t)` / `WithMaxTokens(n)` | sampling controls |
-| `WithThinking(bool)` | provider-side chain-of-thought on/off (DeepSeek reasoner `thinking.type` shape); `false` cuts latency on tool-heavy runs |
-| `WithToolsDisabled()` | offer zero tools; any tool call is refused |
-| `WithToolAllowlist(names)` / `WithToolDenylist(names)` | restrict the tool surface |
+| `WithMaxTurns(n)` | round budget for this run |
+| `WithMaxTokens(n)` / `WithTemperature(t)` / `WithThinking(bool)` | sampling; `WithThinking(false)` cuts latency on tool-heavy runs |
+| `WithLLMRetries(n)` | retry transient provider errors before giving up |
+| `WithMaxBudgetUSD(x)` | stop when estimated spend exceeds the budget |
+| `WithToolsDisabled()` / `WithToolAllowlist(names)` / `WithToolDenylist(names)` | the tool surface |
 | `WithStructuredOutput(spec)` / `WithStructuredOutputType[T]()` | enforce a JSON shape |
-| `WithRequiredDeliverables(...)` / `WithRequestedActions(...)` | declare the delivery contract |
-| `WithConstraintExtraction(bool)` | toggle the per-run constraint-extraction call (default on; off saves one model call per run) |
-| `WithSessionID(id)` / `WithTaskID(id)` / `WithRunID(id)` / `WithParentTaskID(id)` | identity and lineage |
-| `WithResumeMessages(msgs)` | continue from prior history (checkpoint replay) |
+| `WithRequiredDeliverables(...)` / `WithRequestedActions(...)` / `WithConstraintExtraction(bool)` | the delivery contract |
+| `WithSessionID` / `WithTaskID` / `WithRunID` / `WithParentTaskID` / `WithPlanKey` | identity, lineage, which plan |
+| `WithResumeMessages(msgs)` / `WithPriorToolCalls(names)` | continue from history |
 | `WithInputParts(...)` / `WithInputImages(paths...)` | multimodal input |
-| `WithMaxBudgetUSD(x)` | stop the run when estimated spend exceeds the budget |
-| `WithAutoCompaction(threshold, keep)` / `WithoutAutoCompaction()` | context compaction policy |
+| `WithAutoCompaction(threshold, keep)` / `WithoutAutoCompaction()` | compaction policy |
 | `WithDebug(bool)` | verbose logging for one run |
 
-Builder-side options (`agent.New(...).With...`): `WithLLM`, `WithEmbedder`, `WithConfig`, `WithPrompt` / `WithSystemPrompt`, `WithMemory` / `WithGraphMemory` / `WithMemoryService`, `WithRunMemory`, `WithMCP`, `WithSkills`, `WithRAG`, `WithSubagents`, `WithDelegation`, `WithLengthLimits`, `WithSandbox`, `WithAutonomy`, `WithTool(s)`, `WithObserver`, `WithProgress`, `WithDBPath`, `WithDebug`, and `WithOptions(agent.Options{...})` for low-frequency knobs (permission policy, tool-execution policy, required skills, extra modules, observers).
+Builder options: `WithLLM`, `WithEmbedder`, `WithConfig`, `WithPrompt` /
+`WithSystemPrompt`, `WithMemory` / `WithGraphMemory` / `WithMemoryService`,
+`WithRunMemory`, `WithMCP`, `WithSkills`, `WithRAG`, `WithSubagents`, `WithDelegation`,
+`WithLengthLimits`, `WithSandbox`, `WithAutonomy`, `WithPlanStore`, `WithTaskStore`,
+`WithPromptCache`, `WithTool(s)`, `WithObserver`, `WithProgress`, `WithDBPath`,
+`WithDebug`, and `WithOptions(agent.Options{...})` for the low-frequency knobs
+(permission policy, tool-execution policy, required skills, extra modules, observers).
 
 ## Providers
 
-`pkg/providers` speaks the OpenAI-compatible API, which covers OpenAI, DeepSeek, Ollama, LM Studio, vLLM, DashScope/Qwen, and most proxies:
+`pkg/providers` speaks the OpenAI-compatible API — OpenAI, DeepSeek, Ollama, LM Studio,
+vLLM, DashScope/Qwen and most gateways:
 
 ```go
 llm, _ := providers.NewOpenAILLMProvider(&domain.OpenAIProviderConfig{
@@ -326,29 +458,34 @@ llm, _ := providers.NewOpenAILLMProvider(&domain.OpenAIProviderConfig{
 })
 ```
 
-Provider quirks are handled in the library, not your code: DeepSeek's reasoner rejecting pinned `tool_choice`, `response_format` fallbacks, `reasoning_content` from DeepSeek/Ollama, split streaming tool-call deltas, and servers that omit usage on streams.
+Provider quirks are handled in the library: a reasoner that rejects a pinned
+`tool_choice`, `response_format` fallbacks, `reasoning_content`, split streaming tool-call
+deltas, servers that omit usage on streams. Optional request fields (`web_search_options`,
+`tool_choice`, cache markers) follow one shape: send, detect the rejection, strip, retry
+once. Native web search is **detected, never assumed**: a rejection proves unsupported,
+grounding evidence in a response proves supported, acceptance alone proves nothing —
+there is no model-name capability table.
 
-**Usage and cache metering.** Every `domain.GenerationResult` carries provider-reported `Usage` (`domain.TokenUsage`): `PromptTokens`, `CompletionTokens`, and `CachedPromptTokens` — the prompt-cache-hit portion, billed at a deep discount (OpenAI ~0.5x, DeepSeek ~0.26x). Both providers cache automatically; the runtime keeps its context prefix byte-stable across turns so those hits actually happen. `Usage` is nil when the provider reported nothing.
+**Usage and cache metering.** Every `domain.GenerationResult` carries the provider's
+`Usage`: `PromptTokens`, `CompletionTokens`, `CachedPromptTokens` (the cache-hit portion,
+billed at a deep discount) and `CacheWriteTokens`. It is nil when the provider reported
+nothing, which is an honest unknown rather than a zero. If cached tokens read zero on a run
+whose history grows every round, find out whether the cache is broken or the reporting is
+before concluding anything about the loop.
 
-**Multi-provider pool.** `pool.NewPool` load-balances across providers with selection strategies, per-provider concurrency limits, and capability levels; the pool implements the generator interface, so it drops straight into `WithLLM`:
-
-```go
-brain, _ := pool.NewPool(pool.PoolConfig{
-	Enabled:  true,
-	Strategy: pool.StrategyRoundRobin,
-	Providers: []pool.Provider{
-		{Name: "fast", BaseURL: base1, Key: key1, ModelName: "deepseek-chat", MaxConcurrency: 5},
-		{Name: "local", BaseURL: "http://localhost:11434/v1", ModelName: "qwen3"},
-	},
-})
-svc, _ := agent.New("assistant").WithLLM(brain).Build()
-```
-
-`pkg/providers.LLMPool` is the lower-level pool over `domain.LLMProvider` instances (round-robin / random / least-load strategies, failover, health checks).
+**Multi-provider pool.** `pool.NewPool` load-balances across providers (round-robin,
+random, least-load; per-provider concurrency; failover) and implements the generator
+interface, so it drops straight into `WithLLM`. `pkg/providers.LLMPool` is the lower-level
+pool over `domain.LLMProvider` instances.
 
 ## Observability
 
-Implement `agent.Observer` (embed `agent.BaseObserver`, override what you need) and register with `WithObserver` or `Options.Observers`. Callbacks fire at the model / tool / sub-agent / checkpoint seams, with stable span and call IDs for pairing start/end:
+Implement `agent.Observer` (embed `agent.BaseObserver`, override what you need) and
+register with `WithObserver`. Callbacks: `OnModelStart/Delta/End`, `OnToolStart/End`,
+`OnSubAgentStart/End`, `OnCheckpoint`, `OnLint`, `OnModelRetry`, `OnCompaction`,
+`OnError`, `OnSegment` — with stable span and call ids for pairing. Every retry inside a
+model turn has its own callback, so a turn that took three attempts does not look like one
+that took one.
 
 ```go
 type usage struct{ agent.BaseObserver }
@@ -361,56 +498,56 @@ func (u *usage) OnModelEnd(ctx context.Context, info agent.ModelInfo, res *agent
 }
 ```
 
-`ModelResult.CachedTokens` is the prompt-cache-hit portion of `TokensUsed` — cache hits are heavily discounted, so `TokensUsed` alone overstates cost. `pkg/otelobserver` bridges the same callbacks to OpenTelemetry spans (`otelobserver.New(tracerProvider)`).
+`pkg/otelobserver` bridges the same callbacks to OpenTelemetry spans.
 
 ## Storage
 
-By default AgentGo uses:
-
 ```text
-~/.agentgo/
+~/.agentgo/                  # override with AGENTGO_HOME
 ├── data/
-│   ├── agentgo.db     # config, providers, agents, tasks, checkpoints
-│   └── cortex.db      # optional memory/vector/graph storage
-├── memories/          # file memory when enabled
-├── skills/            # local skills
-└── workspace/         # agent working directory
+│   ├── agentgo.db           # config, providers, agents, tasks, checkpoints, plans (SQLite)
+│   └── cortex.db            # optional memory / vector / graph storage
+├── memories/                # file memory when enabled
+├── skills/                  # local skills (SKILL.md)
+└── workspace/               # agent working directory
 ```
 
-Override the home directory with the `AGENTGO_HOME` environment variable.
+Identity is the session UUID. There is no user id in the chat or task APIs.
 
 ## Repository layout
 
 ```text
-pkg/agent         framework core: agent, loop, tools, context, hooks/lints, sessions, checkpoints, run memory
-pkg/domain        shared types: messages, generation results, token usage, provider interfaces
-pkg/providers     OpenAI-compatible providers + LLMPool (failover, health checks)
-pkg/pool          provider pool + token/cost accounting
-pkg/poolsvc       process-global pool service for embedders
+pkg/agent         the framework: agent, loop, tools, context, hooks/lints, sessions, checkpoints, long runs
+pkg/domain        shared types: messages, generation results, token usage, provider and store interfaces
+pkg/providers     OpenAI-compatible providers + LLMPool
+pkg/pool          provider pool, token estimation, pricing and cost
 pkg/mcp           MCP client, tools and servers
 pkg/memory        durable memory service + BaseStore
 pkg/cortexbridge  CortexDB-backed knowledge graph / RAG / RunMemory
 pkg/rag           optional retrieval
-pkg/skills        skill loading
+pkg/skills        skill loading and ranking
 pkg/sandbox       local / Docker execution sandboxes
-pkg/scheduler     cron-style job scheduling
-pkg/otelobserver  Observer -> OpenTelemetry bridge
-pkg/store         SQLite storage
+pkg/scheduler     cron-style scheduling with per-execution cancellation
+pkg/otelobserver  Observer -> OpenTelemetry
+pkg/store         SQLite storage, memory store plugins
 pkg/worktree      git worktree helpers
-eval/             behavioral eval harness (scenarios + runner)
-examples/         runnable examples
+eval/             behavioural eval harness: YAML scenarios, mock and live runners
+examples/         runnable examples, one folder each
 ```
 
 ## Development
 
 ```bash
-make test           # go test ./...
-make check          # fmt + vet + test
-make eval           # behavioral eval, mock-LLM, CI-safe
-make eval-live      # behavioral eval, real provider
+make check          # fmt + vet + test — the release gate
+go test -race ./pkg/agent/...
+make eval           # behavioural eval against a scripted mock model, CI-safe
+make eval-live      # the same scenarios against a real provider
 ```
 
-See `CLAUDE.md` and `docs/dev/PLAN.md` for the harness-engineering roadmap and operational guidance.
+Eval scenarios live in `eval/scenarios/`; a harness change (a lint, a prompt cut, a
+tool-prep tweak) is checked by running `make eval-live` and diffing the result JSON
+against the previous run. `CLAUDE.md` records the architecture decisions and the bugs
+that only a long soak found — read it before changing the loop.
 
 ## License
 
