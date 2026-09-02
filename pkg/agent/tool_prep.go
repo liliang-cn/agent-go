@@ -164,7 +164,16 @@ func promoteRelevantSkillTools(tools []domain.ToolDefinition, relevantSkillNames
 // gets a restricted toolset without a separate execution path.
 func (s *Service) prepareTurnInputsWithConfig(ctx context.Context, currentAgent *Agent, messages []domain.Message, goal string, cfg *RunConfig) ([]domain.ToolDefinition, []domain.Message) {
 	s.syncDiscoveredToolsFromHistory(messages, "")
-	policy := s.buildToolPreparationPolicy(ctx)
+	return s.prepareTurnInputsWithPolicy(ctx, currentAgent, messages, goal, cfg, s.buildToolPreparationPolicy(ctx))
+}
+
+// prepareTurnInputsWithPolicy is prepareTurnInputsWithConfig with the policy
+// already decided. The loop always wants the policy the service currently
+// holds, so it goes through the wrapper above; Service.Preview needs to supply
+// one it computed without writing the session state the policy is normally
+// read from, which is the only reason this is a separate entry point. Nothing
+// else differs — one assembly, one result.
+func (s *Service) prepareTurnInputsWithPolicy(ctx context.Context, currentAgent *Agent, messages []domain.Message, goal string, cfg *RunConfig, policy toolPreparationPolicy) ([]domain.ToolDefinition, []domain.Message) {
 	// A run that forbids tools must not assemble a tool catalogue at all — the
 	// list feeds the prompt as well as the request.
 	if cfg != nil && cfg.resolvedConstraints != nil && cfg.resolvedConstraints.ForbidTools {

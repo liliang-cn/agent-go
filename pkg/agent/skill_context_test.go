@@ -43,7 +43,7 @@ paths:
 	session := NewSession("agent-1")
 	session.AddMessage(domainMessage("user", "please update docs/intro.md"))
 
-	reminder := svc.buildRelevantSkillReminder(context.Background(), "please improve docs/intro.md", session)
+	reminder := svc.buildRelevantSkillReminder(context.Background(), "please improve docs/intro.md", session, false)
 	if reminder == nil {
 		t.Fatal("expected a skill reminder")
 	}
@@ -54,7 +54,7 @@ paths:
 		t.Fatalf("expected when_to_use in reminder, got %q", reminder.Text)
 	}
 
-	msg := buildSkillReminderMessage(session, reminder)
+	msg := buildSkillReminderMessage(session, reminder, false)
 	if msg == nil || !strings.Contains(msg.Content, "<system-reminder>") {
 		t.Fatalf("expected system reminder message, got %+v", msg)
 	}
@@ -261,13 +261,13 @@ func TestWeakSkillMatchIsNotSurfacedAtAll(t *testing.T) {
 	}
 
 	weather := "Check the weather in Chicago. If it's sunny, remind me to hang the laundry outside; otherwise remind me to use the dryer."
-	if reminder := svc.buildRelevantSkillReminder(context.Background(), weather, NewSession("agent-1")); reminder != nil {
+	if reminder := svc.buildRelevantSkillReminder(context.Background(), weather, NewSession("agent-1"), false); reminder != nil {
 		t.Errorf("a weather question surfaced skills %v: %q", reminder.Names, reminder.Text)
 	}
 
 	// The floor is not simply excluding everything.
 	design := "I need a landing page for my startup, make the design look premium"
-	reminder := svc.buildRelevantSkillReminder(context.Background(), design, NewSession("agent-2"))
+	reminder := svc.buildRelevantSkillReminder(context.Background(), design, NewSession("agent-2"), false)
 	if reminder == nil {
 		t.Fatal("a genuine design request surfaced no skill; the floor is too high")
 	}

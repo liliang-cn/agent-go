@@ -23,6 +23,13 @@ import (
 type prepareConversationOptions struct {
 	includeIntent bool
 	emitProgress  bool
+	// dryRun assembles the same context without leaving any of it behind:
+	// no memory query context remembered on the session, no RAG sources
+	// collected on the service, no skill reminder marked as sent and no
+	// skill tool activated for the session. It exists for Service.Preview,
+	// which must show exactly what the first turn would receive and change
+	// nothing by looking.
+	dryRun bool
 }
 
 type preparedConversationContext struct {
@@ -41,7 +48,9 @@ func (s *Service) prepareConversationContext(ctx context.Context, goal string, s
 		queryContext: s.resolveMemoryQueryContext(session),
 	}
 	if session != nil {
-		s.rememberMemoryQueryContext(session, prepared.queryContext)
+		if !opts.dryRun {
+			s.rememberMemoryQueryContext(session, prepared.queryContext)
+		}
 		prepared.summary = resolveConversationSummary(session)
 	}
 
@@ -52,7 +61,7 @@ func (s *Service) prepareConversationContext(ctx context.Context, goal string, s
 			if opts.emitProgress {
 				s.emitProgress("thinking", "🔍 Searching knowledge base...", 0, "")
 			}
-			ragContext, err := s.performRAGQuery(groupCtx, goal)
+			ragContext, err := s.performRAGQuery(groupCtx, goal, !opts.dryRun)
 			if err == nil {
 				prepared.ragContext = ragContext
 				if opts.emitProgress && ragContext != "" {
@@ -78,7 +87,7 @@ func (s *Service) prepareConversationContext(ctx context.Context, goal string, s
 
 	if s.skillsService != nil {
 		g.Go(func() error {
-			prepared.skillReminder = s.buildRelevantSkillReminder(groupCtx, goal, session)
+			prepared.skillReminder = s.buildRelevantSkillReminder(groupCtx, goal, session, opts.dryRun)
 			return nil
 		})
 	}
@@ -87,7 +96,7 @@ func (s *Service) prepareConversationContext(ctx context.Context, goal string, s
 		s.logger.Warn("conversation context collection partial failure", slog.Any("error", err))
 	}
 
-	prepared.messages = s.buildConversationMessages(session, goal, prepared.ragContext, prepared.memoryContext, prepared.skillReminder, prepared.summary)
+	prepared.messages = s.buildConversationMessages(session, goal, prepared.ragContext, prepared.memoryContext, prepared.skillReminder, prepared.summary, opts.dryRun)
 	return prepared
 }
 
@@ -152,11 +161,13 @@ func appendToolResultsAnalysisPrompt(messages []domain.Message) []domain.Message
 }
 
 // buildConversationMessages constructs the next-turn user message and prepends prior session history when available.
-func buildSkillReminderMessage(session *Session, reminder *skillReminder) *domain.Message {
+func buildSkillReminderMessage(session *Session, reminder *skillReminder, dryRun bool) *domain.Message {
 	if reminder == nil || strings.TrimSpace(reminder.Text) == "" {
 		return nil
 	}
-	markRelevantSkillsSent(session, reminder.Names)
+	if !dryRun {
+		markRelevantSkillsSent(session, reminder.Names)
+	}
 	return &domain.Message{
 		Role:    "user",
 		Content: "<system-reminder>\n" + strings.TrimSpace(reminder.Text) + "\n</system-reminder>",
@@ -164,7 +175,7 @@ func buildSkillReminderMessage(session *Session, reminder *skillReminder) *domai
 	}
 }
 
-func (s *Service) buildConversationMessages(session *Session, goal, ragContext, memoryContext string, skillReminder *skillReminder, summary string) []domain.Message {
+func (s *Service) buildConversationMessages(session *Session, goal, ragContext, memoryContext string, skillReminder *skillReminder, summary string, dryRun bool) []domain.Message {
 	history := make([]domain.Message, 0)
 	if session != nil {
 		history = historyForTask(session.GetMessages(), currentTaskID(session))
@@ -175,7 +186,7 @@ func (s *Service) buildConversationMessages(session *Session, goal, ragContext, 
 	if userCtxMsg := buildUserContextMetaMessage(s.buildUserContext()); userCtxMsg != nil {
 		messages = append(messages, *userCtxMsg)
 	}
-	if skillMsg := buildSkillReminderMessage(session, skillReminder); skillMsg != nil {
+	if skillMsg := buildSkillReminderMessage(session, skillReminder, dryRun); skillMsg != nil {
 		messages = append(messages, *skillMsg)
 	}
 	if contextMsg := buildConversationContextMessage(summary, memoryContext, ragContext); contextMsg != nil {
@@ -289,7 +300,7 @@ func (s *Service) appendToolRoundToMessages(messages []domain.Message, taskID st
 	return messages
 }
 
-func (s *Service) buildRelevantSkillReminder(ctx context.Context, goal string, session *Session) *skillReminder {
+func (s *Service) buildRelevantSkillReminder(ctx context.Context, goal string, session *Session, dryRun bool) *skillReminder {
 	if s == nil || s.skillsService == nil || strings.TrimSpace(goal) == "" {
 		return nil
 	}
@@ -331,12 +342,14 @@ func (s *Service) buildRelevantSkillReminder(ctx context.Context, goal string, s
 	for _, sk := range skillsList {
 		currentNames = append(currentNames, sk.ID)
 	}
-	if sessionID != "" {
+	if sessionID != "" && !dryRun {
 		s.rememberRelevantSkillsForSession(sessionID, currentNames)
 	}
-	for _, name := range newNames {
-		if sessionID != "" && s.toolRegistry != nil {
-			s.toolRegistry.ActivateForSession(sessionID, "skill_"+name)
+	if !dryRun {
+		for _, name := range newNames {
+			if sessionID != "" && s.toolRegistry != nil {
+				s.toolRegistry.ActivateForSession(sessionID, "skill_"+name)
+			}
 		}
 	}
 
@@ -366,6 +379,7 @@ func (s *Service) buildRelevantSkillReminder(ctx context.Context, goal string, s
 	}
 	return &skillReminder{
 		Names: newNames,
+		All:   currentNames,
 		Text:  text,
 	}
 }
@@ -448,7 +462,7 @@ func markRelevantSkillsSent(session *Session, names []string) {
 }
 
 // performRAGQuery performs a RAG query to get relevant documents
-func (s *Service) performRAGQuery(ctx context.Context, query string) (string, error) {
+func (s *Service) performRAGQuery(ctx context.Context, query string, collectSources bool) (string, error) {
 	if s.ragProcessor == nil {
 		return "", nil
 	}
@@ -473,7 +487,9 @@ func (s *Service) performRAGQuery(ctx context.Context, query string) (string, er
 	}
 
 	// Collect sources for final result (deduplicated)
-	s.addRAGSources(results.Sources)
+	if collectSources {
+		s.addRAGSources(results.Sources)
+	}
 
 	var context strings.Builder
 	context.WriteString("## Relevant Documents\n\n")

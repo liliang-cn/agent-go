@@ -89,6 +89,18 @@ func (l *captureStreamLLM) record(msgs []domain.Message) {
 	l.captured = append(l.captured, cloned)
 }
 
+// callCount reports how many times the model was actually asked. A preview
+// must leave it at zero.
+func (l *captureStreamLLM) callCount() int32 {
+	return atomic.LoadInt32(&l.calls)
+}
+
+func (l *captureStreamLLM) rounds() [][]domain.Message {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([][]domain.Message(nil), l.captured...)
+}
+
 func (l *captureStreamLLM) firstRound() []domain.Message {
 	l.mu.Lock()
 	defer l.mu.Unlock()

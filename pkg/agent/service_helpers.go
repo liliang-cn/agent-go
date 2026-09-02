@@ -15,8 +15,15 @@ import (
 const sessionContextSentSkillReminders = "skills.sent_relevant_names"
 
 type skillReminder struct {
+	// Names are the skills newly named in this reminder — the ones the
+	// session has not been told about yet.
 	Names []string
-	Text  string
+	// All are every skill that cleared the relevance floor this turn,
+	// whether or not it was named again. It is what the tool-preparation
+	// policy reads, so a caller assembling a turn without writing to the
+	// service (Service.Preview) can hand the same list to the policy.
+	All  []string
+	Text string
 }
 
 type toolPreparationPolicy struct {
