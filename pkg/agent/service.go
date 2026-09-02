@@ -579,7 +579,13 @@ func (s *Service) startRun(ctx context.Context, goal string, cfg *RunConfig) (*S
 	// covers Run, RunStream, Ask, Chat, structured output and the prompt
 	// scheduler alike — the same reason constraints are resolved in the loop
 	// and not in a per-entry-point helper.
-	runCtx, releaseRun := s.registerRun(ctx, cfg.RunID, session.GetID(), taskID)
+	runCtx, runID, releaseRun := s.registerRun(ctx, cfg.RunID, session.GetID(), taskID)
+	// The registry may have renamed the run (a blank id, or one that collided
+	// with a live run). Write the effective id back so everything downstream —
+	// the runtime's logger, the observer infos, a trace line — names the run
+	// the same way CancelRun does.
+	cfg.RunID = runID
+	runCtx = withCurrentRunID(runCtx, runID)
 
 	runtime := NewRuntime(s, session, cfg)
 	return session, s.observeRunStream(session, taskID, goal, startedAt, runtime.RunStream(runCtx, goal), releaseRun), nil

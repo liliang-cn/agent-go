@@ -52,10 +52,16 @@ type runHandle struct {
 // must be called exactly once when the run's event stream has closed: it
 // cancels the derived context (releasing its resources) and forgets the run,
 // so a stale ID can never answer "ok" to a stop.
-func (s *Service) registerRun(ctx context.Context, runID, sessionID, taskID string) (context.Context, func()) {
+//
+// It also returns the id the run was actually registered under, which is not
+// always the one that was asked for: a blank id is generated, and one that
+// collides with a live run is made unique. Everything that names the run
+// afterwards — its trace lines, its log lines — has to use the id the registry
+// knows, or CancelRun cannot be reached from what the operator is reading.
+func (s *Service) registerRun(ctx context.Context, runID, sessionID, taskID string) (context.Context, string, func()) {
 	runCtx, cancel := context.WithCancel(ctx)
 	if s == nil {
-		return runCtx, cancel
+		return runCtx, runID, cancel
 	}
 
 	runID = strings.TrimSpace(runID)
@@ -87,7 +93,7 @@ func (s *Service) registerRun(ctx context.Context, runID, sessionID, taskID stri
 	s.cancelMu.Unlock()
 
 	var released bool
-	return runCtx, func() {
+	return runCtx, runID, func() {
 		s.cancelMu.Lock()
 		if released {
 			s.cancelMu.Unlock()

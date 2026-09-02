@@ -194,6 +194,7 @@ func (r *Runtime) emitLintObserved(v *LintViolation, retrying bool) {
 	}
 	info := LintInfo{
 		TaskID:    currentTaskID(r.session),
+		RunID:     r.runID(),
 		SessionID: r.sessionID(),
 		AgentName: r.currentAgentName(),
 		Round:     r.currentRound,
@@ -500,6 +501,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		modelSpanID := uuid.NewString()
 		modelInfo := ModelInfo{
 			TaskID:    taskID,
+			RunID:     r.runID(),
 			SessionID: r.sessionID(),
 			AgentName: r.currentAgentName(),
 			Round:     round + 1,
@@ -1032,6 +1034,7 @@ func (r *Runtime) runCompactionRound(ctx context.Context, state *queryLoopState,
 	))
 	info := CompactionInfo{
 		TaskID:          currentTaskID(r.session),
+		RunID:           r.runID(),
 		SessionID:       r.sessionID(),
 		AgentName:       r.currentAgentName(),
 		Round:           state.CurrentRound,
@@ -1083,6 +1086,7 @@ func (r *Runtime) persistTerminalCheckpoint(taskID string, reason CheckpointReas
 	r.svc.emitObserver(func(o Observer) {
 		o.OnCheckpoint(context.Background(), CheckpointInfo{
 			TaskID:    taskID,
+			RunID:     r.runID(),
 			SessionID: sessionID,
 			AgentName: agentName,
 			Reason:    string(reason),
@@ -1529,6 +1533,7 @@ func (r *Runtime) observeError(t EventType, marker, content string) {
 	}
 	info := ErrorInfo{
 		TaskID:    currentTaskID(r.session),
+		RunID:     r.runID(),
 		SessionID: r.sessionID(),
 		AgentName: r.currentAgentName(),
 		Marker:    marker,
@@ -1785,7 +1790,7 @@ func (r *Runtime) executeAsyncTool(ctx context.Context, tc domain.ToolCall, wg *
 	behavior := r.svc.toolInterruptBehavior(tc.Function.Name, r.currentAgent)
 	// Observer seam: the streaming loop dispatches fully-argumented tool calls
 	// here (bypassing executeSingleToolCall), so bracket the call for parity.
-	toolInfo := r.svc.toolObserverInfo(r.currentAgent, r.session, tc)
+	toolInfo := r.svc.toolObserverInfo(ctx, r.currentAgent, r.session, tc)
 	r.svc.emitObserver(func(o Observer) { o.OnToolStart(ctx, toolInfo) })
 	r.emitToolCall(tc.Function.Name, tc.Function.Arguments, behavior)
 	r.trackToolCall(tc)
@@ -1884,6 +1889,15 @@ func (r *Runtime) resolveConstraints(ctx context.Context, goal string) {
 	}
 	resolved := r.svc.resolveRunConstraints(ctx, goal, r.cfg)
 	r.cfg.resolvedConstraints = &resolved
+}
+
+// runID is the id this run is registered under, or "" for a runtime that
+// never went through startRun (a directly-constructed Runtime in a test).
+func (r *Runtime) runID() string {
+	if r == nil || r.cfg == nil {
+		return ""
+	}
+	return r.cfg.RunID
 }
 
 // runConstraints returns the resolved constraints, or the zero value when the

@@ -64,6 +64,7 @@ func (r *Runtime) persistRoundCheckpoint(round int, messages []domain.Message) {
 	r.svc.emitObserver(func(o Observer) {
 		o.OnCheckpoint(context.Background(), CheckpointInfo{
 			TaskID:    taskID,
+			RunID:     r.runID(),
 			SessionID: sessionID,
 			AgentName: agentName,
 			Reason:    string(CheckpointReasonRoundEnd),

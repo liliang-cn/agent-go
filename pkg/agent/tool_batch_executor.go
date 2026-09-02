@@ -190,7 +190,7 @@ func (s *Service) executeSingleToolCall(ctx context.Context, currentAgent *Agent
 		ToolName:   toolCall.Function.Name,
 	}
 
-	toolInfo := s.toolObserverInfo(currentAgent, session, toolCall)
+	toolInfo := s.toolObserverInfo(ctx, currentAgent, session, toolCall)
 	s.emitObserver(func(o Observer) { o.OnToolStart(ctx, toolInfo) })
 
 	if callbacks.OnToolCall != nil {

@@ -102,6 +102,7 @@ func (r *Runtime) emitModelRetryObserved(info ModelRetryInfo) {
 		return
 	}
 	info.TaskID = currentTaskID(r.session)
+	info.RunID = r.runID()
 	info.SessionID = r.sessionID()
 	info.AgentName = r.currentAgentName()
 	ctx := context.Background()

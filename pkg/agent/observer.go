@@ -99,7 +99,10 @@ type Observer interface {
 // the SAME SpanID is passed to the matching OnModelEnd so listeners can pair
 // start/end without threading context.
 type ModelInfo struct {
-	TaskID    string
+	TaskID string
+	// RunID is the id the run is registered under, the one CancelRun takes.
+	// It is what separates two runs sharing a session.
+	RunID     string
 	SessionID string
 	AgentName string
 	Round     int
@@ -139,6 +142,7 @@ type ModelResult struct {
 // SAME CallID is passed to the matching OnToolEnd.
 type ToolInfo struct {
 	TaskID    string
+	RunID     string
 	SessionID string
 	AgentName string
 	Tool      string
@@ -152,15 +156,19 @@ type ToolInfo struct {
 // SubAgentInfo identifies a goal-driven sub-agent run.
 type SubAgentInfo struct {
 	ParentTaskID string
-	SubAgentID   string
-	Name         string
-	Goal         string
-	SessionID    string
+	// RunID is the PARENT run's id: a sub-agent runs under its parent's
+	// context and is deliberately not registered separately.
+	RunID      string
+	SubAgentID string
+	Name       string
+	Goal       string
+	SessionID  string
 }
 
 // LintInfo describes one output-lint rejection.
 type LintInfo struct {
 	TaskID    string
+	RunID     string
 	SessionID string
 	AgentName string
 	Round     int
@@ -176,6 +184,7 @@ type LintInfo struct {
 // ModelRetryInfo describes one re-ask of a model turn.
 type ModelRetryInfo struct {
 	TaskID    string
+	RunID     string
 	SessionID string
 	AgentName string
 	Round     int
@@ -200,6 +209,7 @@ type ModelRetryInfo struct {
 // CompactionInfo describes one history-folding step.
 type CompactionInfo struct {
 	TaskID    string
+	RunID     string
 	SessionID string
 	AgentName string
 	Round     int
@@ -223,6 +233,7 @@ type CompactionInfo struct {
 // ErrorInfo describes one error the runtime reported.
 type ErrorInfo struct {
 	TaskID    string
+	RunID     string
 	SessionID string
 	AgentName string
 	Round     int
@@ -254,6 +265,7 @@ type SegmentInfo struct {
 // CheckpointInfo describes a terminal checkpoint snapshot.
 type CheckpointInfo struct {
 	TaskID    string
+	RunID     string
 	SessionID string
 	AgentName string
 	Reason    string
@@ -341,7 +353,7 @@ func (s *Service) emitObserver(fn func(Observer)) {
 
 // toolObserverInfo builds a ToolInfo for a tool dispatch. CallID is the tool
 // call id so OnToolStart / OnToolEnd pair up.
-func (s *Service) toolObserverInfo(currentAgent *Agent, session *Session, tc domain.ToolCall) ToolInfo {
+func (s *Service) toolObserverInfo(ctx context.Context, currentAgent *Agent, session *Session, tc domain.ToolCall) ToolInfo {
 	agentName := ""
 	if currentAgent != nil {
 		agentName = currentAgent.Name()
@@ -352,6 +364,7 @@ func (s *Service) toolObserverInfo(currentAgent *Agent, session *Session, tc dom
 	}
 	return ToolInfo{
 		TaskID:    currentTaskID(session),
+		RunID:     currentRunID(ctx),
 		SessionID: sessionID,
 		AgentName: agentName,
 		Tool:      tc.Function.Name,

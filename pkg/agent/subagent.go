@@ -166,6 +166,7 @@ func (sa *SubAgent) observerInfo() SubAgentInfo {
 	}
 	return SubAgentInfo{
 		ParentTaskID: currentTaskID(sa.config.ParentSession),
+		RunID:        currentRunID(sa.ctx),
 		SubAgentID:   sa.id,
 		Name:         sa.config.Agent.Name(),
 		Goal:         sa.config.Goal,

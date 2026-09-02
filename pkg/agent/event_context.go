@@ -4,6 +4,7 @@ import "context"
 
 type eventSinkContextKey struct{}
 type runDebugContextKey struct{}
+type runIDContextKey struct{}
 
 func withEventSink(ctx context.Context, sink func(*Event)) context.Context {
 	if sink == nil {
@@ -18,6 +19,29 @@ func eventSinkFromContext(ctx context.Context) func(*Event) {
 	}
 	sink, _ := ctx.Value(eventSinkContextKey{}).(func(*Event))
 	return sink
+}
+
+// withCurrentRunID carries the run's registry id down the call tree.
+//
+// The run id is minted in startRun, and the places that most need it — a tool
+// dispatch several frames below the loop, a log line written by service-level
+// code while a run is in flight — have no other route to it. Session and task
+// ids do not stand in: one session can have several runs in flight at once, so
+// grouping a trace or a log by session is grouping two runs together.
+func withCurrentRunID(ctx context.Context, runID string) context.Context {
+	if runID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, runIDContextKey{}, runID)
+}
+
+// currentRunID returns the run id on the context, or "" outside a run.
+func currentRunID(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	id, _ := ctx.Value(runIDContextKey{}).(string)
+	return id
 }
 
 func withRunDebug(ctx context.Context, debug bool) context.Context {

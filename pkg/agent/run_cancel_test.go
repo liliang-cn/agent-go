@@ -273,7 +273,7 @@ func TestRunRegistry_Concurrent(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 50; j++ {
-				runCtx, release := svc.registerRun(context.Background(), "", "session", "task")
+				runCtx, _, release := svc.registerRun(context.Background(), "", "session", "task")
 				_ = runCtx
 				// Releasing twice must be harmless: the observer defers it and
 				// a future caller may well add another safety net.
@@ -306,9 +306,9 @@ func TestRegisterRun_DuplicateIDKeepsBothCancellable(t *testing.T) {
 
 	svc := &Service{inProgressTools: make(map[string]int)}
 
-	firstCtx, releaseFirst := svc.registerRun(context.Background(), "dup", "s", "t")
+	firstCtx, _, releaseFirst := svc.registerRun(context.Background(), "dup", "s", "t")
 	defer releaseFirst()
-	secondCtx, releaseSecond := svc.registerRun(context.Background(), "dup", "s", "t")
+	secondCtx, _, releaseSecond := svc.registerRun(context.Background(), "dup", "s", "t")
 	defer releaseSecond()
 
 	if got := len(svc.ActiveRuns()); got != 2 {
