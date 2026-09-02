@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/config"
@@ -747,9 +748,22 @@ func (b *Builder) build() (*Service, error) {
 }
 
 func resolveServiceModelInfo(llmSvc domain.Generator, cfg *config.Config) (string, string, bool) {
+	modelName, baseURL := "", ""
 	if provider, ok := llmSvc.(modelIdentityProvider); ok {
-		modelName := provider.GetModelName()
-		baseURL := provider.GetBaseURL()
+		modelName = strings.TrimSpace(provider.GetModelName())
+		baseURL = provider.GetBaseURL()
+	}
+	// A provider that only knows its model for usage accounting still knows
+	// it. providers.OpenAILLMProvider is one: injected through WithLLM it
+	// used to leave Info().Model empty, every turn unpriced, and the cost
+	// ceilings — MaxBudgetUSD, MaxTotalCostUSD — silently inert, with no name
+	// an operator could even register a price against.
+	if modelName == "" {
+		if usage, ok := llmSvc.(interface{ UsageModel() string }); ok {
+			modelName = strings.TrimSpace(usage.UsageModel())
+		}
+	}
+	if modelName != "" || baseURL != "" {
 		if fastProvider, ok := llmSvc.(fastModelProvider); ok {
 			return modelName, baseURL, fastProvider.IsFastModel()
 		}

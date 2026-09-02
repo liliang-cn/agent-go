@@ -189,3 +189,27 @@ func TestBuildMemoryServiceRejectsVectorStoreType(t *testing.T) {
 		t.Fatal("expected vector store type to be rejected")
 	}
 }
+
+// usageOnlyLLM knows its model only the way a usage meter asks — the shape
+// providers.OpenAILLMProvider has.
+type usageOnlyLLM struct{ captureStreamLLM }
+
+func (u *usageOnlyLLM) UsageModel() string { return "usage-only-model" }
+
+// A provider that reports its model for usage accounting must not leave the
+// service nameless: with no name every turn is unpriced and the cost
+// ceilings do nothing.
+func TestServiceModelFallsBackToUsageModel(t *testing.T) {
+	var gen interface {
+		domain.Generator
+		UsageModel() string
+	} = &usageOnlyLLM{}
+	svc, err := New("usage-only").WithConfig(testAgentConfig(t.TempDir())).WithLLM(gen).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+	if got := svc.Info().Model; got != "usage-only-model" {
+		t.Fatalf("Info().Model = %q, want the usage model", got)
+	}
+}
