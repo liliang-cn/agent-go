@@ -13,10 +13,10 @@ import (
 // degrades gracefully to plain memory search. This is the library-facing entry
 // that lets the agent loop "know" the knowledge graph.
 func (s *Service) KnowledgeRecall(ctx context.Context, query string, topK int) (*domain.GraphRecallResult, error) {
-	if s == nil || s.memoryService == nil {
+	if s == nil || s.memory() == nil {
 		return nil, fmt.Errorf("memory is not enabled for this agent")
 	}
-	if r, ok := s.memoryService.(interface {
+	if r, ok := s.memory().(interface {
 		KnowledgeRecall(context.Context, string, int) (*domain.GraphRecallResult, error)
 	}); ok {
 		return r.KnowledgeRecall(ctx, query, topK)

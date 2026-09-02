@@ -72,9 +72,9 @@ func (s *Service) prepareConversationContext(ctx context.Context, goal string, s
 		})
 	}
 
-	if s.memoryService != nil {
+	if s.memory() != nil {
 		g.Go(func() error {
-			memoryContext, memoryMemories, memoryLogic, err := s.memoryService.RetrieveAndInjectWithContextAndLogic(groupCtx, goal, prepared.queryContext)
+			memoryContext, memoryMemories, memoryLogic, err := s.memory().RetrieveAndInjectWithContextAndLogic(groupCtx, goal, prepared.queryContext)
 			if err != nil {
 				return err
 			}

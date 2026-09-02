@@ -638,6 +638,22 @@ svc, _ := agent.New("assistant").
   leaves the memory unresolved and still carrying when it was written, which is
   true in every language. Runnable: `examples/timeaware`.
 
+## Swapping memory at runtime
+
+Which backend a service uses was decided once, at construction. Moving a user
+from local file memory to a shared brain meant building a second Service and
+throwing the first away, with its conversation and its in-flight runs.
+
+```go
+previous := svc.SetMemoryService(shared) // already drained and closed
+svc.SetMemoryService(nil)                // turns memory off; runs still work
+```
+
+The outgoing service is closed on purpose: it holds a background writer with
+extractions not yet persisted, and dropping the pointer would strand them
+silently. Swap when the service is idle — a run mid-turn can retrieve from the
+old backend and store into the new. Runnable: `examples/memory-swap`.
+
 ## Multimodal
 
 Images go in and come back out:

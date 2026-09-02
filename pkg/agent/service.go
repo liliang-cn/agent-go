@@ -47,10 +47,15 @@ type Service struct {
 	closed    atomic.Bool
 	closeOnce sync.Once
 
-	debug         bool
-	llmService    domain.Generator
-	mcpService    MCPToolExecutor
-	ragProcessor  domain.Processor
+	debug        bool
+	llmService   domain.Generator
+	mcpService   MCPToolExecutor
+	ragProcessor domain.Processor
+	// memoryService is swappable at runtime (SetMemoryService), so every
+	// read goes through memory() under this lock. It used to be a bare
+	// field read from nineteen places, which is fine for something written
+	// once at construction and a data race the moment it is not.
+	memoryMu      sync.RWMutex
 	memoryService domain.MemoryService
 	skillsService *skills.Service
 	promptManager *prompt.Manager // Central prompt management
@@ -753,17 +758,17 @@ func (s *Service) runWithConfigTee(ctx context.Context, goal string, cfg *RunCon
 // The LLM analyses accumulated facts and generates higher-level observations.
 // Returns a summary of what was consolidated, or an error.
 func (s *Service) TriggerReflection(ctx context.Context, sessionID string) (string, error) {
-	if s.memoryService == nil {
+	if s.memory() == nil {
 		return "", fmt.Errorf("memory service not configured")
 	}
-	return s.memoryService.Reflect(ctx, sessionID)
+	return s.memory().Reflect(ctx, sessionID)
 }
 
 // ExplainMemory returns the full evolution graph for a memory, tracing how
 // raw facts were consolidated into observations. Requires a file-based memory
 // service (FileMemoryStore path).
 func (s *Service) ExplainMemory(ctx context.Context, memoryID string) (*memorypkg.MemoryEvolutionNode, error) {
-	svc, ok := s.memoryService.(*memorypkg.Service)
+	svc, ok := s.memory().(*memorypkg.Service)
 	if !ok {
 		return nil, fmt.Errorf("ExplainMemory requires a *memory.Service (file-based store)")
 	}
@@ -774,12 +779,12 @@ func (s *Service) ExplainMemory(ctx context.Context, memoryID string) (*memorypk
 // preference memories. These are injected into every prompt with the highest priority,
 // overriding any conflicting context.
 func (s *Service) SetAgentDirective(ctx context.Context, sessionID string, mission string, directives []string) error {
-	if s.memoryService == nil {
+	if s.memory() == nil {
 		return fmt.Errorf("memory service not configured")
 	}
 	now := time.Now()
 	if mission != "" {
-		if err := s.memoryService.Add(ctx, &domain.Memory{
+		if err := s.memory().Add(ctx, &domain.Memory{
 			Type:       domain.MemoryTypePreference,
 			Content:    "Agent mission: " + mission,
 			Importance: 1.0,
@@ -791,7 +796,7 @@ func (s *Service) SetAgentDirective(ctx context.Context, sessionID string, missi
 		}
 	}
 	for _, d := range directives {
-		if err := s.memoryService.Add(ctx, &domain.Memory{
+		if err := s.memory().Add(ctx, &domain.Memory{
 			Type:       domain.MemoryTypePreference,
 			Content:    "Directive: " + d,
 			Importance: 1.0,
@@ -830,7 +835,7 @@ func (s *Service) Info() AgentInfo {
 		BaseURL:       s.baseURL,
 		FastModel:     s.isFastModel,
 		RAGEnabled:    s.ragProcessor != nil,
-		MemoryEnabled: s.memoryService != nil,
+		MemoryEnabled: s.memory() != nil,
 		MCPEnabled:    s.mcpService != nil,
 		SkillsEnabled: s.skillsService != nil,
 	}

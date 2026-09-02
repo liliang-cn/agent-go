@@ -22,7 +22,7 @@ func (s *Service) Resources(ctx context.Context) []resource.Resource {
 			Provider: info.BaseURL,
 		})
 	}
-	if s.memoryService != nil {
+	if s.memory() != nil {
 		out = append(out, resource.Resource{
 			ID:       "memory:" + firstNonEmptyTaskString(s.memoryStoreType, "default"),
 			Kind:     resource.KindMemory,

@@ -623,6 +623,26 @@ with memory tools, which is why nothing about it is product-shaped.
   because the scope filter drops them all. `TestMCPMemoryForeignRecordsStayGlobal`
   fails with "0 memories" the moment someone maps it.
 
+### Swapping the backend on a live service
+
+`Service.SetMemoryService(next)` replaces the memory backend and returns the
+one it replaced, **already drained and closed**. Same shape as `SetPlanStore`,
+with one difference that matters: a memory service owns a goroutine. Its
+durable writer holds a queue of extractions not yet persisted, so dropping the
+pointer does not free it — it strands them silently. Closing drains them. A
+caller still holding the old handle now gets loud failures instead, which is
+the trade this repository takes every time.
+
+Two things it changed underneath. The field was read from **nineteen places as
+a bare field access** — fine for something written once at construction, a data
+race the moment it is not; every read goes through `s.memory()` under an
+RWMutex now. And `nil` is a valid argument: it turns memory off, and the run
+still works, it just stops remembering.
+
+Swap when the service is idle. A run already in flight reads the backend at
+each point it needs one, so one mid-turn can retrieve from the old and store
+into the new; check `ActiveRuns()` first, or swap between turns.
+
 The discipline: **an honest `ErrMemoryStoreUnsupported` beats a fake
 implementation.** If a backend cannot do something, say so and let the caller
 degrade. And when you add a memory backend, test it through

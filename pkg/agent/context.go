@@ -82,7 +82,7 @@ func (s *Service) buildSystemContext() *SystemContext {
 	}
 
 	// Memory map injection.
-	if s.memoryService != nil {
+	if s.memory() != nil {
 		ctx.HasMemory = true
 		// Memory entries are injected via semantic search in prepareContext (RetrieveAndInject).
 		// Do NOT list memories here to avoid injecting irrelevant entries (List has no goal context).

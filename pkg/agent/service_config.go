@@ -119,7 +119,7 @@ func (s *Service) SetModelInfo(modelName, baseURL string, isFastModel bool) {
 // MemoryService returns the agent's DB-backed memory service (may be nil).
 // Use this to integrate external components with the same memory store.
 func (s *Service) MemoryService() domain.MemoryService {
-	return s.memoryService
+	return s.memory()
 }
 
 // RegisterAgent registers a new agent with the service

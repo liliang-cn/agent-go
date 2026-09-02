@@ -1,5 +1,5 @@
 package agent
 
 func (s *Service) shouldExposeMemoryTools() bool {
-	return s != nil && s.memoryService != nil
+	return s != nil && s.memory() != nil
 }

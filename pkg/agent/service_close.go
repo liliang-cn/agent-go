@@ -76,7 +76,7 @@ func (s *Service) Close() error {
 		// The memory service owns a worker goroutine and a write queue; closing
 		// it drains pending writes rather than leaving them to land after the
 		// caller has torn its directory down.
-		if closer, ok := s.memoryService.(interface{ Close() error }); ok && closer != nil {
+		if closer, ok := s.memory().(interface{ Close() error }); ok && closer != nil {
 			_ = closer.Close()
 		}
 		if closeErr := s.store.Close(); closeErr != nil {

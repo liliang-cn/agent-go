@@ -1182,7 +1182,7 @@ func (r *Runtime) executeToolOrHandoff(ctx context.Context, tc domain.ToolCall) 
 }
 
 func (r *Runtime) saveToMemory(ctx context.Context, goal, result string) {
-	if r.svc.memoryService != nil {
+	if r.svc.memory() != nil {
 		queryContext := r.svc.resolveMemoryQueryContext(r.session)
 		req := &domain.MemoryStoreRequest{
 			SessionID:  r.session.GetID(),
@@ -1192,9 +1192,9 @@ func (r *Runtime) saveToMemory(ctx context.Context, goal, result string) {
 			TaskGoal:   goal,
 			TaskResult: result,
 		}
-		if writer, ok := r.svc.memoryService.(backgroundMemoryWriter); ok && writer.EnqueueStoreIfWorthwhile(req) {
+		if writer, ok := r.svc.memory().(backgroundMemoryWriter); ok && writer.EnqueueStoreIfWorthwhile(req) {
 			// queued to background durable-memory worker
-		} else if err := r.svc.memoryService.StoreIfWorthwhile(ctx, req); err != nil {
+		} else if err := r.svc.memory().StoreIfWorthwhile(ctx, req); err != nil {
 			r.log().Warn("failed to store memory after run", slog.String("error", err.Error()))
 		}
 	}
