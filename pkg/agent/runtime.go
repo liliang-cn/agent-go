@@ -50,6 +50,9 @@ type Runtime struct {
 	goal string
 	// startedAt is when loop() began, for the run's reported duration.
 	startedAt time.Time
+	// logger is the service logger with this run's ids attached, so every
+	// line the loop writes can be matched to the run that wrote it.
+	logger *slog.Logger
 
 	// Observability: current round (1-indexed, set at loop start)
 	currentRound int
@@ -277,6 +280,12 @@ func (r *Runtime) RunStream(ctx context.Context, goal string) <-chan *Event {
 // loop is the core event loop
 func (r *Runtime) loop(ctx context.Context, goal string) {
 	r.startedAt = time.Now()
+	r.logger = r.log().With(
+		slog.String("run_id", r.runID()),
+		slog.String("session_id", r.sessionID()),
+		slog.String("task_id", currentTaskID(r.session)),
+	)
+	r.logger.Debug("run started", slog.String("agent", r.currentAgentName()))
 	defer func() {
 		close(r.eventChan)
 	}()
@@ -1105,7 +1114,7 @@ func (r *Runtime) persistTerminalCheckpoint(taskID string, reason CheckpointReas
 	// and only when a sandbox is configured. Best-effort: nil on any failure.
 	workspace := snapshotWorkspaceBytes(context.Background(), r.svc.Sandbox())
 	if err := sink.WriteCheckpoint(taskID, reason, r.currentRound, sessionID, agentName, finalText, string(reason), messages, workspace); err != nil {
-		r.svc.logger.Debug("failed to write terminal task checkpoint", slog.String("task_id", taskID), slog.String("error", err.Error()))
+		r.log().Debug("failed to write terminal task checkpoint", slog.String("task_id", taskID), slog.String("error", err.Error()))
 	}
 }
 
@@ -1137,7 +1146,7 @@ func (r *Runtime) saveToMemory(ctx context.Context, goal, result string) {
 		if writer, ok := r.svc.memoryService.(backgroundMemoryWriter); ok && writer.EnqueueStoreIfWorthwhile(req) {
 			// queued to background durable-memory worker
 		} else if err := r.svc.memoryService.StoreIfWorthwhile(ctx, req); err != nil {
-			r.svc.logger.Warn("failed to store memory after run", slog.String("error", err.Error()))
+			r.log().Warn("failed to store memory after run", slog.String("error", err.Error()))
 		}
 	}
 }
@@ -1233,7 +1242,7 @@ func (r *Runtime) reportHistoryPersistFailure(what string, err error) {
 	}
 	msg := fmt.Sprintf("failed to save %s to the conversation store: %v", what, err)
 	if r.svc != nil && r.svc.logger != nil {
-		r.svc.logger.Error(msg,
+		r.log().Error(msg,
 			slog.String("session_id", sessionIDOrEmpty(r.session)),
 			slog.String("error", err.Error()))
 	}
@@ -1939,12 +1948,21 @@ func (r *Runtime) planKey() string {
 // terminal path — completed, blocked, cancelled — passes through, so a
 // RunLifecycle extension sees each run exactly once.
 func (r *Runtime) emitRunEnd(goal string, reason StopReason, text string, blocked, cancelled bool) {
-	if r.svc == nil || r.svc.hooks == nil {
+	if r.svc == nil {
 		return
 	}
 	var dur time.Duration
 	if !r.startedAt.IsZero() {
 		dur = time.Since(r.startedAt)
+	}
+	r.log().Debug("run ended",
+		slog.String("stop_reason", string(reason)),
+		slog.Bool("blocked", blocked),
+		slog.Bool("cancelled", cancelled),
+		slog.Duration("duration", dur),
+	)
+	if r.svc.hooks == nil {
+		return
 	}
 	_, _ = r.svc.hooks.EmitWithResult(context.Background(), HookEventPostExecution, HookData{
 		SessionID:  r.session.GetID(),
@@ -1971,4 +1989,13 @@ func toolResultForModel(res interface{}, err error) interface{} {
 		return "Error: " + err.Error()
 	}
 	return toolResultToString(res) + "\nError: " + err.Error()
+}
+
+// log returns the run-scoped logger, or the service logger before loop()
+// has attached the run's ids.
+func (r *Runtime) log() *slog.Logger {
+	if r.logger != nil {
+		return r.logger
+	}
+	return r.svc.logger
 }

@@ -74,7 +74,7 @@ func (r *Runtime) persistRoundCheckpoint(round int, messages []domain.Message) {
 	})
 	if err := sink.WriteCheckpoint(taskID, CheckpointReasonRoundEnd, round,
 		sessionID, agentName, "", string(CheckpointReasonRoundEnd), messages, nil); err != nil {
-		r.svc.logger.Debug("failed to write round checkpoint",
+		r.log().Debug("failed to write round checkpoint",
 			slog.String("task_id", taskID), slog.String("error", err.Error()))
 	}
 }
