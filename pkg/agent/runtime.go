@@ -277,6 +277,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		close(r.eventChan)
 	}()
 	ctx = withCurrentSession(ctx, r.session)
+	ctx = withCurrentPlanKey(ctx, r.planKey())
 	// Install a tool-use sink so inner tool calls made by PTC
 	// (execute_javascript → fs_write, web_search, ...) are recorded as used,
 	// making them visible to goal-aware output lints.
@@ -1111,6 +1112,7 @@ func (r *Runtime) executeToolOrHandoff(ctx context.Context, tc domain.ToolCall) 
 	ctx = withEventSink(ctx, r.forwardSubAgentEvent)
 	ctx = withRunDebug(ctx, r.debugEnabled())
 	ctx = withCurrentSession(ctx, r.session)
+	ctx = withCurrentPlanKey(ctx, r.planKey())
 	return r.svc.executeDirectToolCall(ctx, r.currentAgent, r.session, tc, DirectToolExecutionOptions{
 		OnHandoff: func(targetAgent *Agent, reason interface{}) {
 			r.emit(EventTypeHandoff, fmt.Sprintf("Transferring to %s: %v", targetAgent.Name(), reason))
@@ -1906,4 +1908,14 @@ func (r *Runtime) refuseForbiddenToolUse(messages *[]domain.Message, state *quer
 	state.Messages = *messages
 	state.setLoopTransition(queryLoopTransitionNextTurn, "tool use refused: task forbids tools")
 	state.noteRoundCompleted()
+}
+
+// planKey is the scratchpad list this run's plan lives under, or "" for the
+// scratchpad's own default. Threaded into the tool context so scratchpad_*
+// calls that name no list land where the supervisor reads.
+func (r *Runtime) planKey() string {
+	if r == nil || r.cfg == nil {
+		return ""
+	}
+	return r.cfg.PlanKey
 }

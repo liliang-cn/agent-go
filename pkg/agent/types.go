@@ -350,6 +350,10 @@ type RunConfig struct {
 	CompactionThresholdTokens int
 	CompactionKeepRecent      int
 	DisableAutoCompaction     bool
+	// PlanKey is the scratchpad list this run's plan lives under. Empty means
+	// the scratchpad's own default. RunSegments sets it so every segment of a
+	// task reads and writes one list, scoped to the task.
+	PlanKey string
 
 	// MaxBudgetUSD caps the estimated cumulative cost of the run in
 	// USD (input + output tokens × model pricing). When exceeded the
@@ -618,4 +622,18 @@ func WithRequestedActions(actions ...RequestedAction) RunOption {
 // small structured model call per run.
 func WithConstraintExtraction(enabled bool) RunOption {
 	return func(c *RunConfig) { c.DisableConstraintExtraction = !enabled }
+}
+
+// WithPlanKey names the scratchpad list this run's plan lives under.
+//
+// The scratchpad tools key their lists by an argument the model supplies,
+// defaulting to "default". A supervisor that scopes a task's plan to the task
+// id has to tell the run so, or the tools keep writing to "default" while the
+// supervisor reads the scoped key — an empty list, which reads as "no
+// unfinished steps", which reads as finished. That was the case: the gate
+// RunSegments relies on to say a task is done was disabled by the same commit
+// that scoped the key, and no test noticed because the scripted plans were
+// seeded under the key being read.
+func WithPlanKey(key string) RunOption {
+	return func(c *RunConfig) { c.PlanKey = strings.TrimSpace(key) }
 }

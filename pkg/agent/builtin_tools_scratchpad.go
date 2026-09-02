@@ -147,8 +147,13 @@ func (m *scratchpadManager) get(key string) []scratchpadItem {
 // name one, which is most of the time.
 const scratchpadDefaultKey = "default"
 
-func scratchpadKey(args map[string]interface{}) string {
+func scratchpadKey(ctx context.Context, args map[string]interface{}) string {
 	if k := toolArgString(args, "key"); k != "" {
+		return k
+	}
+	// The run may have been told where its plan lives (WithPlanKey); a model
+	// that does not name a list is asking for that one.
+	if k := currentPlanKey(ctx); k != "" {
 		return k
 	}
 	return scratchpadDefaultKey
@@ -200,7 +205,7 @@ func RegisterScratchpadTools(svc *Service) {
 				if !ok {
 					return toolErr("items must be an array of strings"), nil
 				}
-				list := pad.set(scratchpadKey(args), items)
+				list := pad.set(scratchpadKey(ctx, args), items)
 				return toolOK(map[string]interface{}{"items": scratchpadItemsPayload(list)}), nil
 			},
 			destMeta,
@@ -225,7 +230,7 @@ func RegisterScratchpadTools(svc *Service) {
 				if text == "" {
 					return toolErr("text required"), nil
 				}
-				list := pad.add(scratchpadKey(args), text)
+				list := pad.add(scratchpadKey(ctx, args), text)
 				return toolOK(map[string]interface{}{"items": scratchpadItemsPayload(list)}), nil
 			},
 			destMeta,
@@ -247,7 +252,7 @@ func RegisterScratchpadTools(svc *Service) {
 				"required": []string{"index"},
 			},
 			func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-				list, err := pad.check(scratchpadKey(args), toolArgInt(args, "index"), toolArgString(args, "note"))
+				list, err := pad.check(scratchpadKey(ctx, args), toolArgInt(args, "index"), toolArgString(args, "note"))
 				if err != nil {
 					return toolErr(err.Error()), nil
 				}
@@ -272,7 +277,7 @@ func RegisterScratchpadTools(svc *Service) {
 				"required": []string{"index", "note"},
 			},
 			func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-				list, err := pad.note(scratchpadKey(args), toolArgInt(args, "index"), toolArgString(args, "note"))
+				list, err := pad.note(scratchpadKey(ctx, args), toolArgInt(args, "index"), toolArgString(args, "note"))
 				if err != nil {
 					return toolErr(err.Error()), nil
 				}
@@ -294,7 +299,7 @@ func RegisterScratchpadTools(svc *Service) {
 				},
 			},
 			func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-				list := pad.get(scratchpadKey(args))
+				list := pad.get(scratchpadKey(ctx, args))
 				return toolOK(map[string]interface{}{"items": scratchpadItemsPayload(list)}), nil
 			},
 			roMeta,

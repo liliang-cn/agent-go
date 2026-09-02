@@ -553,7 +553,7 @@ func (s *Service) startRun(ctx context.Context, goal string, cfg *RunConfig) (*S
 		cfg.recalledContext = s.recallRunMemory(ctx, goal)
 	}
 	if cfg.resumedPlan == "" {
-		cfg.resumedPlan = s.planSummaryForRun(taskID)
+		cfg.resumedPlan = s.planSummaryForRun(cfg.PlanKey, taskID)
 	}
 	if cfg.resumedTask == "" {
 		cfg.resumedTask = s.taskResumeForRun(ctx, taskID)

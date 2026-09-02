@@ -353,6 +353,8 @@ func (s *Service) runSegments(ctx context.Context, goal string, cfg LongRunConfi
 			// state instead.
 			WithSessionID(sessionID),
 			WithMaxTurns(cfg.RoundsPerSegment),
+			// The tools write where the supervisor reads.
+			WithPlanKey(cfg.PlanKey),
 		)
 		// Hand the segment what is left of the task's budget, so the ceiling
 		// holds inside a segment and not merely between them.

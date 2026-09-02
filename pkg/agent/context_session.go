@@ -20,3 +20,22 @@ func getCurrentSession(ctx context.Context) *Session {
 	}
 	return nil
 }
+
+const currentPlanKeyKey contextKey = "current_plan_key"
+
+// withCurrentPlanKey records the run's plan key for the scratchpad tools.
+func withCurrentPlanKey(ctx context.Context, key string) context.Context {
+	if key == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, currentPlanKeyKey, key)
+}
+
+// currentPlanKey returns the run's plan key, or "".
+func currentPlanKey(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	k, _ := ctx.Value(currentPlanKeyKey).(string)
+	return k
+}

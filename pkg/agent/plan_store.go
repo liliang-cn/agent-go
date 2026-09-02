@@ -216,9 +216,16 @@ func (s *Service) SetPlanStore(store PlanStore) {
 // were ticked off would invalidate the provider's cache of the entire
 // conversation after it, every turn — paying for the hand-off over and over.
 // What an earlier run got through is a fact about the start of this one.
-func (s *Service) planSummaryForRun(taskID string) string {
+func (s *Service) planSummaryForRun(planKey, taskID string) string {
 	if s == nil {
 		return ""
+	}
+	// The run's own key is the most specific statement of where its plan is;
+	// RunSegments sets it to the task-scoped list its tools write to.
+	if planKey != "" {
+		if summary := s.PlanSummary(planKey); summary != "" {
+			return summary
+		}
 	}
 	if taskID != "" {
 		if summary := s.PlanSummary(taskID); summary != "" {
