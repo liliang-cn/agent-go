@@ -18,9 +18,11 @@ import (
 	"context"
 	"encoding/json"
 	"sync"
+	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/agent"
@@ -37,6 +39,10 @@ const (
 	attrLLMTokenTotal = "llm.token_count.total"
 	attrToolName      = "tool.name"
 	attrToolParams    = "tool.parameters"
+
+	attrLLMTokenPrompt     = "llm.token_count.prompt"
+	attrLLMTokenCompletion = "llm.token_count.completion"
+	attrLLMTokenCached     = "llm.token_count.prompt_details.cache_read"
 
 	// Extra (non-OpenInference) attributes that help debugging in Phoenix.
 	attrTaskID    = "agentgo.task_id"
@@ -61,18 +67,55 @@ type Observer struct {
 	tracer   trace.Tracer
 	rootKind string
 
-	mu    sync.Mutex
-	roots map[string]*rootSpan  // taskID -> lazy root span
-	spans map[string]trace.Span // per-event key (SpanID / tool:CallID / sub:SubAgentID)
+	meterProvider metric.MeterProvider
+	metrics       *instruments
+
+	mu     sync.Mutex
+	roots  map[string]*rootSpan  // taskID -> lazy root span
+	spans  map[string]trace.Span // per-event key (SpanID / tool:CallID / sub:SubAgentID / seg:TaskID:Index)
+	starts map[string]time.Time  // same keys, for the duration histograms
 }
 
 type rootSpan struct {
 	span trace.Span
 	ctx  context.Context // carries the root span, so children nest under it
+
+	// childCtx is where the next model / tool / sub-agent span attaches. It is
+	// the root context normally and the open segment's context while a
+	// RunSegments segment is running, so a long task renders as
+	// task → segment → turns rather than one flat list of every turn it ever
+	// took.
+	childCtx context.Context
+
+	// openSegments is how many segment spans are currently open under this
+	// root (0 or 1 in practice; segments are sequential).
+	//
+	// A segment outlives the run inside it: the run's terminal checkpoint
+	// fires first, OnSegment(Ending) second. Without the count the root would
+	// end while its own segment child was still open, which is a child that
+	// outlives its parent — legal OTel, unreadable trace.
+	//
+	// One trace per segment rather than one per task is deliberate. The end
+	// of a long run has no callback (RunSegments can stop early for six
+	// different reasons), so a task-wide root could only be closed by
+	// Shutdown — and a span exports nothing until it ends, which would mean
+	// seeing nothing at all from a task until the hour was up. Segments are
+	// correlated by agentgo.task_id instead.
+	openSegments int
+	// pendingEnd records that a checkpoint asked to end the root while a
+	// segment was still open.
+	pendingEnd bool
 }
 
 // Option configures an Observer.
 type Option func(*Observer)
+
+// WithMeterProvider makes the Observer record metrics through mp. Without it
+// the metric side is a no-op and only spans are produced, so New(tp) keeps its
+// original behaviour exactly.
+func WithMeterProvider(mp metric.MeterProvider) Option {
+	return func(o *Observer) { o.meterProvider = mp }
+}
 
 // WithRootKind overrides the OpenInference span kind used for the per-task
 // root span. Defaults to "CHAIN"; "AGENT" is also common.
@@ -98,6 +141,7 @@ func New(tp trace.TracerProvider, opts ...Option) *Observer {
 		rootKind: spanKindChain,
 		roots:    make(map[string]*rootSpan),
 		spans:    make(map[string]trace.Span),
+		starts:   make(map[string]time.Time),
 	}
 	for _, opt := range opts {
 		opt(o)
@@ -105,9 +149,13 @@ func New(tp trace.TracerProvider, opts ...Option) *Observer {
 	if tp == nil {
 		tp = trace.NewNoopTracerProvider()
 	}
-	o.tracer = tp.Tracer("github.com/liliang-cn/agent-go/v3/pkg/otelobserver")
+	o.tracer = tp.Tracer(instrumentationName)
+	o.metrics = newInstruments(o.meterProvider)
 	return o
 }
+
+// instrumentationName is the scope both the tracer and the meter report under.
+const instrumentationName = "github.com/liliang-cn/agent-go/v3/pkg/otelobserver"
 
 var _ agent.Observer = (*Observer)(nil)
 
@@ -131,7 +179,7 @@ func (o *Observer) rootForLocked(ctx context.Context, taskID, sessionID string) 
 		attribute.String(attrSessionID, sessionID),
 		attribute.String(attrTaskID, taskID),
 	)
-	r := &rootSpan{span: span, ctx: rctx}
+	r := &rootSpan{span: span, ctx: rctx, childCtx: rctx}
 	o.roots[taskID] = r
 	return r
 }
@@ -142,15 +190,28 @@ func (o *Observer) track(key string, span trace.Span) {
 	}
 	o.mu.Lock()
 	o.spans[key] = span
+	o.starts[key] = time.Now()
 	o.mu.Unlock()
 }
 
 func (o *Observer) pop(key string) trace.Span {
+	span, _ := o.popTimed(key)
+	return span
+}
+
+// popTimed removes a tracked span and reports how long it was open. A zero
+// duration means the start was never recorded.
+func (o *Observer) popTimed(key string) (trace.Span, time.Duration) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	span := o.spans[key]
 	delete(o.spans, key)
-	return span
+	var elapsed time.Duration
+	if start, ok := o.starts[key]; ok {
+		elapsed = time.Since(start)
+		delete(o.starts, key)
+	}
+	return span, elapsed
 }
 
 // OnModelStart opens an LLM span as a child of the task root.
@@ -160,13 +221,13 @@ func (o *Observer) OnModelStart(ctx context.Context, info agent.ModelInfo) {
 	}
 	o.mu.Lock()
 	root := o.rootForLocked(ctx, info.TaskID, info.SessionID)
-	rctx := root.ctx
+	rctx := root.childCtx
 	o.mu.Unlock()
 
 	_, span := o.tracer.Start(rctx, "llm."+nonEmpty(info.AgentName, "model"))
 	span.SetAttributes(
 		attribute.String(attrSpanKind, spanKindLLM),
-		attribute.String(attrLLMModelName, info.AgentName),
+		attribute.String(attrLLMModelName, nonEmpty(info.Model, info.AgentName)),
 		attribute.String(attrSessionID, info.SessionID),
 		attribute.String(attrAgentName, info.AgentName),
 		attribute.Int(attrRound, info.Round),
@@ -192,10 +253,11 @@ func (o *Observer) OnModelDelta(_ context.Context, delta agent.ModelDelta) {
 }
 
 // OnModelEnd closes the LLM span, attaching output + token attributes.
-func (o *Observer) OnModelEnd(_ context.Context, info agent.ModelInfo, res *agent.ModelResult, err error) {
+func (o *Observer) OnModelEnd(ctx context.Context, info agent.ModelInfo, res *agent.ModelResult, err error) {
 	if o == nil {
 		return
 	}
+	o.recordModelEnd(ctx, info, res, err)
 	span := o.pop(info.SpanID)
 	if span == nil {
 		return
@@ -204,6 +266,9 @@ func (o *Observer) OnModelEnd(_ context.Context, info agent.ModelInfo, res *agen
 		span.SetAttributes(
 			attribute.String(attrOutputValue, res.Content),
 			attribute.Int(attrLLMTokenTotal, res.TokensUsed),
+			attribute.Int(attrLLMTokenPrompt, res.PromptTokens),
+			attribute.Int(attrLLMTokenCompletion, res.CompletionTokens),
+			attribute.Int(attrLLMTokenCached, res.CachedTokens),
 			attribute.Int("llm.tool_calls", res.ToolCalls),
 		)
 	}
@@ -217,7 +282,7 @@ func (o *Observer) OnToolStart(ctx context.Context, info agent.ToolInfo) {
 	}
 	o.mu.Lock()
 	root := o.rootForLocked(ctx, info.TaskID, info.SessionID)
-	rctx := root.ctx
+	rctx := root.childCtx
 	o.mu.Unlock()
 
 	argsJSON := toJSON(info.Args)
@@ -235,11 +300,12 @@ func (o *Observer) OnToolStart(ctx context.Context, info agent.ToolInfo) {
 }
 
 // OnToolEnd closes the TOOL span, attaching the result as output.value.
-func (o *Observer) OnToolEnd(_ context.Context, info agent.ToolInfo, result any, err error) {
+func (o *Observer) OnToolEnd(ctx context.Context, info agent.ToolInfo, result any, err error) {
 	if o == nil {
 		return
 	}
-	span := o.pop("tool:" + info.CallID)
+	span, elapsed := o.popTimed("tool:" + info.CallID)
+	o.recordToolEnd(ctx, info, elapsed, err)
 	if span == nil {
 		return
 	}
@@ -256,7 +322,7 @@ func (o *Observer) OnSubAgentStart(ctx context.Context, info agent.SubAgentInfo)
 	}
 	o.mu.Lock()
 	root := o.rootForLocked(ctx, info.ParentTaskID, info.SessionID)
-	rctx := root.ctx
+	rctx := root.childCtx
 	o.mu.Unlock()
 
 	_, span := o.tracer.Start(rctx, "agent."+nonEmpty(info.Name, "subagent"))
@@ -292,11 +358,20 @@ func (o *Observer) OnCheckpoint(_ context.Context, info agent.CheckpointInfo) {
 	}
 	o.mu.Lock()
 	root := o.roots[info.TaskID]
-	delete(o.roots, info.TaskID)
-	o.mu.Unlock()
 	if root == nil {
+		o.mu.Unlock()
 		return
 	}
+	// A segment still open means this checkpoint ends one run of a longer
+	// task, not the task. Remember the ask and let the last segment close it.
+	ending := root.openSegments == 0
+	if ending {
+		delete(o.roots, info.TaskID)
+	} else {
+		root.pendingEnd = true
+	}
+	o.mu.Unlock()
+
 	root.span.SetAttributes(
 		attribute.String("agentgo.checkpoint.reason", info.Reason),
 		attribute.Int(attrRound, info.Round),
@@ -308,7 +383,9 @@ func (o *Observer) OnCheckpoint(_ context.Context, info agent.CheckpointInfo) {
 	root.span.AddEvent("checkpoint", trace.WithAttributes(
 		attribute.String("reason", info.Reason),
 	))
-	root.span.End()
+	if ending {
+		root.span.End()
+	}
 }
 
 // Shutdown ends any root spans whose task never checkpointed, plus any dangling
@@ -323,6 +400,7 @@ func (o *Observer) Shutdown(_ context.Context) error {
 	spans := o.spans
 	o.roots = make(map[string]*rootSpan)
 	o.spans = make(map[string]trace.Span)
+	o.starts = make(map[string]time.Time)
 	o.mu.Unlock()
 
 	for _, s := range spans {
