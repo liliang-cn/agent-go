@@ -239,3 +239,18 @@ func TestWithLLMRetriesCanDisableRetrying(t *testing.T) {
 		t.Errorf("the provider was called %d times, want exactly 1", n)
 	}
 }
+
+// A 400 that refuses the caller's region is a routing failure, not a bad
+// request: behind a gateway rotating upstream accounts, the same call
+// succeeds on the next account. It must be retried, and it must not drag
+// every other 400 along with it.
+func TestRegionRefusalIsRetried(t *testing.T) {
+	refused := errors.New(`API error (status 400): {"error":{"code":400,"message":"User location is not supported for the API use.","status":"FAILED_PRECONDITION"}}`)
+	if !transientLLMError(refused) {
+		t.Fatal("a region refusal from a rotating gateway must be retried")
+	}
+	bad := errors.New(`API error (status 400): {"error":{"message":"invalid request: messages must not be empty"}}`)
+	if transientLLMError(bad) {
+		t.Fatal("an ordinary 400 must still be permanent")
+	}
+}

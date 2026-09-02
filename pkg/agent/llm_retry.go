@@ -116,6 +116,22 @@ func transientLLMError(err error) bool {
 
 	msg := strings.ToLower(err.Error())
 
+	// One 400 that is not about this request: Google refuses the *caller's
+	// region*, and behind a gateway that rotates upstream accounts the caller
+	// is whichever account the gateway picked this time. Measured against a
+	// CLIProxyAPI pool: five identical requests, two refused, three served.
+	// The request was fine; the routing was not. Asking again reaches a
+	// different account. Against a single direct key this retries a hopeless
+	// call a few times, which costs seconds — the trade is worth it.
+	for _, routing := range []string{
+		"user location is not supported",
+		"failed_precondition",
+	} {
+		if strings.Contains(msg, routing) {
+			return true
+		}
+	}
+
 	// Permanent rejections win over everything below: a 400 that happens to
 	// mention "timeout" in its body is still a 400, and retrying an expired
 	// key four times just delays the real answer.
