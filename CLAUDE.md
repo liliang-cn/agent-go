@@ -292,6 +292,32 @@ Degradation is the design, not an afterthought: no model, a timeout or an
 unparsable answer leaves the memory unresolved, and it still carries the moment
 it was written, which is true in every language and enough to reckon from.
 
+**Three things only a live check found**, all of them invisible to a suite with
+a scripted model:
+
+- **A model does not fill an optional field.** Asked with the time fields
+  optional, gemini omitted them entirely. With `time_kind` required and
+  `occurs_on` still optional, it answered `time_kind: "point"` and wrote the
+  resolved date into the free-text field as prose — `time_text: "明天下午三点
+  特别指2026年9月3日下午15:00"` — leaving `occurs_on` empty. Both answers are
+  indistinguishable from "this text named no time" downstream. `RequiredFields()`
+  now demands both, and the descriptions say the words field holds the input's
+  words and nothing else.
+- **A twenty-second timeout was too short.** A reasoning model behind a gateway
+  took longer on a six-text batch, and every reference came back unresolved.
+  `DefaultTimeout` is 60s: this runs in the background, where a slow answer
+  costs nothing and a timeout costs the whole resolution.
+- **A failed extraction was silent.** `storeIfWorthwhileSync` returned nil for
+  both "the model said there is nothing to remember" and "the call failed", so a
+  provider outage stored nothing and said nothing for as long as it lasted. It
+  warns now.
+
+The proof itself: a real model resolving one batch of six texts in Chinese,
+English, Korean, Portuguese and Arabic against a stated anchor, every date
+correct and the text with no time in it correctly reporting none; then the read
+path rendering `(written 2026-09-02, today; "明天下午三点" = 2026-09-03 15:00,
+tomorrow)` with no model call at all.
+
 ### Task checkpoint + replay
 
 Every terminal `completeRun` / `blockRun` writes a `TaskCheckpoint` snapshot of the message history to `task_checkpoints` (capped at `MaxCheckpointsPerTask=32`, pruned by `checkpointWriter`). The wiring lives in `pkg/agent/task_checkpoint.go` + `task_checkpoint_manager.go`; `Service.SetCheckpointSink(...)` is what the runtime calls — `Manager.buildServiceForModel` auto-wires this, services built directly via `agent.New(...).Build()` skip persistence.

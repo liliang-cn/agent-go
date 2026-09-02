@@ -2,11 +2,15 @@ package memory
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	agentgolog "github.com/liliang-cn/agent-go/v3/pkg/log"
 	"github.com/liliang-cn/agent-go/v3/pkg/timeaware"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -177,3 +181,56 @@ func TestNoResolverStillStoresAndStillDatesMemories(t *testing.T) {
 		t.Errorf("note = %q, want the write time even with no resolver", note)
 	}
 }
+
+// A failed extraction used to be indistinguishable from "the model decided
+// there was nothing worth remembering": both returned nil from the writer,
+// and a provider outage therefore stored nothing, silently, for as long as
+// it lasted. Found by a live check where the memory simply was not there.
+func TestFailedExtractionIsNotSilent(t *testing.T) {
+	ctx := context.Background()
+	store := new(MockMemoryStore)
+	llm := new(MockGenerator)
+	svc := NewService(store, llm, nil, DefaultConfig())
+
+	llm.On("GenerateStructured", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, context.DeadlineExceeded)
+
+	var logged []string
+	restore := captureWarnings(&logged)
+	defer restore()
+
+	// Still not an error to the caller: auto-store is best-effort and must
+	// not fail the turn it rode in on.
+	assert.NoError(t, svc.StoreIfWorthwhile(ctx, &domain.MemoryStoreRequest{
+		SessionID: "s", TaskGoal: "记住这个", TaskResult: "好的",
+	}))
+	store.AssertNotCalled(t, "Store", mock.Anything, mock.Anything)
+
+	found := false
+	for _, line := range logged {
+		if strings.Contains(line, "extraction call failed") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("a failed extraction said nothing; logged: %v", logged)
+	}
+}
+
+// captureWarnings routes the framework's logging into a slice for the
+// duration of a test.
+func captureWarnings(into *[]string) func() {
+	var mu sync.Mutex
+	handler := slog.NewTextHandler(writerFunc(func(p []byte) (int, error) {
+		mu.Lock()
+		*into = append(*into, string(p))
+		mu.Unlock()
+		return len(p), nil
+	}), &slog.HandlerOptions{Level: slog.LevelDebug})
+	agentgolog.SetLogger(slog.New(handler))
+	return func() { agentgolog.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil))) }
+}
+
+type writerFunc func([]byte) (int, error)
+
+func (f writerFunc) Write(p []byte) (int, error) { return f(p) }

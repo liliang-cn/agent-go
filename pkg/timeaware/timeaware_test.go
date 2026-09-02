@@ -314,3 +314,48 @@ func TestPromptCarriesTheIANAZoneForDaylightSaving(t *testing.T) {
 		t.Errorf("the prompt named no IANA zone, so DST rules cannot be applied:\n%s", m.prompt)
 	}
 }
+
+// Both fields that carry the verdict are required, and the reason is not
+// aesthetic: against a real model, leaving them optional produced two
+// different silent failures, and both looked exactly like "this text named
+// no time" to everything downstream.
+func TestTheVerdictFieldsAreRequired(t *testing.T) {
+	required := RequiredFields()
+	for _, want := range []string{"time_kind", "occurs_on"} {
+		found := false
+		for _, r := range required {
+			if r == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%q must be required: a model does not fill an optional field, and an unfilled one is indistinguishable from \"no time here\"", want)
+		}
+	}
+
+	// The standalone route makes the same demand.
+	items := resolveSchema["properties"].(map[string]interface{})["items"].(map[string]interface{})["items"].(map[string]interface{})
+	req, _ := items["required"].([]string)
+	hasDate := false
+	for _, r := range req {
+		if r == "date" {
+			hasDate = true
+		}
+	}
+	if !hasDate {
+		t.Error("the standalone schema must require date for the same reason")
+	}
+
+	// And the field that holds the input's words must say so, or the model
+	// writes the answer into it as prose and leaves the date field empty —
+	// observed: time_text = "明天下午三点特别指2026年9月3日下午15:00".
+	fields := SchemaFields()
+	text := fields["time_text"].(map[string]interface{})["description"].(string)
+	if !strings.Contains(text, "ONLY") || !strings.Contains(text, "nothing else") {
+		t.Errorf("time_text's description does not forbid prose: %q", text)
+	}
+	date := fields["occurs_on"].(map[string]interface{})["description"].(string)
+	if !strings.Contains(date, "REQUIRED") || !strings.Contains(date, "never in time_text") {
+		t.Errorf("occurs_on's description does not claim the answer: %q", date)
+	}
+}

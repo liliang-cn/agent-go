@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	agentgolog "github.com/liliang-cn/agent-go/v3/pkg/log"
 	"github.com/liliang-cn/agent-go/v3/pkg/prompt"
 	"github.com/liliang-cn/agent-go/v3/pkg/store"
 	"github.com/liliang-cn/agent-go/v3/pkg/timeaware"
@@ -421,6 +422,14 @@ func (s *Service) storeIfWorthwhileSync(ctx context.Context, req *domain.MemoryS
 				props[name] = spec
 			}
 		}
+		// Required, not optional. Left optional, a model working through this
+		// long a prompt omits the time fields entirely, and the answer is
+		// indistinguishable from "this text named no time" — measured against
+		// a real model, which filled them perfectly when asked on their own
+		// and skipped them here.
+		if required, ok := items["required"].([]string); ok {
+			items["required"] = append(required, timeaware.RequiredFields()...)
+		}
 	}
 
 	result, err := s.llm.GenerateStructured(ctx, prompt, schema, &domain.GenerationOptions{Temperature: 0.1})
@@ -428,8 +437,18 @@ func (s *Service) storeIfWorthwhileSync(ctx context.Context, req *domain.MemoryS
 	if err == nil && result.Raw != "" && result.Valid {
 		summary, err = normalizeMemorySummary(result.Raw)
 		if err != nil {
+			agentgolog.WithModule("memory.autostore").Warn("extraction returned unparsable output; nothing stored",
+				"error", err)
 			summary = nil
 		}
+	} else if err != nil {
+		// A failed extraction used to return nil from here and look exactly
+		// like "the model decided there was nothing worth remembering". A run
+		// whose provider was timing out therefore stored nothing, silently,
+		// for as long as the outage lasted — found by a live check where the
+		// memory simply was not there and nothing said why.
+		agentgolog.WithModule("memory.autostore").Warn("extraction call failed; nothing stored",
+			"error", err)
 	}
 
 	// No second opinion: if the extraction call said no, or failed, nothing is

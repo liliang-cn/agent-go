@@ -194,7 +194,13 @@ func (r *Resolver) Location() *time.Location {
 }
 
 // DefaultTimeout bounds one resolution call.
-const DefaultTimeout = 20 * time.Second
+//
+// Generous on purpose. This runs in the background, where a slow answer
+// costs nothing anyone is waiting for, and a timeout costs the resolution
+// entirely — measured: a reasoning model behind a gateway took longer than
+// twenty seconds for a six-text batch, and every one of them came back
+// unresolved.
+const DefaultTimeout = 60 * time.Second
 
 // New returns a Resolver over a model. A nil model yields a Resolver whose
 // Resolve reports ErrNoModel, which callers treat as "no resolution
@@ -318,16 +324,16 @@ var resolveSchema = map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"index":      map[string]interface{}{"type": "integer", "description": "which input text this answers, zero-based"},
-					"text":       map[string]interface{}{"type": "string", "description": "the words in the input that name the time, quoted exactly; empty when none"},
+					"text":       map[string]interface{}{"type": "string", "description": "ONLY the words in the input that name the time, quoted exactly — never a date, never an explanation. Empty when none."},
 					"kind":       map[string]interface{}{"type": "string", "enum": []string{"none", "point", "range", "recurring"}},
-					"date":       map[string]interface{}{"type": "string", "description": "resolved start date, YYYY-MM-DD; empty when kind is none"},
+					"date":       map[string]interface{}{"type": "string", "description": "REQUIRED whenever kind is not \"none\": the resolved start date, exactly YYYY-MM-DD. The resolved date goes HERE, never in text. Empty string only when kind is \"none\"."},
 					"time":       map[string]interface{}{"type": "string", "description": "resolved start time, HH:MM 24-hour; empty when no clock time was named"},
 					"end_date":   map[string]interface{}{"type": "string", "description": "end date for a range, YYYY-MM-DD; empty otherwise"},
 					"end_time":   map[string]interface{}{"type": "string", "description": "end time for a range, HH:MM; empty otherwise"},
 					"recurrence": map[string]interface{}{"type": "string", "description": "plain description of the repeat when kind is recurring; empty otherwise"},
 					"all_day":    map[string]interface{}{"type": "boolean", "description": "true when a day was named with no clock time"},
 				},
-				"required": []string{"index", "kind"},
+				"required": []string{"index", "kind", "date"},
 			},
 		},
 	},
