@@ -480,6 +480,8 @@ svc, _ := agent.New("assistant").
 
 前四个各自都是**一个下载下来就能跑的二进制**,不需要任何 API key。七个全部对着真实服务器跑过 `pkg/memory/memorystoretest`——它断言的是 agent **实际被喂进提示词的文本**,因为 store 层往返能过而 agent 什么都看不到,正是这类 bug 的共同形状。
 
+两边——选一个、写一个——都在 `examples/memory-backends` 里。
+
 接自己的后端是**注册**,不是往 switch 里加 case:
 
 ```go

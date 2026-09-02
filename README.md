@@ -665,6 +665,8 @@ key of any kind. All seven were verified against a live server through
 `pkg/memory/memorystoretest`, which asserts on the text the agent is actually
 shown — a Store/Search round trip passes while the agent sees nothing.
 
+Both sides of this — picking one, and writing one — are in `examples/memory-backends`.
+
 Adding your own is a registration, never a new case in a switch:
 
 ```go
