@@ -413,7 +413,13 @@ func (u *usage) OnModelEnd(ctx context.Context, info agent.ModelInfo, res *agent
 }
 ```
 
-`pkg/otelobserver` 把同一组回调桥接到 OpenTelemetry span。
+`pkg/otelobserver` 把全部回调桥到 OpenTelemetry:模型轮次/工具/子 agent 是 span,lint、重试、压缩、错误、分段是 span 事件;配上 `WithMeterProvider` 还有 metrics——调用数、token(含缓存拆分)、成本、重试、lint 拒绝。
+
+**运行前。** `svc.Preview(ctx, goal, opts...)` 返回第一轮模型会收到的消息和工具,不调模型、不写任何东西:"它到底会看到什么"的干跑。
+
+**运行中。** `agent.NewActivityLog(w)` 给人看;`agent.NewTraceWriter(w)` 把同一批事件写成 JSONL 给程序看,每行带 run/task/session id。循环写的每条日志也带这三个 id,`log.SetLogger` 能把框架的日志接到你自己的 `slog` handler 上。
+
+**一切之前。** `agent.Doctor(ctx, ...)` 检查一个 home——数据库、provider、记忆存储类型、MCP 配置、skills——报告哪里不对、怎么修,不调模型。它就是被删掉的 CLI 里 status 命令的替身。可运行:`examples/preview`、`examples/trace`、`examples/otel`、`examples/doctor`。
 
 ## 存储
 

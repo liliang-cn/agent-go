@@ -546,7 +546,26 @@ func (u *usage) OnModelEnd(ctx context.Context, info agent.ModelInfo, res *agent
 }
 ```
 
-`pkg/otelobserver` bridges the same callbacks to OpenTelemetry spans.
+`pkg/otelobserver` bridges every callback to OpenTelemetry: spans for model
+turns, tools and sub-agents, span events for lints, retries, compaction, errors
+and segments, and — with `WithMeterProvider` — metrics for calls, tokens (with
+the cache split), cost, retries and lint rejections.
+
+**Before the run.** `svc.Preview(ctx, goal, opts...)` returns the messages and
+tools the first model turn would receive, without calling the model or writing
+anything: the dry run for "what will it actually see".
+
+**During the run.** `agent.NewActivityLog(w)` narrates for a person;
+`agent.NewTraceWriter(w)` writes the same events as JSONL for a program, one
+object per line with run, task and session ids. Every log line the loop writes
+carries those ids too, and `log.SetLogger` routes the framework's logging
+through your own `slog` handler.
+
+**Before anything.** `agent.Doctor(ctx, ...)` inspects a home — database,
+providers, memory store type, MCP config, skills — and reports what is wrong
+and how to fix it, without calling a model. It is what the removed CLI's status
+command used to be. Runnable: `examples/preview`, `examples/trace`,
+`examples/otel`, `examples/doctor`.
 
 ## Storage
 
