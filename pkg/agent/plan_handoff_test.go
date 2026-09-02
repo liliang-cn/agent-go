@@ -87,8 +87,10 @@ func (m *memoryPlanStore) SavePlan(_ context.Context, key string, items []PlanIt
 // about it, so a resumed run started over holding the answer.
 func TestResumedRunIsToldWhatTheEarlierOneFinished(t *testing.T) {
 	llm := &promptCapturingLLM{}
+	// Under the task's own key: a plan is the task's, and a run that has none
+	// of its own is not handed another task's (see planSummaryForRun).
 	store := &memoryPlanStore{plans: map[string][]PlanItem{
-		scratchpadDefaultKey: {
+		taskScopedPlanKey("task-resume"): {
 			{Text: "find the gateway port", Done: true, Note: "port 47821, from settings.json"},
 			{Text: "write the client", Done: true, Note: "client.go, uses grpc.NewClient"},
 			{Text: "run the tests", Done: false},
@@ -107,7 +109,7 @@ func TestResumedRunIsToldWhatTheEarlierOneFinished(t *testing.T) {
 
 	// RunStream on purpose: it is the API a host drives a long run with, and
 	// the one that used to skip every run-start injection.
-	events, err := svc.RunStream(context.Background(), "Carry on.")
+	events, err := svc.RunStreamWithOptions(context.Background(), "Carry on.", WithTaskID("task-resume"))
 	if err != nil {
 		t.Fatalf("RunStream: %v", err)
 	}

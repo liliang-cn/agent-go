@@ -208,7 +208,19 @@ func fileArtifactExistsIn(path, workspace string) bool {
 	}
 	for _, c := range candidates {
 		info, err := os.Stat(c)
-		if err != nil || info.IsDir() {
+		if err != nil {
+			continue
+		}
+		// A task that asks for "wordfreq" and gets a directory of that name
+		// holding a module, its tests and a built binary has been delivered.
+		// Skipping directories here rejected exactly that run, and the
+		// rejection named a file the model could not create — it copied the
+		// binary to the workspace root, then grepped the whole filesystem for
+		// the lint's name. A directory with something in it is an artifact.
+		if info.IsDir() {
+			if dirHasContent(c) {
+				return true
+			}
 			continue
 		}
 		if info.Size() > 0 {
@@ -216,6 +228,25 @@ func fileArtifactExistsIn(path, workspace string) bool {
 		}
 	}
 	return false
+}
+
+// dirHasContent reports whether the directory holds at least one non-empty
+// regular file, at any depth. An empty tree is a mkdir, not a deliverable.
+func dirHasContent(dir string) bool {
+	found := false
+	_ = filepath.WalkDir(dir, func(_ string, d os.DirEntry, err error) error {
+		if err != nil || found {
+			return nil
+		}
+		if d.Type().IsRegular() {
+			if info, ierr := d.Info(); ierr == nil && info.Size() > 0 {
+				found = true
+				return filepath.SkipAll
+			}
+		}
+		return nil
+	})
+	return found
 }
 
 // --- no_tool_scaffolding_answer -------------------------------------------------

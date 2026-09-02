@@ -1323,6 +1323,7 @@ func (r *Runtime) completeRunWithStop(goal, content string, messages []domain.Me
 		Sources:          r.collectAllSources(),
 		StopReason:       reason,
 		EstimatedCostUSD: r.currentCostUSD(),
+		CostUnpriced:     r.warnedUnpriced,
 		Usage:            r.currentUsage(),
 		Timestamp:        time.Now(),
 	}
@@ -1374,6 +1375,7 @@ func (r *Runtime) blockRunWithStop(goal, blocker string, messages []domain.Messa
 		Sources:          r.collectAllSources(),
 		StopReason:       reason,
 		EstimatedCostUSD: r.currentCostUSD(),
+		CostUnpriced:     r.warnedUnpriced,
 		Usage:            r.currentUsage(),
 		Timestamp:        time.Now(),
 	}
@@ -1417,6 +1419,7 @@ func (r *Runtime) cancelRun(messages []domain.Message) {
 		Content:          cancelledRunText,
 		StopReason:       StopReasonCancelled,
 		EstimatedCostUSD: r.currentCostUSD(),
+		CostUnpriced:     r.warnedUnpriced,
 		Usage:            r.currentUsage(),
 		Timestamp:        time.Now(),
 	}
@@ -1453,6 +1456,7 @@ func (r *Runtime) failRun(cause error, messages []domain.Message) {
 		Content:          fmt.Sprintf("LLM error: %v", cause),
 		StopReason:       StopReasonErrorDuringExecution,
 		EstimatedCostUSD: r.currentCostUSD(),
+		CostUnpriced:     r.warnedUnpriced,
 		Usage:            r.currentUsage(),
 		Timestamp:        time.Now(),
 	}
@@ -1972,10 +1976,19 @@ func (r *Runtime) refuseForbiddenToolUse(messages *[]domain.Message, state *quer
 // scratchpad's own default. Threaded into the tool context so scratchpad_*
 // calls that name no list land where the supervisor reads.
 func (r *Runtime) planKey() string {
-	if r == nil || r.cfg == nil {
+	if r == nil {
 		return ""
 	}
-	return r.cfg.PlanKey
+	if r.cfg != nil && strings.TrimSpace(r.cfg.PlanKey) != "" {
+		return r.cfg.PlanKey
+	}
+	// Unnamed, the plan is scoped to the task — the same key RunSegments
+	// derives, so a plain Run and a segmented one on the same task agree.
+	// It used to fall through to the one shared "default" list, which every
+	// task on the service read and wrote: a fresh session's first turn opened
+	// with another task's finished plan and "carry on from the first
+	// unchecked step".
+	return taskScopedPlanKey(currentTaskID(r.session))
 }
 
 // emitRunEnd tells hooks how the run ended. It is the one place every

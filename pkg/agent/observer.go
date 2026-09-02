@@ -259,7 +259,10 @@ type SegmentInfo struct {
 	Duration   time.Duration
 	Productive bool
 	CostUSD    float64
-	Err        string
+	// Unpriced is true when some turn so far could not be priced, so CostUSD
+	// is a floor that reads 0 for an unlisted model. Show it as unknown.
+	Unpriced bool
+	Err      string
 }
 
 // CheckpointInfo describes a terminal checkpoint snapshot.

@@ -119,11 +119,13 @@ func TestOutputLintRegistryNamesOrdering(t *testing.T) {
 	}
 }
 
-func TestFormatLintFeedbackContainsLintNameAndReason(t *testing.T) {
+func TestFormatLintFeedbackCarriesReasonNotLintName(t *testing.T) {
 	v := &LintViolation{LintName: "dispatcher_no_bounce_back", Reason: "response routes the task back to Dispatcher"}
 	feedback := FormatLintFeedback(v)
-	if !strings.Contains(feedback, "dispatcher_no_bounce_back") {
-		t.Fatalf("feedback missing lint name: %q", feedback)
+	// The name is an internal identifier; a model that reads it goes looking
+	// for it (observed: `grep -rn task_delivery_contract /`).
+	if strings.Contains(feedback, "dispatcher_no_bounce_back") {
+		t.Fatalf("feedback leaks the lint name to the model: %q", feedback)
 	}
 	if !strings.Contains(feedback, "routes the task back to Dispatcher") {
 		t.Fatalf("feedback missing reason: %q", feedback)

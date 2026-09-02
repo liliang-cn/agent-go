@@ -104,15 +104,18 @@ type ExecutionResult struct {
 	// event. RunConfig.MaxBudgetUSD enforces a cap on it; a caller that wants
 	// to know what a run actually cost, or to budget across many runs, needs
 	// to be able to read it back.
-	EstimatedCostUSD float64                   `json:"estimated_cost_usd,omitempty"`
-	Usage            *domain.TokenUsage        `json:"usage,omitempty"`
-	FinalResult      interface{}               `json:"final_result,omitempty"`
-	Sources          []domain.Chunk            `json:"sources,omitempty"`      // RAG sources when EnableRAG is true
-	Memories         []*domain.MemoryWithScore `json:"memories,omitempty"`     // Retrieved long-term memories
-	MemoryLogic      string                    `json:"memory_logic,omitempty"` // IndexNavigator's reasoning for memory selection
-	Error            string                    `json:"error,omitempty"`
-	Duration         string                    `json:"duration"`
-	Metadata         map[string]interface{}    `json:"metadata,omitempty"`
+	EstimatedCostUSD float64 `json:"estimated_cost_usd,omitempty"`
+	// CostUnpriced says EstimatedCostUSD is 0 because nothing could price the
+	// model, not because the run was free. Copied from the terminal event.
+	CostUnpriced bool                      `json:"cost_unpriced,omitempty"`
+	Usage        *domain.TokenUsage        `json:"usage,omitempty"`
+	FinalResult  interface{}               `json:"final_result,omitempty"`
+	Sources      []domain.Chunk            `json:"sources,omitempty"`      // RAG sources when EnableRAG is true
+	Memories     []*domain.MemoryWithScore `json:"memories,omitempty"`     // Retrieved long-term memories
+	MemoryLogic  string                    `json:"memory_logic,omitempty"` // IndexNavigator's reasoning for memory selection
+	Error        string                    `json:"error,omitempty"`
+	Duration     string                    `json:"duration"`
+	Metadata     map[string]interface{}    `json:"metadata,omitempty"`
 }
 
 // AgentInfo contains information about an agent's status and configuration

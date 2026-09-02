@@ -463,9 +463,38 @@ func doctorCheckProvider(r *DoctorReport, prefix string, p pool.Provider) {
 	if keyState == "no key" {
 		r.add(check, DoctorWarn, base+" — "+doctorOr(p.ModelName, strings.Join(p.Models, ","))+", no key",
 			"local endpoints often need none; a hosted one will reject every call")
+	} else {
+		r.add(check, DoctorOK, base+" — "+doctorOr(p.ModelName, strings.Join(p.Models, ","))+", key set", "")
+	}
+	if prefix == "llm.provider" {
+		doctorCheckPricing(r, check, p)
+	}
+}
+
+// doctorCheckPricing says whether the runtime can put a price on this
+// provider's models. An unpriced model is not an error — the run works — but
+// every cost figure reads 0 and the two spending ceilings (MaxBudgetUSD,
+// MaxTotalCostUSD) never trigger, which on a multi-hour task is the one
+// safeguard the operator thought they had. Seen live: a gateway alias like
+// gemini-3.7-flash-high, 900k tokens, "$0".
+func doctorCheckPricing(r *DoctorReport, check string, p pool.Provider) {
+	models := p.Models
+	if m := strings.TrimSpace(p.ModelName); m != "" {
+		models = append([]string{m}, models...)
+	}
+	var unpriced []string
+	for _, m := range models {
+		if _, known := pool.LookupModelPricing(m); !known {
+			unpriced = append(unpriced, m)
+		}
+	}
+	if len(unpriced) == 0 {
+		r.add(check+".pricing", DoctorOK, "every model is priced", "")
 		return
 	}
-	r.add(check, DoctorOK, base+" — "+doctorOr(p.ModelName, strings.Join(p.Models, ","))+", key set", "")
+	r.add(check+".pricing", DoctorWarn,
+		"no pricing for "+strings.Join(unpriced, ", ")+"; cost reads 0 and MaxBudgetUSD / MaxTotalCostUSD never trigger",
+		"pool.RegisterModelPricing(\""+unpriced[0]+"\", pool.ModelPricing{InputPer1K: …, CachedInputPer1K: …, OutputPer1K: …})")
 }
 
 func doctorCheckMemory(r *DoctorReport, cfg *config.Config) {

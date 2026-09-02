@@ -146,6 +146,41 @@ And one about money, which is a stop condition here and not just a readout: **`C
 
 **When you add a retry, add its observer callback in the same commit.** Both re-asks inside a model turn — transient provider error, and budget escalation — happen inside one span, so a turn that took three attempts looked identical to one that took one. `Observer.OnModelRetry` closes that, the way `OnLint` closed the lint layer. A unit test on the escalation function alone stays green whether or not the runtime ever calls it; the loop-level test is what caught the shadowed default above.
 
+### What one real run on the desktop found
+
+The unit suite was green and the Doctor said healthy; the first real long run
+driven through superai on the apps VM (a Go CLI plus tests, gemini via a
+gateway) still ended `blocked` after 31 rounds and 1.4M tokens, with the work
+finished at round 7. Every one of these is a property of a real run, not of a
+scenario, so run one before believing a release is fine.
+
+- **A directory is a deliverable.** The goal said "create a directory
+  `wordfreq`"; `fileArtifactExistsIn` skipped directories, so
+  `task_delivery_contract` rejected the finished answer three times and the
+  run died `lint_exhausted`. A non-empty directory now satisfies a file
+  deliverable (`dirHasContent`).
+- **Never name a lint to the model.** The feedback said `Lint:
+  task_delivery_contract`, and the model spent a round on `grep -rn
+  task_delivery_contract /` looking for the rule. `FormatLintFeedback` carries
+  the reason only; the name is for observers and logs.
+- **A plan belongs to its task.** `planSummaryForRun` fell through to the one
+  shared `default` scratchpad list, so a fresh session's first turn opened
+  with another task's finished plan and "carry on from the first unchecked
+  step". An unnamed plan is now keyed `default:<task_id>` on every path
+  (`taskScopedPlanKey`); the bare list serves only a run with no task at all.
+- **"$0" is not a price.** The bundled table prices OpenAI, Anthropic and
+  DeepSeek names; a gateway alias like `gemini-3.7-flash-high` is unpriced, so
+  cost read 0 for 1.4M tokens and `MaxTotalCostUSD` could never fire. The
+  state is now visible instead of silent: `Event.CostUnpriced`,
+  `ExecutionResult.CostUnpriced`, `SegmentInfo.Unpriced`,
+  `LongRunResult.CostUnpriced`, and a Doctor check `llm.provider.<name>.pricing`
+  that warns with the `RegisterModelPricing` call to make. A host should show
+  "unpriced", not `$0.00`.
+
+Two things it confirmed rather than broke: the prompt cache held at ~80% hit
+rate across 30 rounds on the gateway, and the trace, checkpoint and segment
+events all landed where the panel expected them.
+
 ### Task checkpoint + replay
 
 Every terminal `completeRun` / `blockRun` writes a `TaskCheckpoint` snapshot of the message history to `task_checkpoints` (capped at `MaxCheckpointsPerTask=32`, pruned by `checkpointWriter`). The wiring lives in `pkg/agent/task_checkpoint.go` + `task_checkpoint_manager.go`; `Service.SetCheckpointSink(...)` is what the runtime calls — `Manager.buildServiceForModel` auto-wires this, services built directly via `agent.New(...).Build()` skip persistence.

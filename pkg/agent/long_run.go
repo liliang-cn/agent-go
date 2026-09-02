@@ -196,6 +196,9 @@ type LongRunResult struct {
 	// TotalCostUSD is what every segment cost together, which is the only
 	// figure that means anything for a task made of dozens of runs.
 	TotalCostUSD float64
+	// CostUnpriced says TotalCostUSD is missing at least one segment's spend
+	// because the model has no pricing; MaxTotalCostUSD cannot have applied.
+	CostUnpriced bool
 	// TotalUsage sums the provider-reported tokens across segments. Nil when
 	// no segment's provider reported any.
 	TotalUsage *domain.TokenUsage
@@ -286,7 +289,7 @@ func (s *Service) runSegments(ctx context.Context, goal string, cfg LongRunConfi
 	// read and overwrite each other's steps. A caller who names PlanKey keeps
 	// their name, including when they name the default one.
 	if !callerNamedPlanKey {
-		cfg.PlanKey = scratchpadDefaultKey + ":" + taskID
+		cfg.PlanKey = taskScopedPlanKey(taskID)
 	}
 
 	// Task memory brackets the whole thing: mark the task running now (keeping
@@ -384,6 +387,7 @@ func (s *Service) runSegments(ctx context.Context, goal string, cfg LongRunConfi
 				toolsUsed[name] = struct{}{}
 			}
 			out.TotalCostUSD += result.EstimatedCostUSD
+			out.CostUnpriced = out.CostUnpriced || result.CostUnpriced
 			out.TotalUsage = addUsage(out.TotalUsage, result.Usage)
 			seg.StopReason = result.StopReason
 			seg.Text = result.Text()
@@ -398,7 +402,7 @@ func (s *Service) runSegments(ctx context.Context, goal string, cfg LongRunConfi
 		s.emitSegmentObserved(ctx, SegmentInfo{
 			TaskID: taskID, Index: i, Total: cfg.MaxSegments, SessionID: sessionID,
 			Ending: true, StopReason: seg.StopReason, Duration: seg.Duration,
-			Productive: seg.Productive, CostUSD: out.TotalCostUSD, Err: seg.Error,
+			Productive: seg.Productive, CostUSD: out.TotalCostUSD, Unpriced: out.CostUnpriced, Err: seg.Error,
 		})
 		s.taskMemoryEndRun(runRecID, taskID, seg, result)
 

@@ -674,6 +674,9 @@ func (s *Service) runWithConfigTee(ctx context.Context, goal string, cfg *RunCon
 		if evt.EstimatedCostUSD > result.EstimatedCostUSD {
 			result.EstimatedCostUSD = evt.EstimatedCostUSD
 		}
+		if evt.CostUnpriced {
+			result.CostUnpriced = true
+		}
 		switch evt.Type {
 		case EventTypeToolCall:
 			if evt.ToolName != "" {

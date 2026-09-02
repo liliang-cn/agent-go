@@ -229,9 +229,12 @@ func FormatLintFeedback(violation *LintViolation) string {
 	if reason == "" {
 		reason = "no reason provided"
 	}
+	// The lint's name is for observers and logs, not for the model. Naming it
+	// here sent a real run hunting for it: told "Lint: task_delivery_contract",
+	// the model spent a round on `grep -rn task_delivery_contract /` looking
+	// for the rule it was supposed to satisfy. The reason is the whole message.
 	return strings.TrimSpace(
-		"Your previous response failed an output lint and was not delivered to the user.\n" +
-			"Lint: " + violation.LintName + "\n" +
+		"Your previous response failed an output check and was not delivered to the user.\n" +
 			"Reason: " + reason + "\n" +
 			"Revise your response to satisfy the rule above and reply with the corrected final answer. " +
 			"Do not acknowledge this message — produce only the revised final answer.",

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	agentgolog "github.com/liliang-cn/agent-go/v3/pkg/log"
@@ -228,9 +229,25 @@ func (s *Service) planSummaryForRun(planKey, taskID string) string {
 		}
 	}
 	if taskID != "" {
-		if summary := s.PlanSummary(taskID); summary != "" {
+		// The task's own list — what an unnamed run writes to (Runtime.planKey)
+		// and what RunSegments derives. Never the shared "default" list from
+		// here: a task that has no plan of its own must not be handed another
+		// task's, which is what the old fallback did on every fresh session.
+		if summary := s.PlanSummary(taskScopedPlanKey(taskID)); summary != "" {
 			return summary
 		}
+		return s.PlanSummary(taskID)
 	}
 	return s.PlanSummary(scratchpadDefaultKey)
+}
+
+// taskScopedPlanKey is the scratchpad list a task's plan lives under when
+// nobody named one. RunSegments and Runtime.planKey both derive it, so a plan
+// written by one is found by the other.
+func taskScopedPlanKey(taskID string) string {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return scratchpadDefaultKey
+	}
+	return scratchpadDefaultKey + ":" + taskID
 }

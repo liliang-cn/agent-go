@@ -128,6 +128,11 @@ type Event struct {
 	// moment the event was emitted (input + output tokens × model
 	// pricing). Populated on terminal events; zero elsewhere.
 	EstimatedCostUSD float64 `json:"estimated_cost_usd,omitempty"`
+	// CostUnpriced is true when at least one model turn of this run could
+	// not be priced — the model is not in the pricing table and nobody
+	// registered rates. EstimatedCostUSD then reads 0 and means "unknown",
+	// not "free"; a caller showing spend should say so rather than print $0.
+	CostUnpriced bool `json:"cost_unpriced,omitempty"`
 
 	// Usage carries the run's provider-reported token accounting, summed
 	// over its rounds. Populated on terminal events alongside the cost, and
