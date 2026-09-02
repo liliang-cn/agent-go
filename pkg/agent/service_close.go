@@ -62,6 +62,10 @@ func (s *Service) Close() error {
 		// Refuse new runs before releasing anything: a scheduled prompt that
 		// fires during shutdown must not slip into the loop behind us.
 		s.closed.Store(true)
+		// Detached work first: a background task holds the store this
+		// service is about to release, and one still running through a
+		// closed store is the exact bug this file exists to prevent.
+		s.stopBackgroundTasks(closeDrainTimeout)
 		s.stopRunsForClose()
 		// Wait for work a run left running (memory extraction) before closing
 		// the store underneath it.

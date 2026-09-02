@@ -197,6 +197,11 @@ func (r *ExecutionResult) HasSources() bool {
 
 // RunConfig holds configuration for a single agent run
 type RunConfig struct {
+	// BackgroundLabel is a short name for a detached task, set with
+	// WithBackgroundLabel. It exists so a model checking on several can tell
+	// them apart without re-reading every goal.
+	BackgroundLabel string
+
 	// Tenant is the opaque owner label for this run, set with WithTenant.
 	// Empty on a single-user service, which is every service that predates
 	// it. See multitenant.go for what it is and what it deliberately is not.
@@ -489,6 +494,11 @@ func WithRunID(runID string) RunOption {
 // UUID; tenant is ownership sitting alongside it.
 func WithTenant(tenant string) RunOption {
 	return func(c *RunConfig) { c.Tenant = strings.TrimSpace(tenant) }
+}
+
+// WithBackgroundLabel gives a detached task a short name.
+func WithBackgroundLabel(label string) RunOption {
+	return func(c *RunConfig) { c.BackgroundLabel = strings.TrimSpace(label) }
 }
 
 // WithResumeMessages seeds the runtime with a pre-assembled message

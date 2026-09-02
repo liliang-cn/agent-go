@@ -318,6 +318,39 @@ correct and the text with no time in it correctly reporting none; then the read
 path rendering `(written 2026-09-02, today; "明天下午三点" = 2026-09-03 15:00,
 tomorrow)` with no model call at all.
 
+### Background work: the agent's own, not only the host's
+
+Half of this existed. A **host** could always start detached work
+(`Manager.SubmitAgentTask`, `PromptScheduler.Schedule`); the **agent** could
+not, so every consumer that wanted it wrote its own tool — superai's
+`schedule_prompt` is exactly that, and a scheduler is not a background task.
+
+`Service.StartBackgroundTask(ctx, goal, opts...)` plus three tools the agent
+can call itself: `background_start`, `background_check`, `background_cancel`.
+`Builder.WithBackgroundTasks(max)` registers them.
+
+Three decisions worth not relitigating:
+
+- **It does not inherit the caller's context.** This is the single thing that
+  separates it from a sub-agent, which runs under its parent and dies with it.
+  A task cancelled because the chat message that started it finished would be
+  no use to anyone, so it derives from `Background()` and is cancellable only
+  through the registry — or by `Close`, which cancels and drains it before
+  releasing the store (a task still writing through a closed store is the bug
+  `service_close.go` exists to prevent).
+- **It is still one loop.** A background task is another run on the same
+  Service, with its own session and run id, so every observer, lint, hook and
+  extension applies to it unchanged. It inherits the caller's tenant, so
+  `CancelTenant` reaches it.
+- **The tools are opt-in.** A background task is a whole run with its own round
+  budget and its own spend; an agent that can start them without its author
+  deciding so can spend money in a loop. `max` bounds concurrency and is a
+  memory ceiling too — each task holds a full conversation.
+
+`background_check` never reports a result for a task still in flight. A partial
+answer is the most misleading thing it could return: a model that reads one
+tells the user it is the answer.
+
 ### Task checkpoint + replay
 
 Every terminal `completeRun` / `blockRun` writes a `TaskCheckpoint` snapshot of the message history to `task_checkpoints` (capped at `MaxCheckpointsPerTask=32`, pruned by `checkpointWriter`). The wiring lives in `pkg/agent/task_checkpoint.go` + `task_checkpoint_manager.go`; `Service.SetCheckpointSink(...)` is what the runtime calls — `Manager.buildServiceForModel` auto-wires this, services built directly via `agent.New(...).Build()` skip persistence.

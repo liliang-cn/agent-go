@@ -97,18 +97,20 @@ type SkillsConfig struct {
 // Builder allows chainable agent configuration.
 // Assign to (*Service, error) to build - no explicit Build() needed!
 type Builder struct {
-	name              string
-	agentgoCfg        *config.Config
-	dbPath            string
-	systemPrompt      string
-	debug             bool
-	progressCb        ProgressCallback
-	permissionHandler PermissionHandler
-	permissionPolicy  PermissionPolicy
-	observers         []Observer
-	maxConcurrentRuns int
-	maxRunsPerTenant  int
-	timeLocation      *time.Location
+	name               string
+	agentgoCfg         *config.Config
+	dbPath             string
+	systemPrompt       string
+	debug              bool
+	progressCb         ProgressCallback
+	permissionHandler  PermissionHandler
+	permissionPolicy   PermissionPolicy
+	observers          []Observer
+	maxConcurrentRuns  int
+	maxRunsPerTenant   int
+	timeLocation       *time.Location
+	backgroundTasks    bool
+	maxBackgroundTasks int
 	// Custom LLM service (optional - if not set, uses global pool)
 	llmService domain.Generator
 	// Custom Embedder service (optional - used with custom LLM for RAG/Memory)
@@ -345,6 +347,24 @@ func (b *Builder) WithExtensions(exts ...Extension) *Builder {
 func (b *Builder) WithTimezone(loc *time.Location) *Builder {
 	if loc != nil {
 		b.timeLocation = loc
+	}
+	return b
+}
+
+// WithBackgroundTasks gives the agent background_start, background_check and
+// background_cancel, so it can start work that outlives the turn and pick the
+// result up later.
+//
+// Off by default, deliberately. A background task is a whole run with its own
+// round budget and its own spend, and an agent that can start them without
+// its author having decided so is an agent that can spend money in a loop.
+//
+// max bounds how many run at once; 0 uses the default of 8. Each one holds a
+// full conversation, so this is a memory ceiling as much as a concurrency one.
+func (b *Builder) WithBackgroundTasks(max int) *Builder {
+	b.backgroundTasks = true
+	if max > 0 {
+		b.maxBackgroundTasks = max
 	}
 	return b
 }
@@ -680,6 +700,10 @@ func (b *Builder) build() (*Service, error) {
 	}
 	svc.maxConcurrentRuns = b.maxConcurrentRuns
 	svc.maxRunsPerTenant = b.maxRunsPerTenant
+	svc.maxBackgroundTasks = b.maxBackgroundTasks
+	if b.backgroundTasks {
+		RegisterBackgroundTaskTools(svc)
+	}
 	if b.runMemory != nil {
 		svc.runMemory = b.runMemory
 	}

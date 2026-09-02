@@ -638,6 +638,37 @@ svc, _ := agent.New("assistant").
   leaves the memory unresolved and still carrying when it was written, which is
   true in every language. Runnable: `examples/timeaware`.
 
+## Background work
+
+Some things a person would never stand and wait for: a crawl, a build, a report
+over a week of logs. Making the model wait stops the conversation and burns the
+round budget on a tool that is merely slow.
+
+A host could always start detached work. Now the agent can too:
+
+```go
+svc, _ := agent.New("assistant").
+	WithBackgroundTasks(4).   // gives it background_start / _check / _cancel
+	Build()
+
+task, _ := svc.StartBackgroundTask(ctx, goal, agent.WithBackgroundLabel("crawl"))
+// … later, in another turn
+if t, ok := svc.BackgroundTask(task.ID); ok && t.Status.Done() {
+	fmt.Println(t.Result)
+}
+```
+
+It **does not inherit the caller's context** — that is the whole difference
+from a sub-agent, which runs under its parent and dies with it. It is still one
+loop: another run on the same Service, with its own session and run id, so every
+observer, lint, hook and extension applies to it, and it inherits the caller's
+tenant so `CancelTenant` reaches it. `Close` cancels and drains anything still
+running before releasing the store.
+
+The tools are opt-in because a background task is a whole run with its own
+budget, and `background_check` never reports a result for a task still in
+flight. Runnable: `examples/background`.
+
 ## Many callers through one Service
 
 A `Service` has always been safe to run many tasks through at once. What it had

@@ -55,3 +55,46 @@ func runDebugFromContext(ctx context.Context) bool {
 	debug, _ := ctx.Value(runDebugContextKey{}).(bool)
 	return debug
 }
+
+// The run's tenant and session on the context.
+//
+// Both exist for the same reason the run id does: code several frames below
+// the loop — a tool handler starting background work — has no other route to
+// them, and a background task started without them loses whose work it is
+// and which conversation asked for it.
+type tenantContextKey struct{}
+type sessionContextKeyType struct{}
+
+func withCurrentTenant(ctx context.Context, tenant string) context.Context {
+	if tenant == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, tenantContextKey{}, tenant)
+}
+
+// currentRunTenant reads the tenant of the run that is calling, so work
+// started on somebody's behalf stays theirs.
+func currentRunTenant(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	tenant, _ := ctx.Value(tenantContextKey{}).(string)
+	return tenant
+}
+
+func withCurrentSessionID(ctx context.Context, sessionID string) context.Context {
+	if sessionID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, sessionContextKeyType{}, sessionID)
+}
+
+// currentRunSessionID reads the conversation a background task was started
+// from, so a host can show a person the work their own chat kicked off.
+func currentRunSessionID(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	id, _ := ctx.Value(sessionContextKeyType{}).(string)
+	return id
+}

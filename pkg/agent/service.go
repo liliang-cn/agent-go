@@ -68,8 +68,14 @@ type Service struct {
 	// Admission control for a service serving more than one caller. Zero
 	// means unlimited, which is what a desktop app wants and what every
 	// service built before these existed keeps getting.
-	maxConcurrentRuns     int
-	maxRunsPerTenant      int
+	maxConcurrentRuns int
+	maxRunsPerTenant  int
+
+	// Detached work the agent or the host started; see background.go.
+	backgroundOnce     sync.Once
+	backgroundReg      *backgroundRegistry
+	maxBackgroundTasks int
+
 	progressCb            ProgressCallback
 	currentSessionID      string // Auto-generated UUID for Chat() method
 	sessionMu             sync.RWMutex
@@ -597,6 +603,10 @@ func (s *Service) startRun(ctx context.Context, goal string, cfg *RunConfig) (*S
 	// the same way CancelRun does.
 	cfg.RunID = runID
 	runCtx = withCurrentRunID(runCtx, runID)
+	// Tenant and session travel with the run so anything the run calls — a
+	// tool that starts background work, most of all — can inherit them.
+	runCtx = withCurrentTenant(runCtx, cfg.Tenant)
+	runCtx = withCurrentSessionID(runCtx, session.GetID())
 
 	runtime := NewRuntime(s, session, cfg)
 	return session, s.observeRunStream(session, taskID, goal, startedAt, runtime.RunStream(runCtx, goal), releaseRun), nil

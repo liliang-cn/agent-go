@@ -382,7 +382,7 @@ resumed, _ := manager.Tasks().ResumeFromCheckpoint(ctx, task.ID,
 | `WithTenant(id)` | 标记这次运行属于谁,用于限额、取消和计费 |
 | `WithDebug(bool)` | 单次运行的详细日志 |
 
-Builder 选项:`WithLLM`、`WithEmbedder`、`WithConfig`、`WithPrompt` / `WithSystemPrompt`、`WithMemory` / `WithGraphMemory` / `WithMemoryService`、`WithRunMemory`、`WithMCP`、`WithSkills`、`WithRAG`、`WithSubagents`、`WithDelegation`、`WithLengthLimits`、`WithSandbox`、`WithAutonomy`、`WithPlanStore`、`WithTaskStore`、`WithPromptCache`、`WithExtensions`、`WithMaxConcurrentRuns`、`WithMaxRunsPerTenant`、`WithTimezone`、`WithTool(s)`、`WithObserver`、`WithProgress`、`WithDBPath`、`WithDebug`,以及装低频旋钮的 `WithOptions(agent.Options{...})`(权限策略、工具执行策略、必需 skill、额外模块、observer)。
+Builder 选项:`WithLLM`、`WithEmbedder`、`WithConfig`、`WithPrompt` / `WithSystemPrompt`、`WithMemory` / `WithGraphMemory` / `WithMemoryService`、`WithRunMemory`、`WithMCP`、`WithSkills`、`WithRAG`、`WithSubagents`、`WithDelegation`、`WithLengthLimits`、`WithSandbox`、`WithAutonomy`、`WithPlanStore`、`WithTaskStore`、`WithPromptCache`、`WithExtensions`、`WithMaxConcurrentRuns`、`WithMaxRunsPerTenant`、`WithTimezone`、`WithBackgroundTasks`、`WithTool(s)`、`WithObserver`、`WithProgress`、`WithDBPath`、`WithDebug`,以及装低频旋钮的 `WithOptions(agent.Options{...})`(权限策略、工具执行策略、必需 skill、额外模块、observer)。
 
 ## Provider
 
@@ -455,6 +455,28 @@ svc, _ := agent.New("assistant").
 - **读取时一次调用都没有。** 每条召回的记忆都带上 `(written 2026-09-01, yesterday; "明天" = 2026-09-02, today)`,纯粹由两个时间戳算出来。
 - **本地时间是最容易错的一处。** 锚点在交给模型之前先转成用户所在时区,提示词同时给出偏移量**和** IANA 时区名(偏移量表达不了夏令时规则),日历天的比较会把两端都先转过去——东京的 23:30 是维也纳同一天下午的 16:30。
 - **降级是设计的一部分。** 没有模型、超时、答案解不开,记忆就保持未解析状态,但仍然带着"写于何时",这在任何语言里都成立。可运行:`examples/timeaware`。
+
+## 后台任务
+
+有些活人不会站着等:一次爬取、一次构建、一份跨一周日志的报告。让模型等着,对话就停住了,轮次预算也烧在一个只是慢的工具上。
+
+宿主一直能起后台任务,现在 **agent 自己也能**:
+
+```go
+svc, _ := agent.New("assistant").
+	WithBackgroundTasks(4).   // 给它 background_start / _check / _cancel
+	Build()
+
+task, _ := svc.StartBackgroundTask(ctx, goal, agent.WithBackgroundLabel("crawl"))
+// …之后,在另一轮里
+if t, ok := svc.BackgroundTask(task.ID); ok && t.Status.Done() {
+	fmt.Println(t.Result)
+}
+```
+
+它**不继承调用方的 context**——这正是它和子 agent 的根本区别:子 agent 跑在父运行的 context 下,父死它就死。它仍然是同一个 loop:同一个 Service 上的另一次运行,有自己的 session 和 run id,所以所有 observer、lint、hook、扩展对它一视同仁;它继承调用方的租户,`CancelTenant` 能够到它。`Close` 会先取消并排空还在跑的任务,再释放存储。
+
+工具默认关闭,因为一个后台任务就是一整次运行、有自己的预算;而 `background_check` **绝不**返回还在跑的任务的结果——半截答案是它能返回的最误导人的东西。可运行:`examples/background`。
 
 ## 一个 Service 服务很多人
 
