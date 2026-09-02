@@ -200,6 +200,18 @@ Shipped extensions live in `pkg/extensions/{logging,pii,usage}`; a `Service`
 runs many tasks concurrently and shares its extensions between them, so an
 extension's methods must be safe for that (`extension_concurrency_test.go`).
 
+`pkg/extensions/exec` is the same seams over a pipe: a plugin in any language,
+run as a subprocess, speaking newline-delimited JSON (protocol 1, documented in
+docs/extensions.md). Two things about it are load-bearing. **The capability
+gate is ours** — `installExtensions` detects seams by type assertion and the
+one exec type implements all of them, so each method must check the handshake's
+declared set and no-op before touching the pipe. **Every failure is the seam's
+own fail-closed answer**: a timeout or broken pipe on `after_tool` keeps the
+result from the model, on `before_tool` refuses the call, on `lint` rejects, on
+`run_start` blocks the run; `context` and `run_end` only log. A transport
+failure retires that process rather than reusing it — the reply we gave up on
+would otherwise be read as the answer to the next request.
+
 ### Hard constraints live in the runtime, not the prompt
 
 A user who refuses tool use is obeyed by *withholding the tools* — `prepareTurnInputsWithConfig` empties the list, including `search_available_tools` — and any tool call the model emits anyway is refused with structured feedback. Forbidding a capability means not offering it, not offering it and then arguing about it.

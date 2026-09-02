@@ -357,6 +357,15 @@ is tested at the seams the loop actually calls, with no model behind it.
 [docs/extensions.md](docs/extensions.md) is the contract;
 `examples/extensions-thirdparty` is a complete extension in a separate module.
 
+It does not have to be Go either. `pkg/extensions/exec` runs a plugin as a
+subprocess speaking a small versioned JSON protocol over stdio —
+`exec.New("redact", []string{"python3", "plugins/redact.py"})` is an ordinary
+extension, so nothing in the loop changes. The plugin names the capabilities it
+implements in a handshake and only those are ever sent to it; one that hangs or
+dies fails closed at every seam, so an unchecked tool result never reaches the
+model. Runnable: `examples/extensions-exec`, whose reference plugin is 90 lines
+of stdlib Python.
+
 ## Long-running work
 
 A run that must last hours is not a longer run. It is many runs, and the framework is
@@ -585,7 +594,7 @@ Identity is the session UUID. There is no user id in the chat or task APIs.
 
 ```text
 pkg/agent         the framework: agent, loop, tools, context, hooks/lints, extensions, sessions, checkpoints, long runs
-pkg/extensions    shipped extensions: logging, pii, usage
+pkg/extensions    shipped extensions: logging, pii, usage, exec (out-of-process plugins)
 pkg/extensiontest test an extension through the real loop with a scripted model
 pkg/domain        shared types: messages, generation results, token usage, provider and store interfaces
 pkg/providers     OpenAI-compatible providers + LLMPool

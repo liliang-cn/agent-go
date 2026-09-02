@@ -109,6 +109,129 @@ func TestRedactsToolResults(t *testing.T) {
 `Rounds()` is every message list the model received — the ground truth for
 "what did the model actually see after my filter ran".
 
+## Out-of-process plugins
+
+None of the seams above is Go-specific: each one is a question with a small
+answer. `pkg/extensions/exec` asks them over a pipe, so a plugin can be
+written in any language.
+
+```go
+svc, err := agent.New("assistant").
+	WithExtensions(exec.New("redact", []string{"python3", "plugins/redact.py"})).
+	Build()
+```
+
+`exec.New(name, command, opts...)` returns an ordinary `agent.Extension`. The
+process starts at `Build()` and is asked to leave at `Close()`. Options:
+`WithTimeout` (per request, default 5s), `WithShutdownGrace` (default 2s),
+`WithConcurrency` (processes, default 1), `WithEnv`, `WithDir`, `WithLogger`.
+
+### Framing
+
+Newline-delimited JSON. One request object per line on the plugin's **stdin**,
+one reply object per line on its **stdout**. Every request carries an `id`
+that increases by one per process; every reply echoes the `id` it answers.
+Requests to one process are serialised — the framework never has two in flight
+on the same pipe — so a plugin can be a plain read-handle-write loop with no
+concurrency of its own.
+
+**stdout is the protocol.** Anything else printed there is an undecodable
+reply. Diagnostics go to **stderr**, which is forwarded line by line to the
+framework's logger, tagged with the plugin's name.
+
+### Handshake
+
+The first request is always:
+
+```json
+{"id":1,"type":"hello","protocol":1,"name":"redact"}
+```
+
+The plugin answers with the version it speaks and the capabilities it
+implements:
+
+```json
+{"id":1,"type":"hello","protocol":1,"capabilities":["after_tool","lint"]}
+```
+
+Capabilities are exactly `"context"`, `"before_tool"`, `"after_tool"`,
+`"lint"`, `"run_start"`, `"run_end"`. A mismatched `protocol` or an unknown
+capability name fails the build — loudly, because a typo that silently
+disables a seam looks installed and does nothing. Only declared capabilities
+are ever sent.
+
+### Requests
+
+Every request has `id` and `type`. The payload sits under a field named for
+its shape, and mirrors the Go type of the seam it serves in snake_case.
+
+| type | payload | fields |
+| --- | --- | --- |
+| `context` | `context` | `goal`, `session_id`, `agent_id` |
+| `before_tool` | `call` | `name`, `args` (object), `session_id`, `agent_id` |
+| `after_tool` | `result` | `name`, `args`, `result` (any JSON), `error` (string, empty when the tool succeeded), `session_id`, `agent_id` |
+| `lint` | `lint` | `text`, `agent_name`, `task_id`, `session_id`, `turn_index`, `goal`, `tool_calls` (array of names), `available_tools`, `deliverables`, `requested_actions`, `workspace`, `is_retry`, `retry_count` |
+| `run_start` | `run` | `goal`, `session_id`, `agent_id`, `task_id` |
+| `run_end` | `run` + `outcome` | outcome: `stop_reason`, `text`, `blocked`, `cancelled`, `duration_ms` |
+| `shutdown` | — | sent once at `Close()`; no reply is read |
+
+### Replies
+
+| for | reply | meaning |
+| --- | --- | --- |
+| `context` | `{"messages":[{"role":"system","content":"..."}]}` | messages appended to the run's context; `role` defaults to `system`, empty content is dropped |
+| `before_tool` | `{"args":{...}\|null,"block":""}` | `args` non-null replaces the call's arguments; `block` non-empty refuses the call and the model reads the reason as the tool's error |
+| `after_tool` | `{"result":<any JSON>,"replaced":true}` | `replaced` false leaves the result alone; true substitutes `result` |
+| `lint` | `{"ok":true}` / `{"ok":false,"reason":"..."}` | `ok` false rejects the answer and re-prompts with `reason`. `ok` is absent-means-false: a reply that omits it rejects |
+| `run_start` | `{}` | anything but an error lets the run proceed |
+| `run_end` | `{}` | acknowledgement only; the outcome already happened |
+
+A reply with a non-empty `"error"` is an error to the framework whatever the
+type was — that is how a plugin blocks a run from `run_start`, or reports that
+it could not do its job. It is a verdict, not a crash: the process stays.
+
+### Failure is not optional
+
+A plugin is a process, and a process can hang or die. A request that times out
+or hits a broken pipe produces the same outcome the seam's own contract
+already gives:
+
+| seam | failure |
+| --- | --- |
+| `after_tool` | the model does not see the result — a filter that could not inspect a result must not let it through |
+| `before_tool` | the call is refused |
+| `lint` | the answer is rejected; exhausting the lint budget blocks the run |
+| `context` | nothing is contributed, and it is logged |
+| `run_start` | the run is blocked before its first model turn |
+| `run_end` | logged only |
+
+A transport failure retires that process rather than reusing it: the reply
+that was given up on may still arrive and would be read as the answer to the
+next request. There is no restart — a retired process answers every later
+request instantly with its failure, still closed.
+
+### Concurrency
+
+One process serves one request at a time. A `Service` runs many tasks at once,
+so a plugin that takes 200ms per call makes every concurrent run queue behind
+every other. `WithConcurrency(n)` runs n identical processes and hands each
+request the first free one; they must declare the same capabilities. Anything
+a plugin remembers between requests is then per-process, which is a reason to
+keep plugins stateless.
+
+### One caveat about the Go side
+
+`Build()` detects capabilities by type assertion, and the one Go type behind
+every exec plugin implements all of them — so the framework calls every seam
+of every plugin, whatever that plugin is for. The gate is therefore in this
+package: each method checks the declared capability set and returns
+"unchanged" without touching the pipe. The cost is a map lookup per seam per
+turn on a plugin that declared nothing there.
+
+`examples/extensions-exec` is a complete reference: a Python plugin
+(stdlib only) that masks email addresses in tool results and refuses an answer
+that quotes one, plus a `main.go` that installs it.
+
 ## Stability
 
 The types named on this page — `Extension`, the nine capability interfaces,
@@ -117,6 +240,10 @@ The types named on this page — `Extension`, the nine capability interfaces,
 `extensiontest` package — are the extension API. They follow the module's
 semantic version: fields may be added in a minor release, nothing is removed
 or changed in meaning without a major one.
+
+The out-of-process protocol is versioned separately and stated in the
+handshake. Version 1 follows the same rule: fields may be added, and a plugin
+that speaks it keeps working until a version 2 says otherwise.
 
 ## A complete third-party example
 
