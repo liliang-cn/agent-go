@@ -38,6 +38,10 @@ type ActiveRun struct {
 	TaskID string `json:"task_id,omitempty"`
 	// StartedAt is when the run entered the loop.
 	StartedAt time.Time `json:"started_at"`
+	// Tenant is the opaque owner label the caller attached with WithTenant,
+	// empty when it attached none. It is what CancelTenant aims at and what
+	// a per-customer limit is counted against; nothing in the loop reads it.
+	Tenant string `json:"tenant,omitempty"`
 }
 
 // runHandle is an ActiveRun plus the means to stop it.
@@ -58,10 +62,10 @@ type runHandle struct {
 // collides with a live run is made unique. Everything that names the run
 // afterwards — its trace lines, its log lines — has to use the id the registry
 // knows, or CancelRun cannot be reached from what the operator is reading.
-func (s *Service) registerRun(ctx context.Context, runID, sessionID, taskID string) (context.Context, string, func()) {
+func (s *Service) registerRun(ctx context.Context, runID, sessionID, taskID, tenant string) (context.Context, string, func(), error) {
 	runCtx, cancel := context.WithCancel(ctx)
 	if s == nil {
-		return runCtx, runID, cancel
+		return runCtx, runID, cancel, nil
 	}
 
 	runID = strings.TrimSpace(runID)
@@ -72,6 +76,14 @@ func (s *Service) registerRun(ctx context.Context, runID, sessionID, taskID stri
 	s.cancelMu.Lock()
 	if s.runs == nil {
 		s.runs = make(map[string]*runHandle)
+	}
+	// Admission is decided here, under the same lock that records the run:
+	// a limit checked anywhere else is a limit two simultaneous callers can
+	// both pass.
+	if err := s.admitLocked(tenant); err != nil {
+		s.cancelMu.Unlock()
+		cancel()
+		return runCtx, runID, func() {}, err
 	}
 	// A caller-supplied RunID that collides with a live run would otherwise
 	// make the older run unstoppable. Give the newcomer a unique ID rather
@@ -86,6 +98,7 @@ func (s *Service) registerRun(ctx context.Context, runID, sessionID, taskID stri
 			SessionID: sessionID,
 			TaskID:    taskID,
 			StartedAt: time.Now(),
+			Tenant:    tenant,
 		},
 		cancel: cancel,
 		seq:    s.runSeq,
@@ -103,7 +116,7 @@ func (s *Service) registerRun(ctx context.Context, runID, sessionID, taskID stri
 		delete(s.runs, runID)
 		s.cancelMu.Unlock()
 		cancel()
-	}
+	}, nil
 }
 
 // Cancel stops every run currently in flight on this service and reports

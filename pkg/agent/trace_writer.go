@@ -130,6 +130,25 @@ type traceLine struct {
 	Productive       *bool   `json:"productive,omitempty"`
 	CostUSD          float64 `json:"cost_usd,omitempty"`
 	Delta            string  `json:"delta,omitempty"`
+
+	// Process resources, one line per round. A long task's trace is where
+	// its memory curve lives — nothing else records it, and by the time a
+	// process is killed the curve is the only evidence left.
+	Res   *traceResources `json:"res,omitempty"`
+	Final bool            `json:"final,omitempty"`
+}
+
+// traceResources is what the process looked like at a round boundary.
+type traceResources struct {
+	HeapBytes    uint64  `json:"heap_bytes"`
+	HeapObjects  uint64  `json:"heap_objects"`
+	StackBytes   uint64  `json:"stack_bytes"`
+	Goroutines   int     `json:"goroutines"`
+	RSSBytes     uint64  `json:"rss_bytes,omitempty"`
+	PeakRSSBytes uint64  `json:"peak_rss_bytes,omitempty"`
+	CPUSeconds   float64 `json:"cpu_seconds,omitempty"`
+	NumGC        uint32  `json:"num_gc,omitempty"`
+	UptimeMs     int64   `json:"uptime_ms,omitempty"`
 }
 
 // traceTokens is the token split for one model turn. Cached is broken out
@@ -326,6 +345,30 @@ func (t *TraceWriter) OnCheckpoint(_ context.Context, info CheckpointInfo) {
 		CheckpointReason: info.Reason,
 		Messages:         info.Messages,
 		TextLen:          len(info.FinalText),
+	}, time.Now())
+}
+
+// OnResourceSample records one process reading per round.
+func (t *TraceWriter) OnResourceSample(_ context.Context, s ResourceSample) {
+	t.write(traceLine{
+		Event:     "resource",
+		TaskID:    s.TaskID,
+		RunID:     s.RunID,
+		SessionID: s.SessionID,
+		Agent:     s.AgentName,
+		Round:     s.Round,
+		Final:     s.Final,
+		Res: &traceResources{
+			HeapBytes:    s.Stats.HeapAllocBytes,
+			HeapObjects:  s.Stats.HeapObjects,
+			StackBytes:   s.Stats.StackInuseBytes,
+			Goroutines:   s.Stats.Goroutines,
+			RSSBytes:     s.Stats.RSSBytes,
+			PeakRSSBytes: s.Stats.PeakRSSBytes,
+			CPUSeconds:   s.Stats.CPUSeconds(),
+			NumGC:        s.Stats.NumGC,
+			UptimeMs:     s.Stats.Uptime.Milliseconds(),
+		},
 	}, time.Now())
 }
 

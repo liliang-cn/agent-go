@@ -107,15 +107,19 @@ type ExecutionResult struct {
 	EstimatedCostUSD float64 `json:"estimated_cost_usd,omitempty"`
 	// CostUnpriced says EstimatedCostUSD is 0 because nothing could price the
 	// model, not because the run was free. Copied from the terminal event.
-	CostUnpriced bool                      `json:"cost_unpriced,omitempty"`
-	Usage        *domain.TokenUsage        `json:"usage,omitempty"`
-	FinalResult  interface{}               `json:"final_result,omitempty"`
-	Sources      []domain.Chunk            `json:"sources,omitempty"`      // RAG sources when EnableRAG is true
-	Memories     []*domain.MemoryWithScore `json:"memories,omitempty"`     // Retrieved long-term memories
-	MemoryLogic  string                    `json:"memory_logic,omitempty"` // IndexNavigator's reasoning for memory selection
-	Error        string                    `json:"error,omitempty"`
-	Duration     string                    `json:"duration"`
-	Metadata     map[string]interface{}    `json:"metadata,omitempty"`
+	CostUnpriced bool `json:"cost_unpriced,omitempty"`
+	// Tenant is the owner label the run carried, so a caller billing many
+	// customers through one service can attribute this result without
+	// keeping its own run-to-tenant map.
+	Tenant      string                    `json:"tenant,omitempty"`
+	Usage       *domain.TokenUsage        `json:"usage,omitempty"`
+	FinalResult interface{}               `json:"final_result,omitempty"`
+	Sources     []domain.Chunk            `json:"sources,omitempty"`      // RAG sources when EnableRAG is true
+	Memories    []*domain.MemoryWithScore `json:"memories,omitempty"`     // Retrieved long-term memories
+	MemoryLogic string                    `json:"memory_logic,omitempty"` // IndexNavigator's reasoning for memory selection
+	Error       string                    `json:"error,omitempty"`
+	Duration    string                    `json:"duration"`
+	Metadata    map[string]interface{}    `json:"metadata,omitempty"`
 }
 
 // AgentInfo contains information about an agent's status and configuration
@@ -193,6 +197,11 @@ func (r *ExecutionResult) HasSources() bool {
 
 // RunConfig holds configuration for a single agent run
 type RunConfig struct {
+	// Tenant is the opaque owner label for this run, set with WithTenant.
+	// Empty on a single-user service, which is every service that predates
+	// it. See multitenant.go for what it is and what it deliberately is not.
+	Tenant string
+
 	// MaxTurns limits the number of agent loop iterations. Zero means the
 	// run has no opinion: the service's WithAutonomy budget applies, and
 	// failing that DefaultMaxRounds. Set it with WithMaxTurns.
@@ -466,6 +475,20 @@ func WithTaskID(taskID string) RunOption {
 // to be able to press stop before the first event arrives.
 func WithRunID(runID string) RunOption {
 	return func(c *RunConfig) { c.RunID = runID }
+}
+
+// WithTenant labels the run with whoever it is for.
+//
+// The label is opaque: this package stores it, counts runs against it for
+// admission control, hands it back on ActiveRun and ExecutionResult, and aims
+// CancelTenant at it. Nothing in the loop reads it, and nothing about the
+// agent's behaviour may ever depend on its contents — a tenant that changes
+// what an agent does is configuration by string matching.
+//
+// It is not an identity. The conversation's identity is still the session
+// UUID; tenant is ownership sitting alongside it.
+func WithTenant(tenant string) RunOption {
+	return func(c *RunConfig) { c.Tenant = strings.TrimSpace(tenant) }
 }
 
 // WithResumeMessages seeds the runtime with a pre-assembled message

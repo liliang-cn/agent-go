@@ -42,6 +42,11 @@ type ActivityLog struct {
 	// MaxArgLen bounds how much of a tool's arguments is written. A file write
 	// carries the whole file; logging it would bury the line it belongs to.
 	MaxArgLen int
+
+	// Last printed resource reading, so the log says something when the
+	// numbers move and stays quiet when they do not.
+	lastResHeap       uint64
+	lastResGoroutines int
 }
 
 // NewActivityLog returns an Observer that narrates a run to w.
@@ -258,4 +263,59 @@ func shortSessionID(id string) string {
 		return id[:8]
 	}
 	return id
+}
+
+// OnResourceSample narrates the process itself.
+//
+// Not every round: a line per round would double the log, and the reason to
+// read this is the shape, not the samples. It prints the first reading, the
+// last, one every tenth round, and any round where the heap or the goroutine
+// count grew by a quarter since the last line — which is the shape of a leak
+// showing up in a log a human greps rather than a dashboard nobody opened.
+func (a *ActivityLog) OnResourceSample(_ context.Context, s ResourceSample) {
+	// The decision is taken under the lock; the write is not. line() takes
+	// the same mutex, so holding it across the call deadlocks the run — which
+	// is exactly what it did the first time this was written.
+	a.mu.Lock()
+	grew := func(now, last uint64) bool { return last > 0 && now > last+last/4 }
+	print := s.Final || a.lastResHeap == 0 || s.Round%10 == 0 ||
+		grew(s.Stats.HeapAllocBytes, a.lastResHeap) ||
+		grew(uint64(s.Stats.Goroutines), uint64(a.lastResGoroutines))
+	if !print {
+		a.mu.Unlock()
+		return
+	}
+	a.lastResHeap = s.Stats.HeapAllocBytes
+	a.lastResGoroutines = s.Stats.Goroutines
+	a.mu.Unlock()
+
+	round := "r" + itoa(s.Round)
+	if s.Final {
+		round = "end"
+	}
+	rss := ""
+	if s.Stats.RSSKnown {
+		rss = " rss=" + humanBytes(s.Stats.RSSBytes)
+	} else if s.Stats.PeakRSSBytes > 0 {
+		rss = " peak_rss=" + humanBytes(s.Stats.PeakRSSBytes)
+	}
+	a.line("res  %-4s heap=%s objs=%d goroutines=%d%s cpu=%.1fs gc=%d",
+		round, humanBytes(s.Stats.HeapAllocBytes), s.Stats.HeapObjects,
+		s.Stats.Goroutines, rss, s.Stats.CPUSeconds(), s.Stats.NumGC)
+}
+
+// humanBytes renders a byte count the way a log reader scans it.
+func humanBytes(n uint64) string {
+	const unit = 1024
+	if n < unit {
+		return itoa(int(n)) + "B"
+	}
+	div, exp := uint64(unit), 0
+	for v := n / unit; v >= unit && exp < 3; v /= unit {
+		div *= unit
+		exp++
+	}
+	whole := n / div
+	frac := (n % div) * 10 / div
+	return itoa(int(whole)) + "." + itoa(int(frac)) + string("KMGT"[exp]) + "iB"
 }

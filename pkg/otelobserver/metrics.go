@@ -62,6 +62,12 @@ type instruments struct {
 
 	costUSD       metric.Float64Counter
 	unpricedTurns metric.Int64Counter
+
+	// Process gauges. These are observable: the meter pulls them on its own
+	// collection interval rather than waiting for a callback, so a process
+	// that is leaking between runs — the interesting case, since a run's own
+	// telemetry stops when the run does — is still visible.
+	procRegistration metric.Registration
 }
 
 // newInstruments creates the instrument set, or returns nil when no
@@ -110,7 +116,62 @@ func newInstruments(mp metric.MeterProvider) *instruments {
 	i.unpricedTurns, _ = m.Int64Counter("agentgo.model.unpriced_turns",
 		metric.WithDescription("Turns nothing could price, which agentgo.cost.usd therefore omits."))
 
+	i.registerProcessGauges(m)
+
 	return i
+}
+
+// registerProcessGauges publishes what the process itself is using.
+//
+// The loop's own metrics say nothing about the program they run inside, and
+// on a task measured in hours that is the half that kills you: a goroutine
+// leaked per tool call, or a history nothing ever drops, does not fail a
+// lint. It fails at 03:00 with the OOM killer, and every agent metric right
+// up to the last one looks healthy.
+//
+// Observable, not pushed: they are read on the meter's schedule, so they keep
+// reporting while a service sits idle between runs — which is exactly when a
+// leak is easiest to see and when no run is emitting anything.
+func (i *instruments) registerProcessGauges(m metric.Meter) {
+	heap, err1 := m.Int64ObservableGauge("agentgo.process.heap.bytes",
+		metric.WithDescription("Live Go heap."),
+		metric.WithUnit("By"))
+	objects, err2 := m.Int64ObservableGauge("agentgo.process.heap.objects",
+		metric.WithDescription("Live heap objects, which separate one big buffer from a million small leaks."))
+	goroutines, err3 := m.Int64ObservableGauge("agentgo.process.goroutines",
+		metric.WithDescription("Goroutines alive right now."))
+	rss, err4 := m.Int64ObservableGauge("agentgo.process.rss.bytes",
+		metric.WithDescription("Resident set size, the number an OOM killer reads. Not reported where it cannot be read without cgo."),
+		metric.WithUnit("By"))
+	peakRSS, err5 := m.Int64ObservableGauge("agentgo.process.rss.peak_bytes",
+		metric.WithDescription("Peak resident set size the kernel remembers."),
+		metric.WithUnit("By"))
+	cpu, err6 := m.Float64ObservableCounter("agentgo.process.cpu.seconds",
+		metric.WithDescription("Cumulative process CPU time, user plus system."),
+		metric.WithUnit("s"))
+	if err1 != nil || err2 != nil || err3 != nil || err4 != nil || err5 != nil || err6 != nil {
+		return
+	}
+
+	reg, err := m.RegisterCallback(func(_ context.Context, o metric.Observer) error {
+		s := agent.SampleProcess()
+		o.ObserveInt64(heap, int64(s.HeapAllocBytes))
+		o.ObserveInt64(objects, int64(s.HeapObjects))
+		o.ObserveInt64(goroutines, int64(s.Goroutines))
+		if s.RSSKnown {
+			o.ObserveInt64(rss, int64(s.RSSBytes))
+		}
+		if s.PeakRSSBytes > 0 {
+			o.ObserveInt64(peakRSS, int64(s.PeakRSSBytes))
+		}
+		if s.CPUKnown {
+			o.ObserveFloat64(cpu, s.CPUSeconds())
+		}
+		return nil
+	}, heap, objects, goroutines, rss, peakRSS, cpu)
+	if err == nil {
+		i.procRegistration = reg
+	}
 }
 
 // recordModelEnd counts a finished turn, its duration, its tokens and — when

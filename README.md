@@ -488,6 +488,7 @@ Passed to `Run` / `RunStreamWithOptions` / `RunSegments` per call:
 | `WithMaxBudgetUSD(x)` | stop when estimated spend exceeds the budget |
 | `WithToolsDisabled()` / `WithToolAllowlist(names)` / `WithToolDenylist(names)` | the tool surface |
 | `WithStructuredOutput(spec)` / `WithStructuredOutputType[T]()` | enforce a JSON shape |
+| `WithTenant(id)` | label the run's owner for limits, cancellation and billing |
 | `WithRequiredDeliverables(...)` / `WithRequestedActions(...)` / `WithConstraintExtraction(bool)` | the delivery contract |
 | `WithSessionID` / `WithTaskID` / `WithRunID` / `WithParentTaskID` / `WithPlanKey` | identity, lineage, which plan |
 | `WithResumeMessages(msgs)` / `WithPriorToolCalls(names)` | continue from history |
@@ -570,11 +571,74 @@ object per line with run, task and session ids. Every log line the loop writes
 carries those ids too, and `log.SetLogger` routes the framework's logging
 through your own `slog` handler.
 
+**The process itself.** Every callback above reports what the *agent* did.
+`agent.SampleProcess()` reports what the *program* is using — live heap, heap
+objects, goroutines, GC, current and peak RSS, cumulative CPU, uptime — with no
+cgo and no dependency. A goroutine leaked per tool call fails no lint and no
+test; it fails at 03:00 with the OOM killer, and every agent metric right up to
+the last one looks healthy.
+
+```go
+type watch struct{ agent.BaseObserver }
+
+// Optional interface: one reading per round, plus a final one at every
+// terminal path. Nothing is sampled when no observer asks for it.
+func (watch) OnResourceSample(_ context.Context, s agent.ResourceSample) {
+	log.Printf("round=%d heap=%d goroutines=%d rss=%d",
+		s.Round, s.Stats.HeapAllocBytes, s.Stats.Goroutines, s.Stats.RSSBytes)
+}
+```
+
+The same readings reach `TraceWriter` as one `"event":"resource"` line per
+round — where a long run's memory curve lives — and `pkg/otelobserver`
+publishes them as observable gauges (`agentgo.process.heap.bytes`,
+`.goroutines`, `.rss.bytes`, `.cpu.seconds` and the rest), which keep reporting
+while the service sits idle between runs. What cannot be read on a platform is
+reported as unknown rather than zero: a zero looks like a process using no
+memory.
+
 **Before anything.** `agent.Doctor(ctx, ...)` inspects a home — database,
 providers, memory store type, MCP config, skills — and reports what is wrong
 and how to fix it, without calling a model. It is what the removed CLI's status
 command used to be. Runnable: `examples/preview`, `examples/trace`,
-`examples/otel`, `examples/doctor`.
+`examples/otel`, `examples/doctor`, `examples/resources`.
+
+## Many callers through one Service
+
+A `Service` has always been safe to run many tasks through at once. What it had
+no notion of was *whose* run a run is — and on a shared server that is the
+difference between a product and an incident.
+
+```go
+svc, _ := agent.New("support").
+	WithMaxConcurrentRuns(64).  // the process's ceiling
+	WithMaxRunsPerTenant(4).    // one customer's share of it
+	Build()
+
+res, err := svc.Run(ctx, goal, agent.WithTenant("acme"))
+if errors.Is(err, agent.ErrTenantAtCapacity) {
+	// refused immediately, with the numbers on the error — shed, queue, or 503
+}
+```
+
+| what | for |
+| --- | --- |
+| `WithTenant(id)` | attach an opaque owner label to a run |
+| `WithMaxConcurrentRuns(n)` / `WithMaxRunsPerTenant(n)` | ceilings; 0 = unlimited, the default |
+| `Capacity()` | runs in flight, the ceilings, the split by tenant |
+| `ActiveRunsForTenant(id)` / `CancelTenant(id)` | see and stop one customer's work |
+| `ActiveRun.Tenant` / `ExecutionResult.Tenant` | attribute a run and what it cost |
+
+Two things the label deliberately is not. It is **not an identity** — identity
+is still the session UUID, memory scopes by session and history filters by task
+— and **nothing in the loop reads it**: a tenant string that changed what an
+agent does would be configuration by string matching. It exists for admission
+control, bulk cancellation and attributing spend, and for nothing else.
+
+Admission is decided under the same lock that records the run, so two callers
+arriving together cannot both take the last slot, and it **refuses rather than
+queues**: a library that blocks its caller for an unbounded time turns a
+capacity problem into a latency mystery. Runnable: `examples/multitenant`.
 
 ## Storage
 

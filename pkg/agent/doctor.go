@@ -223,8 +223,46 @@ func Doctor(ctx context.Context, opts ...DoctorOption) (*DoctorReport, error) {
 	doctorCheckMemory(report, cfg)
 	doctorCheckMCP(ctx, report, cfg, o)
 	doctorCheckSkills(ctx, report, cfg)
+	doctorCheckProcess(report)
 
 	return report, nil
+}
+
+// doctorCheckProcess reports what the process running this check is using.
+//
+// In a one-shot CLI the numbers are small and dull. In the host that serves
+// agents — where Doctor is an RPC and the process has been up for days — they
+// are the first thing worth pasting into a bug report: a report saying 40,000
+// goroutines and 6 GiB resident answers a question no amount of config
+// inspection can. It is informational by design: this package has no business
+// deciding that some heap size is wrong for your deployment.
+func doctorCheckProcess(r *DoctorReport) {
+	s := SampleProcess()
+	detail := fmt.Sprintf("heap %s in %d objects, %d goroutines, %s CPU, up %s",
+		doctorBytes(s.HeapAllocBytes), s.HeapObjects, s.Goroutines,
+		time.Duration(s.CPUSeconds()*float64(time.Second)).Round(time.Second),
+		s.Uptime.Round(time.Second))
+	switch {
+	case s.RSSKnown:
+		detail += ", rss " + doctorBytes(s.RSSBytes)
+	case s.PeakRSSBytes > 0:
+		detail += ", peak rss " + doctorBytes(s.PeakRSSBytes)
+	}
+	r.add("process.resources", DoctorOK, detail, "")
+}
+
+// doctorBytes renders a byte count for a report a human reads.
+func doctorBytes(n uint64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%dB", n)
+	}
+	div, exp := uint64(unit), 0
+	for v := n / unit; v >= unit && exp < 3; v /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f%ciB", float64(n)/float64(div), "KMGT"[exp])
 }
 
 // doctorResolveHome mirrors config.Load's resolution — AGENTGO_HOME, then

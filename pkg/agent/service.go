@@ -62,9 +62,14 @@ type Service struct {
 	// a service can be driving several runs at once (a chat turn, a scheduled
 	// prompt, a sub-agent), so cancellation is a lookup in `runs`, not a
 	// single stored CancelFunc.
-	cancelMu              sync.RWMutex
-	runs                  map[string]*runHandle
-	runSeq                uint64
+	cancelMu sync.RWMutex
+	runs     map[string]*runHandle
+	runSeq   uint64
+	// Admission control for a service serving more than one caller. Zero
+	// means unlimited, which is what a desktop app wants and what every
+	// service built before these existed keeps getting.
+	maxConcurrentRuns     int
+	maxRunsPerTenant      int
 	progressCb            ProgressCallback
 	currentSessionID      string // Auto-generated UUID for Chat() method
 	sessionMu             sync.RWMutex
@@ -579,7 +584,13 @@ func (s *Service) startRun(ctx context.Context, goal string, cfg *RunConfig) (*S
 	// covers Run, RunStream, Ask, Chat, structured output and the prompt
 	// scheduler alike — the same reason constraints are resolved in the loop
 	// and not in a per-entry-point helper.
-	runCtx, runID, releaseRun := s.registerRun(ctx, cfg.RunID, session.GetID(), taskID)
+	runCtx, runID, releaseRun, err := s.registerRun(ctx, cfg.RunID, session.GetID(), taskID, cfg.Tenant)
+	if err != nil {
+		// At capacity. Refuse here, before anything is started, so the caller
+		// gets a typed error it can shed load on rather than a run that
+		// competes for a process that has none left.
+		return nil, nil, err
+	}
 	// The registry may have renamed the run (a blank id, or one that collided
 	// with a live run). Write the effective id back so everything downstream —
 	// the runtime's logger, the observer infos, a trace line — names the run
@@ -645,6 +656,7 @@ func (s *Service) runWithConfigTee(ctx context.Context, goal string, cfg *RunCon
 		SessionID: session.GetID(),
 		TaskID:    currentTaskID(session),
 		StartedAt: &startedAt,
+		Tenant:    cfg.Tenant,
 	}
 	toolSeen := map[string]struct{}{}
 	var lastError string

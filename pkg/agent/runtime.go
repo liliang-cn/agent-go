@@ -468,6 +468,11 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		attachInputParts(messages, r.cfg.InputParts)
 	}
 	for round := 0; round < maxRounds; round++ {
+		// One process reading per round. Round boundaries are seconds apart
+		// and this is the only place in the loop that samples, so a run's
+		// memory curve costs one stop-the-world read per model turn — and
+		// nothing at all when no observer asked for them.
+		r.emitResourceSample(ctx, round+1, false)
 		// Check cancellation
 		if ctx.Err() != nil {
 			r.cancelRun(messages)
@@ -2002,6 +2007,10 @@ func (r *Runtime) emitRunEnd(goal string, reason StopReason, text string, blocke
 	if !r.startedAt.IsZero() {
 		dur = time.Since(r.startedAt)
 	}
+	// The last reading, which is the one worth comparing against the first:
+	// a run that ended holding 400MB more than it started with is the whole
+	// diagnosis, and it is invisible from inside the loop.
+	r.emitResourceSample(context.Background(), 0, true)
 	r.log().Debug("run ended",
 		slog.String("stop_reason", string(reason)),
 		slog.Bool("blocked", blocked),

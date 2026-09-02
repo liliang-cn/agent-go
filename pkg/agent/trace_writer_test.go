@@ -106,6 +106,24 @@ func TestTraceWriterEmitsParsableJSONLForAScriptedRun(t *testing.T) {
 	// mid-stream, so tool_end precedes model_end), a round-end checkpoint,
 	// a second model turn that answers, and the terminal checkpoint. The
 	// trace has to say exactly that, in that order.
+	//
+	// Resource lines are filtered out: they are the process's own readings,
+	// one per round plus a final one, and they interleave with the agent's
+	// events by design. TestTraceAndActivityLogCarryResourceReadings covers
+	// their presence; this test is about the sequence of what the agent did.
+	var agentEvents []string
+	resourceLines := 0
+	for _, e := range events2 {
+		if e == "resource" {
+			resourceLines++
+			continue
+		}
+		agentEvents = append(agentEvents, e)
+	}
+	if resourceLines == 0 {
+		t.Error("the trace carried no resource readings")
+	}
+	events2 = agentEvents
 	want := []string{"model_start", "tool_start", "tool_end", "model_end", "checkpoint", "model_start", "model_end", "checkpoint"}
 	if len(events2) != len(want) {
 		t.Fatalf("event sequence = %v, want %v", events2, want)

@@ -181,6 +181,75 @@ Two things it confirmed rather than broke: the prompt cache held at ~80% hit
 rate across 30 rounds on the gateway, and the trace, checkpoint and segment
 events all landed where the panel expected them.
 
+### Watching the process, not only the agent
+
+Every observer before this one reported what the *agent* did. Nothing reported
+what the *program* was using, and on a task measured in hours that is the half
+that decides whether it finishes: a goroutine leaked per tool call, or a
+history nothing ever drops, fails no lint and no test. It fails at 03:00 with
+the OOM killer, and every agent metric right up to the last one looks healthy.
+
+`agent.SampleProcess()` returns a `ProcessStats` — live heap, heap objects,
+stack, goroutines, GC, current RSS, peak RSS, cumulative CPU, uptime. No cgo
+and no dependency: `getrusage` for CPU and peak RSS on unix, `/proc/self/statm`
+for current RSS on Linux. **What cannot be read is reported as unknown, not as
+zero** (`RSSKnown`, `CPUKnown`) — a zero looks like a process using no memory.
+
+Three ways it reaches you, all the same reading:
+
+- **`ResourceObserver`** — an *optional* interface, deliberately not a
+  fourteenth method on `Observer`: hosts outside this repo implement `Observer`
+  in full, and adding a method would break every one that does not embed
+  `BaseObserver`. The runtime emits one sample per round plus a final one at
+  every terminal path, and **samples nothing at all when no observer asks**
+  (`ReadMemStats` stops the world briefly, so an unwatched service must not
+  pay for it).
+- **`TraceWriter`** — one `"event":"resource"` JSONL line per round. This is
+  where a long run's memory curve lives; by the time a process is killed the
+  curve is the only evidence left.
+- **`pkg/otelobserver`** — observable gauges (`agentgo.process.heap.bytes`,
+  `.heap.objects`, `.goroutines`, `.rss.bytes`, `.rss.peak_bytes`,
+  `.cpu.seconds`). Observable, not pushed, so they keep reporting while the
+  service sits idle between runs — which is when a leak is easiest to see and
+  when nothing else emits anything.
+
+`ActivityLog` prints a `res` line on the first reading, the last, every tenth
+round, and any round where heap or goroutines grew by a quarter — a leak
+detector in a log a human greps. `Doctor` reports `process.resources`
+informationally: in the CLI the numbers are dull, in a host that has been up
+for days they are the first thing worth pasting into a bug report.
+
+### Many callers through one Service
+
+`Service` was always safe to run many tasks through at once; what it had no
+notion of was *whose* run a run is. On a server that is the difference between
+a product and an incident.
+
+`WithTenant(id)` attaches an opaque owner label. The rules that keep it honest:
+
+- **Nothing in the loop may read it.** It exists for exactly three things:
+  admission control, bulk cancellation, and attributing spend. A tenant string
+  that changes what an agent does is configuration by string matching — the
+  same disease `constraints.go` removed.
+- **It is not an identity.** Identity is still the session UUID (memory scopes
+  by session, history filters by task). Tenant sits alongside as ownership.
+
+The surface: `WithMaxConcurrentRuns(n)` and `WithMaxRunsPerTenant(n)` (0 =
+unlimited, which every service built before these keeps); `Capacity()` for what
+the process is carrying; `ActiveRunsForTenant`; `CancelTenant` — the operator's
+verb, which previously required a host to keep its own run-to-tenant map and
+race every run that started meanwhile. `ActiveRun.Tenant` and
+`ExecutionResult.Tenant` carry the label back.
+
+Two decisions worth not relitigating. **Admission is decided under the same
+lock that records the run** — a limit checked anywhere else is one two
+simultaneous callers both pass, and there is a test that starts 32 runs at once
+against a limit of 4. And **it refuses rather than queues**
+(`ErrAtCapacity` / `ErrTenantAtCapacity`, with a `CapacityError` carrying the
+numbers): a library that blocks its caller for an unbounded time turns a
+capacity problem into a latency mystery, and shedding, queueing or answering
+503 are the host's decisions to make.
+
 ### Task checkpoint + replay
 
 Every terminal `completeRun` / `blockRun` writes a `TaskCheckpoint` snapshot of the message history to `task_checkpoints` (capped at `MaxCheckpointsPerTask=32`, pruned by `checkpointWriter`). The wiring lives in `pkg/agent/task_checkpoint.go` + `task_checkpoint_manager.go`; `Service.SetCheckpointSink(...)` is what the runtime calls — `Manager.buildServiceForModel` auto-wires this, services built directly via `agent.New(...).Build()` skip persistence.

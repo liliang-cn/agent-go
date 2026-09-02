@@ -106,6 +106,8 @@ type Builder struct {
 	permissionHandler PermissionHandler
 	permissionPolicy  PermissionPolicy
 	observers         []Observer
+	maxConcurrentRuns int
+	maxRunsPerTenant  int
 	// Custom LLM service (optional - if not set, uses global pool)
 	llmService domain.Generator
 	// Custom Embedder service (optional - used with custom LLM for RAG/Memory)
@@ -312,6 +314,42 @@ func (b *Builder) WithProgress(cb ProgressCallback) *Builder {
 // results). They run in the order given. See Extension.
 func (b *Builder) WithExtensions(exts ...Extension) *Builder {
 	b.extensions = append(b.extensions, exts...)
+	return b
+}
+
+// WithMaxConcurrentRuns caps how many runs this service will have in flight
+// at once. Zero, the default, is unlimited.
+//
+// A run entry point called past the cap returns an error wrapping
+// ErrAtCapacity, immediately, rather than queueing: a library that blocks its
+// caller for an unbounded time turns a capacity problem into a latency
+// mystery, and shedding, queueing or answering 503 are the host's decisions.
+//
+// The right number comes from measurement, not arithmetic: a run's cost is
+// mostly the history it holds, so watch agentgo.process.heap.bytes and
+// agentgo.process.rss.bytes (or the ProcessStats an observer receives every
+// round) under real load and leave headroom.
+func (b *Builder) WithMaxConcurrentRuns(n int) *Builder {
+	if n < 0 {
+		n = 0
+	}
+	b.maxConcurrentRuns = n
+	return b
+}
+
+// WithMaxRunsPerTenant caps how many runs any one tenant may have in flight.
+// Zero, the default, is unlimited.
+//
+// This is the limit that keeps one caller from consuming a shared service:
+// the service-wide cap alone is satisfied by a single tenant filling it.
+// Runs with no tenant are not counted against it — they have no owner to
+// limit, and lumping them together would make one anonymous caller's work
+// throttle another's.
+func (b *Builder) WithMaxRunsPerTenant(n int) *Builder {
+	if n < 0 {
+		n = 0
+	}
+	b.maxRunsPerTenant = n
 	return b
 }
 
@@ -620,6 +658,8 @@ func (b *Builder) build() (*Service, error) {
 	if len(b.observers) > 0 {
 		svc.RegisterObserver(b.observers...)
 	}
+	svc.maxConcurrentRuns = b.maxConcurrentRuns
+	svc.maxRunsPerTenant = b.maxRunsPerTenant
 	if b.runMemory != nil {
 		svc.runMemory = b.runMemory
 	}

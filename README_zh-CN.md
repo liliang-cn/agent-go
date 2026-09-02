@@ -379,9 +379,10 @@ resumed, _ := manager.Tasks().ResumeFromCheckpoint(ctx, task.ID,
 | `WithResumeMessages(msgs)` / `WithPriorToolCalls(names)` | 从历史继续 |
 | `WithInputParts(...)` / `WithInputImages(paths...)` | 多模态输入 |
 | `WithAutoCompaction(threshold, keep)` / `WithoutAutoCompaction()` | 压缩策略 |
+| `WithTenant(id)` | 标记这次运行属于谁,用于限额、取消和计费 |
 | `WithDebug(bool)` | 单次运行的详细日志 |
 
-Builder 选项:`WithLLM`、`WithEmbedder`、`WithConfig`、`WithPrompt` / `WithSystemPrompt`、`WithMemory` / `WithGraphMemory` / `WithMemoryService`、`WithRunMemory`、`WithMCP`、`WithSkills`、`WithRAG`、`WithSubagents`、`WithDelegation`、`WithLengthLimits`、`WithSandbox`、`WithAutonomy`、`WithPlanStore`、`WithTaskStore`、`WithPromptCache`、`WithExtensions`、`WithTool(s)`、`WithObserver`、`WithProgress`、`WithDBPath`、`WithDebug`,以及装低频旋钮的 `WithOptions(agent.Options{...})`(权限策略、工具执行策略、必需 skill、额外模块、observer)。
+Builder 选项:`WithLLM`、`WithEmbedder`、`WithConfig`、`WithPrompt` / `WithSystemPrompt`、`WithMemory` / `WithGraphMemory` / `WithMemoryService`、`WithRunMemory`、`WithMCP`、`WithSkills`、`WithRAG`、`WithSubagents`、`WithDelegation`、`WithLengthLimits`、`WithSandbox`、`WithAutonomy`、`WithPlanStore`、`WithTaskStore`、`WithPromptCache`、`WithExtensions`、`WithMaxConcurrentRuns`、`WithMaxRunsPerTenant`、`WithTool(s)`、`WithObserver`、`WithProgress`、`WithDBPath`、`WithDebug`,以及装低频旋钮的 `WithOptions(agent.Options{...})`(权限策略、工具执行策略、必需 skill、额外模块、observer)。
 
 ## Provider
 
@@ -421,7 +422,50 @@ func (u *usage) OnModelEnd(ctx context.Context, info agent.ModelInfo, res *agent
 
 **运行中。** `agent.NewActivityLog(w)` 给人看;`agent.NewTraceWriter(w)` 把同一批事件写成 JSONL 给程序看,每行带 run/task/session id。循环写的每条日志也带这三个 id,`log.SetLogger` 能把框架的日志接到你自己的 `slog` handler 上。
 
-**一切之前。** `agent.Doctor(ctx, ...)` 检查一个 home——数据库、provider、记忆存储类型、MCP 配置、skills——报告哪里不对、怎么修,不调模型。它就是被删掉的 CLI 里 status 命令的替身。可运行:`examples/preview`、`examples/trace`、`examples/otel`、`examples/doctor`。
+**进程自己。** 上面的回调讲的都是 **agent 做了什么**,`agent.SampleProcess()` 讲的是 **程序在用什么**——存活堆、堆对象数、goroutine 数、GC、当前与峰值 RSS、累计 CPU、运行时长,不需要 cgo、不引入依赖。每次工具调用漏一个 goroutine,过不了任何 lint 也过不了任何测试;它在凌晨三点被 OOM killer 杀掉,而在那之前每一个 agent 指标都很健康。
+
+```go
+type watch struct{ agent.BaseObserver }
+
+// 可选接口:每轮一次读数,加上每条终止路径上的最后一次。
+// 没有 observer 要,就一次都不采样。
+func (watch) OnResourceSample(_ context.Context, s agent.ResourceSample) {
+	log.Printf("round=%d heap=%d goroutines=%d rss=%d",
+		s.Round, s.Stats.HeapAllocBytes, s.Stats.Goroutines, s.Stats.RSSBytes)
+}
+```
+
+同一批读数会以每轮一行 `"event":"resource"` 进入 `TraceWriter`——长跑任务的内存曲线就活在那里;`pkg/otelobserver` 则把它们发布成可观测量表(`agentgo.process.heap.bytes`、`.goroutines`、`.rss.bytes`、`.cpu.seconds` 等),**服务空闲、没有任何运行在跑的时候照样上报**,而那正是泄漏最容易看出来的时刻。某个平台读不到的数,报成"未知"而不是 0:0 看起来像一个不占内存的进程。
+
+**一切之前。** `agent.Doctor(ctx, ...)` 检查一个 home——数据库、provider、记忆存储类型、MCP 配置、skills——报告哪里不对、怎么修,不调模型。它就是被删掉的 CLI 里 status 命令的替身。可运行:`examples/preview`、`examples/trace`、`examples/otel`、`examples/doctor`、`examples/resources`。
+
+## 一个 Service 服务很多人
+
+`Service` 一直就能同时跑很多任务。它缺的是**这次运行是谁的**——在共享的服务端上,这是"产品"和"事故"的区别。
+
+```go
+svc, _ := agent.New("support").
+	WithMaxConcurrentRuns(64).  // 整个进程的上限
+	WithMaxRunsPerTenant(4).    // 单个客户能占的份额
+	Build()
+
+res, err := svc.Run(ctx, goal, agent.WithTenant("acme"))
+if errors.Is(err, agent.ErrTenantAtCapacity) {
+	// 立刻拒绝,错误上带着数字——你自己决定丢弃、排队还是回 503
+}
+```
+
+| 是什么 | 干什么 |
+| --- | --- |
+| `WithTenant(id)` | 给一次运行贴上不透明的归属标签 |
+| `WithMaxConcurrentRuns(n)` / `WithMaxRunsPerTenant(n)` | 上限;0 = 不限,也是默认 |
+| `Capacity()` | 在跑几个、上限多少、按租户怎么分 |
+| `ActiveRunsForTenant(id)` / `CancelTenant(id)` | 看见和停掉某个客户的活 |
+| `ActiveRun.Tenant` / `ExecutionResult.Tenant` | 把一次运行和它的花费归到人头上 |
+
+这个标签**刻意不是**两样东西。它**不是身份**——身份仍然是 session UUID,记忆按 session 划域、历史按 task 过滤;**循环里没有任何地方读它**:一个能改变 agent 行为的租户字符串,就是用字符串匹配做配置。它只用于准入控制、批量取消和费用归属,别的一概不做。
+
+准入是在**记录这次运行的同一把锁里**决定的,所以两个同时到达的调用者不可能都拿到最后一个名额;而且它**拒绝而不排队**:一个会把调用方无限期阻塞的库,是把容量问题变成了延迟谜题。可运行:`examples/multitenant`。
 
 ## 存储
 
