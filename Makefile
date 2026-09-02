@@ -22,6 +22,7 @@ help:
 
 test:
 	@go test ./...
+	@cd examples/extensions-thirdparty && go test ./...
 
 check:
 	@echo "Running format check..."

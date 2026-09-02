@@ -349,6 +349,14 @@ shared by all of them, so its methods must be safe to call concurrently; the
 three shipped ones are, and `go test -race` covers twelve runs through every
 seam of one extension. Runnable: `examples/extensions`.
 
+Anyone can write one: it is a Go type in your own module, and nothing in the
+framework has to know about it. The capability interfaces and their argument
+types are the extension API and follow the module's semantic version.
+`pkg/extensiontest` builds a real service over a scripted model so an extension
+is tested at the seams the loop actually calls, with no model behind it.
+[docs/extensions.md](docs/extensions.md) is the contract;
+`examples/extensions-thirdparty` is a complete extension in a separate module.
+
 ## Long-running work
 
 A run that must last hours is not a longer run. It is many runs, and the framework is
@@ -559,6 +567,7 @@ Identity is the session UUID. There is no user id in the chat or task APIs.
 ```text
 pkg/agent         the framework: agent, loop, tools, context, hooks/lints, extensions, sessions, checkpoints, long runs
 pkg/extensions    shipped extensions: logging, pii, usage
+pkg/extensiontest test an extension through the real loop with a scripted model
 pkg/domain        shared types: messages, generation results, token usage, provider and store interfaces
 pkg/providers     OpenAI-compatible providers + LLMPool
 pkg/pool          provider pool, token estimation, pricing and cost

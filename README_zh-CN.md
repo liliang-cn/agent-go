@@ -281,6 +281,8 @@ svc, _ := agent.New("support").
 
 这刻意不是中间件链。没有 `next()`:扩展不能包住循环、跳过阶段、或自己调模型——这正是"一条循环"能保持一条的原因。一个 `Service` 同时跑很多任务,每个扩展被所有任务共享,所以它的方法必须能并发调用;自带的三个都满足,`go test -race` 覆盖了十二个运行同时穿过同一个扩展全部接缝的情况。可运行:`examples/extensions`。
 
+任何人都能写:它就是你自己模块里的一个 Go 类型,框架不需要知道它的存在。能力接口和它们的参数类型就是扩展 API,跟随模块的语义化版本。`pkg/extensiontest` 用脚本化的模型建一个真实的 service,让扩展在循环真正调用的接缝上被测试,背后不需要真模型。[docs/extensions.md](docs/extensions.md) 是契约;`examples/extensions-thirdparty` 是一个独立模块里的完整扩展。
+
 ## 长时程运行
 
 必须跑几个小时的运行,不是一次更长的运行,而是很多次运行;框架的构造方式是让"活下来"所需的部件成为运行时的职责,而不是调用方的。
@@ -432,6 +434,7 @@ func (u *usage) OnModelEnd(ctx context.Context, info agent.ModelInfo, res *agent
 ```text
 pkg/agent         框架本体:agent、循环、工具、上下文、hook/lint、扩展、会话、检查点、长跑
 pkg/extensions    自带扩展:logging、pii、usage
+pkg/extensiontest 用脚本化模型在真实循环里测试扩展
 pkg/domain        共享类型:消息、生成结果、token 用量、provider 与 store 接口
 pkg/providers     OpenAI 兼容 provider + LLMPool
 pkg/pool          provider 池、token 估算、定价与成本
