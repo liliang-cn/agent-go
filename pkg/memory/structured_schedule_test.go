@@ -194,8 +194,13 @@ func TestEnrichStructuredMemoryReadsOnlyMemoryContent(t *testing.T) {
 	if event.EventType != "trip" {
 		t.Fatalf("expected trip event type, got %q", event.EventType)
 	}
-	if event.TimeExpression != "周二" {
-		t.Fatalf("expected 周二 time expression, got %q", event.TimeExpression)
+	// The time expression is deliberately NOT derived here any more. It used
+	// to come from a regular expression listing 今天/明天/周二…, which served
+	// Chinese and silently nothing else. It is now resolved by the model on
+	// the write path, together with the absolute date it means, and this
+	// enrichment leaves it alone.
+	if event.TimeExpression != "" {
+		t.Fatalf("time is resolved by the model, not by a pattern here; got %q", event.TimeExpression)
 	}
 	if !containsString(trip.Keywords, "三宝") {
 		t.Fatalf("expected 三宝 in keywords, got %+v", trip.Keywords)

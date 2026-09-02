@@ -23,9 +23,17 @@ const (
 
 // MemoryEventMetadata captures a structured event interpretation for one memory.
 type MemoryEventMetadata struct {
-	Kind                string               `json:"kind,omitempty"`
-	EventType           string               `json:"event_type,omitempty"`
-	TimeExpression      string               `json:"time_expression,omitempty"`
+	Kind           string `json:"kind,omitempty"`
+	EventType      string `json:"event_type,omitempty"`
+	TimeExpression string `json:"time_expression,omitempty"`
+	// OccursOn is TimeExpression resolved to a date (YYYY-MM-DD) against the
+	// moment the memory was written. Empty when the expression named no day
+	// the resolver understands. It exists because "明天" means a different
+	// day every day it is read, and the recalled text cannot say which one.
+	OccursOn string `json:"occurs_on,omitempty"`
+	// AnchoredAt is the write time OccursOn was resolved against, so a later
+	// reader can check the arithmetic rather than trust it.
+	AnchoredAt          string               `json:"anchored_at,omitempty"`
 	Location            string               `json:"location,omitempty"`
 	SubjectProfiles     []string             `json:"subject_profiles,omitempty"`
 	ParticipantProfiles []string             `json:"participant_profiles,omitempty"`
@@ -80,6 +88,8 @@ func SetMemoryEventMetadata(metadata map[string]interface{}, event *MemoryEventM
 			"kind":             event.Kind,
 			"event_type":       event.EventType,
 			"time_expression":  event.TimeExpression,
+			"occurs_on":        event.OccursOn,
+			"anchored_at":      event.AnchoredAt,
 			"location":         event.Location,
 			"subject_profiles": append([]string(nil), event.SubjectProfiles...),
 		}

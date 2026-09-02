@@ -250,6 +250,48 @@ numbers): a library that blocks its caller for an unbounded time turns a
 capacity problem into a latency mystery, and shedding, queueing or answering
 503 are the host's decisions to make.
 
+### Time is relative to when it was said, and stored text outlives that
+
+`pkg/timeaware`. A memory written on the 1st saying "明天要去医院" describes the
+2nd — but the stored text still says "明天", and a model recalling it on the
+2nd with no anchor books the appointment for the 3rd. The sentence is correct
+and it is correct about a day that has passed. Same for "next Friday", "月末",
+"after the holiday", and every other way of naming a day without naming it.
+
+**There is no phrase table, and there must never be one.** A map of 明天 → +1,
+tomorrow → +1 serves exactly the languages someone enumerated and silently does
+nothing for everyone else — which reads identically to "this text mentioned no
+date". Deciding what a person meant by a day is understanding, so the model
+does it. The old `timeExpressionPatterns` regexp in `structured_schedule.go` is
+gone for this reason; `MemoryEventMetadata.TimeExpression` is now filled from
+the model's answer, alongside `OccursOn`.
+
+The two halves sit on opposite sides of the latency budget:
+
+- **Writing** resolves. It rides on the extraction call the memory writer
+  already makes — `timeaware.SchemaFields()` grafts the fields onto that
+  schema, `PromptRules(anchor)` onto that prompt, `ReferenceFromFields` parses
+  what comes back — so time costs **zero extra model calls**. It happens on the
+  durable worker, where nothing is waiting. `Resolver.Resolve` is the
+  standalone route (one call, however many texts) for a caller with no
+  structured pass to graft onto; it must never be called on an agent's turn.
+- **Reading** never calls anything. `timeaware.Note(writtenAt, ref, now)` is
+  arithmetic on two timestamps, so every recalled memory carries
+  `(written 2026-09-01, yesterday; "明天" = 2026-09-02, today)`.
+
+**Local time is the part most likely to be wrong and least likely to look
+wrong.** `Builder.WithTimezone(loc)` sets the person's zone; unset it is the
+machine's, which is right for a desktop app and a guess for a server. The
+anchor is converted into that zone before the model sees it, the prompt states
+the offset *and* the IANA name (an offset cannot express a DST rule), and
+`DaysBetween` converts both endpoints before comparing — a memory written at
+23:30 in Tokyo is 16:30 the same afternoon in Vienna, and comparing them as
+stored puts "today" and "yesterday" a day apart.
+
+Degradation is the design, not an afterthought: no model, a timeout or an
+unparsable answer leaves the memory unresolved, and it still carries the moment
+it was written, which is true in every language and enough to reckon from.
+
 ### Task checkpoint + replay
 
 Every terminal `completeRun` / `blockRun` writes a `TaskCheckpoint` snapshot of the message history to `task_checkpoints` (capped at `MaxCheckpointsPerTask=32`, pruned by `checkpointWriter`). The wiring lives in `pkg/agent/task_checkpoint.go` + `task_checkpoint_manager.go`; `Service.SetCheckpointSink(...)` is what the runtime calls — `Manager.buildServiceForModel` auto-wires this, services built directly via `agent.New(...).Build()` skip persistence.

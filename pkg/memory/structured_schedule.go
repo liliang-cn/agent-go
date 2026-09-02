@@ -14,11 +14,6 @@ import (
 )
 
 var (
-	timeExpressionPatterns = []*regexp.Regexp{
-		regexp.MustCompile(`(今天|明天|后天|今晚|明早|明晚|这周(?:[一二三四五六日天])?|本周(?:[一二三四五六日天])?|下周(?:[一二三四五六日天])?|周末|周[一二三四五六日天])(?:上午|下午|晚上|早上|中午)?(?:[0-9０-９]{1,2}[:：][0-9０-９]{2})?`),
-		regexp.MustCompile(`(上午|下午|晚上|早上|中午)(?:[0-9０-９]{1,2}[:：][0-9０-９]{2})?`),
-		regexp.MustCompile(`([0-9０-９]{1,2}[:：][0-9０-９]{2})`),
-	}
 	leadingSubjectPattern = regexp.MustCompile(`^([\p{Han}A-Za-z][\p{Han}A-Za-z0-9_-]{0,7}?)(?:要|会|去|跟|是|开|参加|处理|放假|上课|吃饭|开会|春游|旅行|旅游|提醒)`)
 	companionPattern      = regexp.MustCompile(`(?:和|跟)([\p{Han}A-Za-z][\p{Han}A-Za-z0-9_-]{0,7})`)
 	organizerWithPattern  = regexp.MustCompile(`(?:跟着|由)([\p{Han}A-Za-z][\p{Han}A-Za-z0-9_-]{0,7})`)
@@ -84,9 +79,15 @@ func deriveEventMetadata(text string) *domain.MemoryEventMetadata {
 	correctionHints := extractCorrectionHints(text)
 
 	meta := &domain.MemoryEventMetadata{
-		Kind:                "event",
-		EventType:           classifyEventType(text),
-		TimeExpression:      extractTimeExpression(text),
+		Kind:      "event",
+		EventType: classifyEventType(text),
+		// No TimeExpression here. It used to be pulled out with a regular
+		// expression listing 今天/明天/后天/下周…, which served Chinese and
+		// nothing else: the same text in Korean or Portuguese produced an
+		// event with no time at all, silently. What a person meant by a day
+		// is understanding, so it is resolved by the model on the write path
+		// (pkg/timeaware) and stored beside the memory, and this field is
+		// filled from that answer rather than from a pattern.
 		SubjectProfiles:     subjects,
 		ParticipantProfiles: participants,
 		OrganizerProfiles:   organizers,
@@ -127,15 +128,6 @@ func looksLikeStructuredEvent(text string) bool {
 		return true
 	}
 	return false
-}
-
-func extractTimeExpression(text string) string {
-	for _, pattern := range timeExpressionPatterns {
-		if match := pattern.FindString(text); strings.TrimSpace(match) != "" {
-			return strings.TrimSpace(match)
-		}
-	}
-	return ""
 }
 
 func extractSubjectProfiles(text string) []string {

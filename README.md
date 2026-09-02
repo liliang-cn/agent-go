@@ -603,6 +603,41 @@ and how to fix it, without calling a model. It is what the removed CLI's status
 command used to be. Runnable: `examples/preview`, `examples/trace`,
 `examples/otel`, `examples/doctor`, `examples/resources`.
 
+## Time is relative to when it was said
+
+A memory written on the 1st saying "明天要去医院" describes the 2nd. Recalled on
+the 2nd, the text still says "明天" — and a model with no anchor books the
+appointment for the 3rd. The sentence is correct, and it is correct about a day
+that has passed.
+
+`pkg/timeaware` resolves this with the model and **no phrase table**. A map of
+`明天 → +1`, `tomorrow → +1` serves exactly the languages someone enumerated and
+silently does nothing for everyone else, which reads identically to "this text
+mentioned no date".
+
+```go
+svc, _ := agent.New("assistant").
+	WithTimezone(shanghai).   // the person's zone, not the server's
+	Build()
+```
+
+- **Writing resolves, at no extra cost.** The fields ride on the extraction
+  call the memory writer already makes, on a background worker — nothing on the
+  agent's turn waits for it. `timeaware.SchemaFields()` and `PromptRules(anchor)`
+  graft the same contract onto any structured call you already make;
+  `Resolver.Resolve` is the standalone route, one call for however many texts.
+- **Reading calls nothing.** Every recalled memory carries
+  `(written 2026-09-01, yesterday; "明天" = 2026-09-02, today)`, computed from
+  two timestamps.
+- **Local time is the part most likely to be wrong.** The anchor is converted
+  into the person's zone before the model sees it, the prompt states the offset
+  *and* the IANA name (an offset cannot express a daylight-saving rule), and day
+  arithmetic converts both endpoints first — 23:30 in Tokyo is 16:30 the same
+  afternoon in Vienna.
+- **Degradation is the design.** No model, a timeout or an unparsable answer
+  leaves the memory unresolved and still carrying when it was written, which is
+  true in every language. Runnable: `examples/timeaware`.
+
 ## Many callers through one Service
 
 A `Service` has always been safe to run many tasks through at once. What it had

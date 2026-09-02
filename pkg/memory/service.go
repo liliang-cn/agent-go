@@ -12,6 +12,7 @@ import (
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 	"github.com/liliang-cn/agent-go/v3/pkg/prompt"
 	"github.com/liliang-cn/agent-go/v3/pkg/store"
+	"github.com/liliang-cn/agent-go/v3/pkg/timeaware"
 )
 
 // Service implements the MemoryService interface
@@ -43,6 +44,13 @@ type Service struct {
 	enableHybrid bool
 	rrfK         float64
 
+	// timeResolver turns what a person said about a day into a date, with one
+	// model call, on the durable worker — never on the agent's turn. See
+	// pkg/timeaware; nil when no model is configured, in which case a recalled
+	// memory still carries the moment it was written, which is enough to
+	// reckon from.
+	timeResolver *timeaware.Resolver
+
 	// PageIndex-style navigator for file-based stores (no embedder)
 	navigator        *IndexNavigator
 	reflectThreshold int // auto-reflect after this many new facts
@@ -57,6 +65,13 @@ type Service struct {
 
 // Config holds configuration for the memory service
 type Config struct {
+	// Location is the person's timezone. Everything about a day — which day
+	// "tomorrow" is, whether a stored memory was written "today" — is decided
+	// in it, and a server sitting in UTC answers for the wrong day at every
+	// hour a person is likely to be talking about their evening. Nil falls
+	// back to the machine's zone, which is a guess, not a setting.
+	Location *time.Location
+
 	MinScore    float64 // Minimum relevance score for memory retrieval (default 0.7)
 	MaxMemories int     // Maximum memories to inject (default 5)
 
@@ -124,6 +139,13 @@ func NewService(
 		reflectThreshold: config.ReflectThreshold,
 		disableRetrieval: config.DisableRetrieval,
 		disableAutoStore: config.DisableAutoStore,
+	}
+	if llm != nil {
+		opts := []timeaware.Option{}
+		if config.Location != nil {
+			opts = append(opts, timeaware.WithLocation(config.Location))
+		}
+		svc.timeResolver = timeaware.New(llm, opts...)
 	}
 
 	if config.NoiseFilterConfig != nil {
@@ -358,7 +380,16 @@ func (s *Service) storeIfWorthwhileSync(ctx context.Context, req *domain.MemoryS
 		return nil
 	}
 
-	prompt := s.buildSummaryPrompt(req)
+	// The moment this is being written, in the person's timezone. Everything
+	// the extraction says about a day is resolved against it, and it is
+	// stored on the memory so a reader on another day can re-anchor without
+	// asking anything.
+	writtenAt := time.Now()
+	if loc := s.timeLocation(); loc != nil {
+		writtenAt = writtenAt.In(loc)
+	}
+
+	prompt := s.buildSummaryPrompt(req) + timeaware.PromptRules(writtenAt)
 	schema := map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
@@ -383,6 +414,15 @@ func (s *Service) storeIfWorthwhileSync(ctx context.Context, req *domain.MemoryS
 		"required": []string{"should_store", "memories"},
 	}
 
+	// Time rides along in the same call rather than costing a second one.
+	if items, ok := schema["properties"].(map[string]interface{})["memories"].(map[string]interface{})["items"].(map[string]interface{}); ok {
+		if props, ok := items["properties"].(map[string]interface{}); ok {
+			for name, spec := range timeaware.SchemaFields() {
+				props[name] = spec
+			}
+		}
+	}
+
 	result, err := s.llm.GenerateStructured(ctx, prompt, schema, &domain.GenerationOptions{Temperature: 0.1})
 	var summary *domain.MemorySummaryResult
 	if err == nil && result.Raw != "" && result.Valid {
@@ -399,8 +439,13 @@ func (s *Service) storeIfWorthwhileSync(ctx context.Context, req *domain.MemoryS
 		return nil
 	}
 
+	// What the same call said about time, parsed with the same contract the
+	// standalone resolver uses. No second request, and nothing here reads
+	// the words.
+	timeRefs := timeReferencesFromSummary(result.Raw, writtenAt)
+
 	factScopeCounts := make(map[string]int)
-	for _, item := range summary.Memories {
+	for itemIndex, item := range summary.Memories {
 		baseScope, initialScope, finalScope, placementMeta := resolveMemoryPlacement(req, item)
 		_ = baseScope
 		_ = initialScope
@@ -415,7 +460,7 @@ func (s *Service) storeIfWorthwhileSync(ctx context.Context, req *domain.MemoryS
 			Tags:       item.Tags.Strings(),
 			Importance: item.Importance,
 			SourceType: domain.MemorySourceInferred, // stored by agent inference
-			CreatedAt:  time.Now(),
+			CreatedAt:  writtenAt,
 			Metadata: mergeMetadataMaps(
 				map[string]interface{}{
 					"entities": item.Entities.Strings(),
@@ -423,6 +468,9 @@ func (s *Service) storeIfWorthwhileSync(ctx context.Context, req *domain.MemoryS
 				},
 				placementMeta,
 			),
+		}
+		if ref, ok := timeRefs.For(itemIndex); ok && ref.Resolved() {
+			mem.Metadata = setMemoryTimeReference(mem.Metadata, ref)
 		}
 		_ = s.Add(ctx, mem)
 		if item.Type == domain.MemoryTypeFact {
@@ -506,6 +554,9 @@ func (s *Service) Add(ctx context.Context, memory *domain.Memory) error {
 		memory.CreatedAt = time.Now()
 	}
 	enrichStructuredMemory(memory)
+	// After the event blob exists, not before: the resolved date has nowhere
+	// to go until enrichStructuredMemory has created it.
+	applyResolvedTimeToEvent(memory)
 
 	// Always generate embedding if possible
 	if len(memory.Vector) == 0 && s.embedder != nil {
@@ -793,8 +844,24 @@ func (s *Service) formatMemoriesForQuery(ctx context.Context, query string, quer
 		return sb.String()
 	}
 	sb.WriteString("## Relevant Memory\n\n")
+	// Every memory says when it was written, and — where a model resolved it
+	// on the write path — what day its words named. Without this a memory
+	// saying "明天" is read as tomorrow-from-today however old it is, which
+	// is wrong every day but the one it was written on. Pure arithmetic: the
+	// read path never calls a model.
+	now := time.Now()
+	if loc := s.timeLocation(); loc != nil {
+		now = now.In(loc)
+	}
+	if hasTimeNotes(memories, now) {
+		sb.WriteString(timeHeader(now))
+	}
 	for i, m := range memories {
-		sb.WriteString(fmt.Sprintf("[%d] [%s]: %s\n\n", i+1, m.Type, m.Content))
+		note := timeNoteFor(m.Memory, now)
+		if note != "" {
+			note = " " + note
+		}
+		sb.WriteString(fmt.Sprintf("[%d] [%s]%s: %s\n\n", i+1, m.Type, note, m.Content))
 	}
 	return sb.String()
 }

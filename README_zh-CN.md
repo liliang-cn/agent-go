@@ -382,7 +382,7 @@ resumed, _ := manager.Tasks().ResumeFromCheckpoint(ctx, task.ID,
 | `WithTenant(id)` | 标记这次运行属于谁,用于限额、取消和计费 |
 | `WithDebug(bool)` | 单次运行的详细日志 |
 
-Builder 选项:`WithLLM`、`WithEmbedder`、`WithConfig`、`WithPrompt` / `WithSystemPrompt`、`WithMemory` / `WithGraphMemory` / `WithMemoryService`、`WithRunMemory`、`WithMCP`、`WithSkills`、`WithRAG`、`WithSubagents`、`WithDelegation`、`WithLengthLimits`、`WithSandbox`、`WithAutonomy`、`WithPlanStore`、`WithTaskStore`、`WithPromptCache`、`WithExtensions`、`WithMaxConcurrentRuns`、`WithMaxRunsPerTenant`、`WithTool(s)`、`WithObserver`、`WithProgress`、`WithDBPath`、`WithDebug`,以及装低频旋钮的 `WithOptions(agent.Options{...})`(权限策略、工具执行策略、必需 skill、额外模块、observer)。
+Builder 选项:`WithLLM`、`WithEmbedder`、`WithConfig`、`WithPrompt` / `WithSystemPrompt`、`WithMemory` / `WithGraphMemory` / `WithMemoryService`、`WithRunMemory`、`WithMCP`、`WithSkills`、`WithRAG`、`WithSubagents`、`WithDelegation`、`WithLengthLimits`、`WithSandbox`、`WithAutonomy`、`WithPlanStore`、`WithTaskStore`、`WithPromptCache`、`WithExtensions`、`WithMaxConcurrentRuns`、`WithMaxRunsPerTenant`、`WithTimezone`、`WithTool(s)`、`WithObserver`、`WithProgress`、`WithDBPath`、`WithDebug`,以及装低频旋钮的 `WithOptions(agent.Options{...})`(权限策略、工具执行策略、必需 skill、额外模块、observer)。
 
 ## Provider
 
@@ -438,6 +438,23 @@ func (watch) OnResourceSample(_ context.Context, s agent.ResourceSample) {
 同一批读数会以每轮一行 `"event":"resource"` 进入 `TraceWriter`——长跑任务的内存曲线就活在那里;`pkg/otelobserver` 则把它们发布成可观测量表(`agentgo.process.heap.bytes`、`.goroutines`、`.rss.bytes`、`.cpu.seconds` 等),**服务空闲、没有任何运行在跑的时候照样上报**,而那正是泄漏最容易看出来的时刻。某个平台读不到的数,报成"未知"而不是 0:0 看起来像一个不占内存的进程。
 
 **一切之前。** `agent.Doctor(ctx, ...)` 检查一个 home——数据库、provider、记忆存储类型、MCP 配置、skills——报告哪里不对、怎么修,不调模型。它就是被删掉的 CLI 里 status 命令的替身。可运行:`examples/preview`、`examples/trace`、`examples/otel`、`examples/doctor`、`examples/resources`。
+
+## 时间是相对说话那一刻的
+
+1 号写下的"明天要去医院",说的是 2 号。2 号召回时,文本里still写着"明天"——没有锚点的模型会把复查安排到 3 号。这句话没错,它只是在说一个已经过去的日子。
+
+`pkg/timeaware` 用模型解决它,**没有任何短语表**。`明天 → +1`、`tomorrow → +1` 这样的表只服务于有人想到要枚举的那几种语言,对其他所有人**静默地什么都不做**——而这看起来和"这段文字里没有日期"一模一样。
+
+```go
+svc, _ := agent.New("assistant").
+	WithTimezone(shanghai).   // 用户所在的时区,不是服务器的
+	Build()
+```
+
+- **写入时解析,零额外成本。** 时间字段搭在记忆写入本来就要发的那次抽取调用上,跑在后台 worker 里——agent 的这一轮**一步都不等它**。`timeaware.SchemaFields()` 和 `PromptRules(anchor)` 可以把同一份契约嫁接到你自己已有的结构化调用上;`Resolver.Resolve` 是独立路径,一次调用解一整批文本。
+- **读取时一次调用都没有。** 每条召回的记忆都带上 `(written 2026-09-01, yesterday; "明天" = 2026-09-02, today)`,纯粹由两个时间戳算出来。
+- **本地时间是最容易错的一处。** 锚点在交给模型之前先转成用户所在时区,提示词同时给出偏移量**和** IANA 时区名(偏移量表达不了夏令时规则),日历天的比较会把两端都先转过去——东京的 23:30 是维也纳同一天下午的 16:30。
+- **降级是设计的一部分。** 没有模型、超时、答案解不开,记忆就保持未解析状态,但仍然带着"写于何时",这在任何语言里都成立。可运行:`examples/timeaware`。
 
 ## 一个 Service 服务很多人
 

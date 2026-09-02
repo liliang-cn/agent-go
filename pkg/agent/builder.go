@@ -108,6 +108,7 @@ type Builder struct {
 	observers         []Observer
 	maxConcurrentRuns int
 	maxRunsPerTenant  int
+	timeLocation      *time.Location
 	// Custom LLM service (optional - if not set, uses global pool)
 	llmService domain.Generator
 	// Custom Embedder service (optional - used with custom LLM for RAG/Memory)
@@ -329,6 +330,25 @@ func (b *Builder) WithExtensions(exts ...Extension) *Builder {
 // mostly the history it holds, so watch agentgo.process.heap.bytes and
 // agentgo.process.rss.bytes (or the ProcessStats an observer receives every
 // round) under real load and leave headroom.
+// WithTimezone sets the timezone the agent reasons about days in: the
+// person's, not the server's.
+//
+// Everything that turns a word into a day depends on it. "Tomorrow" said at
+// 23:30 in Tokyo is a different date from "tomorrow" said at the same
+// instant in Vienna, and a service in UTC gets both wrong for anyone living
+// east of it after four in the afternoon. It reaches the memory writer,
+// which resolves what a stored memory meant by a day, and the recall path,
+// which decides whether that day has turned out to be today.
+//
+// Unset, the machine's zone is used. That is right for a desktop app and a
+// guess for a server, which is why this exists.
+func (b *Builder) WithTimezone(loc *time.Location) *Builder {
+	if loc != nil {
+		b.timeLocation = loc
+	}
+	return b
+}
+
 func (b *Builder) WithMaxConcurrentRuns(n int) *Builder {
 	if n < 0 {
 		n = 0
@@ -947,6 +967,10 @@ func (b *Builder) assembleMemoryService(memStore domain.MemoryStore, llmSvc doma
 	}
 	memCfg.DisableRetrieval = b.memoryCfg.RetrievalDisabled
 	memCfg.DisableAutoStore = b.memoryCfg.AutoStoreDisabled
+	// Which day "tomorrow" is depends on where the person is, not where the
+	// server is. Unset, this is the machine's zone — right for a desktop app,
+	// a guess for anything serving someone else.
+	memCfg.Location = b.timeLocation
 
 	memSvc := memory.NewService(memStore, llmSvc, embedSvc, memCfg)
 

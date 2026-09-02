@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/config"
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
@@ -488,12 +489,25 @@ func TestAgentWithMemoryStoresOrdinaryDialogueViaStoreIfWorthwhile(t *testing.T)
 		t.Fatalf("unexpected first response: %q", got)
 	}
 
-	mems, total, err := svc.MemoryService().List(ctx, 10, 0)
-	if err != nil {
-		t.Fatalf("list memories failed: %v", err)
-	}
-	if total == 0 || len(mems) == 0 {
-		t.Fatal("expected StoreIfWorthwhile to persist extracted memory")
+	// The durable write is asynchronous by design — a chat turn does not wait
+	// for its own memory to land — so the assertion has to wait for it rather
+	// than assume the scheduler ran the worker before this line.
+	var mems []*domain.Memory
+	var total int
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var err error
+		mems, total, err = svc.MemoryService().List(ctx, 10, 0)
+		if err != nil {
+			t.Fatalf("list memories failed: %v", err)
+		}
+		if total > 0 && len(mems) > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("expected StoreIfWorthwhile to persist extracted memory")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 
 	found := false
