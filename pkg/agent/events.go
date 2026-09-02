@@ -134,6 +134,11 @@ type Event struct {
 	// not "free"; a caller showing spend should say so rather than print $0.
 	CostUnpriced bool `json:"cost_unpriced,omitempty"`
 
+	// OutputParts is non-text output the run produced — an image the model
+	// drew. Present on terminal events, empty on the overwhelming majority
+	// of runs.
+	OutputParts []domain.MessagePart `json:"output_parts,omitempty"`
+
 	// Usage carries the run's provider-reported token accounting, summed
 	// over its rounds. Populated on terminal events alongside the cost, and
 	// nil when no provider on the run reported any — which is a different

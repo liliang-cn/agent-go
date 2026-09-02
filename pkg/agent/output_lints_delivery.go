@@ -31,8 +31,15 @@ import (
 func NonEmptyFinalAnswer() OutputLint {
 	return LintFunc{
 		NameValue: "non_empty_final_answer",
-		Fn: func(text string, _ LintContext) (bool, string) {
+		Fn: func(text string, ctx LintContext) (bool, string) {
 			if len(strings.TrimSpace(text)) >= minimumFinalAnswerChars {
+				return true, ""
+			}
+			// An answer that is a picture is an answer. A model asked to
+			// draw returns content null with the image in a sibling field,
+			// and rejecting that as blank tells a drawing agent it refused —
+			// then blocks the run when the retries run out.
+			if len(ctx.OutputParts) > 0 {
 				return true, ""
 			}
 			return false, "your final answer was empty. Never end a run with no text. " +

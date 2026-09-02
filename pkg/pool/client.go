@@ -223,8 +223,11 @@ func buildPoolGenerateWithToolsRequest(modelName string, messages []domain.Messa
 	apiMessages := make([]map[string]interface{}, len(messages))
 	for i, msg := range messages {
 		apiMessages[i] = map[string]interface{}{
-			"role":    msg.Role,
-			"content": msg.Content,
+			"role": msg.Role,
+			// Parts, when there are any, become a content array. Before this
+			// the field was always msg.Content and every attached image was
+			// dropped without a word — see multimodal.go.
+			"content": messageContentForWire(msg),
 		}
 		if msg.ToolCalls != nil {
 			apiToolCalls := make([]map[string]interface{}, len(msg.ToolCalls))
@@ -477,6 +480,10 @@ func (c *Client) GenerateWithTools(ctx context.Context, messages []domain.Messag
 				Role             string            `json:"role"`
 				ToolCalls        []json.RawMessage `json:"tool_calls,omitempty"`
 				ReasoningContent string            `json:"reasoning_content"`
+				// Non-text output. A model asked to draw returns content
+				// null and the picture here; without this the loop read an
+				// empty answer and the lint layer called it a refusal.
+				Images []wireOutputImage `json:"images,omitempty"`
 			} `json:"message"`
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
@@ -495,6 +502,7 @@ func (c *Client) GenerateWithTools(ctx context.Context, messages []domain.Messag
 	response := &domain.GenerationResult{
 		Content:          cleanContent,
 		ReasoningContent: reasoning,
+		Parts:            outputPartsFromMessage(choice.Message.Images),
 		FinishReason:     choice.FinishReason,
 		Usage:            parsePoolUsage(resp),
 	}

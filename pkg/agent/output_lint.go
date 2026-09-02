@@ -3,6 +3,8 @@ package agent
 import (
 	"strings"
 	"sync"
+
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 )
 
 // OutputLint is a deterministic post-output check applied to an agent's
@@ -24,6 +26,12 @@ type OutputLint interface {
 // best-effort: a lint should treat zero values as "unknown" rather than
 // asserting on them.
 type LintContext struct {
+	// OutputParts is non-text output the run produced — an image the model
+	// drew, most often. A lint that judges emptiness has to see it: an
+	// answer that is a picture is an answer, and rejecting it as blank is
+	// how a drawing agent gets told it refused.
+	OutputParts []domain.MessagePart
+
 	AgentName string
 	TaskID    string
 	SessionID string

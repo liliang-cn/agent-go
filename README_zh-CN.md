@@ -456,6 +456,24 @@ svc, _ := agent.New("assistant").
 - **本地时间是最容易错的一处。** 锚点在交给模型之前先转成用户所在时区,提示词同时给出偏移量**和** IANA 时区名(偏移量表达不了夏令时规则),日历天的比较会把两端都先转过去——东京的 23:30 是维也纳同一天下午的 16:30。
 - **降级是设计的一部分。** 没有模型、超时、答案解不开,记忆就保持未解析状态,但仍然带着"写于何时",这在任何语言里都成立。可运行:`examples/timeaware`。
 
+## 多模态
+
+图片能进,也能出:
+
+```go
+res, _ := svc.Run(ctx, "这张图里是什么？", agent.WithInputImages("photo.png"))
+
+// 让模型画图时它一个字都不返回——图片在这里。
+for _, part := range res.OutputParts {
+	if part.Image != nil {
+		raw, _ := base64.StdEncoding.DecodeString(part.Image.Base64)
+		os.WriteFile("drawn.jpg", raw, 0o644)
+	}
+}
+```
+
+`WithInputAudio` 和 `WithInputFiles` 用同样的方式挂录音和文档(OpenAI 的 `input_audio` 与 `file` 块)。这两条走的是有文档的线格式,但**没有**在本仓库对着真实端点跑过——这一点写在它们的注释里,而不是靠"它存在"来暗示;图片这条两个方向都用真模型验证过。
+
 ## 后台任务
 
 有些活人不会站着等:一次爬取、一次构建、一份跨一周日志的报告。让模型等着,对话就停住了,轮次预算也烧在一个只是慢的工具上。

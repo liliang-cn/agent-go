@@ -351,6 +351,43 @@ Three decisions worth not relitigating:
 answer is the most misleading thing it could return: a model that reads one
 tells the user it is the answer.
 
+### Multimodal, and the two places it was quietly broken
+
+Images in and images out both work now, and both were broken in the same way:
+the type existed, one code path filled it, and the path a real install uses
+threw it away.
+
+- **Input never reached the model through a pool.** `domain.MessagePart`,
+  `WithInputImages` and the serialiser in `pkg/providers/openai.go` have been
+  there for a long time. `pkg/pool` had **zero** references to `MessagePart`:
+  it built every message as `{"role":…, "content": <string>}` and dropped
+  `msg.Parts`. The pool is what every `WithConfig` install uses, superai
+  included — so attaching an image sent a request with no image in it, and the
+  model answered the text plausibly. `pkg/pool/multimodal.go` renders the
+  content array now; a message with no parts stays a plain string, because a
+  content array where a string would do is a difference some servers notice.
+- **Output had nowhere to go, then was dropped again.** A model asked to draw
+  returns `content: null` with the picture in `message.images[]` (confirmed
+  against a live image model, not assumed). The pool parses that into
+  `GenerationResult.Parts` — and `streamToolTurnWithRecovery`, which rebuilds
+  the turn's result from the deltas, still dropped it. Anything that
+  aggregator does not copy is lost; that is the same shape as the tool-call
+  and usage fields it already carries.
+- **A picture is an answer.** `non_empty_final_answer` reads `OutputParts`
+  now. Without that a drawing agent is told it refused, and blocks when the
+  lint retries run out — which is exactly what the first live run did.
+
+`ExecutionResult.OutputParts` and the terminal `Event` carry it to the host.
+Audio (`WithInputAudio`, OpenAI's `input_audio` block) and documents
+(`WithInputFiles`, the `file` block) follow the documented wire formats but
+were **not** exercised against a live endpoint here — that is stated in their
+doc comments rather than implied by their existence.
+
+Verified live, with a control: a generated red-circle-on-blue PNG described
+correctly ("It is a red circle"), the same question without the image
+answering "No image was provided" — so the first answer came from the picture
+— and a green triangle drawn and written out as a real 1408×768 JPEG.
+
 ### Task checkpoint + replay
 
 Every terminal `completeRun` / `blockRun` writes a `TaskCheckpoint` snapshot of the message history to `task_checkpoints` (capped at `MaxCheckpointsPerTask=32`, pruned by `checkpointWriter`). The wiring lives in `pkg/agent/task_checkpoint.go` + `task_checkpoint_manager.go`; `Service.SetCheckpointSink(...)` is what the runtime calls — `Manager.buildServiceForModel` auto-wires this, services built directly via `agent.New(...).Build()` skip persistence.

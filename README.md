@@ -638,6 +638,28 @@ svc, _ := agent.New("assistant").
   leaves the memory unresolved and still carrying when it was written, which is
   true in every language. Runnable: `examples/timeaware`.
 
+## Multimodal
+
+Images go in and come back out:
+
+```go
+res, _ := svc.Run(ctx, "What is in this image?", agent.WithInputImages("photo.png"))
+
+// A model asked to draw returns no text at all — the picture arrives here.
+for _, part := range res.OutputParts {
+	if part.Image != nil {
+		raw, _ := base64.StdEncoding.DecodeString(part.Image.Base64)
+		os.WriteFile("drawn.jpg", raw, 0o644)
+	}
+}
+```
+
+`WithInputAudio` and `WithInputFiles` attach recorded audio and documents the
+same way, using OpenAI's `input_audio` and `file` blocks. Those two follow the
+documented wire format but were not exercised against a live endpoint here,
+which their doc comments say plainly; the image path was verified in both
+directions against a real model.
+
 ## Background work
 
 Some things a person would never stand and wait for: a crawl, a build, a report

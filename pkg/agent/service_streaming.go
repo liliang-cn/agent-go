@@ -29,6 +29,12 @@ func (s *Service) streamToolTurnWithRecovery(ctx context.Context, messages []dom
 		lastFinishReason string
 		toolCallDetected bool
 		lastUsage        *domain.TokenUsage
+		// Non-text output the model produced. Aggregated like everything
+		// else, because this function rebuilds the turn's result from the
+		// deltas and anything it does not copy is lost — which is what
+		// happened to a drawn image: the provider parsed it, this dropped
+		// it, and the loop saw an empty answer.
+		outputParts []domain.MessagePart
 	)
 
 	llmCtx, cancel := withLLMTurnTimeout(ctx, s.cfg)
@@ -53,6 +59,9 @@ func (s *Service) streamToolTurnWithRecovery(ctx context.Context, messages []dom
 		}
 		if delta.ReasoningContent != "" && callbacks.OnReasoning != nil {
 			callbacks.OnReasoning(delta.ReasoningContent)
+		}
+		if len(delta.Parts) > 0 {
+			outputParts = append(outputParts, delta.Parts...)
 		}
 		if delta.Content != "" {
 			fullContent.WriteString(delta.Content)
@@ -101,6 +110,7 @@ func (s *Service) streamToolTurnWithRecovery(ctx context.Context, messages []dom
 		ID:           lastResponseID,
 		Content:      fullContent.String(),
 		ToolCalls:    toolCalls,
+		Parts:        outputParts,
 		Usage:        lastUsage,
 		FinishReason: lastFinishReason,
 	}, lastResponseID, recoveryMeta{}, err

@@ -322,8 +322,16 @@ type GenerationResult struct {
 	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
 	// Usage is nil when the provider did not report token accounting
 	// (some streaming paths and OpenAI-compatible servers omit it).
-	Usage    *TokenUsage `json:"usage,omitempty"`
-	Finished bool        `json:"finished"`
+	Usage *TokenUsage `json:"usage,omitempty"`
+	// Parts carries non-text output the model produced — an image it drew,
+	// most often. Empty for the overwhelming majority of turns.
+	//
+	// It exists because a model that returns a picture had nowhere to put it:
+	// the loop reads Content, and a response whose content is null and whose
+	// image sits in a sibling field read as an empty answer. Populated from
+	// what a provider actually returned, never assumed.
+	Parts    []MessagePart `json:"parts,omitempty"`
+	Finished bool          `json:"finished"`
 	// FinishReason mirrors the provider's stop reason. Common values:
 	// "stop" (model produced a natural end), "tool_calls" (model wants a
 	// tool), "length" (hit max_tokens), "content_filter" (provider safety

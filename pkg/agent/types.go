@@ -111,7 +111,11 @@ type ExecutionResult struct {
 	// Tenant is the owner label the run carried, so a caller billing many
 	// customers through one service can attribute this result without
 	// keeping its own run-to-tenant map.
-	Tenant      string                    `json:"tenant,omitempty"`
+	Tenant string `json:"tenant,omitempty"`
+	// OutputParts is non-text output the run produced — an image the model
+	// drew, most often. Empty for almost every run; a host that renders one
+	// reads it here rather than parsing the text for a data URI.
+	OutputParts []domain.MessagePart      `json:"output_parts,omitempty"`
 	Usage       *domain.TokenUsage        `json:"usage,omitempty"`
 	FinalResult interface{}               `json:"final_result,omitempty"`
 	Sources     []domain.Chunk            `json:"sources,omitempty"`      // RAG sources when EnableRAG is true
@@ -530,6 +534,36 @@ func WithInputParts(parts ...domain.MessagePart) RunOption {
 
 // WithInputImages is a convenience over WithInputParts that attaches local
 // image files (by path) to the initial user message for vision models.
+// WithInputAudio attaches recorded audio to the run's first user message.
+//
+// The wire format is OpenAI's input_audio block. Unlike images, this path
+// has not been exercised against a live endpoint in this repository: it
+// follows the documented format, and a provider that does not accept it will
+// reject the request rather than quietly ignore the audio.
+func WithInputAudio(paths ...string) RunOption {
+	return func(c *RunConfig) {
+		for _, p := range paths {
+			if strings.TrimSpace(p) == "" {
+				continue
+			}
+			c.InputParts = append(c.InputParts, domain.AudioLocalPathPart(p))
+		}
+	}
+}
+
+// WithInputFiles attaches documents (a PDF, most often) to the run's first
+// user message. Same caveat as WithInputAudio.
+func WithInputFiles(paths ...string) RunOption {
+	return func(c *RunConfig) {
+		for _, p := range paths {
+			if strings.TrimSpace(p) == "" {
+				continue
+			}
+			c.InputParts = append(c.InputParts, domain.FileLocalPathPart(p))
+		}
+	}
+}
+
 func WithInputImages(paths ...string) RunOption {
 	return func(c *RunConfig) {
 		for _, p := range paths {

@@ -73,6 +73,12 @@ type Runtime struct {
 	// once per run rather than once per round.
 	warnedUnpriced bool
 
+	// outputParts collects non-text output the model produced across the
+	// run's turns — a picture it drew, most often. It is kept because a
+	// response whose content is null and whose image sits in a sibling
+	// field is otherwise read as an empty answer and rejected as a refusal.
+	outputParts []domain.MessagePart
+
 	// budgetSnapshot is a pointer to the per-run budget block, kept on
 	// the runtime so terminal-event emitters can read the running cost
 	// without threading state through every call site.
@@ -130,6 +136,7 @@ func (r *Runtime) runFinalLints(content string, turn int) *LintViolation {
 		RequestedActions: r.runConstraints().RequestedActions,
 		IsRetry:          r.lintRetryBudget < defaultLintRetryBudget,
 		RetryCount:       defaultLintRetryBudget - r.lintRetryBudget,
+		OutputParts:      r.outputParts,
 	}
 	if reg := r.svc.OutputLints(); reg != nil {
 		if v := reg.Run(content, lintCtx); v != nil {
@@ -643,6 +650,9 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 				if result != nil {
 					outputTokens = tc.EstimateTokens(result.Content, model)
 				}
+			}
+			if result != nil && len(result.Parts) > 0 {
+				r.outputParts = append(r.outputParts, result.Parts...)
 			}
 			turnTokens = inputTokens + outputTokens
 			promptTokens, completionTokens = inputTokens, outputTokens
@@ -1329,6 +1339,7 @@ func (r *Runtime) completeRunWithStop(goal, content string, messages []domain.Me
 		StopReason:       reason,
 		EstimatedCostUSD: r.currentCostUSD(),
 		CostUnpriced:     r.warnedUnpriced,
+		OutputParts:      r.outputParts,
 		Usage:            r.currentUsage(),
 		Timestamp:        time.Now(),
 	}
@@ -1381,6 +1392,7 @@ func (r *Runtime) blockRunWithStop(goal, blocker string, messages []domain.Messa
 		StopReason:       reason,
 		EstimatedCostUSD: r.currentCostUSD(),
 		CostUnpriced:     r.warnedUnpriced,
+		OutputParts:      r.outputParts,
 		Usage:            r.currentUsage(),
 		Timestamp:        time.Now(),
 	}
@@ -1425,6 +1437,7 @@ func (r *Runtime) cancelRun(messages []domain.Message) {
 		StopReason:       StopReasonCancelled,
 		EstimatedCostUSD: r.currentCostUSD(),
 		CostUnpriced:     r.warnedUnpriced,
+		OutputParts:      r.outputParts,
 		Usage:            r.currentUsage(),
 		Timestamp:        time.Now(),
 	}
@@ -1462,6 +1475,7 @@ func (r *Runtime) failRun(cause error, messages []domain.Message) {
 		StopReason:       StopReasonErrorDuringExecution,
 		EstimatedCostUSD: r.currentCostUSD(),
 		CostUnpriced:     r.warnedUnpriced,
+		OutputParts:      r.outputParts,
 		Usage:            r.currentUsage(),
 		Timestamp:        time.Now(),
 	}
