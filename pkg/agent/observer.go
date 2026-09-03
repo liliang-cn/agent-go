@@ -163,6 +163,17 @@ type SubAgentInfo struct {
 	Name       string
 	Goal       string
 	SessionID  string
+	// Kind says what sort of sub-agent this is. Empty — the zero value every
+	// existing caller produces — means the in-process kind: another Runtime on
+	// this Service, whose spend already lands in the parent's own accounting.
+	// "cli" means the work was handed to an agent CLI installed on the
+	// machine, which is a separate process billed to a separate account, and
+	// an observer adding up what a run cost must not fold the two together.
+	Kind string
+	// Provider names the thing that actually ran the work when Kind is not the
+	// in-process one — "claude", "codex", "gemini", "cursor-agent". It is
+	// empty for an ordinary sub-agent, whose provider is the service's own.
+	Provider string
 }
 
 // LintInfo describes one output-lint rejection.

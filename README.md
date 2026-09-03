@@ -748,6 +748,39 @@ The tools are opt-in because a background task is a whole run with its own
 budget, and `background_check` never reports a result for a task still in
 flight. Runnable: `examples/background`.
 
+## Delegating to an agent CLI
+
+The most capable agent runtime on a developer's machine is often not the one you
+are writing. `claude`, `codex`, `gemini` and `cursor-agent` are whole agents with
+their own tools and their own subscriptions; two tools let yours hand one of them
+a task and get the answer back, with its output streaming into the parent run's
+event channel and its tokens accounted separately.
+
+```go
+svc, _ := agent.New("assistant").Build()
+
+err := agent.RegisterCLIAgentTools(svc, agent.CLIAgentConfig{
+	AllowedRoots:   []string{workdir}, // bounds cwd; defaults to the workspace
+	DefaultTimeout: 3 * time.Minute,
+})
+// the agent now has cli_agent_list and cli_agent_run
+```
+
+Two things to know before relying on it. **Listed means installed, not logged
+in** — the only honest probe is a real, billable turn, so discovery reports the
+binaries it found and a run reports what came back. And **`failed` is not the
+exit code**: a `claude` whose OAuth token has been revoked writes "Failed to
+authenticate" as an assistant message, sets `is_error`, and exits zero, so a
+caller reading the summary and the status hands the model an authentication
+error as if it were the answer. `cli_agent_run` treats that verdict as a
+failure regardless of the exit code.
+
+The delegated run is bracketed by `OnSubAgentStart` / `OnSubAgentEnd` with
+`SubAgentInfo.Kind == "cli"`, and the end carries a `CLIAgentRunResult` so an
+observer can bill it to the right account. Command building, stream parsing and
+usage accounting come from `github.com/liliang-cn/agentcli`. Runnable:
+`examples/cli-agents`.
+
 ## Many callers through one Service
 
 A `Service` has always been safe to run many tasks through at once. What it had

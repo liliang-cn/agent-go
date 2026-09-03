@@ -8,11 +8,12 @@ require (
 	github.com/blevesearch/bleve/v2 v2.6.0
 	github.com/chromedp/cdproto v0.0.0-20250724212937-08a3db8b4327
 	github.com/chromedp/chromedp v0.14.1
-	github.com/creack/pty v1.1.21
+	github.com/creack/pty v1.1.24
 	github.com/dslipak/pdf v0.0.2
 	github.com/go-shiori/go-readability v0.0.0-20251205110129-5db1dc9836f0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
+	github.com/liliang-cn/agentcli v0.1.4
 	github.com/liliang-cn/cortexdb/v2 v2.83.0
 	github.com/liliang-cn/mcp-swagger-server v1.3.0
 	github.com/liliang-cn/skills-go v1.9.0

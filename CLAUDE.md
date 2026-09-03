@@ -351,6 +351,53 @@ Three decisions worth not relitigating:
 answer is the most misleading thing it could return: a model that reads one
 tells the user it is the answer.
 
+### Delegating to an agent CLI on the machine
+
+The most capable agent runtime a developer has is often not the one you are
+writing. `claude`, `codex`, `gemini` and `cursor-agent` are whole agents with
+their own tools and their own subscriptions, and `pkg/agent/cliagents` plus
+`RegisterCLIAgentTools(svc, CLIAgentConfig{...})` hands one of them a task:
+`cli_agent_list` and `cli_agent_run`, output streaming into the parent run's
+event channel, tokens accounted apart from the parent's.
+
+Command building, stream-json parsing, usage accounting and the PTY runner all
+come from `github.com/liliang-cn/agentcli` rather than being written again
+here. Only cursor-agent needed anything new, and it needed fifteen lines: its
+`--output-format stream-json` *is* Claude Code's dialect, so `cliagents/cursor.go`
+is a claude session with its `BuildCommand` replaced.
+
+Five things that are not guesses:
+
+- **Listed means installed, not logged in.** On the machine this was built on
+  all four are on PATH and one works; the rest fail at the first turn with an
+  expired login or an ineligible account. The only honest probe is a real,
+  billable turn, so discovery reports presence and the run reports what came
+  back. The tool description says so in as many words, because the model is
+  what repeats it to the user.
+- **`Result.Failed` outranks the exit code.** A `claude` whose OAuth token has
+  been revoked writes "Failed to authenticate" as an assistant message, sets
+  `is_error` on its result frame, and **exits zero**. A caller reading only the
+  summary and the status hands the model an authentication error as the answer.
+- **`Request.Sandbox` stays false, and that is the switch.** Its zero value is
+  what emits codex's `--skip-git-repo-check` and gemini's `--skip-trust`;
+  without them both refuse to start in a directory that is not a trusted git
+  repo, which a scratch cwd never is. Do not add flags here — rely on it.
+- **Nothing is written to the child's stdin, deliberately.** Codex looks for
+  more of the prompt on stdin when it is handed a pipe and then waits for a
+  person who is never coming; the fix for that is `/dev/null`, and under a PTY
+  there is no pipe to notice. Writing a synthetic `^D` anyway makes it worse:
+  the line discipline echoes it back into the stream being parsed, glued to the
+  front of the first frame, and the frame stops being JSON.
+- **`cwd` is bounded by `AllowedRoots`, resolved through `EvalSymlinks` on both
+  sides.** The delegated agent runs with its approval prompts off, so this is
+  the only bound on it — and on macOS a workspace under `/tmp` is really under
+  `/private/tmp`, so a textual comparison rejects the service's own workspace.
+
+`SubAgentInfo` grew two additive fields for this: `Kind` (empty for the
+in-process kind, `"cli"` here) and `Provider`. `OnSubAgentEnd` carries a
+`CLIAgentRunResult`, so an observer adding up what a run cost does not fold a
+separate subscription's tokens into this one's.
+
 ### Multimodal, and the two places it was quietly broken
 
 Images in and images out both work now, and both were broken in the same way:

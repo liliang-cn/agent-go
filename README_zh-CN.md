@@ -543,6 +543,24 @@ if t, ok := svc.BackgroundTask(task.ID); ok && t.Status.Done() {
 
 工具默认关闭,因为一个后台任务就是一整次运行、有自己的预算;而 `background_check` **绝不**返回还在跑的任务的结果——半截答案是它能返回的最误导人的东西。可运行:`examples/background`。
 
+## 把活交给机器上的另一个 agent CLI
+
+开发者机器上最能干的 agent 运行时,往往不是你正在写的这个。`claude`、`codex`、`gemini`、`cursor-agent` 每一个都是完整的 agent,有自己的工具、自己的订阅账单。两个工具让你的 agent 把一件事交给它们中的一个并拿回结果,过程中它的输出会流进父运行的事件通道,token 单独记账。
+
+```go
+svc, _ := agent.New("assistant").Build()
+
+err := agent.RegisterCLIAgentTools(svc, agent.CLIAgentConfig{
+	AllowedRoots:   []string{workdir}, // 限定 cwd;默认是 workspace
+	DefaultTimeout: 3 * time.Minute,
+})
+// agent 现在有了 cli_agent_list 和 cli_agent_run
+```
+
+两件必须先知道的事。**列出来只代表二进制装了,不代表登录还有效**——唯一诚实的探测就是真跑一次并付钱,所以发现只报告找到了哪些二进制,运行只报告实际拿回了什么。以及 **`failed` 不等于退出码**:OAuth token 被吊销的 `claude` 会把 "Failed to authenticate" 当成一条 assistant 消息写出来,把 `is_error` 置上,然后**退出码为 0**;只看摘要和退出码的调用方,会把一个认证失败当成模型的答案交给用户。`cli_agent_run` 无视退出码,以这个判定为准。
+
+被委托的运行由 `OnSubAgentStart` / `OnSubAgentEnd` 包住,`SubAgentInfo.Kind == "cli"`,结束时带一个 `CLIAgentRunResult`,好让 observer 把这笔钱记到正确的账上。命令构造、流式解析和用量统计都来自 `github.com/liliang-cn/agentcli`。可运行:`examples/cli-agents`。
+
 ## 一个 Service 服务很多人
 
 `Service` 一直就能同时跑很多任务。它缺的是**这次运行是谁的**——在共享的服务端上,这是"产品"和"事故"的区别。
