@@ -92,8 +92,6 @@ type Service struct {
 	memorySavedInRun      bool
 	ragSourcesMu          sync.RWMutex
 	ragSources            []domain.Chunk // Collect RAG sources during execution
-	isRunning             bool
-	statusMu              sync.RWMutex
 	permissionMu          sync.RWMutex
 	permissionHandler     PermissionHandler
 	permissionPolicy      PermissionPolicy
@@ -659,8 +657,6 @@ func (s *Service) runWithConfig(ctx context.Context, goal string, cfg *RunConfig
 func (s *Service) runWithConfigTee(ctx context.Context, goal string, cfg *RunConfig, sink chan<- *Event) (*ExecutionResult, error) {
 	startedAt := time.Now()
 	s.resetRunMemorySaved()
-	s.setRunning(true)
-	defer s.setRunning(false)
 
 	session, events, err := s.startRun(ctx, goal, cfg)
 	if err != nil {
@@ -847,27 +843,38 @@ func (s *Service) Info() AgentInfo {
 	return info
 }
 
-// Status returns the current status of the agent ("running" or "idle").
+// Status returns the current status of the agent ("running", "idle" or
+// "closed"). It is the one-word form of StatusSnapshot().State.
+//
+// It is derived from the in-flight run registry rather than from a flag,
+// because a flag could not be right: a Service drives many runs at once, so
+// the first of two concurrent runs to finish used to clear it while the other
+// was still going — and it was only ever set by the collecting entry points
+// (Run/Ask/Chat), so a service busy inside RunStream, the primary streaming
+// API, reported "idle".
 func (s *Service) Status() string {
-	s.statusMu.RLock()
-	defer s.statusMu.RUnlock()
-	if s.isRunning {
-		return "running"
-	}
-	return "idle"
+	return string(s.serviceState())
 }
 
-// IsRunning returns true if the agent is currently executing a task.
+// IsRunning reports whether any run is in flight on this service.
 func (s *Service) IsRunning() bool {
-	s.statusMu.RLock()
-	defer s.statusMu.RUnlock()
-	return s.isRunning
+	if s == nil {
+		return false
+	}
+	s.cancelMu.RLock()
+	defer s.cancelMu.RUnlock()
+	return len(s.runs) > 0
 }
 
-func (s *Service) setRunning(running bool) {
-	s.statusMu.Lock()
-	defer s.statusMu.Unlock()
-	s.isRunning = running
+// serviceState is the shared derivation behind Status and StatusSnapshot.
+func (s *Service) serviceState() ServiceState {
+	if s == nil || s.Closed() {
+		return ServiceClosed
+	}
+	if s.IsRunning() {
+		return ServiceRunning
+	}
+	return ServiceIdle
 }
 
 func (s *Service) estimateRunTokens(goal string, finalResult interface{}) int {

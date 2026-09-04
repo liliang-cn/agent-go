@@ -10,6 +10,16 @@ import (
 type EventType string
 
 const (
+	// TurnStageResolvingConstraints and TurnStageRetrievingContext are the
+	// two things a run does before its first round, and they used to be
+	// unnamed. Measured on a live run: three and a half seconds — a model
+	// call for the constraints, then memory and RAG retrieval, which is
+	// allowed thirty seconds before it times out. Anything watching a run
+	// from outside saw nothing at all for that whole stretch and could only
+	// report "starting".
+	TurnStageResolvingConstraints = "resolving_constraints"
+	TurnStageRetrievingContext    = "retrieving_context"
+
 	TurnStagePreparingContext = "preparing_context"
 	TurnStageAwaitingModel    = "awaiting_model"
 	TurnStageHandlingTools    = "handling_tools"

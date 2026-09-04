@@ -429,10 +429,12 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 	// Every entry point (Run / RunStream / Ask / Chat / prompt scheduler /
 	// sub-agent) reaches the loop, so doing it here is what makes the
 	// enforcement uniform instead of dependent on which API the caller used.
+	r.emitTurnState(TurnStageResolvingConstraints, "resolving run constraints", 0, 0)
 	r.resolveConstraints(ctx, goal)
 
 	// 1. Prepare context (Memory & RAG) — with a timeout so a slow embedding
 	// model or unreachable LLM doesn't block the entire run forever.
+	r.emitTurnState(TurnStageRetrievingContext, "retrieving memory and documents", 0, 0)
 	prepStart := time.Now()
 	prepCtx, prepCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer prepCancel()
@@ -1529,6 +1531,10 @@ func (r *Runtime) emitLoopState(state *queryLoopState) {
 	if state == nil {
 		return
 	}
+	// Publish before the send. The event channel has one consumer and can
+	// block; a status reader is a different consumer entirely, and must not
+	// be held to the pace of whoever is reading the stream.
+	r.publishProgress(state)
 	stateDelta := map[string]interface{}{
 		"task_id":            state.TaskID,
 		"turn_stage":         state.Stage,
@@ -1558,6 +1564,11 @@ func (r *Runtime) emitLoopState(state *queryLoopState) {
 }
 
 func (r *Runtime) emitTurnState(stage, reason string, round int, toolCount int) {
+	// Same rule as emitLoopState: publish for the status readers before
+	// sending to the single event consumer, and amend rather than replace so
+	// a bare stage announcement cannot wipe out the round and the spend the
+	// last full reading carried.
+	r.publishStage(stage, reason, round, toolCount)
 	stateDelta := map[string]interface{}{
 		"turn_stage":        stage,
 		"transition_reason": reason,

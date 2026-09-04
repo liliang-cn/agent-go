@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -44,11 +45,16 @@ type ActiveRun struct {
 	Tenant string `json:"tenant,omitempty"`
 }
 
-// runHandle is an ActiveRun plus the means to stop it.
+// runHandle is an ActiveRun plus the means to stop it, plus whatever the loop
+// has published about how far it has got (see status.go). The registry half is
+// written once at registration; the progress half is replaced whole, which is
+// why it is an atomic pointer rather than more fields under cancelMu — a run
+// publishing every round must not contend with admission control.
 type runHandle struct {
 	ActiveRun
-	cancel context.CancelFunc
-	seq    uint64
+	cancel   context.CancelFunc
+	seq      uint64
+	progress atomic.Pointer[runProgress]
 }
 
 // registerRun derives a cancellable context for one run and records it so

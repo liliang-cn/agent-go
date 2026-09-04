@@ -219,6 +219,57 @@ detector in a log a human greps. `Doctor` reports `process.resources`
 informationally: in the CLI the numbers are dull, in a host that has been up
 for days they are the first thing worth pasting into a bug report.
 
+### Asking a run what it is doing, without being its caller
+
+`Service.StatusSnapshot()` (`status.go`). Everything in it existed somewhere;
+what did not exist was a way to read it from outside the run. An event stream
+has exactly one consumer — whoever called `RunStream` — and a status endpoint,
+an operator's console, a second window and a metrics scrape are none of them.
+Each was left to tee the stream or guess.
+
+The snapshot is identity (`Info()`), workspace, lints, `Capacity`, one
+`RunStatus` per run in flight and a background summary. It takes a lock and
+copies: no model call, no store, and no `ReadMemStats` unless asked
+(`WithProcessStats()`), so it is safe to poll at screen refresh rates.
+`RunStatuses()` and `RunStatus(runID)` are the same reading at a finer grain.
+Every field is JSON-tagged — `examples/agent-status` serves it over HTTP in
+three lines.
+
+Three things it deliberately is not: **not health** (Doctor probes — it dials
+providers and opens the store; status reports what the process already knows),
+**not history** (a run that ended is gone from it, exactly as it is gone from
+the cancel registry; its record is the checkpoint), and **not a subscription**
+(Observer and the event stream are still how you get told rather than ask).
+
+The loop publishes onto its `runHandle` behind an atomic pointer, wherever it
+already announces a stage — before the event send, so a status reader stays
+current even when the event consumer has stopped reading. Sub-agents publish
+nothing: they are deliberately not registered, so the parent's `handling_tools`
+with a pending `task` call is what a host sees.
+
+Three things this found on its way in:
+
+- **"Running" was a bool on a service that runs many things.** `isRunning` was
+  set only by the collecting entry points, so a service busy inside
+  `RunStream` — the primary streaming API — reported `idle`; and with two
+  concurrent runs the first to finish cleared it for both. `Status()` derives
+  from the run registry now, and gained a third answer, `closed`.
+- **A run's first four seconds had no name.** The first `emitLoopState` comes
+  after `resolveConstraints` (a model call) and `prepareConversationContext`
+  (memory + RAG, allowed 30s). Measured live: 3–4 seconds of a status API with
+  nothing to say. `TurnStageResolvingConstraints` and
+  `TurnStageRetrievingContext` name them, on the event stream as well.
+  Constraint extraction is most of it — `WithConstraintExtraction(false)` is
+  the switch when the caller already knows.
+- **Registered and reporting are different moments.** `RunStatus.Reported` is
+  false until the loop publishes, so a host shows "starting" rather than
+  "round 0 of 0". A bare stage announcement amends the previous reading
+  instead of replacing it, or `completed` would blank out the round and the
+  spend on the way out.
+
+`RunStatus.Goal` is the user's own prompt. A host serving more than one person
+must decide who may read a snapshot before exposing one.
+
 ### Many callers through one Service
 
 `Service` was always safe to run many tasks through at once; what it had no

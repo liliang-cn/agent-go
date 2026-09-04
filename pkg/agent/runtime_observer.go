@@ -31,6 +31,10 @@ func (r *Runtime) emitRoundCompletedAnalytics(state *queryLoopState) {
 	if state == nil {
 		return
 	}
+	// A round closing is when its tokens, cost and cache split have landed,
+	// so it is the second point worth publishing a status reading from — the
+	// first being every stage change (emitLoopState).
+	r.publishProgress(state)
 	r.eventChan <- NewAnalyticsEvent(AnalyticsRoundCompleted, map[string]interface{}{
 		"round":        state.CurrentRound,
 		"total_tokens": state.Budget.EstimatedTokens,
