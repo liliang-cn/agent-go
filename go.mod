@@ -13,7 +13,7 @@ require (
 	github.com/go-shiori/go-readability v0.0.0-20251205110129-5db1dc9836f0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
-	github.com/liliang-cn/agentexec v0.3.0
+	github.com/liliang-cn/agentexec v0.4.0
 	github.com/liliang-cn/cortexdb/v2 v2.83.0
 	github.com/liliang-cn/mcp-swagger-server v1.3.0
 	github.com/liliang-cn/skills-go v1.9.0

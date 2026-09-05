@@ -406,16 +406,19 @@ tells the user it is the answer.
 
 The most capable agent runtime a developer has is often not the one you are
 writing. `claude`, `codex`, `gemini` and `cursor-agent` are whole agents with
-their own tools and their own subscriptions, and `pkg/agent/cliagents` plus
+their own tools and their own subscriptions, and
 `RegisterCLIAgentTools(svc, CLIAgentConfig{...})` hands one of them a task:
 `cli_agent_list` and `cli_agent_run`, output streaming into the parent run's
 event channel, tokens accounted apart from the parent's.
 
-Command building, stream-json parsing, usage accounting and the PTY runner all
-come from `github.com/liliang-cn/agentcli` rather than being written again
-here. Only cursor-agent needed anything new, and it needed fifteen lines: its
-`--output-format stream-json` *is* Claude Code's dialect, so `cliagents/cursor.go`
-is a claude session with its `BuildCommand` replaced.
+Everything about the CLIs themselves — which are installed, how each is
+driven, stream-json parsing, usage accounting, the PTY runner — comes from
+`github.com/liliang-cn/agentexec` (`Discover`, `RegistryFrom`, the four
+providers). This package owns the *tool*: the roots a run may work in, the
+approval posture, the timeouts, and turning a result into a sub-agent bracket.
+It must not grow knowledge of a CLI's flags or output; that belongs in
+agentexec, and a `pkg/agent/cliagents` that once held discovery and the
+cursor provider was removed for exactly that reason.
 
 Five things that are not guesses:
 

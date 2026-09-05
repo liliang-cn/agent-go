@@ -778,7 +778,7 @@ failure regardless of the exit code.
 The delegated run is bracketed by `OnSubAgentStart` / `OnSubAgentEnd` with
 `SubAgentInfo.Kind == "cli"`, and the end carries a `CLIAgentRunResult` so an
 observer can bill it to the right account. Command building, stream parsing and
-usage accounting come from `github.com/liliang-cn/agentcli`. Runnable:
+usage accounting come from `github.com/liliang-cn/agentexec`. Runnable:
 `examples/cli-agents`.
 
 ## Many callers through one Service

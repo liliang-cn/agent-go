@@ -559,7 +559,7 @@ err := agent.RegisterCLIAgentTools(svc, agent.CLIAgentConfig{
 
 两件必须先知道的事。**列出来只代表二进制装了,不代表登录还有效**——唯一诚实的探测就是真跑一次并付钱,所以发现只报告找到了哪些二进制,运行只报告实际拿回了什么。以及 **`failed` 不等于退出码**:OAuth token 被吊销的 `claude` 会把 "Failed to authenticate" 当成一条 assistant 消息写出来,把 `is_error` 置上,然后**退出码为 0**;只看摘要和退出码的调用方,会把一个认证失败当成模型的答案交给用户。`cli_agent_run` 无视退出码,以这个判定为准。
 
-被委托的运行由 `OnSubAgentStart` / `OnSubAgentEnd` 包住,`SubAgentInfo.Kind == "cli"`,结束时带一个 `CLIAgentRunResult`,好让 observer 把这笔钱记到正确的账上。命令构造、流式解析和用量统计都来自 `github.com/liliang-cn/agentcli`。可运行:`examples/cli-agents`。
+被委托的运行由 `OnSubAgentStart` / `OnSubAgentEnd` 包住,`SubAgentInfo.Kind == "cli"`,结束时带一个 `CLIAgentRunResult`,好让 observer 把这笔钱记到正确的账上。命令构造、流式解析和用量统计都来自 `github.com/liliang-cn/agentexec`。可运行:`examples/cli-agents`。
 
 ## 一个 Service 服务很多人
 

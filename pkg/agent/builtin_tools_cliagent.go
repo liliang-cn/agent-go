@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/liliang-cn/agent-go/v3/pkg/agent/cliagents"
 	"github.com/liliang-cn/agentexec"
 	agentexecpty "github.com/liliang-cn/agentexec/pty"
 )
@@ -84,7 +83,7 @@ type CLIAgentRunResult struct {
 // which agents exist, how to drive each, and where they are allowed to run.
 type cliAgentRunner struct {
 	svc            *Service
-	agents         []cliagents.Agent
+	agents         []agentexec.Installed
 	registry       *agentexec.Registry
 	roots          []string
 	defaultCwd     string
@@ -107,9 +106,9 @@ func RegisterCLIAgentTools(svc *Service, cfg CLIAgentConfig) error {
 		return err
 	}
 
-	agents := cliagents.Discover(cfg.Binaries)
+	agents := agentexec.Discover(cfg.Binaries)
 	if len(cfg.Agents) > 0 {
-		allowed := make([]cliagents.Agent, 0, len(agents))
+		allowed := make([]agentexec.Installed, 0, len(agents))
 		for _, a := range agents {
 			if slices.Contains(cfg.Agents, a.Name) {
 				allowed = append(allowed, a)
@@ -121,7 +120,7 @@ func RegisterCLIAgentTools(svc *Service, cfg CLIAgentConfig) error {
 	r := &cliAgentRunner{
 		svc:            svc,
 		agents:         agents,
-		registry:       cliagents.Registry(agents),
+		registry:       agentexec.RegistryFrom(agents, agentexec.WithMCPConfig(".agentgo-cli-agent-mcp.json", true)),
 		roots:          roots,
 		defaultCwd:     roots[0],
 		defaultTimeout: cfg.DefaultTimeout,

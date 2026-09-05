@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/agent"
-	"github.com/liliang-cn/agent-go/v3/pkg/agent/cliagents"
+	"github.com/liliang-cn/agentexec"
 )
 
 func main() {
@@ -24,7 +24,7 @@ func main() {
 	// and does not tell you: these binaries exist. Whether the account behind
 	// one is still logged in is only knowable by running it, so nothing here
 	// pretends to know.
-	found := cliagents.Discover(nil)
+	found := agentexec.Discover(nil)
 	if len(found) == 0 {
 		fmt.Println("no agent CLIs on PATH — install one of claude, codex, gemini, cursor-agent")
 		return
