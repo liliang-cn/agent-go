@@ -1,5 +1,5 @@
 // Package cliagents finds the agent CLIs installed on this machine — Claude
-// Code, Codex, Gemini, cursor-agent — and turns them into cliagent providers
+// Code, Codex, Gemini, cursor-agent — and turns them into agentexec providers
 // that can be driven headlessly.
 //
 // It answers one narrow question, which is which of those binaries exist and
@@ -24,7 +24,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/liliang-cn/agentcli/cliagent"
+	"github.com/liliang-cn/agentexec"
 )
 
 // Agent is one CLI agent this machine can be asked to run.
@@ -42,7 +42,7 @@ type Agent struct {
 // a service that is only building a tool list.
 const versionTimeout = 2 * time.Second
 
-// dialect names the cliagent provider that knows a CLI's flags and its JSON.
+// dialect names the agentexec provider that knows a CLI's flags and its JSON.
 type dialect string
 
 const (
@@ -62,7 +62,7 @@ type traits struct {
 }
 
 // builtins is the set of agents this package knows how to drive. Gemini's
-// stream-json carries no session id at all — cliagent's gemini session returns
+// stream-json carries no session id at all — agentexec's gemini session returns
 // "" from SessionID() — so resume is false for it rather than optimistic.
 var builtins = map[string]traits{
 	"claude":       {dialect: dialectClaude, streaming: true, resume: true},
@@ -111,31 +111,31 @@ func Discover(overrides map[string]string) []Agent {
 	return out
 }
 
-// Registry builds a cliagent.Registry for the discovered set.
-func Registry(agents []Agent) *cliagent.Registry {
-	reg := cliagent.NewRegistry()
+// Registry builds a agentexec.Registry for the discovered set.
+func Registry(agents []Agent) *agentexec.Registry {
+	reg := agentexec.NewRegistry()
 	for _, a := range agents {
 		t, ok := resolveTraits(a.Name, a.Binary)
 		if !ok {
 			continue
 		}
-		opts := []cliagent.Option{
-			cliagent.WithName(a.Name),
-			cliagent.WithBinary(a.Binary),
+		opts := []agentexec.Option{
+			agentexec.WithName(a.Name),
+			agentexec.WithBinary(a.Binary),
 			// Claude writes the merged MCP config into the working directory,
 			// and a delegated run passes NoMCP, which means it always writes
 			// one. Name it after us: an unexplained .mcp-config.json appearing
 			// in somebody's repo is a mystery, and one with agentgo in the
 			// name is a grep away from an answer.
-			cliagent.WithMCPConfig(".agentgo-cli-agent-mcp.json", true),
+			agentexec.WithMCPConfig(".agentgo-cli-agent-mcp.json", true),
 		}
 		switch t.dialect {
 		case dialectClaude:
-			reg.Register(cliagent.NewClaude(opts...))
+			reg.Register(agentexec.NewClaude(opts...))
 		case dialectCodex:
-			reg.Register(cliagent.NewCodex(opts...))
+			reg.Register(agentexec.NewCodex(opts...))
 		case dialectGemini:
-			reg.Register(cliagent.NewGemini(opts...))
+			reg.Register(agentexec.NewGemini(opts...))
 		case dialectCursor:
 			reg.Register(newCursor(a.Name, a.Binary))
 		}

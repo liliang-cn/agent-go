@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/liliang-cn/agentcli/cliagent"
+	"github.com/liliang-cn/agentexec"
 )
 
 // writeFakeCLI drops an executable script under dir and returns its path. The
@@ -122,7 +122,7 @@ func TestRegistryBuildsARunnerForEveryDiscoveredAgent(t *testing.T) {
 		if err != nil {
 			t.Fatalf("registry has no provider for %s: %v", name, err)
 		}
-		spec, err := provider.NewSession().BuildCommand(context.Background(), cliagent.Request{
+		spec, err := provider.NewSession().BuildCommand(context.Background(), agentexec.Request{
 			Prompt:        "say OK",
 			WorkspacePath: dir,
 		})
@@ -164,7 +164,7 @@ func TestZeroSandboxEmitsTheBypassFlags(t *testing.T) {
 		if err != nil {
 			t.Fatalf("registry has no provider for %s: %v", name, err)
 		}
-		spec, err := provider.NewSession().BuildCommand(context.Background(), cliagent.Request{
+		spec, err := provider.NewSession().BuildCommand(context.Background(), agentexec.Request{
 			Prompt:        "say OK",
 			WorkspacePath: dir,
 		})
@@ -202,7 +202,7 @@ func TestCursorSessionParsesTheClaudeDialect(t *testing.T) {
 	}
 	var sawAssistant bool
 	for _, e := range events {
-		if e.Type == cliagent.EventAgentMessage && e.Payload["role"] == "assistant" {
+		if e.Type == agentexec.EventAgentMessage && e.Payload["role"] == "assistant" {
 			sawAssistant = true
 		}
 	}

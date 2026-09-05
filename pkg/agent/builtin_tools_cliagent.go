@@ -12,8 +12,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/liliang-cn/agent-go/v3/pkg/agent/cliagents"
-	"github.com/liliang-cn/agentcli/cliagent"
-	cliagentpty "github.com/liliang-cn/agentcli/cliagent/pty"
+	"github.com/liliang-cn/agentexec"
+	agentexecpty "github.com/liliang-cn/agentexec/pty"
 )
 
 // Handing a task to another agent CLI.
@@ -38,7 +38,7 @@ import (
 //     probe for that, so the failure is reported rather than predicted.
 //   - `claude` with a revoked OAuth token writes "Failed to authenticate" as
 //     an assistant message, sets is_error on its result frame, and exits zero.
-//     cliagent.Result.Failed is that verdict, and this tool treats it as a
+//     agentexec.Result.Failed is that verdict, and this tool treats it as a
 //     failure regardless of the exit code. A caller that read only the summary
 //     and the exit status would hand the model an authentication error as if
 //     it were the answer, and the model would hand it to the user.
@@ -85,7 +85,7 @@ type CLIAgentRunResult struct {
 type cliAgentRunner struct {
 	svc            *Service
 	agents         []cliagents.Agent
-	registry       *cliagent.Registry
+	registry       *agentexec.Registry
 	roots          []string
 	defaultCwd     string
 	defaultTimeout time.Duration
@@ -328,7 +328,7 @@ func (r *cliAgentRunner) run(ctx context.Context, args map[string]interface{}) (
 	}
 
 	session := provider.NewSession()
-	spec, err := session.BuildCommand(ctx, cliagent.Request{
+	spec, err := session.BuildCommand(ctx, agentexec.Request{
 		RunID:           currentRunID(ctx),
 		Prompt:          prompt,
 		WorkspacePath:   cwd,
@@ -342,7 +342,7 @@ func (r *cliAgentRunner) run(ctx context.Context, args map[string]interface{}) (
 		// A delegated call that can reach the operator's own MCP servers is
 		// not reproducible, and booting all of them costs more than the call.
 		NoMCP:          true,
-		PermissionMode: cliagent.PermissionBypass,
+		PermissionMode: agentexec.PermissionBypass,
 	})
 	if err != nil {
 		return cliAgentFailure(name, fmt.Sprintf("could not build the %s command: %v", name, err)), nil
@@ -366,7 +366,7 @@ func (r *cliAgentRunner) run(ctx context.Context, args map[string]interface{}) (
 
 	sink := eventSinkFromContext(ctx)
 	started := time.Now()
-	ptyResult, runErr := cliagentpty.Run(runCtx, cliagentpty.Command{
+	ptyResult, runErr := agentexecpty.Run(runCtx, agentexecpty.Command{
 		Argv:    spec.Argv,
 		Env:     spec.Env,
 		WorkDir: spec.WorkDir,
@@ -461,13 +461,13 @@ func (r *cliAgentRunner) run(ctx context.Context, args map[string]interface{}) (
 // delegated CLI's tool results are frames about its own internal loop, and
 // replaying them into the parent's tool timeline would claim this agent ran
 // tools it never ran.
-func (r *cliAgentRunner) forward(sink func(*Event), name string, events []cliagent.Event) {
+func (r *cliAgentRunner) forward(sink func(*Event), name string, events []agentexec.Event) {
 	if sink == nil || len(events) == 0 {
 		return
 	}
 	for _, e := range events {
 		switch e.Type {
-		case cliagent.EventAgentMessage:
+		case agentexec.EventAgentMessage:
 			if e.Payload["role"] != "assistant" {
 				continue
 			}
@@ -476,7 +476,7 @@ func (r *cliAgentRunner) forward(sink func(*Event), name string, events []cliage
 				continue
 			}
 			sink(&Event{Type: EventTypePartial, AgentName: name, Content: text})
-		case cliagent.EventToolCall:
+		case agentexec.EventToolCall:
 			tool := cliAgentToolName(e.Payload)
 			sink(&Event{
 				Type:      EventTypeStateUpdate,

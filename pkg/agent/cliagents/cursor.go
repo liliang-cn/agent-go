@@ -4,10 +4,10 @@ import (
 	"context"
 	"sort"
 
-	"github.com/liliang-cn/agentcli/cliagent"
+	"github.com/liliang-cn/agentexec"
 )
 
-// cursor-agent is the one of the four that cliagent has no provider for, and
+// cursor-agent is the one of the four that agentexec has no provider for, and
 // it needs about fifteen lines rather than a fourth parser: Cursor's
 // `--output-format stream-json` is Claude Code's dialect, frame for frame —
 // a `system` init, `assistant` frames whose message.content holds text and
@@ -24,39 +24,39 @@ import (
 type cursorProvider struct {
 	name   string
 	binary string
-	parser cliagent.Provider
+	parser agentexec.Provider
 }
 
 // newCursor returns a Provider for cursor-agent under the given name.
-func newCursor(name, binary string) cliagent.Provider {
+func newCursor(name, binary string) agentexec.Provider {
 	return &cursorProvider{
 		name:   name,
 		binary: binary,
-		parser: cliagent.NewClaude(cliagent.WithName(name)),
+		parser: agentexec.NewClaude(agentexec.WithName(name)),
 	}
 }
 
 func (p *cursorProvider) Name() string { return p.name }
 
-func (p *cursorProvider) Capabilities() cliagent.Capabilities {
+func (p *cursorProvider) Capabilities() agentexec.Capabilities {
 	// No Plugins and no MCP: cursor-agent has its own notion of both, this
 	// package does not pass either, and claiming them would invite a caller to
 	// send plugin dirs that BuildCommand silently drops.
-	return cliagent.Capabilities{Streaming: true, Resume: true, SupportsPTY: true, RequiresWorkspace: true}
+	return agentexec.Capabilities{Streaming: true, Resume: true, SupportsPTY: true, RequiresWorkspace: true}
 }
 
-func (p *cursorProvider) NewSession() cliagent.Session {
+func (p *cursorProvider) NewSession() agentexec.Session {
 	return &cursorSession{Session: p.parser.NewSession(), binary: p.binary}
 }
 
 // cursorSession embeds the claude session so ParseChunk, Finalize and
 // SessionID come along, and overrides only the command.
 type cursorSession struct {
-	cliagent.Session
+	agentexec.Session
 	binary string
 }
 
-func (s *cursorSession) BuildCommand(_ context.Context, req cliagent.Request) (cliagent.CommandSpec, error) {
+func (s *cursorSession) BuildCommand(_ context.Context, req agentexec.Request) (agentexec.CommandSpec, error) {
 	// There is no --append-system-prompt here, so policy text goes where codex
 	// and gemini put it: in front of the prompt.
 	prompt := req.Prompt
@@ -71,11 +71,11 @@ func (s *cursorSession) BuildCommand(_ context.Context, req cliagent.Request) (c
 	if req.ResumeSessionID != "" {
 		argv = append(argv, "--resume", req.ResumeSessionID)
 	}
-	if req.PermissionMode == cliagent.PermissionBypass {
+	if req.PermissionMode == agentexec.PermissionBypass {
 		argv = append(argv, "--force")
 	}
 	if !req.Sandbox {
-		// The headless posture, same as cliagent's --skip-trust /
+		// The headless posture, same as agentexec's --skip-trust /
 		// --skip-git-repo-check: in a scratch directory the CLI has never seen,
 		// the trust prompt is a prompt nobody is there to answer.
 		argv = append(argv, "--trust", "--sandbox", "disabled")
@@ -86,13 +86,13 @@ func (s *cursorSession) BuildCommand(_ context.Context, req cliagent.Request) (c
 	// and the only one that has been seen to work.
 	argv = append(argv, prompt)
 
-	return cliagent.CommandSpec{Argv: argv, Env: cursorEnv(req), WorkDir: req.WorkspacePath}, nil
+	return agentexec.CommandSpec{Argv: argv, Env: cursorEnv(req), WorkDir: req.WorkspacePath}, nil
 }
 
 // cursorEnv renders Request.Env as the "KEY=VALUE" overrides pty.Run expects.
-// cliagent keeps its own mergeEnv unexported, and there is no base env to
+// agentexec keeps its own mergeEnv unexported, and there is no base env to
 // merge here, so this is the whole of it.
-func cursorEnv(req cliagent.Request) []string {
+func cursorEnv(req agentexec.Request) []string {
 	if len(req.Env) == 0 {
 		return nil
 	}

@@ -277,8 +277,8 @@ github.com/kyokomi/emoji/v2 v2.2.13 h1:GhTfQa67venUUvmleTNFnb+bi7S3aocF7ZCXU9fSO
 github.com/kyokomi/emoji/v2 v2.2.13/go.mod h1:JUcn42DTdsXJo1SWanHh4HKDEyPaR5CqkmoirZZP9qE=
 github.com/ledongthuc/pdf v0.0.0-20220302134840-0c2507a12d80 h1:6Yzfa6GP0rIo/kULo2bwGEkFvCePZ3qHDDTC3/J9Swo=
 github.com/ledongthuc/pdf v0.0.0-20220302134840-0c2507a12d80/go.mod h1:imJHygn/1yfhB7XSJJKlFZKl/J+dCPAknuiaGOshXAs=
-github.com/liliang-cn/agentcli v0.1.4 h1:rq+y3RcgUCEFO8UwD65v6GOz5efw8i6bhSDw1pzKOMQ=
-github.com/liliang-cn/agentcli v0.1.4/go.mod h1:mYOQB07cYq67fFYU08J6RT9xVKQhyX/P4VnhYYu57Uc=
+github.com/liliang-cn/agentexec v0.3.0 h1:83wxc7yhi7JrxVaT+by5HdBAl+jcYQmV03plDiPSAMU=
+github.com/liliang-cn/agentexec v0.3.0/go.mod h1:Lt1DVrf3IX0u/2B4YokbMOfQElXKN4bd1xgKNI4acIo=
 github.com/liliang-cn/cortexdb/v2 v2.83.0 h1:OYVg5Yqt9W3AH1V5iMdKIV841awZh7FKRfGXocY0LGU=
 github.com/liliang-cn/cortexdb/v2 v2.83.0/go.mod h1:O4EPYRbBsEpEsRisT2Hs2jhKVoEMPuRm87xAXpwLMwc=
 github.com/liliang-cn/mcp-swagger-server v1.3.0 h1:PFnm9mSbjVoFv4AelRzmHuxuuJXI8QRUYVeYmjkpsPw=
