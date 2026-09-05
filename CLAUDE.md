@@ -270,6 +270,36 @@ Three things this found on its way in:
 `RunStatus.Goal` is the user's own prompt. A host serving more than one person
 must decide who may read a snapshot before exposing one.
 
+The background half is `BackgroundStatuses()` / `BackgroundTaskStatus(id)`, and
+`AgentStatus.Background.InFlight`. A background task *is* a run — its own
+session, its own run id, the same loop — so it had already published everything
+`RunStatus` carries; what was missing was the join. `BackgroundTask.RunID` had
+been declared since background tasks were written and **never once assigned**,
+so a host holding a task had no way to reach the run behind it. It is minted
+before the run starts now (a fresh UUID cannot hit the collision case that makes
+`registerRun` rename).
+
+Two things follow from "a background task is a run", and both bite:
+
+- **It is in the run registry too.** It occupies a concurrency slot, counts
+  against `Capacity`, and spends money, so that is the honest accounting — but
+  a host drawing "runs" and "background tasks" as two lists double-counts it.
+  `ActiveRun.BackgroundTaskID` names the task, so the split needs no
+  cross-reference. It also means background tasks pass through `admitLocked`:
+  `WithMaxConcurrentRuns` is a second ceiling above `WithBackgroundTasks(max)`,
+  and the smaller one wins.
+- **Status forgets a run; it must not forget a task.** `Run` goes nil when the
+  task ends, exactly as a foreground run leaves the registry — but the task
+  stays, because a result nobody collected is still owed to somebody. Hence
+  `ResultChars` rather than the result: a snapshot is polled, an answer can be
+  arbitrarily long, and `BackgroundTask(id)` already has it.
+
+`background_check` now reports progress (stage, round, tool calls) for a running
+task, and still never a partial result. Those are opposite things: half an answer
+gets reported to the user as the answer, but "still running" alone cannot
+distinguish work from a wedge — and waiting versus giving up are opposite
+decisions.
+
 ### Many callers through one Service
 
 `Service` was always safe to run many tasks through at once; what it had no

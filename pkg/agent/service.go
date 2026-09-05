@@ -593,7 +593,13 @@ func (s *Service) startRun(ctx context.Context, goal string, cfg *RunConfig) (*S
 	// covers Run, RunStream, Ask, Chat, structured output and the prompt
 	// scheduler alike — the same reason constraints are resolved in the loop
 	// and not in a per-entry-point helper.
-	runCtx, runID, releaseRun, err := s.registerRun(ctx, cfg.RunID, session.GetID(), taskID, cfg.Tenant)
+	runCtx, runID, releaseRun, err := s.registerRun(ctx, ActiveRun{
+		RunID:            cfg.RunID,
+		SessionID:        session.GetID(),
+		TaskID:           taskID,
+		Tenant:           cfg.Tenant,
+		BackgroundTaskID: cfg.backgroundTaskID,
+	})
 	if err != nil {
 		// At capacity. Refuse here, before anything is started, so the caller
 		// gets a typed error it can shed load on rather than a run that

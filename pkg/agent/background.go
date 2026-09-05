@@ -198,6 +198,16 @@ func (s *Service) StartBackgroundTask(ctx context.Context, goal string, opts ...
 	if strings.TrimSpace(cfg.Tenant) == "" {
 		cfg.Tenant = currentRunTenant(ctx)
 	}
+	// Name the run before starting it, so the task can be joined to its live
+	// reading in the run registry (BackgroundTaskStatus). BackgroundTask.RunID
+	// has been declared since this file was written and was never assigned:
+	// the field existed, documented as naming the run, and was empty on every
+	// task — so anything that went looking for the run behind a task found
+	// nothing. A freshly minted UUID cannot collide with a live run, which is
+	// the one case registerRun renames.
+	if strings.TrimSpace(cfg.RunID) == "" {
+		cfg.RunID = uuid.NewString()
+	}
 
 	task := &BackgroundTask{
 		ID:              uuid.NewString(),
@@ -205,6 +215,7 @@ func (s *Service) StartBackgroundTask(ctx context.Context, goal string, opts ...
 		Label:           strings.TrimSpace(cfg.BackgroundLabel),
 		Status:          BackgroundRunning,
 		SessionID:       cfg.SessionID,
+		RunID:           cfg.RunID,
 		ParentSessionID: currentRunSessionID(ctx),
 		Tenant:          cfg.Tenant,
 		StartedAt:       time.Now(),
@@ -220,6 +231,10 @@ func (s *Service) StartBackgroundTask(ctx context.Context, goal string, opts ...
 	reg.tasks[task.ID] = task
 	reg.order = append(reg.order, task.ID)
 	reg.mu.Unlock()
+
+	// The run knows which task it is, so a reader looking at the run registry
+	// can tell detached work from a chat turn without a second lookup.
+	cfg.backgroundTaskID = task.ID
 
 	reg.wg.Add(1)
 	go func() {

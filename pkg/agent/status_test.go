@@ -97,6 +97,9 @@ func TestStatusSnapshotReportsARunInFlight(t *testing.T) {
 	if run.Tenant != "acme" {
 		t.Errorf("Tenant = %q, want acme", run.Tenant)
 	}
+	if run.BackgroundTaskID != "" {
+		t.Errorf("an ordinary run is marked as background work: %q", run.BackgroundTaskID)
+	}
 	if run.RunID == "" {
 		t.Error("RunID is empty; it is what CancelRun takes")
 	}
@@ -250,4 +253,203 @@ func waitForRunStatus(t *testing.T, svc *Service, want func(RunStatus) bool) Run
 	}
 	t.Fatalf("timed out waiting for the loop to publish a matching reading; have %+v", svc.RunStatuses())
 	return RunStatus{}
+}
+
+// A background task is a run, so it has everything a run's status has — but
+// only if something joins the two. BackgroundTask.RunID had been declared
+// since background tasks were written and never assigned, so a host holding a
+// task could not reach the run behind it.
+func TestBackgroundTaskStatusCarriesTheLiveRun(t *testing.T) {
+	llm := newGateLLM()
+	defer llm.releaseAll()
+	svc, err := New("bg-status").
+		WithConfig(testAgentConfig(t.TempDir())).
+		WithLLM(llm).
+		WithBackgroundTasks(4).
+		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+
+	task, err := svc.StartBackgroundTask(context.Background(), "Count the beans.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.RunID == "" {
+		t.Fatal("StartBackgroundTask returned a task with no RunID; nothing can find its run")
+	}
+	waitForActiveRuns(t, svc, 1)
+
+	st := waitForBackgroundStatus(t, svc, task.ID, func(s BackgroundTaskStatus) bool {
+		return s.Run != nil && s.Run.Stage == TurnStageAwaitingModel
+	})
+	if st.Status != BackgroundRunning {
+		t.Errorf("Status = %q, want running", st.Status)
+	}
+	if st.Goal != "Count the beans." {
+		t.Errorf("Goal = %q", st.Goal)
+	}
+	if st.RunID != task.RunID {
+		t.Errorf("RunID = %q, want the task's own %q", st.RunID, task.RunID)
+	}
+	if st.Run.RunID != task.RunID {
+		t.Errorf("joined the wrong run: %q vs %q", st.Run.RunID, task.RunID)
+	}
+	if st.Run.Round < 1 || st.Run.MaxRounds < 1 {
+		t.Errorf("live reading has no round budget: %d/%d", st.Run.Round, st.Run.MaxRounds)
+	}
+	if st.ResultChars != 0 {
+		t.Errorf("ResultChars = %d on a task still running", st.ResultChars)
+	}
+	if st.EndedAt != nil {
+		t.Error("EndedAt set on a task still running")
+	}
+
+	// A background task is a run on this service: it occupies a concurrency
+	// slot and it spends money, so it belongs in the run registry. It is
+	// marked, because a host drawing "runs" and "background tasks" as two
+	// lists would otherwise count it twice.
+	runs := svc.RunStatuses()
+	if len(runs) != 1 {
+		t.Fatalf("RunStatuses = %d, want the background task's own run", len(runs))
+	}
+	if runs[0].BackgroundTaskID != task.ID {
+		t.Errorf("BackgroundTaskID = %q, want %q", runs[0].BackgroundTaskID, task.ID)
+	}
+	if svc.Capacity().ActiveRuns != 1 {
+		t.Error("a background task does not count against capacity")
+	}
+
+	// The same task, reached through the whole-service snapshot.
+	snap := svc.StatusSnapshot()
+	if snap.Background.Running != 1 || len(snap.Background.InFlight) != 1 {
+		t.Fatalf("Background = %+v, want one task in flight", snap.Background)
+	}
+	if snap.Background.InFlight[0].Run == nil {
+		t.Error("the snapshot's in-flight task carries no live reading")
+	}
+	if len(snap.Background.RunningIDs) != 1 || snap.Background.RunningIDs[0] != task.ID {
+		t.Errorf("RunningIDs = %v, want [%s]", snap.Background.RunningIDs, task.ID)
+	}
+
+	// The agent's own view: progress, and never a result.
+	full, _ := svc.BackgroundTask(task.ID)
+	payload := backgroundTaskPayload(full, svc.runStatusPtr(full.RunID))
+	if _, leaked := payload["result"]; leaked {
+		t.Error("background_check reported a result for a running task")
+	}
+	progress, _ := payload["progress"].(map[string]interface{})
+	if progress == nil {
+		t.Fatal("background_check reported no progress for a running task")
+	}
+	if progress["stage"] != TurnStageAwaitingModel {
+		t.Errorf("progress stage = %v, want %q", progress["stage"], TurnStageAwaitingModel)
+	}
+
+	llm.releaseAll()
+	waitForBackground(t, svc, task.ID)
+
+	// Finished: the run is gone, the task is not — its answer may never have
+	// been collected.
+	done := waitForBackgroundStatus(t, svc, task.ID, func(s BackgroundTaskStatus) bool {
+		return s.Status.Done()
+	})
+	if done.Run != nil {
+		t.Error("a finished task still carries a live run reading")
+	}
+	if done.EndedAt == nil || done.Duration <= 0 {
+		t.Error("a finished task does not know how long it took")
+	}
+	if done.ResultChars <= 0 {
+		t.Error("ResultChars = 0 on a task that produced an answer")
+	}
+	if snap := svc.StatusSnapshot(); len(snap.Background.InFlight) != 0 || snap.Background.Completed != 1 {
+		t.Errorf("Background = %+v, want nothing in flight and one completed", snap.Background)
+	}
+	if _, ok := svc.BackgroundTaskStatus("no-such-task"); ok {
+		t.Error("BackgroundTaskStatus answered for an unknown id")
+	}
+}
+
+// Several at once is the case the join has to get right: every task must carry
+// its own run's reading, not whichever one the map happened to yield.
+func TestBackgroundStatusesKeepTasksApart(t *testing.T) {
+	llm := newGateLLM()
+	defer llm.releaseAll()
+	svc, err := New("bg-many").
+		WithConfig(testAgentConfig(t.TempDir())).
+		WithLLM(llm).
+		WithBackgroundTasks(4).
+		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+
+	goals := []string{"First.", "Second.", "Third."}
+	ids := make(map[string]string, len(goals)) // task id -> goal
+	for _, goal := range goals {
+		task, err := svc.StartBackgroundTask(context.Background(), goal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids[task.ID] = goal
+	}
+	waitForActiveRuns(t, svc, 3)
+
+	deadline := time.Now().Add(10 * time.Second)
+	var statuses []BackgroundTaskStatus
+	for time.Now().Before(deadline) {
+		statuses = svc.BackgroundStatuses()
+		joined := 0
+		for _, st := range statuses {
+			if st.Run != nil {
+				joined++
+			}
+		}
+		if joined == len(goals) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	seen := map[string]bool{}
+	for _, st := range statuses {
+		if st.Run == nil {
+			t.Fatalf("task %s never joined its run", st.ID)
+		}
+		if want := ids[st.ID]; st.Goal != want || st.Run.Goal != want {
+			t.Errorf("task %s: goal %q, run goal %q, want %q", st.ID, st.Goal, st.Run.Goal, want)
+		}
+		if seen[st.Run.RunID] {
+			t.Errorf("two tasks share run %s", st.Run.RunID)
+		}
+		seen[st.Run.RunID] = true
+		if st.SessionID == "" {
+			t.Errorf("task %s has no session", st.ID)
+		}
+	}
+	if len(statuses) != len(goals) {
+		t.Errorf("got %d statuses, want %d", len(statuses), len(goals))
+	}
+}
+
+// waitForBackgroundStatus waits for one task's status to satisfy want.
+func waitForBackgroundStatus(t *testing.T, svc *Service, id string, want func(BackgroundTaskStatus) bool) BackgroundTaskStatus {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	var last BackgroundTaskStatus
+	for time.Now().Before(deadline) {
+		st, ok := svc.BackgroundTaskStatus(id)
+		if ok {
+			last = st
+			if want(st) {
+				return st
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting on background task %s; last = %+v", id, last)
+	return BackgroundTaskStatus{}
 }

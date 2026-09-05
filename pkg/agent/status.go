@@ -162,9 +162,10 @@ type RunStatus struct {
 	Usage RunUsage `json:"usage"`
 }
 
-// BackgroundSummary counts detached work by state. Results are not repeated
-// here — a status snapshot is polled, and a finished task's answer can be
-// arbitrarily long; BackgroundTask has it.
+// BackgroundSummary counts detached work by state, and describes the part of
+// it that is still happening. Results are not repeated here — a status
+// snapshot is polled, and a finished task's answer can be arbitrarily long;
+// BackgroundTask has it.
 type BackgroundSummary struct {
 	Running   int `json:"running"`
 	Completed int `json:"completed"`
@@ -174,9 +175,61 @@ type BackgroundSummary struct {
 	// Max is the ceiling set by WithBackgroundTasks; 0 means the agent-facing
 	// background tools were never registered.
 	Max int `json:"max,omitempty"`
-	// RunningIDs names the tasks still in flight, so a host can offer to
-	// cancel one without a second call.
+	// RunningIDs names the tasks still in flight. Every id here is also the
+	// ID of an InFlight entry; the field is kept because it shipped.
 	RunningIDs []string `json:"running_ids,omitempty"`
+	// InFlight is the running tasks, each carrying the live reading from the
+	// run behind it. Finished tasks are remembered but not listed here — the
+	// same rule AgentStatus.Runs follows, so that a snapshot describes this
+	// moment rather than growing with everything the process has ever done.
+	// BackgroundStatuses() returns them all.
+	InFlight []BackgroundTaskStatus `json:"in_flight,omitempty"`
+}
+
+// BackgroundTaskStatus is one piece of detached work: the registry's record of
+// it, plus — while it is still going — the same live reading a foreground run
+// reports.
+//
+// A background task IS a run: its own session, its own run id, the same loop.
+// So it already published everything RunStatus carries; what was missing was
+// the join. BackgroundTask.RunID had been declared since background tasks were
+// written and never once assigned, so a host holding a task had no way to
+// reach the run behind it.
+type BackgroundTaskStatus struct {
+	ID    string `json:"id"`
+	Label string `json:"label,omitempty"`
+	Goal  string `json:"goal,omitempty"`
+
+	Status     BackgroundStatus `json:"status"`
+	StopReason StopReason       `json:"stop_reason,omitempty"`
+	// Err is why it failed, when it did.
+	Err string `json:"error,omitempty"`
+
+	SessionID string `json:"session_id,omitempty"`
+	// RunID is what RunStatus(runID) and CancelRun take.
+	RunID string `json:"run_id,omitempty"`
+	// ParentSessionID is the conversation that started it, so a host can show
+	// somebody the work their own chat kicked off.
+	ParentSessionID string `json:"parent_session_id,omitempty"`
+	Tenant          string `json:"tenant,omitempty"`
+
+	StartedAt time.Time     `json:"started_at"`
+	EndedAt   *time.Time    `json:"ended_at,omitempty"`
+	Duration  time.Duration `json:"duration_ns"`
+
+	// ResultChars is how long the finished answer is, not the answer. A status
+	// snapshot is polled and a result can be arbitrarily long; collect it with
+	// BackgroundTask(id) or the agent's own background_check.
+	ResultChars int `json:"result_chars,omitempty"`
+
+	// Run is the live reading while the task is in flight, and nil once it
+	// ends — the run leaves the registry when its event stream closes, exactly
+	// as a foreground run does.
+	//
+	// It is also nil for the moment between a task being recorded and its
+	// goroutine reaching the loop. Status running with no Run means starting,
+	// not stuck.
+	Run *RunStatus `json:"run,omitempty"`
 }
 
 // StatusOption tunes what a snapshot includes.
@@ -276,20 +329,16 @@ func (s *Service) RunStatus(runID string) (RunStatus, bool) {
 	return h.status(time.Now()), true
 }
 
-// backgroundSummary counts the detached work this service remembers.
+// backgroundSummary counts the detached work this service remembers, and
+// describes the part of it still in flight.
 func (s *Service) backgroundSummary() BackgroundSummary {
 	summary := BackgroundSummary{Max: s.maxBackgroundTasks}
-	reg := s.background()
-	if reg == nil {
-		return summary
-	}
-	reg.mu.RLock()
-	defer reg.mu.RUnlock()
-	for id, t := range reg.tasks {
-		switch t.Status {
+	for _, st := range s.BackgroundStatuses() {
+		switch st.Status {
 		case BackgroundRunning:
 			summary.Running++
-			summary.RunningIDs = append(summary.RunningIDs, id)
+			summary.RunningIDs = append(summary.RunningIDs, st.ID)
+			summary.InFlight = append(summary.InFlight, st)
 		case BackgroundCompleted:
 			summary.Completed++
 		case BackgroundBlocked:
@@ -302,6 +351,95 @@ func (s *Service) backgroundSummary() BackgroundSummary {
 	}
 	sort.Strings(summary.RunningIDs)
 	return summary
+}
+
+// BackgroundStatuses returns every background task this service remembers,
+// newest first, each joined to the live reading of the run behind it.
+//
+// This is the background half of StatusSnapshot: the same question
+// (what is it doing, right now) asked of work that outlives the turn that
+// started it. Unlike the run registry it does remember finished tasks, because
+// a detached result nobody has collected yet is still owed to somebody.
+func (s *Service) BackgroundStatuses() []BackgroundTaskStatus {
+	if s == nil {
+		return nil
+	}
+	tasks := s.BackgroundTasks()
+	live := s.liveRunStatuses()
+	out := make([]BackgroundTaskStatus, 0, len(tasks))
+	for _, t := range tasks {
+		out = append(out, backgroundTaskStatus(t, live))
+	}
+	return out
+}
+
+// BackgroundTaskStatus returns one task's status by id, and whether it was
+// found. A finished task is still found — that is the difference from
+// RunStatus, and the reason is that its result has not necessarily been read.
+func (s *Service) BackgroundTaskStatus(id string) (BackgroundTaskStatus, bool) {
+	if s == nil {
+		return BackgroundTaskStatus{}, false
+	}
+	task, ok := s.BackgroundTask(id)
+	if !ok {
+		return BackgroundTaskStatus{}, false
+	}
+	live := make(map[string]RunStatus, 1)
+	if run, found := s.RunStatus(task.RunID); found {
+		live[run.RunID] = run
+	}
+	return backgroundTaskStatus(task, live), true
+}
+
+// liveRunStatuses indexes the runs in flight by id. One pass over the run
+// registry rather than a lookup per task: a service at its ceiling has only a
+// handful of tasks, but the lock is the one every starting run also wants.
+func (s *Service) liveRunStatuses() map[string]RunStatus {
+	runs := s.RunStatuses()
+	live := make(map[string]RunStatus, len(runs))
+	for _, r := range runs {
+		live[r.RunID] = r
+	}
+	return live
+}
+
+// runStatusPtr is RunStatus as a pointer, for callers that render "or nothing"
+// rather than branching on a bool.
+func (s *Service) runStatusPtr(runID string) *RunStatus {
+	run, ok := s.RunStatus(runID)
+	if !ok {
+		return nil
+	}
+	return &run
+}
+
+// backgroundTaskStatus joins one task record to its live reading, if it has
+// one. Shared so the list and single-id paths cannot describe a task
+// differently.
+func backgroundTaskStatus(t *BackgroundTask, live map[string]RunStatus) BackgroundTaskStatus {
+	if t == nil {
+		return BackgroundTaskStatus{}
+	}
+	out := BackgroundTaskStatus{
+		ID:              t.ID,
+		Label:           t.Label,
+		Goal:            t.Goal,
+		Status:          t.Status,
+		StopReason:      t.StopReason,
+		Err:             t.Err,
+		SessionID:       t.SessionID,
+		RunID:           t.RunID,
+		ParentSessionID: t.ParentSessionID,
+		Tenant:          t.Tenant,
+		StartedAt:       t.StartedAt,
+		EndedAt:         t.EndedAt,
+		Duration:        t.Duration(),
+		ResultChars:     len(t.Result),
+	}
+	if run, ok := live[t.RunID]; ok && t.RunID != "" {
+		out.Run = &run
+	}
+	return out
 }
 
 // --- what the loop publishes ------------------------------------------------

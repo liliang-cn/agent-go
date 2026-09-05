@@ -98,7 +98,7 @@ func TestServiceCancel_BlockedByRunningBlockingTool(t *testing.T) {
 	svc := &Service{
 		inProgressTools: make(map[string]int),
 	}
-	runCtx, _, release, _ := svc.registerRun(context.Background(), "run-1", "sess-1", "task-1", "")
+	runCtx, _, release, _ := svc.registerRun(context.Background(), ActiveRun{RunID: "run-1", SessionID: "sess-1", TaskID: "task-1"})
 	defer release()
 
 	_, end := svc.beginToolExecution("memory_save", nil)
@@ -125,7 +125,7 @@ func TestServiceCancel_AllowsCancelableTool(t *testing.T) {
 		CategoryRAG,
 		ToolMetadata{ReadOnly: true, ConcurrencySafe: true, InterruptBehavior: InterruptBehaviorCancel},
 	)
-	runCtx, _, release, _ := svc.registerRun(context.Background(), "run-1", "sess-1", "task-1", "")
+	runCtx, _, release, _ := svc.registerRun(context.Background(), ActiveRun{RunID: "run-1", SessionID: "sess-1", TaskID: "task-1"})
 	defer release()
 
 	_, end := svc.beginToolExecution("rag_query", nil)

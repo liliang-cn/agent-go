@@ -98,12 +98,19 @@ func RegisterBackgroundTaskTools(svc *Service) {
 					if !ok {
 						return toolErr("no background task with id " + id), nil
 					}
-					return toolOK(backgroundTaskPayload(task)), nil
+					return toolOK(backgroundTaskPayload(task, svc.runStatusPtr(task.RunID))), nil
 				}
 				tasks := svc.BackgroundTasks()
+				// One pass over the run registry rather than a lookup per
+				// task: the lock is the one every starting run also wants.
+				live := svc.liveRunStatuses()
 				payload := make([]map[string]interface{}, 0, len(tasks))
 				for _, t := range tasks {
-					payload = append(payload, backgroundTaskPayload(t))
+					var run *RunStatus
+					if r, ok := live[t.RunID]; ok && t.RunID != "" {
+						run = &r
+					}
+					payload = append(payload, backgroundTaskPayload(t, run))
 				}
 				return toolOK(map[string]interface{}{"tasks": payload, "count": len(payload)}), nil
 			},
@@ -139,7 +146,7 @@ func RegisterBackgroundTaskTools(svc *Service) {
 // The result is included only once the task is done. A partial answer from a
 // run still in flight is the single most misleading thing this tool could
 // return: a model that reads one reports it to the user as the answer.
-func backgroundTaskPayload(t *BackgroundTask) map[string]interface{} {
+func backgroundTaskPayload(t *BackgroundTask, run *RunStatus) map[string]interface{} {
 	if t == nil {
 		return nil
 	}
@@ -153,7 +160,13 @@ func backgroundTaskPayload(t *BackgroundTask) map[string]interface{} {
 		out["label"] = t.Label
 	}
 	if !t.Status.Done() {
+		// Progress, never a partial answer. The distinction is the whole
+		// point: a model handed half an answer reports it as the answer, but
+		// a model told only "still running" cannot tell work from a wedge,
+		// and those call for opposite decisions — keep waiting, or give up
+		// and do it itself.
 		out["note"] = "still running; there is no result yet"
+		out["progress"] = backgroundProgressPayload(run)
 		return out
 	}
 	if t.Result != "" {
@@ -167,4 +180,24 @@ func backgroundTaskPayload(t *BackgroundTask) map[string]interface{} {
 	}
 	out["finished_after"] = fmt.Sprintf("%s", t.Duration().Round(1e9))
 	return out
+}
+
+// backgroundProgressPayload describes how far a running task has got. A task
+// recorded but not yet in the loop is "starting" — reporting round 0 of 0
+// would read as a run that has done nothing, which is a different thing.
+func backgroundProgressPayload(run *RunStatus) map[string]interface{} {
+	if run == nil || !run.Reported {
+		return map[string]interface{}{"stage": "starting"}
+	}
+	progress := map[string]interface{}{
+		"stage": run.Stage,
+		"round": run.Round,
+	}
+	if run.MaxRounds > 0 {
+		progress["max_rounds"] = run.MaxRounds
+	}
+	if run.ToolCalls > 0 {
+		progress["tool_calls"] = run.ToolCalls
+	}
+	return progress
 }

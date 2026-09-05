@@ -43,6 +43,14 @@ type ActiveRun struct {
 	// empty when it attached none. It is what CancelTenant aims at and what
 	// a per-customer limit is counted against; nothing in the loop reads it.
 	Tenant string `json:"tenant,omitempty"`
+	// BackgroundTaskID names the detached task this run belongs to, and is
+	// empty for an ordinary run.
+	//
+	// A background task IS a run on this service, so it appears here and in
+	// Capacity like any other. That is the honest accounting — it occupies a
+	// concurrency slot and spends money — but a host drawing "runs" and
+	// "background tasks" as two lists will double-count without this field.
+	BackgroundTaskID string `json:"background_task_id,omitempty"`
 }
 
 // runHandle is an ActiveRun plus the means to stop it, plus whatever the loop
@@ -68,13 +76,17 @@ type runHandle struct {
 // collides with a live run is made unique. Everything that names the run
 // afterwards — its trace lines, its log lines — has to use the id the registry
 // knows, or CancelRun cannot be reached from what the operator is reading.
-func (s *Service) registerRun(ctx context.Context, runID, sessionID, taskID, tenant string) (context.Context, string, func(), error) {
+// rec describes the run to register: RunID, SessionID, TaskID, Tenant and
+// BackgroundTaskID. StartedAt is filled here — a run starts when the registry
+// says it does. Passed as a record rather than as a row of interchangeable
+// strings, which is how the tenant and the session end up swapped.
+func (s *Service) registerRun(ctx context.Context, rec ActiveRun) (context.Context, string, func(), error) {
 	runCtx, cancel := context.WithCancel(ctx)
 	if s == nil {
-		return runCtx, runID, cancel, nil
+		return runCtx, rec.RunID, cancel, nil
 	}
 
-	runID = strings.TrimSpace(runID)
+	runID := strings.TrimSpace(rec.RunID)
 	if runID == "" {
 		runID = uuid.NewString()
 	}
@@ -86,7 +98,7 @@ func (s *Service) registerRun(ctx context.Context, runID, sessionID, taskID, ten
 	// Admission is decided here, under the same lock that records the run:
 	// a limit checked anywhere else is a limit two simultaneous callers can
 	// both pass.
-	if err := s.admitLocked(tenant); err != nil {
+	if err := s.admitLocked(rec.Tenant); err != nil {
 		s.cancelMu.Unlock()
 		cancel()
 		return runCtx, runID, func() {}, err
@@ -98,16 +110,12 @@ func (s *Service) registerRun(ctx context.Context, runID, sessionID, taskID, ten
 		runID = runID + "#" + uuid.NewString()
 	}
 	s.runSeq++
+	rec.RunID = runID
+	rec.StartedAt = time.Now()
 	s.runs[runID] = &runHandle{
-		ActiveRun: ActiveRun{
-			RunID:     runID,
-			SessionID: sessionID,
-			TaskID:    taskID,
-			StartedAt: time.Now(),
-			Tenant:    tenant,
-		},
-		cancel: cancel,
-		seq:    s.runSeq,
+		ActiveRun: rec,
+		cancel:    cancel,
+		seq:       s.runSeq,
 	}
 	s.cancelMu.Unlock()
 

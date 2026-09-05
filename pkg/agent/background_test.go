@@ -178,7 +178,7 @@ func TestBackgroundToolsAreOptIn(t *testing.T) {
 // a model reading a partial answer tells the user it is the answer.
 func TestRunningTaskReportsNoResult(t *testing.T) {
 	running := &BackgroundTask{ID: "a", Goal: "g", Status: BackgroundRunning, StartedAt: time.Now()}
-	payload := backgroundTaskPayload(running)
+	payload := backgroundTaskPayload(running, nil)
 	if _, ok := payload["result"]; ok {
 		t.Error("a running task reported a result")
 	}
@@ -187,7 +187,7 @@ func TestRunningTaskReportsNoResult(t *testing.T) {
 	}
 
 	done := &BackgroundTask{ID: "b", Goal: "g", Status: BackgroundCompleted, Result: "the answer", StartedAt: time.Now()}
-	if got, _ := backgroundTaskPayload(done)["result"].(string); got != "the answer" {
+	if got, _ := backgroundTaskPayload(done, nil)["result"].(string); got != "the answer" {
 		t.Errorf("result = %q", got)
 	}
 }

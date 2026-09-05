@@ -307,6 +307,12 @@ type RunConfig struct {
 	// pays for the extraction once, not once per round.
 	resolvedConstraints *RunConstraints
 
+	// backgroundTaskID names the detached task this run belongs to, when it
+	// is one. Unexported because it is not a knob: StartBackgroundTask sets
+	// it, and a caller setting it by hand would only be lying about who owns
+	// the run. It reaches a reader as ActiveRun.BackgroundTaskID.
+	backgroundTaskID string
+
 	// SystemPromptOverride replaces the agent's instructions for this run.
 	SystemPromptOverride string
 

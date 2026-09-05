@@ -31,11 +31,17 @@ const statusAddr = "127.0.0.1:47311"
 func main() {
 	serve := flag.Bool("serve", false, "expose the snapshot as JSON on "+statusAddr)
 	goal := flag.String("goal", "List three prime numbers, then explain in one sentence why 1 is not one.", "what to ask the agent")
+	background := flag.Bool("background", false, "also start a detached task and watch it the same way")
 	flag.Parse()
 
-	svc, err := agent.New("status-demo").
-		WithSystemPrompt("You answer briefly.").
-		Build()
+	builder := agent.New("status-demo").WithSystemPrompt("You answer briefly.")
+	if *background {
+		// Off by default here for the same reason it is off by default in the
+		// framework: a background task is a whole run with its own round
+		// budget and its own spend.
+		builder = builder.WithBackgroundTasks(4)
+	}
+	svc, err := builder.Build()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -67,6 +73,18 @@ func main() {
 		fmt.Printf("serving http://%s/status\n\n", statusAddr)
 	}
 
+	if *background {
+		// Detached work the caller does not wait for. It is a run like any
+		// other — its own session, its own run id, the same loop — so it has
+		// the same reading, once something joins the task to its run.
+		task, err := svc.StartBackgroundTask(context.Background(),
+			"Name the four largest moons of Jupiter, one line.")
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Printf("started background task %s (run %s)\n\n", short(task.ID), short(task.RunID))
+	}
+
 	// --- watch it work, from a goroutine that is not the caller -----------
 	stop := make(chan struct{})
 	go func() {
@@ -78,15 +96,25 @@ func main() {
 				return
 			case <-ticker.C:
 				for _, r := range svc.RunStatuses() {
-					if !r.Reported {
-						// Registered, but the loop has not published a
-						// reading yet. "starting" — never "round 0 of 0".
-						fmt.Printf("  %s  starting\n", short(r.RunID))
+					// A background task is a run on this service, so it is
+					// in this list too — it really does occupy a concurrency
+					// slot and really does spend money. BackgroundTaskID is
+					// how a host that draws two lists avoids drawing it
+					// twice.
+					if r.BackgroundTaskID == "" {
+						printRun("", r)
+					}
+				}
+				// The background half: same reading, reached through the task
+				// rather than through the run.
+				for _, bt := range svc.StatusSnapshot().Background.InFlight {
+					if bt.Run == nil {
+						// Recorded, but its goroutine has not reached the
+						// loop yet. Starting, not stuck.
+						fmt.Printf("  bg %s  starting\n", short(bt.ID))
 						continue
 					}
-					fmt.Printf("  %s  %-22s %-11s tools %-3d %-10s %s\n",
-						short(r.RunID), r.Stage, rounds(r), r.ToolCalls,
-						money(r.Usage), r.Duration.Round(time.Millisecond))
+					printRun("bg ", *bt.Run)
 				}
 			}
 		}
@@ -99,6 +127,24 @@ func main() {
 	}
 	fmt.Printf("\n%s\n\n", res.Text())
 
+	if *background {
+		// The foreground run is done; the detached one is not, and it does
+		// not stop because its caller did. Wait for it, so what follows shows
+		// a finished task rather than the same running one again.
+		waitForBackground(svc, 90*time.Second)
+
+		// A finished task stays in the snapshot's counts after its run has
+		// left the registry: an answer nobody has collected is still owed to
+		// somebody. That is the one place background status differs from run
+		// status, which forgets a run the moment it ends.
+		fmt.Println("background tasks:")
+		for _, bt := range svc.BackgroundStatuses() {
+			fmt.Printf("  %s  %-10s %-9s %d chars  %s\n", short(bt.ID), bt.Status,
+				bt.StopReason, bt.ResultChars, bt.Duration.Round(time.Millisecond))
+		}
+		fmt.Println()
+	}
+
 	after := svc.StatusSnapshot()
 	// The run is gone, not stale: it left the registry when its event stream
 	// closed. Its durable record is the checkpoint and the task store.
@@ -110,6 +156,33 @@ func main() {
 		fmt.Printf("\nstill serving http://%s/status — ctrl-c to stop\n", statusAddr)
 		select {}
 	}
+}
+
+// waitForBackground blocks until nothing is running, or the deadline passes.
+// Bounded, because a detached task is exactly the thing that might not finish.
+func waitForBackground(svc *agent.Service, limit time.Duration) {
+	deadline := time.Now().Add(limit)
+	for time.Now().Before(deadline) {
+		if svc.StatusSnapshot().Background.Running == 0 {
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	fmt.Println("(gave up waiting; cancel with svc.CancelBackgroundTask)")
+}
+
+// printRun renders one live reading, with a prefix so a background task's run
+// is distinguishable from the foreground one.
+func printRun(prefix string, r agent.RunStatus) {
+	if !r.Reported {
+		// Registered, but the loop has not published a reading yet.
+		// "starting" — never "round 0 of 0".
+		fmt.Printf("  %s%s  starting\n", prefix, short(r.RunID))
+		return
+	}
+	fmt.Printf("  %s%s  %-22s %-11s tools %-3d %-10s %s\n",
+		prefix, short(r.RunID), r.Stage, rounds(r), r.ToolCalls,
+		money(r.Usage), r.Duration.Round(time.Millisecond))
 }
 
 // rounds is blank before the first round starts. The two stages that come
