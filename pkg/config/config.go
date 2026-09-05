@@ -130,6 +130,26 @@ type ToolingConfig struct {
 	// catalogue of any size goes into the schema flat.
 	DisableToolSearch bool `mapstructure:"disable_tool_search"`
 
+	// DeferTools names registry tools that go behind the index rather than
+	// into the schema, as exact names or "prefix*" patterns.
+	//
+	// Discovery already defers MCP tools and skills wholesale, but never the
+	// tools registered directly — and on a host with a big built-in surface
+	// those are the expensive ones. Measured on one such install: 66 knowledge
+	// and graph tools were 93KB of the 124KB schema, roughly 23k tokens on
+	// every turn, for tools a given conversation almost never calls.
+	//
+	// A deferred tool is not hidden. Its name and first line still reach the
+	// model through the tool index (see IndexDeferredTools), which is what
+	// makes this a lookup rather than an amputation.
+	DeferTools []string `mapstructure:"defer_tools"`
+
+	// IndexDeferredTools controls whether the turn carries a one-line index of
+	// everything discovery is holding back. Default on; set false only to
+	// reproduce the old behaviour, where deferred tools existed but nothing
+	// told the model so.
+	IndexDeferredTools *bool `mapstructure:"index_deferred_tools"`
+
 	WebSearch WebSearchConfig `mapstructure:"web_search"`
 }
 

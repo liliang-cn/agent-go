@@ -199,6 +199,14 @@ func (s *Service) prepareTurnInputsWithPolicy(ctx context.Context, currentAgent 
 	if cfg != nil && strings.TrimSpace(cfg.SystemPromptOverride) != "" {
 		systemMsg = cfg.SystemPromptOverride
 	}
+	// What discovery is holding back, by name. Before the run-specific
+	// sections below, so it stays inside the byte-stable prefix a provider's
+	// prompt cache can keep: the index changes when the install's tools do,
+	// which is nearly never, while everything appended after it changes per
+	// run. A run with no tools at all has nothing to index.
+	if len(tools) > 0 {
+		systemMsg += s.toolIndex(ctx, currentAgent, policy, tools)
+	}
 	// Run-memory recall rides at the END of the system prompt: it is the most
 	// run-specific content, and appending (rather than prepending) keeps the
 	// static prompt prefix byte-stable across runs for provider prompt caches.
@@ -317,7 +325,15 @@ func (s *Service) collectTools(ctx context.Context, currentAgent *Agent, policy 
 
 	// 1. Add static tools and active deferred tools from Registry
 	// This includes built-in tools like delegate_to_subagent and task_complete
-	addTools(s.toolRegistry.ListForLLM(sessionID))
+	registryTools := s.toolRegistry.ListForLLM(sessionID)
+	if searchMode {
+		// Discovery has always deferred the dynamic sources and never the
+		// registry, which on a host with a large built-in surface leaves the
+		// expensive half untouched. An install says which of its own tools it
+		// would rather look up; nothing is deferred here by default.
+		registryTools = s.deferConfiguredRegistryTools(registryTools, sessionID)
+	}
+	addTools(registryTools)
 
 	// Search tools ride along only when something is actually hidden behind them.
 	if deferBulk && policy.ExposeSearchTools {
