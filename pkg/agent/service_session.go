@@ -6,12 +6,48 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 	"github.com/liliang-cn/agent-go/v3/pkg/prompt"
 )
 
 // GetSession retrieves a session by ID
 func (s *Service) GetSession(sessionID string) (*Session, error) {
 	return s.store.GetSession(sessionID)
+}
+
+// AppendSessionMessages writes messages into a session without running the
+// model, creating the session if it does not exist yet.
+//
+// For the exchanges a host carries out on the model's behalf and around it: a
+// question the person addressed to a different agent and that agent's reply,
+// a notice the host posted, anything that happened in the conversation but not
+// in a turn. Without this, such an exchange was visible on screen and absent
+// from the record — the next turn could not see what the other agent had said,
+// and reopening the conversation showed a hole where it had been.
+//
+// Messages are appended in order and saved once. The save merges rather than
+// overwrites (see Store.SaveSession), so this is safe alongside a run that is
+// writing to the same session.
+func (s *Service) AppendSessionMessages(sessionID string, msgs ...domain.Message) error {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return fmt.Errorf("append session messages: empty session id")
+	}
+	if len(msgs) == 0 {
+		return nil
+	}
+	sess, err := s.store.GetSession(sessionID)
+	if err != nil || sess == nil {
+		agentID := ""
+		if s.agent != nil {
+			agentID = s.agent.Name()
+		}
+		sess = NewSessionWithID(sessionID, agentID)
+	}
+	for _, m := range msgs {
+		sess.AddMessage(m)
+	}
+	return s.store.SaveSession(sess)
 }
 
 // GetPlan retrieves a plan by ID
