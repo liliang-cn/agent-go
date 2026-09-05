@@ -55,7 +55,7 @@ func main() {
 	var (
 		exporterKind = flag.String("exporter", "memory", `"memory" (span tree + metric tables) or "stdout" (also OTLP-shaped JSON)`)
 		otlpURL      = flag.String("otlp", "", "also export spans to this OTLP/HTTP traces URL (e.g. http://localhost:4318/v1/traces)")
-		model        = flag.String("model", envOr("AGENTGO_PROBE_MODEL", "gemini-3.7-flash-high"), "model name")
+		model        = flag.String("model", envOr("AGENTGO_PROBE_MODEL", "gemini-3.8-flash-high"), "model name")
 		doRun        = flag.Bool("run", true, "run the single-Run probe")
 		doSegments   = flag.Bool("segments", true, "run the RunSegments probe")
 		roundsPer    = flag.Int("rounds-per-segment", 2, "RoundsPerSegment for the segmented probe")

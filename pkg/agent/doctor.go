@@ -514,7 +514,7 @@ func doctorCheckProvider(r *DoctorReport, prefix string, p pool.Provider) {
 // every cost figure reads 0 and the two spending ceilings (MaxBudgetUSD,
 // MaxTotalCostUSD) never trigger, which on a multi-hour task is the one
 // safeguard the operator thought they had. Seen live: a gateway alias like
-// gemini-3.7-flash-high, 900k tokens, "$0".
+// gemini-3.8-flash-high, 900k tokens, "$0".
 func doctorCheckPricing(r *DoctorReport, check string, p pool.Provider) {
 	models := p.Models
 	if m := strings.TrimSpace(p.ModelName); m != "" {

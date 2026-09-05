@@ -169,7 +169,7 @@ scenario, so run one before believing a release is fine.
   step". An unnamed plan is now keyed `default:<task_id>` on every path
   (`taskScopedPlanKey`); the bare list serves only a run with no task at all.
 - **"$0" is not a price.** The bundled table prices OpenAI, Anthropic and
-  DeepSeek names; a gateway alias like `gemini-3.7-flash-high` is unpriced, so
+  DeepSeek names; a gateway alias like `gemini-3.8-flash-high` is unpriced, so
   cost read 0 for 1.4M tokens and `MaxTotalCostUSD` could never fire. The
   state is now visible instead of silent: `Event.CostUnpriced`,
   `ExecutionResult.CostUnpriced`, `SegmentInfo.Unpriced`,
