@@ -61,6 +61,8 @@ type ToolRegistry struct {
 	tools            map[string]*registeredTool
 	sessionActivated map[string]map[string]bool // sessionID -> toolName -> bool
 	policy           ToolExecutionPolicy
+	// deferPatterns names the tools this install keeps behind the index.
+	deferPatterns []string
 }
 
 // NewToolRegistry creates an empty ToolRegistry.
@@ -149,12 +151,45 @@ func (r *ToolRegistry) RegisterWithMetadata(def domain.ToolDefinition, handler T
 	if metadata.ExposureMode == "" {
 		metadata.ExposureMode = r.resolveExposureModeLocked(def.Function.Name, category, "")
 	}
+	if matchesAnyToolPattern(r.deferPatterns, def.Function.Name) {
+		def.DeferLoading = true
+	}
 	r.tools[def.Function.Name] = &registeredTool{
 		def:      def,
 		handler:  handler,
 		category: category,
 		metadata: metadata,
 	}
+}
+
+// SetDeferredPatterns tells the registry which of its tools this install keeps
+// behind the tool index, as exact names or "prefix*".
+//
+// Applied at the registry rather than per turn, and that is the whole point:
+// DeferLoading is what the tool search filters on, so a tool deferred any other
+// way is not merely absent from the schema — it cannot be found at all. That
+// was the first version of this feature, and it produced a model that searched,
+// found nothing, and fell back to the wrong tool.
+//
+// Retroactive, because tools register in an order the caller does not control.
+func (r *ToolRegistry) SetDeferredPatterns(patterns []string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.deferPatterns = patterns
+	for _, t := range r.tools {
+		if matchesAnyToolPattern(patterns, t.def.Function.Name) {
+			t.def.DeferLoading = true
+		}
+	}
+}
+
+func matchesAnyToolPattern(patterns []string, name string) bool {
+	for _, p := range patterns {
+		if toolPolicyPatternMatches(p, name) {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *ToolRegistry) resolveExposureModeLocked(name, category string, explicit ToolExposureMode) ToolExposureMode {

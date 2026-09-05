@@ -602,6 +602,16 @@ func (b *Builder) build() (*Service, error) {
 		return nil, fmt.Errorf("failed to create service: %w", err)
 	}
 	svc.cfg = agentgoCfg
+	// What this install keeps behind the tool index (Tooling.DeferTools).
+	//
+	// It goes to the registry rather than being consulted per turn, because
+	// DeferLoading is what the tool search filters on: a tool held back any
+	// other way is not merely absent from the schema, it cannot be found at
+	// all. That was the first version of this, and the model searched, found
+	// nothing, and fell back to the wrong tool.
+	if agentgoCfg != nil && len(agentgoCfg.Tooling.DeferTools) > 0 && svc.toolRegistry != nil {
+		svc.toolRegistry.SetDeferredPatterns(agentgoCfg.Tooling.DeferTools)
+	}
 	svc.memoryStoreType = memoryStoreType
 	if b.toolPolicy.Default != "" || len(b.toolPolicy.Rules) > 0 {
 		svc.SetToolExecutionPolicy(b.toolPolicy)

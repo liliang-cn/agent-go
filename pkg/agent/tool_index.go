@@ -57,42 +57,6 @@ func (s *Service) deferredToolPatterns() []string {
 	return s.cfg.Tooling.DeferTools
 }
 
-// isDeferredByConfig reports whether a registry tool is one this install holds
-// back. Session activation is checked by the caller, which has the session.
-func (s *Service) isDeferredByConfig(name string) bool {
-	for _, pattern := range s.deferredToolPatterns() {
-		if toolPolicyPatternMatches(pattern, name) {
-			return true
-		}
-	}
-	return false
-}
-
-// deferConfiguredRegistryTools removes the tools this install keeps behind the
-// index, except any the session has already looked up.
-//
-// Only ever called when the turn is already in discovery mode. Below the
-// threshold there is nothing to pay for hiding things, and a catalogue small
-// enough to send flat should be sent flat.
-func (s *Service) deferConfiguredRegistryTools(tools []domain.ToolDefinition, sessionID string) []domain.ToolDefinition {
-	if len(s.deferredToolPatterns()) == 0 {
-		return tools
-	}
-	var active map[string]bool
-	if s.toolRegistry != nil {
-		active = s.toolRegistry.sessionActivated[sessionID]
-	}
-	out := make([]domain.ToolDefinition, 0, len(tools))
-	for _, t := range tools {
-		name := t.Function.Name
-		if s.isDeferredByConfig(name) && !active[name] {
-			continue
-		}
-		out = append(out, t)
-	}
-	return out
-}
-
 // toolIndex renders the tools that exist but are not in this turn's schema.
 //
 // Computed by difference rather than by asking the registry what is deferred:
@@ -104,7 +68,14 @@ func (s *Service) toolIndex(ctx context.Context, currentAgent *Agent, policy too
 	if !s.shouldIndexDeferredTools() {
 		return ""
 	}
-	return renderToolIndex(s, s.collectTools(ctx, currentAgent, policy, false), sent)
+	// The flat collect plus the registry's own deferred set. Neither alone is
+	// the whole answer: MCP tools and skills never enter the registry, and a
+	// registry tool held back by SetDeferredPatterns never enters the collect.
+	all := s.collectTools(ctx, currentAgent, policy, false)
+	if s.toolRegistry != nil {
+		all = append(all, s.toolRegistry.ListDeferredTools()...)
+	}
+	return renderToolIndex(s, all, sent)
 }
 
 // renderToolIndex is toolIndex once the two catalogues are in hand: everything

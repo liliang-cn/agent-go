@@ -325,15 +325,10 @@ func (s *Service) collectTools(ctx context.Context, currentAgent *Agent, policy 
 
 	// 1. Add static tools and active deferred tools from Registry
 	// This includes built-in tools like delegate_to_subagent and task_complete
-	registryTools := s.toolRegistry.ListForLLM(sessionID)
-	if searchMode {
-		// Discovery has always deferred the dynamic sources and never the
-		// registry, which on a host with a large built-in surface leaves the
-		// expensive half untouched. An install says which of its own tools it
-		// would rather look up; nothing is deferred here by default.
-		registryTools = s.deferConfiguredRegistryTools(registryTools, sessionID)
-	}
-	addTools(registryTools)
+	// ListForLLM already leaves out anything the registry was told to defer
+	// (SetDeferredPatterns), along with anything activated back in for this
+	// session by a search.
+	addTools(s.toolRegistry.ListForLLM(sessionID))
 
 	// Search tools ride along only when something is actually hidden behind them.
 	if deferBulk && policy.ExposeSearchTools {

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"slices"
 	"strings"
 	"testing"
@@ -96,32 +97,58 @@ func TestTheIndexCanBeTurnedOff(t *testing.T) {
 
 // An install says which of its own tools it would rather look up. Nothing is
 // deferred by default, because that would change every existing agent.
-func TestConfiguredRegistryToolsAreDeferred(t *testing.T) {
-	plain := &Service{cfg: &config.Config{}, toolRegistry: NewToolRegistry()}
-	tools := []domain.ToolDefinition{def("bash", "b"), def("knowledge_search", "k"), def("memory_save", "m")}
-	if got := plain.deferConfiguredRegistryTools(tools, "s1"); len(got) != 3 {
-		t.Fatalf("an unconfigured install deferred %d tools; it must defer none", 3-len(got))
+//
+// It has to happen at the registry: DeferLoading is what the tool search
+// filters on, so a tool held back any other way is not merely absent from the
+// schema — it is unfindable, and the model searches, finds nothing and falls
+// back to the wrong tool.
+func TestConfiguredRegistryToolsAreDeferredAndStillFindable(t *testing.T) {
+	reg := NewToolRegistry()
+	add := func(name string) {
+		reg.Register(def(name, "does "+name), func(context.Context, map[string]interface{}) (interface{}, error) {
+			return nil, nil
+		}, CategoryCustom)
+	}
+	add("bash")
+	add("knowledge_search")
+	add("memory_save")
+
+	if got := len(reg.ListForLLM("s1")); got != 3 {
+		t.Fatalf("an unconfigured registry deferred something: %d of 3 sent", got)
 	}
 
-	s := &Service{
-		cfg:          &config.Config{Tooling: config.ToolingConfig{DeferTools: []string{"knowledge_*", "memory_save"}}},
-		toolRegistry: NewToolRegistry(),
+	reg.SetDeferredPatterns([]string{"knowledge_*", "memory_save"})
+	sent := names(reg.ListForLLM("s1"))
+	if len(sent) != 1 || sent[0] != "bash" {
+		t.Fatalf("wrong tools survived: %v", sent)
 	}
-	got := s.deferConfiguredRegistryTools(tools, "s1")
-	if len(got) != 1 || got[0].Function.Name != "bash" {
-		t.Fatalf("wrong tools survived: %+v", names(got))
+	// Retroactive: tools register in an order the caller does not control.
+	if got := len(reg.ListDeferredTools()); got != 2 {
+		t.Errorf("already-registered tools were not deferred: %d", got)
+	}
+	// And a tool registered afterwards obeys the same patterns.
+	add("knowledge_graph_query")
+	if !slices.Contains(names(reg.ListDeferredTools()), "knowledge_graph_query") {
+		t.Error("a tool registered after the patterns were set was left eager")
 	}
 
-	// A tool the session has already looked up stays callable, or every turn
-	// after the search would take it away again.
-	s.toolRegistry.ActivateForSession("s1", "knowledge_search")
-	got = s.deferConfiguredRegistryTools(tools, "s1")
-	if len(got) != 2 || !slices.Contains(names(got), "knowledge_search") {
-		t.Fatalf("a tool found by search was deferred again: %+v", names(got))
+	// Findable. This is the property the first version lacked.
+	found, err := reg.ExecuteToolSearch("knowledge", "bm25")
+	if err != nil {
+		t.Fatal(err)
 	}
-	// And only for that session.
-	if other := s.deferConfiguredRegistryTools(tools, "s2"); len(other) != 1 {
-		t.Errorf("one session's lookup leaked into another: %+v", names(other))
+	if !slices.Contains(names(found), "knowledge_search") {
+		t.Fatalf("a deferred tool could not be found by search: %v", names(found))
+	}
+
+	// And once found, callable for the rest of that session — otherwise the
+	// turn after the search would take it away again.
+	reg.ActivateForSession("s1", "knowledge_search")
+	if !slices.Contains(names(reg.ListForLLM("s1")), "knowledge_search") {
+		t.Error("a tool found by search was deferred again")
+	}
+	if slices.Contains(names(reg.ListForLLM("s2")), "knowledge_search") {
+		t.Error("one session's lookup leaked into another")
 	}
 }
 
