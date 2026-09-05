@@ -24,13 +24,16 @@ test:
 	@go test ./...
 	@cd examples/extensions-thirdparty && go test ./...
 
-check:
+# check runs the release gate's tests, not a weaker copy of them. It used to
+# call `go test ./...` directly, which covers the root module and nothing else
+# — so the third-party extension example, which is its own module, was tested
+# by `make test` (what the Release workflow runs) and by no local gate at all.
+# A stale go.mod there shipped a red release while every local check was green.
+check: test
 	@echo "Running format check..."
 	@go fmt ./...
 	@echo "Running vet..."
 	@go vet ./...
-	@echo "Running tests..."
-	@go test ./...
 
 coverage-core:
 	@echo "Running core unit-test coverage..."

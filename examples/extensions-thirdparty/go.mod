@@ -41,7 +41,7 @@ require (
 	github.com/chromedp/cdproto v0.0.0-20250724212937-08a3db8b4327 // indirect
 	github.com/chromedp/chromedp v0.14.1 // indirect
 	github.com/chromedp/sysutil v1.1.0 // indirect
-	github.com/creack/pty v1.1.21 // indirect
+	github.com/creack/pty v1.1.24 // indirect
 	github.com/dlclark/regexp2 v1.11.5 // indirect
 	github.com/dslipak/pdf v0.0.2 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
@@ -71,6 +71,7 @@ require (
 	github.com/jackc/pgx/v5 v5.10.0 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/json-iterator/go v0.0.0-20171115153421-f7279a603ede // indirect
+	github.com/liliang-cn/agentexec v0.4.0 // indirect
 	github.com/liliang-cn/cortexdb/v2 v2.83.0 // indirect
 	github.com/liliang-cn/mcp-swagger-server v1.3.0 // indirect
 	github.com/liliang-cn/pipeit v0.1.0 // indirect
