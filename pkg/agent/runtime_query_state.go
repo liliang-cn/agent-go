@@ -172,6 +172,14 @@ func (s *queryLoopState) noteRecovery(meta recoveryMeta) {
 
 func (s *queryLoopState) noteRoundCompleted() {
 	s.Budget.CompletedRounds = s.CurrentRound
+	// An unlimited budget stays unlimited. Subtracting from UnlimitedRounds
+	// would clamp to zero and then report "no rounds left" to a run that has
+	// no such constraint — and the model reads that number, so it would start
+	// wrapping up work it was told it had all the time in the world for.
+	if s.Budget.MaxRounds == UnlimitedRounds {
+		s.Budget.RemainingRounds = UnlimitedRounds
+		return
+	}
 	remaining := s.Budget.MaxRounds - s.Budget.CompletedRounds
 	if remaining < 0 {
 		remaining = 0

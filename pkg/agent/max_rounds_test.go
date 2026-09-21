@@ -155,8 +155,13 @@ func TestResolveMaxRounds(t *testing.T) {
 		{"the run's budget is used when set", 250, 0, 250},
 		{"the service's budget is used when the run has none", 0, 300, 300},
 		{"the run beats the service", 7, 300, 7},
-		{"a non-positive run budget means unset, not zero rounds", -1, 300, 300},
-		{"a non-positive service budget means unset too", 0, -1, DefaultMaxRounds},
+		// -1 is UnlimitedRounds and has its own meaning now; these use another
+		// negative so they still say what they were written to say — a value
+		// nobody chose on purpose falls through to the next level.
+		{"a stray negative run budget means unset, not zero rounds", -42, 300, 300},
+		{"a stray negative service budget means unset too", 0, -42, DefaultMaxRounds},
+		{"the run can ask for no budget at all", UnlimitedRounds, 300, UnlimitedRounds},
+		{"so can the service", 0, UnlimitedRounds, UnlimitedRounds},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -439,7 +439,8 @@ type RunOption func(*RunConfig)
 
 // WithMaxTurns sets this run's tool-round budget, overriding both the
 // service's WithAutonomy setting and DefaultMaxRounds. A long-horizon run
-// wants hundreds; n <= 0 leaves the budget unset.
+// wants hundreds; UnlimitedRounds asks for no budget at all, and any other
+// n <= 0 leaves the budget unset so the service or framework default applies.
 func WithMaxTurns(n int) RunOption {
 	return func(c *RunConfig) { c.MaxTurns = n }
 }

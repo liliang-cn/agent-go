@@ -476,7 +476,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 	if !resuming && r.cfg != nil && len(r.cfg.InputParts) > 0 {
 		attachInputParts(messages, r.cfg.InputParts)
 	}
-	for round := 0; round < maxRounds; round++ {
+	for round := 0; !roundsExhausted(round, maxRounds); round++ {
 		// One process reading per round. Round boundaries are seconds apart
 		// and this is the only place in the loop that samples, so a run's
 		// memory curve costs one stop-the-world read per model turn — and

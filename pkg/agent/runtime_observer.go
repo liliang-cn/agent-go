@@ -65,6 +65,9 @@ func (r *Runtime) emitAutoContinueNotice(state *queryLoopState) {
 }
 
 func formatBudgetProgress(used, max int) string {
+	if max == UnlimitedRounds {
+		return itoa(used) + "/\u221e"
+	}
 	return itoa(used) + "/" + itoa(max)
 }
 

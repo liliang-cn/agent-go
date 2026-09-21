@@ -815,7 +815,7 @@ func (b *Builder) build() (*Service, error) {
 	}
 	svc.promptCache = b.promptCache
 	svc.notesFile = b.notesFile
-	if b.autonomy.MaxRounds > 0 || b.autonomy.LintRetryBudget > 0 || b.autonomy.Scratchpad ||
+	if isRoundBudgetSet(b.autonomy.MaxRounds) || b.autonomy.LintRetryBudget > 0 || b.autonomy.Scratchpad ||
 		b.autonomy.CheckpointEveryRounds > 0 {
 		svc.defaultMaxTurns = b.autonomy.MaxRounds
 		svc.lintRetryBudgetOverride = b.autonomy.LintRetryBudget
