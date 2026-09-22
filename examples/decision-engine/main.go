@@ -25,6 +25,7 @@ import (
 func main() {
 	url := flag.String("engine", decision.LayaDefaultURL, "decision engine address")
 	askOnly := flag.Bool("ask-only", false, "just ask the engine; do not run an agent")
+	showRoutes := flag.Bool("routes", false, "show what the model router decides, without running anything")
 	flag.Parse()
 
 	engine := decision.NewLaya(decision.WithLayaURL(*url))
@@ -40,7 +41,11 @@ func main() {
 	fmt.Printf("engine %s\n\n", engine.Name())
 
 	askDirectly(ctx, engine)
-	if *askOnly {
+	if *showRoutes {
+		fmt.Println()
+		showRouting(ctx, engine)
+	}
+	if *askOnly || *showRoutes {
 		return
 	}
 	fmt.Println()
@@ -74,6 +79,36 @@ func askDirectly(ctx context.Context, engine decision.Engine) {
 			// conservative of the two.
 			fmt.Printf("    %-7s %-14s confidence %.2f\n", name, a.Label, a.Confidence)
 		}
+	}
+}
+
+// showRouting prints what the router would decide, for each of a few goals.
+//
+// Most of them come back "left to the pool", and that is the honest picture:
+// the engine is accurate about this question and rarely confident enough to
+// act, so the floor turns most goals into no decision at all. A router that
+// declines costs one cheap call; one that is sure and wrong sends a hard
+// problem to the cheap model.
+func showRouting(ctx context.Context, engine decision.Engine) {
+	routes := []agent.ModelRoute{
+		{Name: "fast", Model: "claude-haiku-4-5-20251001",
+			Description: "A direct lookup or a short factual answer"},
+		{Name: "deep", Model: "claude-opus-5",
+			Description: "Design, debugging, or a decision with consequences"},
+	}
+	router := agent.NewDecisionRouter(engine, 0, routes...).(agent.ConfidentModelRouter)
+
+	for _, goal := range []string{
+		"What port does Postgres listen on by default?",
+		"设计一套跨三个服务的幂等写入方案",
+		"这个 goroutine 泄漏排查了两天了，帮我找出来",
+	} {
+		route, confidence, ok := router.RouteWithConfidence(ctx, goal)
+		if !ok {
+			fmt.Printf("  left to the pool (%.2f)       %s\n", confidence, goal)
+			continue
+		}
+		fmt.Printf("  -> %-5s %-28s (%.2f)  %s\n", route.Name, route.Model, confidence, goal)
 	}
 }
 

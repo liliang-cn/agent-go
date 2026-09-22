@@ -115,3 +115,79 @@ func TestDecisionGateAgainstLiveEngine(t *testing.T) {
 		t.Error("the gate never skipped anything; it is costing latency and saving nothing")
 	}
 }
+
+// routeCase is one goal and the route it belongs on.
+type routeCase struct {
+	text string
+	want string // ModelRoute.Name
+}
+
+// TestDecisionRouterAgainstLiveEngine calibrates routing the way
+// TestDecisionGateAgainstLiveEngine calibrates the gate.
+//
+//	AGENTGO_DECISION_LIVE=1 go test ./pkg/agent -run TestDecisionRouterAgainstLive -v
+//
+// The descriptions here are the ones in WithModelRoutes' own example, so a
+// change to the advice in that doc comment should be run past this.
+func TestDecisionRouterAgainstLiveEngine(t *testing.T) {
+	if os.Getenv("AGENTGO_DECISION_LIVE") != "1" {
+		t.Skip("set AGENTGO_DECISION_LIVE=1 and run a decision engine")
+	}
+
+	var opts []decision.LayaOption
+	if url := os.Getenv("AGENTGO_DECISION_URL"); url != "" {
+		opts = append(opts, decision.WithLayaURL(url))
+	}
+	engine := decision.NewLaya(opts...)
+	ctx := context.Background()
+	if err := engine.Ready(ctx); err != nil {
+		t.Skipf("no decision engine reachable: %v", err)
+	}
+
+	routes := []ModelRoute{
+		{Name: "fast", Model: "cheap-model",
+			Description: "A direct lookup or a short factual answer"},
+		{Name: "deep", Model: "smart-model",
+			Description: "Design, debugging, or a decision with consequences"},
+	}
+	router := NewDecisionRouter(engine, DefaultDecisionConfidence, routes...).(ConfidentModelRouter)
+
+	corpus := []routeCase{
+		{"What is a mutex?", "fast"},
+		{"Go 的 channel 是什么", "fast"},
+		{"What port does Postgres listen on by default?", "fast"},
+		{"列一下这个目录里的文件", "fast"},
+
+		{"Our checkout loses about 2% of orders under load. Find out why.", "deep"},
+		{"设计一套跨三个服务的幂等写入方案", "deep"},
+		{"Should we move the storage layer from SQLite to Postgres?", "deep"},
+		{"这个 goroutine 泄漏排查了两天了，帮我找出来", "deep"},
+	}
+
+	var routed, correct, unsure int
+	for _, c := range corpus {
+		route, confidence, ok := router.RouteWithConfidence(ctx, c.text)
+		if !ok {
+			unsure++
+			t.Logf("  unsure  (%.2f)          %s", confidence, c.text)
+			continue
+		}
+		routed++
+		mark := "  ok    "
+		if route.Name != c.want {
+			mark = "  WRONG "
+			correct--
+		}
+		correct++
+		t.Logf("%s %-5s (%.2f) want %-5s %s", mark, route.Name, confidence, c.want, c.text)
+	}
+
+	t.Logf("routed %d/%d, %d correct, %d left to the pool (floor %.2f)",
+		routed, len(corpus), correct, unsure, DefaultDecisionConfidence)
+
+	// Routing the wrong way costs money or quality; routing nowhere costs
+	// neither, so the bar is on the ones it acted on.
+	if routed > 0 && correct < routed {
+		t.Errorf("%d of %d routes went to the wrong model", routed-correct, routed)
+	}
+}

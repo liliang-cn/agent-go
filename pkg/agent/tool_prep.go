@@ -884,3 +884,22 @@ func collectAvailableTools(mcpService MCPToolExecutor, ragProcessor domain.Proce
 
 	return tools
 }
+
+// generationOptions builds the options for one model call on this run,
+// including which model should answer it.
+//
+// The model is read from r.cfg and not from a field on the Service, unlike
+// the thinking and prompt-cache knobs beside it. Those are pushed onto the
+// Service when a run starts and cleared when it ends, which is safe for one
+// run at a time and is not what a Service is: two runs in flight would each
+// be reading a setting the other wrote. A run's model has to come from the
+// run.
+func (r *Runtime) generationOptions(temperature float64, maxTokens int, toolChoice string) *domain.GenerationOptions {
+	opts := r.svc.toolGenerationOptions(temperature, maxTokens, toolChoice)
+	if opts == nil || r.cfg == nil {
+		return opts
+	}
+	opts.Model = r.cfg.Model
+	opts.Provider = r.cfg.Provider
+	return opts
+}

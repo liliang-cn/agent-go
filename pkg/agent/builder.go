@@ -129,6 +129,7 @@ type Builder struct {
 	planStore          PlanStore
 	decisionEngine     decision.Engine
 	decisionConfidence float64
+	modelRouter        ModelRouter
 	taskStore          TaskStore
 	enableSkills       bool
 	skillsPaths        []string
@@ -267,6 +268,43 @@ func (b *Builder) WithPlanStore(ps PlanStore) *Builder {
 func (b *Builder) WithDecisionEngine(engine decision.Engine, confidence float64) *Builder {
 	b.decisionEngine = engine
 	b.decisionConfidence = confidence
+	return b
+}
+
+// WithModelRouter chooses the model per run, for a caller that did not name
+// one itself.
+//
+// The router runs once, before the first turn. It is a preference like every
+// other model choice here: a route naming something the pool does not serve
+// is ignored by the pool, so watch RouteInfo rather than assuming.
+func (b *Builder) WithModelRouter(router ModelRouter) *Builder {
+	b.modelRouter = router
+	return b
+}
+
+// WithModelRoutes routes with the decision engine attached by
+// WithDecisionEngine, choosing between the routes by their descriptions.
+//
+//	agent.New("assistant").
+//	    WithDecisionEngine(decision.NewLaya(), 0).
+//	    WithModelRoutes(
+//	        agent.ModelRoute{Name: "fast", Model: "claude-haiku-4-5-20251001",
+//	            Description: "A direct lookup or a short factual answer"},
+//	        agent.ModelRoute{Name: "deep", Model: "claude-opus-5",
+//	            Description: "Design, debugging, or a decision with consequences"},
+//	    ).
+//	    Build()
+//
+// Describe the work, not the model: the engine reads the description and has
+// never heard of your bill. Fewer than two usable routes is not a choice and
+// nothing is asked.
+//
+// Call it after WithDecisionEngine; with no engine attached it does nothing.
+func (b *Builder) WithModelRoutes(routes ...ModelRoute) *Builder {
+	if b.decisionEngine == nil || len(routes) < 2 {
+		return b
+	}
+	b.modelRouter = NewDecisionRouter(b.decisionEngine, b.decisionConfidence, routes...)
 	return b
 }
 
@@ -746,6 +784,9 @@ func (b *Builder) build() (*Service, error) {
 	if b.decisionEngine != nil {
 		svc.decisionEngine = b.decisionEngine
 		svc.decisionConfidence = b.decisionConfidence
+	}
+	if b.modelRouter != nil {
+		svc.modelRouter = b.modelRouter
 	}
 	if b.planStore != nil {
 		svc.SetPlanStore(b.planStore)

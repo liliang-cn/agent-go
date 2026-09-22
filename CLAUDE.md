@@ -352,6 +352,55 @@ model per run needs a seam that does not exist — `RunConfig` carries no model,
 and neither does `SubagentSpec`. A classifier with nowhere to route is half the
 pattern.
 
+### Which model answers a run
+
+`RunConfig.Model` / `WithModel(model, provider…)`, `GenerationOptions.Model`,
+and a `ModelRouter` seam. Before these, a run could not be pointed at a model
+at all: `RunConfig` carried none, the pool's `GetWithHint` was unreachable from
+the agent layer, and `SubagentSpec` still carries none.
+
+The chain is options → `Pool.clientFor` → `GetWithHint`. A pool client is one
+provider and one model (`c.modelName` is baked into every request body), so
+routing means picking a different client, not rewriting a field.
+
+**It is a preference, and an unmet one is silent.** `selectWithHint` falls back
+to the pool's strategy when nothing matches, which is right — a routing mistake
+should not become an outage — but it means asking for the cheap model and
+getting the expensive one looks exactly like success. `GenerationResult.Model`
+/ `.Provider` say what actually answered, and `ActiveRun.Model` puts it in the
+status snapshot. A caller that routed and did not check has not routed.
+
+Precedence: an explicit `WithModel` wins, then the router, then the pool.
+Routing happens once, beside `resolveConstraints`, so every entry point behaves
+alike.
+
+`Runtime.generationOptions` reads the model from `r.cfg`, **not** from a knob
+on the Service. The thinking and prompt-cache knobs beside it are pushed onto
+the Service at run start and cleared at the end, which is safe for one run at a
+time and is not what a Service is — two runs in flight each read what the other
+wrote. That is a live bug for `WithThinking` on a concurrent service; the model
+deliberately does not join it.
+
+`NewDecisionRouter` routes with a decision engine, and what it measures is
+worth knowing before reaching for it. On laya-mlx, ten goals split evenly
+between a lookup and a hard problem:
+
+| form | right | mean confidence |
+|---|---|---|
+| `choice` over the descriptions | 8/10 | 0.48 |
+| `choice` over short labels | 7/10 | 0.51 |
+| `noul` "does this need extended reasoning?" | **5/10** | **0.94** |
+
+**Confident and wrong is worse than useless.** The noul form clears any floor
+and is a coin toss, so the floor protects nothing and hard problems go to the
+cheap model with a 0.94 beside them. The choice form is accurate and
+under-confident, so the floor turns doubt into "leave it to the pool" — at the
+cost of firing on one or two goals in eight. A router that declines is working;
+one that is sure and wrong is not. **A classifier's confidence is not evidence
+it is right until it has been checked against labels** — the constraint gate's
+confidence tracks correctness, this one's does not, and only measuring
+distinguishes them.
+
 ### Many callers through one Service
 
 `Service` was always safe to run many tasks through at once; what it had no

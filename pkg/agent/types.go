@@ -307,6 +307,17 @@ type RunConfig struct {
 	// pays for the extraction once, not once per round.
 	resolvedConstraints *RunConstraints
 
+	// Model and Provider choose which of a configured pool's clients answers
+	// this run's turns. Both empty — the usual case — leaves the choice to
+	// the pool.
+	//
+	// It is a preference. A pool with nothing matching falls back to its own
+	// strategy rather than failing the run, so a caller that cares whether
+	// the route took effect reads RunStatus.Model or the routing observer
+	// rather than assuming.
+	Model    string `json:"model,omitempty"`
+	Provider string `json:"provider,omitempty"`
+
 	// backgroundTaskID names the detached task this run belongs to, when it
 	// is one. Unexported because it is not a knob: StartBackgroundTask sets
 	// it, and a caller setting it by hand would only be lying about who owns
@@ -505,6 +516,22 @@ func WithRunID(runID string) RunOption {
 // UUID; tenant is ownership sitting alongside it.
 func WithTenant(tenant string) RunOption {
 	return func(c *RunConfig) { c.Tenant = strings.TrimSpace(tenant) }
+}
+
+// WithModel routes this run to a named model, and optionally to a named
+// provider when the same model is served by more than one.
+//
+//	svc.Run(ctx, goal, agent.WithModel("claude-haiku-4-5-20251001"))
+//
+// The model must be one of the pool's configured clients; a name nothing
+// serves is not an error, it is a preference the pool ignores.
+func WithModel(model string, provider ...string) RunOption {
+	return func(c *RunConfig) {
+		c.Model = strings.TrimSpace(model)
+		if len(provider) > 0 {
+			c.Provider = strings.TrimSpace(provider[0])
+		}
+	}
 }
 
 // WithBackgroundLabel gives a detached task a short name.

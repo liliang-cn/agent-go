@@ -166,6 +166,10 @@ type Service struct {
 	decisionEngine     decision.Engine
 	decisionConfidence float64
 
+	// modelRouter, when non-nil, chooses which model answers a run whose
+	// caller did not name one. See Builder.WithModelRouter.
+	modelRouter ModelRouter
+
 	// runMemory, when non-nil, is consulted at run start (recall) and run end
 	// (capture). See RunMemory and Builder.WithRunMemory.
 	runMemory RunMemory

@@ -281,7 +281,7 @@ func (r *Runtime) forceFinalSynthesis(ctx context.Context, state *queryLoopState
 	synthStart := time.Now()
 
 	// tools=nil + no tool_choice → the provider must return plain text.
-	res, err := r.svc.llmService.GenerateWithTools(ctx, sanitizeToolPairing(synth), nil, r.svc.toolGenerationOptions(r.temperature(), r.maxTokens(), ""))
+	res, err := r.svc.llmService.GenerateWithTools(ctx, sanitizeToolPairing(synth), nil, r.generationOptions(r.temperature(), r.maxTokens(), ""))
 	synthDur := time.Since(synthStart)
 	if err != nil || res == nil {
 		r.svc.emitObserver(func(o Observer) { o.OnModelEnd(ctx, modelInfo, nil, err) })
@@ -431,6 +431,11 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 	// enforcement uniform instead of dependent on which API the caller used.
 	r.emitTurnState(TurnStageResolvingConstraints, "resolving run constraints", 0, 0)
 	r.resolveConstraints(ctx, goal)
+
+	// Settle which model answers this run, in the same place and for the same
+	// reason: once, before anything is built, so every entry point behaves
+	// alike. It writes r.cfg.Model, which every turn's options then carry.
+	r.svc.routeRun(ctx, goal, r.cfg)
 
 	// 1. Prepare context (Memory & RAG) — with a timeout so a slow embedding
 	// model or unreachable LLM doesn't block the entire run forever.
@@ -593,7 +598,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 					ctx,
 					genMessages,
 					tools,
-					r.svc.toolGenerationOptions(r.temperature(), turnMaxTokens, ""),
+					r.generationOptions(r.temperature(), turnMaxTokens, ""),
 					r.buildStreamingTurnCallbacks(ctx, modelSpanID, &taskTerminalName, &taskTerminalResult, collector),
 				)
 				if err == nil || ctx.Err() != nil || attempt >= maxLLMRetries || !transientLLMError(err) {

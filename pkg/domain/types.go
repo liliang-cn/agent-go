@@ -157,6 +157,17 @@ type RealtimeGenerator interface {
 }
 
 type GenerationOptions struct {
+	// Model and Provider name which of a pool's configured clients should
+	// answer this call. Both empty — the usual case — leaves the choice to
+	// the pool's own strategy.
+	//
+	// They are a preference, not a guarantee: a pool with nothing matching
+	// falls back to its strategy rather than failing the call, which is why
+	// GenerationResult reports what actually answered. A caller that routed
+	// and did not check has not routed.
+	Model    string
+	Provider string
+
 	Temperature          float64
 	MaxTokens            int
 	Think                *bool
@@ -323,6 +334,13 @@ type GenerationResult struct {
 	// Usage is nil when the provider did not report token accounting
 	// (some streaming paths and OpenAI-compatible servers omit it).
 	Usage *TokenUsage `json:"usage,omitempty"`
+	// Model and Provider are what actually answered, which is not
+	// necessarily what GenerationOptions asked for: model selection is a
+	// preference and a pool with no match silently uses its own strategy.
+	// Without these a route that never happened looks exactly like one that
+	// did.
+	Model    string `json:"model,omitempty"`
+	Provider string `json:"provider,omitempty"`
 	// Parts carries non-text output the model produced — an image it drew,
 	// most often. Empty for the overwhelming majority of turns.
 	//

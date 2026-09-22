@@ -51,13 +51,20 @@ type ActiveRun struct {
 	// concurrency slot and spends money — but a host drawing "runs" and
 	// "background tasks" as two lists will double-count without this field.
 	BackgroundTaskID string `json:"background_task_id,omitempty"`
+	// Model and Provider are what this run was routed to, empty when it was
+	// left to the pool. A host serving several models needs this to answer
+	// "what is running on the expensive one right now", which is otherwise
+	// only visible to whoever called Run.
+	Model    string `json:"model,omitempty"`
+	Provider string `json:"provider,omitempty"`
 }
 
 // runHandle is an ActiveRun plus the means to stop it, plus whatever the loop
 // has published about how far it has got (see status.go). The registry half is
-// written once at registration; the progress half is replaced whole, which is
-// why it is an atomic pointer rather than more fields under cancelMu — a run
-// publishing every round must not contend with admission control.
+// written at registration and, for the routed model alone, once more when the
+// loop settles it; the progress half is replaced whole, which is why it is an
+// atomic pointer rather than more fields under cancelMu — a run publishing
+// every round must not contend with admission control.
 type runHandle struct {
 	ActiveRun
 	cancel   context.CancelFunc
@@ -131,6 +138,24 @@ func (s *Service) registerRun(ctx context.Context, rec ActiveRun) (context.Conte
 		s.cancelMu.Unlock()
 		cancel()
 	}, nil
+}
+
+// setRunModel records which model a run was routed to.
+//
+// It is the one thing about a registered run that is written after
+// registration: routing happens inside the loop, which is after the run is in
+// the registry, and a registry that cannot say what a run is costing is no use
+// to the operator deciding whether to stop it. Once per run, under the lock
+// the registry already uses.
+func (s *Service) setRunModel(runID, model, provider string) {
+	if s == nil || strings.TrimSpace(runID) == "" || (model == "" && provider == "") {
+		return
+	}
+	s.cancelMu.Lock()
+	defer s.cancelMu.Unlock()
+	if h, ok := s.runs[runID]; ok {
+		h.Model, h.Provider = model, provider
+	}
 }
 
 // Cancel stops every run currently in flight on this service and reports

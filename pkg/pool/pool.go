@@ -574,7 +574,7 @@ func (p *Pool) Close() error {
 
 // Generate is the pool-level Generate (acquires and releases a client automatically).
 func (p *Pool) Generate(ctx context.Context, prompt string, opts *domain.GenerationOptions) (string, error) {
-	client, err := p.Get()
+	client, err := p.clientFor(opts)
 	if err != nil {
 		return "", err
 	}
@@ -583,20 +583,49 @@ func (p *Pool) Generate(ctx context.Context, prompt string, opts *domain.Generat
 	return client.Generate(ctx, prompt, opts)
 }
 
+// clientFor picks the client for one call. Options naming a model or provider
+// are routed through the hint path; everything else takes the pool's strategy,
+// which is what every call did before routing existed.
+//
+// A hint that matches nothing falls back to the strategy rather than failing:
+// a pool is a set of clients someone configured, and refusing to answer
+// because a preference went unmet would turn a routing mistake into an
+// outage. The caller learns what really happened from GenerationResult.
+func (p *Pool) clientFor(opts *domain.GenerationOptions) (*Client, error) {
+	if opts == nil || (opts.Model == "" && opts.Provider == "") {
+		return p.Get()
+	}
+	return p.GetWithHint(SelectionHint{
+		PreferredProvider: opts.Provider,
+		PreferredModel:    opts.Model,
+	})
+}
+
+// stamp records which client answered, so a caller can tell a route that
+// happened from one that quietly did not.
+func stamp(res *domain.GenerationResult, c *Client) *domain.GenerationResult {
+	if res != nil && c != nil {
+		res.Model = c.GetModelName()
+		res.Provider = c.GetProviderName()
+	}
+	return res
+}
+
 // GenerateWithTools is the pool-level GenerateWithTools.
 func (p *Pool) GenerateWithTools(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions) (*domain.GenerationResult, error) {
-	client, err := p.Get()
+	client, err := p.clientFor(opts)
 	if err != nil {
 		return nil, err
 	}
 	defer p.Release(client)
 
-	return client.GenerateWithTools(ctx, messages, tools, opts)
+	res, err := client.GenerateWithTools(ctx, messages, tools, opts)
+	return stamp(res, client), err
 }
 
 // GenerateStructured is the pool-level GenerateStructured.
 func (p *Pool) GenerateStructured(ctx context.Context, prompt string, schema interface{}, opts *domain.GenerationOptions) (*domain.StructuredResult, error) {
-	client, err := p.Get()
+	client, err := p.clientFor(opts)
 	if err != nil {
 		return nil, err
 	}
