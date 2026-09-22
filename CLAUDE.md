@@ -300,6 +300,58 @@ gets reported to the user as the answer, but "still running" alone cannot
 distinguish work from a wedge — and waiting versus giving up are opposite
 decisions.
 
+### A cheap model for the decisions, the expensive one for the work
+
+`pkg/decision` plus `Builder.WithDecisionEngine(engine, confidence)`. A
+decision engine answers typed closed questions — choice, score, yes/no — in one
+forward pass and tens of milliseconds. It generates nothing. The runtime
+consults one before a model call it might not need to make, and the only thing
+it can change is whether that call happened.
+
+Entirely optional: with no engine attached every gate returns "ask as usual"
+on a nil check, and a service behaves exactly as it did before the package
+existed. Zero new module dependencies — the laya client is `net/http`.
+
+The first gate is constraint extraction. It skips the call only on a confident
+"this request asks for nothing", which is both the common case and the one an
+engine is surest about. It never supplies constraints: two of the three fields
+in `RunConstraints` carry the user's own words and a tool name from this run's
+catalog, and something that does not generate text cannot fill either.
+
+Four things this found, none of them reasonable to guess:
+
+- **A compound question has no answer.** One noul naming all three constraint
+  categories got 9 of 10 constrained goals wrong, several confidently —
+  "给张伟发一封邮件" came back as "asks for nothing" at 0.99. Asked as its own
+  question the same model on the same text answers "an email" at 1.00. Split
+  into three, on the same corpus: 7/20 skipped, **0 wrong**. Asking three costs
+  nothing — one forward pass answers every question it is given. **A closed
+  question must ask one thing.**
+- **Confidence is the engine's, not the winning probability.** They differ: a
+  choice whose top option sits at 0.58 can report 0.36, because the engine
+  accounts for how close the runner-up was. Recomputing it from the
+  distribution overstates certainty exactly where the answer is worst.
+- **The gate's confidence is the weakest answer's**, not the mean. The skip
+  needs all three right, and averaging lets a category nobody was sure about
+  ride in on the other two.
+- **`DefaultDecisionConfidence` is 0.80 because it was measured.** At 0.70 the
+  corpus also gives zero wrong skips, but the three dangerous goals sit at
+  0.33/0.65/0.68 — two within 0.02 of the floor. 0.80 keeps 0.12.
+
+`TestDecisionGateAgainstLiveEngine` (`AGENTGO_DECISION_LIVE=1`) is the
+calibration. Re-run it after touching `constraintGateQuestions` or the floor;
+neither can be reasoned about from the code, and a wrong skip means a run that
+asked for a file finishes without `file_task_must_write` ever knowing to look.
+
+`DecisionObserver` reports **every** consultation, including the ones that
+changed nothing. A gate that never clears its floor is pure added latency, and
+that is invisible in a log that only shows the times it worked.
+
+What this is not: it is not model routing. Choosing a different *generating*
+model per run needs a seam that does not exist — `RunConfig` carries no model,
+and neither does `SubagentSpec`. A classifier with nowhere to route is half the
+pattern.
+
 ### Many callers through one Service
 
 `Service` was always safe to run many tasks through at once; what it had no

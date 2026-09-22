@@ -404,7 +404,11 @@ func TestBackgroundStatusesKeepTasksApart(t *testing.T) {
 		statuses = svc.BackgroundStatuses()
 		joined := 0
 		for _, st := range statuses {
-			if st.Run != nil {
+			// Reported, not merely non-nil: registered and reporting are
+			// different moments, and Goal is one of the fields the loop only
+			// fills once it publishes. Waiting for the join alone made this
+			// read an un-published reading about one run in five.
+			if st.Run != nil && st.Run.Reported {
 				joined++
 			}
 		}
@@ -418,6 +422,9 @@ func TestBackgroundStatusesKeepTasksApart(t *testing.T) {
 	for _, st := range statuses {
 		if st.Run == nil {
 			t.Fatalf("task %s never joined its run", st.ID)
+		}
+		if !st.Run.Reported {
+			t.Fatalf("task %s: run never published a reading", st.ID)
 		}
 		if want := ids[st.ID]; st.Goal != want || st.Run.Goal != want {
 			t.Errorf("task %s: goal %q, run goal %q, want %q", st.ID, st.Goal, st.Run.Goal, want)

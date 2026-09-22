@@ -151,6 +151,27 @@ func (l *ActivityLog) OnLint(_ context.Context, info LintInfo) {
 	l.line("r%-3d lint     %s %s: %s", info.Round, verdict, info.Lint, oneLine(info.Reason, 200))
 }
 
+// OnDecision records one decision-engine consultation. It prints every
+// consultation, not only the useful ones: a gate that is always unsure is
+// costing latency and saving nothing, and that is invisible if the log only
+// shows the times it worked.
+func (l *ActivityLog) OnDecision(_ context.Context, info DecisionInfo) {
+	if info.Err != nil {
+		l.line("     decide   %s %s: unavailable (%s)", info.Gate, info.Engine, oneLine(info.Err.Error(), 120))
+		return
+	}
+	outcome := "ignored"
+	switch {
+	case info.Skipped:
+		outcome = "skipped the model call"
+	case info.Acted:
+		outcome = "acted"
+	}
+	l.line("     decide   %s %s -> %s conf=%.2f/%.2f %s, %s",
+		info.Gate, info.Engine, info.Label, info.Confidence, info.Floor,
+		shortDuration(info.Duration), outcome)
+}
+
 // OnModelRetry records a re-ask inside a model turn. Without it a turn that
 // took three attempts is indistinguishable from one that took one — the span
 // opens, time passes, an answer arrives — and a run quietly paying for two

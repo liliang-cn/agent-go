@@ -226,6 +226,10 @@ func (m *memoryModule) RegisterTools(registry *ToolRegistry) error {
 		if err != nil {
 			return nil, err
 		}
+		// A miss. Both paths out of here carry count: 0 — the hit path below
+		// already reports one, and without it on these two there is no way to
+		// tell a recall that matched fifty from one that matched none. Every
+		// caller that watches tools sees only that something came back.
 		if len(memories) == 0 {
 			allMems, _, listErr := m.svc.List(ctx, 10, 0)
 			if listErr == nil && len(allMems) > 0 {
@@ -233,9 +237,16 @@ func (m *memoryModule) RegisterTools(registry *ToolRegistry) error {
 				for _, mem := range allMems {
 					out = append(out, fmt.Sprintf("- [%s] %s", mem.Type, mem.Content))
 				}
-				return map[string]interface{}{"memories": strings.Join(out, "\n")}, nil
+				// And say so. The model was being handed ten unrelated
+				// memories with nothing marking them as unrelated, which is
+				// how a recall that found nothing ends up quoted as if it had.
+				return map[string]interface{}{
+					"memories": strings.Join(out, "\n"),
+					"count":    0,
+					"fallback": "nothing matched this query; these are the most recent memories instead, and may be unrelated",
+				}, nil
 			}
-			return map[string]interface{}{"memories": ""}, nil
+			return map[string]interface{}{"memories": "", "count": 0}, nil
 		}
 		var out []string
 		for _, mem := range memories {

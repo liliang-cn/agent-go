@@ -302,6 +302,16 @@ func (s *Service) resolveRunConstraints(ctx context.Context, goal string, cfg *R
 	if strings.TrimSpace(goal) == "" || s == nil || s.llmService == nil {
 		return declared
 	}
+	// A decision engine, when one is attached, can often settle this without
+	// the extraction: most goals ask for nothing, and "nothing" is both the
+	// common answer and the one such an engine is surest about. It only ever
+	// skips the call — it never produces constraints of its own, because the
+	// two categories it would have to fill carry the user's own words and a
+	// tool name from this run's catalog, and an engine that does not generate
+	// text cannot supply either.
+	if s.goalNeedsNoConstraints(ctx, goal) {
+		return declared
+	}
 	return s.extractRunConstraints(ctx, goal)
 }
 

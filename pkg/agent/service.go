@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/config"
+	"github.com/liliang-cn/agent-go/v3/pkg/decision"
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 	agentgolog "github.com/liliang-cn/agent-go/v3/pkg/log"
 	"github.com/liliang-cn/agent-go/v3/pkg/mcp"
@@ -156,6 +157,14 @@ type Service struct {
 	scratchpadMu sync.Mutex
 	scratchpad   *scratchpadManager
 	planStore    PlanStore
+
+	// decisionEngine, when non-nil, answers small closed questions in
+	// milliseconds so the runtime can skip a model call it would otherwise
+	// make. Optional by construction: every gate that consults it also works
+	// with it absent, and a service built without one behaves exactly as it
+	// did before the field existed. See Builder.WithDecisionEngine.
+	decisionEngine     decision.Engine
+	decisionConfidence float64
 
 	// runMemory, when non-nil, is consulted at run start (recall) and run end
 	// (capture). See RunMemory and Builder.WithRunMemory.

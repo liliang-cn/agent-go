@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/config"
+	"github.com/liliang-cn/agent-go/v3/pkg/decision"
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 	agentgolog "github.com/liliang-cn/agent-go/v3/pkg/log"
 	"github.com/liliang-cn/agent-go/v3/pkg/mcp"
@@ -116,21 +117,23 @@ type Builder struct {
 	// Custom Embedder service (optional - used with custom LLM for RAG/Memory)
 	embedService domain.Embedder
 
-	enableRAG         bool
-	ragCfg            RAGConfig
-	enableMCP         bool
-	mcpCfgPaths       []string
-	enableMemory      bool
-	memoryCfg         MemoryConfig
-	memoryService     domain.MemoryService
-	registerGraphTool bool
-	runMemory         RunMemory
-	planStore         PlanStore
-	taskStore         TaskStore
-	enableSkills      bool
-	skillsPaths       []string
-	requiredSkills    []string // Build() fails if any of these aren't installed
-	toolPolicy        ToolExecutionPolicy
+	enableRAG          bool
+	ragCfg             RAGConfig
+	enableMCP          bool
+	mcpCfgPaths        []string
+	enableMemory       bool
+	memoryCfg          MemoryConfig
+	memoryService      domain.MemoryService
+	registerGraphTool  bool
+	runMemory          RunMemory
+	planStore          PlanStore
+	decisionEngine     decision.Engine
+	decisionConfidence float64
+	taskStore          TaskStore
+	enableSkills       bool
+	skillsPaths        []string
+	requiredSkills     []string // Build() fails if any of these aren't installed
+	toolPolicy         ToolExecutionPolicy
 
 	tools        []*Tool // pre-registered via WithTool/WithTools
 	extraModules []Module
@@ -244,6 +247,26 @@ func (b *Builder) WithRunMemory(rm RunMemory) *Builder {
 // can carry on instead of starting over. See PlanStore and Service.PlanSummary.
 func (b *Builder) WithPlanStore(ps PlanStore) *Builder {
 	b.planStore = ps
+	return b
+}
+
+// WithDecisionEngine attaches a decision engine: a small model that answers
+// typed closed questions in milliseconds. The runtime consults it before a
+// model call it might be able to skip, and acts on the answer only when the
+// engine is at least confidence sure.
+//
+//	agent.New("assistant").
+//	    WithDecisionEngine(decision.NewLaya(), 0). // 0 takes the default floor
+//	    Build()
+//
+// It is entirely optional and it cannot change what a run decides — only
+// whether a call was needed to decide it. An engine that is slow, unsure,
+// unreachable or absent leaves the ordinary path to run. Attach a
+// DecisionObserver to see what it is answering and how often it is saving a
+// call; that is the only way to know whether it is earning its place.
+func (b *Builder) WithDecisionEngine(engine decision.Engine, confidence float64) *Builder {
+	b.decisionEngine = engine
+	b.decisionConfidence = confidence
 	return b
 }
 
@@ -719,6 +742,10 @@ func (b *Builder) build() (*Service, error) {
 	}
 	if b.permissionHandler != nil {
 		svc.SetPermissionHandler(b.permissionHandler)
+	}
+	if b.decisionEngine != nil {
+		svc.decisionEngine = b.decisionEngine
+		svc.decisionConfidence = b.decisionConfidence
 	}
 	if b.planStore != nil {
 		svc.SetPlanStore(b.planStore)
