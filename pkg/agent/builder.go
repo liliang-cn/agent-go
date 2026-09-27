@@ -141,6 +141,9 @@ type Builder struct {
 	extensions   []Extension
 	subagents    []SubagentSpec
 
+	subagentMaxDepth    int
+	subagentMaxParallel int
+
 	// delegation is nil unless WithDelegation was called; nil means the built-in
 	// delegation tools follow whether sub-agents were configured.
 	delegation *bool
@@ -898,6 +901,8 @@ func (b *Builder) build() (*Service, error) {
 	if len(b.subagents) > 0 {
 		RegisterSubagentTool(svc, b.subagents...)
 	}
+	svc.SetSubagentMaxDepth(b.subagentMaxDepth)
+	svc.SetSubagentMaxParallel(b.subagentMaxParallel)
 	// Applied after RegisterSubagentTool so an explicit WithDelegation still
 	// wins over what the sub-agent configuration implies.
 	svc.delegationTools = b.delegation

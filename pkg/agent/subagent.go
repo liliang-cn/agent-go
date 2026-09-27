@@ -74,6 +74,11 @@ type SubAgentConfig struct {
 	// checkout so writes land there instead of the parent repo. See
 	// WithSubAgentWorktree.
 	Worktree *WorktreeSpec
+
+	// Model and Provider route this sub-agent's run the way WithModel routes
+	// a top-level one. Empty defers to the service's router or the pool.
+	Model    string
+	Provider string
 }
 
 // SubAgent represents a wrapped agent execution with independent context
@@ -103,6 +108,9 @@ type SubAgent struct {
 	// Progress tracking
 	progressChan chan SubAgentProgress
 	events       chan *Event
+	// drained is set by RunAsync, whose caller reads events until close; it
+	// makes emitEvent deliver instead of dropping on a full buffer.
+	drained bool
 
 	// Worktree isolation (set up in Run when config.Worktree != nil).
 	activeWorktree *worktreeRuntime
@@ -386,7 +394,11 @@ func (sa *SubAgent) Run(parentCtx context.Context) (interface{}, error) {
 }
 
 // RunAsync starts the sub-agent in background
+//
+// The returned channel must be read until it closes: events are delivered,
+// not dropped, so a caller that stops reading stalls the sub-agent.
 func (sa *SubAgent) RunAsync(parentCtx context.Context) <-chan *Event {
+	sa.drained = true
 	go func() {
 		_, _ = sa.Run(parentCtx)
 	}()
@@ -451,6 +463,8 @@ func (sa *SubAgent) execute(ctx context.Context) (interface{}, error) {
 	cfg.TaskID = currentTaskID(sa.session)
 	cfg.ToolAllowlist = sa.config.ToolAllowlist
 	cfg.ToolDenylist = sa.config.ToolDenylist
+	cfg.Model = strings.TrimSpace(sa.config.Model)
+	cfg.Provider = strings.TrimSpace(sa.config.Provider)
 	cfg.SystemPromptOverride = svc.buildSystemPrompt(ctx, agentForRun) + subAgentToolPrompt
 
 	runtime := NewRuntime(svc, sa.session, cfg)

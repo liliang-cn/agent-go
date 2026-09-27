@@ -156,6 +156,14 @@ type Event struct {
 	// apart when the question is whether the prompt cache is working.
 	Usage *domain.TokenUsage `json:"usage,omitempty"`
 
+	// SubAgentID names the sub-agent run an event came from, and
+	// SubAgentDepth how deeply it is nested (1 = a child of the top-level
+	// run). Both are empty on the run's own events. Parallel children of one
+	// spec share an agent name and id, so this is what tells their streams
+	// apart once they are interleaved on one channel.
+	SubAgentID    string `json:"subagent_id,omitempty"`
+	SubAgentDepth int    `json:"subagent_depth,omitempty"`
+
 	Timestamp time.Time `json:"timestamp"`
 }
 

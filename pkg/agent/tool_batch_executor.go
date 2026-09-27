@@ -74,12 +74,24 @@ func (e *toolBatchExecutor) run() ([]ToolExecutionResult, error) {
 	for _, batch := range e.svc.partitionToolCalls(e.toolCalls(), e.session, e.currentAgent) {
 		if batch.isConcurrencySafe {
 			g, groupCtx := errgroup.WithContext(e.ctx)
+			// Parallel-safe sub-agents share a bounded number of slots; the
+			// other members of the batch are not throttled by them.
+			slots := make(chan struct{}, e.svc.SubagentMaxParallel())
 			for _, tc := range batch.toolCalls {
 				entry := e.entryForCall(tc)
 				if entry == nil {
 					continue
 				}
+				needsSlot := e.svc.isParallelSubagentCall(tc)
 				g.Go(func() error {
+					if needsSlot {
+						select {
+						case slots <- struct{}{}:
+							defer func() { <-slots }()
+						case <-groupCtx.Done():
+							return groupCtx.Err()
+						}
+					}
 					return e.executeEntry(groupCtx, entry)
 				})
 			}

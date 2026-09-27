@@ -1862,6 +1862,44 @@ func (r *Runtime) ensureToolResultConsistency() {
 	}
 }
 
+// executeGatedAsyncTool waits for the call's turn in its toolCallGate, then
+// runs it as executeAsyncTool does. A run stopped while the call was still
+// waiting never starts it: the call gets a cancellation result under its own
+// id, so the transcript still pairs every call with one answer.
+func (r *Runtime) executeGatedAsyncTool(ctx context.Context, tc domain.ToolCall, ticket *toolCallTicket, wg *sync.WaitGroup, results chan<- ToolExecutionResult) {
+	if ticket == nil {
+		r.executeAsyncTool(ctx, tc, wg, results)
+		return
+	}
+	defer ticket.finish()
+	if err := ticket.wait(ctx); err != nil {
+		r.finishAsyncTool(ctx, tc, nil, fmt.Errorf("not started: %w", err), wg, results)
+		return
+	}
+	r.executeAsyncTool(ctx, tc, wg, results)
+}
+
+// finishAsyncTool reports a call that was never executed through the same
+// events and result channel an executed one uses.
+func (r *Runtime) finishAsyncTool(ctx context.Context, tc domain.ToolCall, res interface{}, err error, wg *sync.WaitGroup, results chan<- ToolExecutionResult) {
+	if wg != nil {
+		defer wg.Done()
+	}
+	behavior := r.svc.toolInterruptBehavior(tc.Function.Name, r.currentAgent)
+	r.emitToolCall(tc.Function.Name, tc.Function.Arguments, behavior)
+	r.trackToolCall(tc)
+	r.emitToolResult(tc.Function.Name, res, err, behavior)
+	r.trackToolResult(tc.ID)
+	if results != nil {
+		results <- ToolExecutionResult{
+			ToolCallID: tc.ID,
+			ToolName:   tc.Function.Name,
+			Result:     toolResultForModel(res, err),
+			Error:      errorString(err),
+		}
+	}
+}
+
 // executeAsyncTool runs a tool in a separate goroutine and emits results
 func (r *Runtime) executeAsyncTool(ctx context.Context, tc domain.ToolCall, wg *sync.WaitGroup, results chan<- ToolExecutionResult) {
 	if wg != nil {

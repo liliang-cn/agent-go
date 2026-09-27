@@ -14,6 +14,14 @@ func (sa *SubAgent) emitEvent(evt *Event) {
 	if evt == nil || sa.events == nil {
 		return
 	}
+	// Under RunAsync somebody is ranging over the channel until it closes,
+	// so wait for them: dropping here lost a child's events whenever its
+	// consumer fell 64 behind, which parallel children sharing one parent
+	// channel make routine. Under Run nobody reads, so never block.
+	if sa.drained {
+		sa.events <- evt
+		return
+	}
 	select {
 	case sa.events <- evt:
 	default:

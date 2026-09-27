@@ -19,6 +19,19 @@ type runtimeAsyncToolCollector struct {
 	// into a full buffer from the stream callback would block the stream.
 	mu        sync.Mutex
 	collapsed []ToolExecutionResult
+
+	// gate orders the calls of this turn by what each declared; see
+	// toolCallGate. One per turn, created on the first dispatched call.
+	gate *toolCallGate
+}
+
+func (c *runtimeAsyncToolCollector) gateFor(maxParallelSubagents int) *toolCallGate {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.gate == nil {
+		c.gate = newToolCallGate(maxParallelSubagents)
+	}
+	return c.gate
 }
 
 func (c *runtimeAsyncToolCollector) addCollapsed(res ToolExecutionResult) {
@@ -125,8 +138,17 @@ func (r *Runtime) buildStreamingTurnCallbacks(ctx context.Context, spanID string
 				return nil
 			}
 
+			// Start it in the order the model emitted it: a call that did not
+			// declare itself concurrency-safe waits for everything before it,
+			// and everything after it waits for it. Deciding here, not in the
+			// goroutine, is what fixes the order — admit never blocks, so the
+			// stream keeps being read while earlier calls run.
+			ticket := collector.gateFor(r.svc.SubagentMaxParallel()).admit(
+				r.svc.isConcurrencySafeToolCall(tc, r.session, r.currentAgent),
+				r.svc.isParallelSubagentCall(tc),
+			)
 			collector.wg.Add(1)
-			go r.executeAsyncTool(ctx, tc, &collector.wg, collector.results)
+			go r.executeGatedAsyncTool(ctx, tc, ticket, &collector.wg, collector.results)
 			return nil
 		},
 		OnReasoning: func(text string) {

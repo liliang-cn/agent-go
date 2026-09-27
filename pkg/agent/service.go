@@ -207,6 +207,11 @@ type Service struct {
 	// work to, delegate_to_subagent only re-runs a clone of this same agent.
 	subagentsConfigured bool
 
+	// subagentLimits holds the fan-out and nesting bounds for the `task` tool
+	// and which named sub-agents declared themselves safe to run side by side.
+	// See subagent_limits.go.
+	subagentLimits subagentLimits
+
 	// delegationTools overrides that derivation when the caller has an opinion.
 	// nil means "follow subagentsConfigured"; see Builder.WithDelegation, and
 	// offersDelegationTools below for the whole rule.

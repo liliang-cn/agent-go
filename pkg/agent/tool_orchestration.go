@@ -51,6 +51,14 @@ func (s *Service) isConcurrencySafeToolCall(toolCall domain.ToolCall, session *S
 	req.ReadOnly = metadata.ReadOnly
 	req.Destructive = metadata.Destructive
 	req.ConcurrencySafe = metadata.ConcurrencySafe
+	// A `task` call is exclusive by default — a child can write the same
+	// workspace as its siblings — unless the sub-agent it names declared
+	// itself parallel-safe (SubagentSpec.Parallel). The metadata is per tool,
+	// and this one tool fronts many sub-agents, so the answer is per call.
+	if s.isParallelSubagentCall(toolCall) {
+		metadata.ConcurrencySafe = true
+		req.ConcurrencySafe = true
+	}
 
 	s.permissionMu.RLock()
 	policy := s.permissionPolicy

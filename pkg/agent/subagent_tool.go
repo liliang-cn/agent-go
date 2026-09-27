@@ -23,6 +23,18 @@ func (s *Service) executeSubAgentDelegation(ctx context.Context, currentAgent *A
 		return nil, fmt.Errorf("delegate: 'goal' argument is required")
 	}
 
+	// Nesting is bounded here, the one place both `task` and
+	// delegate_to_subagent pass through. Beyond the bound nothing runs; the
+	// caller gets told to do the work itself.
+	depth := subagentDepth(ctx)
+	maxDepth := s.SubagentMaxDepth()
+	subName, _ := args["_subagent_name"].(string)
+	if depth >= maxDepth {
+		return subagentDepthRefusal(depth, maxDepth, strings.TrimSpace(subName)), nil
+	}
+	childDepth := depth + 1
+	ctx = withSubagentDepth(ctx, childDepth)
+
 	maxTurns := 5
 	if mt, ok := args["max_turns"].(float64); ok {
 		maxTurns = int(mt)
@@ -39,6 +51,12 @@ func (s *Service) executeSubAgentDelegation(ctx context.Context, currentAgent *A
 
 	allowlist := stringSliceArg(args["tools_allowlist"])
 	denylist := stringSliceArg(args["tools_denylist"])
+	// A child at the bound is not offered a way to go deeper. The refusal
+	// above still answers a call it makes anyway; withholding the tools is
+	// what keeps it from spending a turn finding that out.
+	if childDepth >= maxDepth {
+		denylist = append(append([]string(nil), denylist...), delegationToolNames...)
+	}
 
 	var contextData map[string]interface{}
 	if ctxData, ok := args["context"].(map[string]interface{}); ok {
@@ -55,11 +73,15 @@ func (s *Service) executeSubAgentDelegation(ctx context.Context, currentAgent *A
 		WithSubAgentContext(contextData),
 	)
 	subAgent.config.Debug = runDebugFromContext(ctx)
-	subName, _ := args["_subagent_name"].(string)
 	subInstructions, _ := args["_subagent_instructions"].(string)
 	if strings.TrimSpace(subName) != "" && strings.TrimSpace(subInstructions) != "" {
 		subAgent.config.Agent = NewAgentWithConfig(strings.TrimSpace(subName), subInstructions, currentAgent.Tools())
 	}
+	// The spec's model rides the run's own model field — the same one
+	// WithModel sets — so routing, precedence and status reporting are the
+	// ones every run already has.
+	subAgent.config.Model, _ = args["_subagent_model"].(string)
+	subAgent.config.Provider, _ = args["_subagent_provider"].(string)
 
 	sink := eventSinkFromContext(ctx)
 	var (
@@ -69,7 +91,18 @@ func (s *Service) executeSubAgentDelegation(ctx context.Context, currentAgent *A
 	if sink == nil {
 		result, err = subAgent.Run(ctx)
 	} else {
+		// Stamp each event with the child that produced it. Siblings running
+		// side by side share one event channel and, when they come from one
+		// spec, one agent name and id; without this a host could not tell
+		// whose stream a line belongs to.
+		subID := subAgent.ID()
 		for evt := range subAgent.RunAsync(ctx) {
+			if evt != nil && evt.SubAgentID == "" {
+				stamped := *evt
+				stamped.SubAgentID = subID
+				stamped.SubAgentDepth = childDepth
+				evt = &stamped
+			}
 			sink(evt)
 		}
 		result, err = subAgent.GetResult()
@@ -116,6 +149,22 @@ type SubagentSpec struct {
 	Tools []string
 	// MaxTurns caps the sub-agent's tool-round budget (default 10).
 	MaxTurns int
+
+	// Parallel declares that several calls to this sub-agent — and calls to
+	// other concurrency-safe tools — may run at the same time within one
+	// turn. The default is false, and it is the right default: a child that
+	// writes the workspace its siblings read or write is not safe beside
+	// them. Set it for children that only read, or that each work in their
+	// own worktree. At most SubagentMaxParallel of them run at once
+	// (WithSubagentMaxParallel).
+	Parallel bool
+
+	// Model and Provider point this sub-agent's runs at a named model, exactly
+	// as WithModel does for a top-level run: a preference the pool honours
+	// when it has a matching client and falls back from when it does not.
+	// Empty leaves the choice to the service's router or the pool.
+	Model    string
+	Provider string
 }
 
 // RegisterSubagentTool installs the `task` tool on svc, giving the model one
@@ -139,6 +188,7 @@ func RegisterSubagentTool(svc *Service, specs ...SubagentSpec) {
 			continue
 		}
 		byName[strings.ToLower(name)] = spec
+		svc.subagentLimits.setParallel(name, spec.Parallel)
 		names = append(names, name)
 		fmt.Fprintf(&catalog, "\n- %s: %s", name, strings.TrimSpace(spec.Description))
 	}
@@ -189,6 +239,8 @@ func RegisterSubagentTool(svc *Service, specs ...SubagentSpec) {
 			"max_turns":              maxTurns,
 			"_subagent_name":         spec.Name,
 			"_subagent_instructions": spec.Instructions,
+			"_subagent_model":        strings.TrimSpace(spec.Model),
+			"_subagent_provider":     strings.TrimSpace(spec.Provider),
 		}
 		if len(spec.Tools) > 0 {
 			allow := make([]interface{}, 0, len(spec.Tools))
@@ -202,6 +254,9 @@ func RegisterSubagentTool(svc *Service, specs ...SubagentSpec) {
 			return nil, err
 		}
 		if m, ok := out.(map[string]interface{}); ok {
+			if refused, _ := m["refused"].(bool); refused {
+				return m, nil
+			}
 			return map[string]interface{}{
 				"ok":         true,
 				"agent_name": spec.Name,

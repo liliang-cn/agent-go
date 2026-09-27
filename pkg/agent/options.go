@@ -113,6 +113,26 @@ func (b *Builder) WithDelegation(enabled bool) *Builder {
 	return b
 }
 
+// WithSubagentMaxDepth bounds how deeply sub-agents may nest. The top-level
+// run is depth 0; with the default of 1 (DefaultSubagentMaxDepth) it may hand
+// work to a sub-agent, and that sub-agent may not hand it on. A child at the
+// bound is not offered the delegation tools, and a delegation it attempts
+// anyway returns a structured refusal telling it to do the work itself — a
+// result the model reads, not an error that ends the run. n < 1 keeps the
+// default.
+func (b *Builder) WithSubagentMaxDepth(n int) *Builder {
+	b.subagentMaxDepth = n
+	return b
+}
+
+// WithSubagentMaxParallel caps how many parallel-safe sub-agents
+// (SubagentSpec.Parallel) one turn runs at once; the rest wait for a slot.
+// n < 1 keeps DefaultSubagentMaxParallel (4).
+func (b *Builder) WithSubagentMaxParallel(n int) *Builder {
+	b.subagentMaxParallel = n
+	return b
+}
+
 // WithLengthLimits decides whether the system prompt carries the numeric length
 // anchors: "keep text between tool calls to ≤25 words. Keep final responses to
 // ≤100 words unless the task requires more detail."
