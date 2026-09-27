@@ -131,6 +131,29 @@ func (l *ActivityLog) OnToolEnd(_ context.Context, info ToolInfo, result any, er
 		oneLine(fmt.Sprintf("%v", result), 100))
 }
 
+// OnPermissionDecision prints the decisions a person reading the log would
+// look for: every refusal or handler failure, and every approval of a
+// destructive tool. Routine approvals and ungated calls stay out of it — the
+// tool> line already says those ran, and TraceWriter keeps the full record.
+func (l *ActivityLog) OnPermissionDecision(_ context.Context, d PermissionDecisionInfo) {
+	switch {
+	case d.Decision == PermissionDenied, d.Decision == PermissionDecisionError:
+	case d.Decision == PermissionAllowed && d.Destructive:
+	default:
+		return
+	}
+	who := string(d.Decider)
+	if d.DecidedBy != "" {
+		who += ":" + d.DecidedBy
+	}
+	detail := d.Reason
+	if d.Error != "" {
+		detail = d.Error
+	}
+	l.line("     perm    %s %s by=%s %s %s", d.Tool, d.Decision, who,
+		shortDuration(d.Duration), oneLine(detail, 120))
+}
+
 func (l *ActivityLog) OnSubAgentStart(_ context.Context, info SubAgentInfo) {
 	l.line("     sub>    %s %s", info.Name, oneLine(info.Goal, 120))
 }

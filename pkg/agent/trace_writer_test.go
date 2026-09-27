@@ -124,7 +124,10 @@ func TestTraceWriterEmitsParsableJSONLForAScriptedRun(t *testing.T) {
 		t.Error("the trace carried no resource readings")
 	}
 	events2 = agentEvents
-	want := []string{"model_start", "tool_start", "tool_end", "model_end", "checkpoint", "model_start", "model_end", "checkpoint"}
+	// The permission line sits inside the tool bracket because the gate runs
+	// inside dispatch; with no handler configured it says so (decider=none)
+	// rather than saying nothing.
+	want := []string{"model_start", "tool_start", "permission", "tool_end", "model_end", "checkpoint", "model_start", "model_end", "checkpoint"}
 	if len(events2) != len(want) {
 		t.Fatalf("event sequence = %v, want %v", events2, want)
 	}
@@ -139,6 +142,9 @@ func TestTraceWriterEmitsParsableJSONLForAScriptedRun(t *testing.T) {
 	byEvent := map[string]map[string]any{}
 	for _, l := range lines {
 		byEvent[l["event"].(string)] = l
+	}
+	if p := byEvent["permission"]; p["decision"] != "not_required" || p["decider"] != "none" || p["tool"] != "ping" {
+		t.Errorf("permission line = %v", p)
 	}
 	if got := byEvent["model_start"]["messages"]; got == nil {
 		t.Errorf("model_start carries no message count")
