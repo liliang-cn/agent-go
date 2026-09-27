@@ -73,6 +73,17 @@ type Runtime struct {
 	// once per run rather than once per round.
 	warnedUnpriced bool
 
+	// anchor is the provider's prompt count for a prefix of the history, so
+	// the compaction trigger measures what the provider measures
+	// (compaction_anchor.go). threshold/thresholdSource are the run's
+	// compaction threshold, resolved once. compaction tracks the summariser's
+	// failures and cooldown.
+	anchor          usageAnchor
+	requestOverhead int
+	threshold       int
+	thresholdSource string
+	compaction      compactionTracker
+
 	// outputParts collects non-text output the model produced across the
 	// run's turns — a picture it drew, most often. It is kept because a
 	// response whose content is null and whose image sits in a sibling
@@ -525,6 +536,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 
 		// 3. Build model inputs for CURRENT agent
 		tools, genMessages := r.svc.prepareTurnInputsWithConfig(ctx, r.currentAgent, messages, goal, r.cfg)
+		r.noteRequestOverhead(messages, genMessages, tools)
 
 		// --- DEBUG: LOG FULL PROMPT + TOOLS ---
 		if r.debugEnabled() {
@@ -651,9 +663,13 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 				outputTokens = result.Usage.CompletionTokens
 				cachedTokens = result.Usage.CachedPromptTokens
 				state.noteCacheUsage(cachedTokens, result.Usage.CacheWriteTokens)
+				// messages is exactly what this turn was built from; the
+				// provider's count of it anchors the next compaction check.
+				r.noteReportedUsage(result.Usage, messages)
 			} else {
 				tc := pool.NewTokenCounter()
-				inputTokens = tc.EstimateConversationTokens(genMessages, model)
+				inputTokens = tc.EstimateConversationTokens(genMessages, model) +
+					tc.EstimateToolsTokens(tools, model)
 				if result != nil {
 					outputTokens = tc.EstimateTokens(result.Content, model)
 				}
@@ -1008,109 +1024,6 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		return
 	}
 	r.completeRunWithStop(goal, final, messages, true, StopReasonMaxTurns)
-}
-
-// shouldAutoCompact returns true when the runtime should try to summarize
-// older history before continuing. Two triggers:
-//   - estimated context tokens exceed RunConfig.CompactionThresholdTokens
-//   - the budget signals diminishing returns (queryLoopState.shouldContinue)
-//
-// Disabled when RunConfig.DisableAutoCompaction is set or no LLM is
-// available. The compactor itself is a no-op when the middle slice is
-// too small to summarize, so callers can ask freely.
-func (r *Runtime) shouldAutoCompact(state *queryLoopState, messages []domain.Message) bool {
-	if r == nil || r.svc == nil || r.svc.llmService == nil {
-		return false
-	}
-	if r.cfg != nil && r.cfg.DisableAutoCompaction {
-		return false
-	}
-	if state == nil || len(messages) == 0 {
-		return false
-	}
-	threshold := 0
-	if r.cfg != nil {
-		threshold = r.cfg.CompactionThresholdTokens
-	}
-	model := ""
-	if r.svc != nil {
-		model = r.svc.Info().Model
-	}
-	if r.svc.shouldCompactByTokens(messages, model, threshold) {
-		return true
-	}
-	if state.shouldContinue() == budgetCompact {
-		return true
-	}
-	return false
-}
-
-// runCompactionRound performs one summarize-and-replace step. Returns the
-// new message slice and ok=true on success; the original messages and
-// ok=false when the summarizer fails (callers keep the unmodified history
-// rather than dropping context).
-func (r *Runtime) runCompactionRound(ctx context.Context, state *queryLoopState, messages []domain.Message, goal string) ([]domain.Message, bool) {
-	keepRecent := 0
-	if r.cfg != nil {
-		keepRecent = r.cfg.CompactionKeepRecent
-	}
-
-	reason := compactionTriggerTokenThreshold
-	if state.shouldContinue() == budgetCompact {
-		reason = compactionTriggerDiminishingReturns
-	}
-
-	hookData := HookData{
-		SessionID:      r.session.GetID(),
-		AgentID:        currentAgentID(r.currentAgent, r.svc.agent),
-		Goal:           goal,
-		MessagesBefore: append([]domain.Message(nil), messages...),
-		TriggerReason:  string(reason),
-		Metadata: map[string]interface{}{
-			"round":            state.CurrentRound,
-			"message_count":    len(messages),
-			"estimated_tokens": state.Budget.EstimatedTokens,
-		},
-	}
-	if r.svc != nil && r.svc.hooks != nil {
-		r.svc.hooks.Emit(HookEventPreCompact, hookData)
-	}
-
-	newMsgs, err := r.svc.compactMessages(ctx, messages, keepRecent)
-	if err != nil {
-		r.emit(EventTypeError, fmt.Sprintf("auto-compaction failed: %v", err))
-		return messages, false
-	}
-	if len(newMsgs) >= len(messages) {
-		// Compactor declined (history too short, or no middle to fold).
-		return messages, false
-	}
-
-	r.eventChan <- NewAnalyticsEvent(AnalyticsAutocompactTriggered, map[string]interface{}{
-		"round":            state.CurrentRound,
-		"trigger":          string(reason),
-		"messages_before":  len(messages),
-		"messages_after":   len(newMsgs),
-		"estimated_tokens": state.Budget.EstimatedTokens,
-	})
-	r.emit(EventTypeCompactBoundary, fmt.Sprintf(
-		"Compacted %d → %d messages (%s)",
-		len(messages), len(newMsgs), reason,
-	))
-	info := CompactionInfo{
-		TaskID:          currentTaskID(r.session),
-		RunID:           r.runID(),
-		SessionID:       r.sessionID(),
-		AgentName:       r.currentAgentName(),
-		Round:           state.CurrentRound,
-		Trigger:         string(reason),
-		MessagesBefore:  len(messages),
-		MessagesAfter:   len(newMsgs),
-		ContextTokens:   r.svc.estimateConversationTokens(messages),
-		EstimatedTokens: state.Budget.EstimatedTokens,
-	}
-	r.svc.emitObserver(func(o Observer) { o.OnCompaction(ctx, info) })
-	return newMsgs, true
 }
 
 // sessionID returns the current session id, or "" if unset.

@@ -506,7 +506,34 @@ func doctorCheckProvider(r *DoctorReport, prefix string, p pool.Provider) {
 	}
 	if prefix == "llm.provider" {
 		doctorCheckPricing(r, check, p)
+		doctorCheckWindow(r, check, p)
 	}
+}
+
+// doctorCheckWindow says whether the runtime knows this provider's models'
+// context windows. Like pricing, an unknown window is not an error: the run
+// compacts at the fixed CompactionDefaultThresholdTokens. But that number is a
+// third of a 200k window and more than a 32k window holds, so a run on an
+// unknown model is compacting at a size chosen for some other model.
+func doctorCheckWindow(r *DoctorReport, check string, p pool.Provider) {
+	models := p.Models
+	if m := strings.TrimSpace(p.ModelName); m != "" {
+		models = append([]string{m}, models...)
+	}
+	var unknown []string
+	for _, m := range models {
+		if _, known := pool.LookupModelWindow(m); !known {
+			unknown = append(unknown, m)
+		}
+	}
+	if len(unknown) == 0 {
+		r.add(check+".window", DoctorOK, "every model's context window is known", "")
+		return
+	}
+	r.add(check+".window", DoctorWarn,
+		"no context window for "+strings.Join(unknown, ", ")+
+			fmt.Sprintf("; compaction falls back to a fixed %d-token threshold", CompactionDefaultThresholdTokens),
+		"pool.RegisterModelWindow(\""+unknown[0]+"\", pool.ModelWindow{ContextTokens: …, MaxOutputTokens: …})")
 }
 
 // doctorCheckPricing says whether the runtime can put a price on this

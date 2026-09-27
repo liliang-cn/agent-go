@@ -192,8 +192,16 @@ func (l *ActivityLog) OnModelRetry(_ context.Context, info ModelRetryInfo) {
 // model just forgot everything older than the last few messages": the
 // re-reads that follow it are not the agent being redundant.
 func (l *ActivityLog) OnCompaction(_ context.Context, info CompactionInfo) {
-	l.line("r%-3d compact  %s msgs %d -> %d (context ~%d tokens)",
-		info.Round, info.Trigger, info.MessagesBefore, info.MessagesAfter, info.ContextTokens)
+	mode := info.Mode
+	if info.Degraded {
+		mode += " DEGRADED"
+	}
+	l.line("r%-3d compact  %s %s msgs %d -> %d (context ~%d -> ~%d tokens, threshold %d %s, clipped %d)",
+		info.Round, info.Trigger, mode, info.MessagesBefore, info.MessagesAfter,
+		info.ContextTokens, info.ContextTokensAfter, info.Threshold, info.ThresholdSource, info.ClippedResults)
+	if info.SummaryError != "" {
+		l.line("r%-3d compact  summariser failed: %s", info.Round, oneLine(info.SummaryError, 160))
+	}
 }
 
 // OnError records what went wrong. A long run's tool failures reach nobody

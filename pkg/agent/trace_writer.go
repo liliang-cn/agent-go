@@ -118,6 +118,13 @@ type traceLine struct {
 	MessagesAfter   int    `json:"messages_after,omitempty"`
 	ContextTokens   int    `json:"context_tokens,omitempty"`
 	EstimatedTokens int    `json:"estimated_tokens,omitempty"`
+	ContextAfter    int    `json:"context_tokens_after,omitempty"`
+	Threshold       int    `json:"threshold,omitempty"`
+	ThresholdSource string `json:"threshold_source,omitempty"`
+	Mode            string `json:"mode,omitempty"`
+	Clipped         int    `json:"clipped_results,omitempty"`
+	SummaryCalls    int    `json:"summary_calls,omitempty"`
+	Degraded        bool   `json:"degraded,omitempty"`
 	Marker          string `json:"marker,omitempty"`
 	Message         string `json:"message,omitempty"`
 	Error           string `json:"error,omitempty"`
@@ -421,6 +428,14 @@ func (t *TraceWriter) OnCompaction(_ context.Context, info CompactionInfo) {
 		MessagesAfter:   info.MessagesAfter,
 		ContextTokens:   info.ContextTokens,
 		EstimatedTokens: info.EstimatedTokens,
+		ContextAfter:    info.ContextTokensAfter,
+		Threshold:       info.Threshold,
+		ThresholdSource: info.ThresholdSource,
+		Mode:            info.Mode,
+		Clipped:         info.ClippedResults,
+		SummaryCalls:    info.SummaryCalls,
+		Degraded:        info.Degraded,
+		Error:           info.SummaryError,
 	}, time.Now())
 }
 
