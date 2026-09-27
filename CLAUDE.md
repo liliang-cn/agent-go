@@ -569,7 +569,7 @@ alongside `Result` in `ToolExecutionResult` but only `Result` was written into
 the tool message. `toolResultForModel` fixes that; an empty tool result is the
 one thing a model can only respond to by repeating the call.
 
-Shipped extensions live in `pkg/extensions/{logging,pii,usage}`; a `Service`
+Shipped extensions live in `pkg/extensions/{logging,pii,usage,bashguard}`; a `Service`
 runs many tasks concurrently and shares its extensions between them, so an
 extension's methods must be safe for that (`extension_concurrency_test.go`).
 
