@@ -18,9 +18,12 @@ func (s *Service) buildSystemPrompt(ctx context.Context, agent *Agent) string {
 // every refusal costs a wasted round.
 func (s *Service) buildSystemPromptForRun(ctx context.Context, agent *Agent, cfg *RunConfig) string {
 	forbid := cfg != nil && cfg.resolvedConstraints != nil && cfg.resolvedConstraints.ForbidTools
-	return renderSystemPromptSections(s.buildSystemPromptSections(ctx, agent, systemPromptOptions{
-		forbidTools: forbid,
-	}))
+	opts := systemPromptOptions{forbidTools: forbid}
+	if cfg != nil && cfg.projectInstructionsResolved {
+		opts.projectInstructions = cfg.projectInstructions
+		opts.projectInstructionsResolved = true
+	}
+	return renderSystemPromptSections(s.buildSystemPromptSections(ctx, agent, opts))
 }
 
 func (s *Service) buildMemoryPromptNote(ctx context.Context, agent *Agent) string {

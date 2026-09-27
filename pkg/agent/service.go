@@ -204,6 +204,10 @@ type Service struct {
 	// other callers' outputs are shaped by them. See Builder.WithLengthLimits.
 	omitLengthLimits bool
 
+	// projectInstructions is nil unless the builder enabled project
+	// instruction files. See Builder.WithProjectInstructions.
+	projectInstructions *ProjectInstructions
+
 	// Public access to underlying services
 	LLM     domain.Generator
 	MCP     *mcp.Service // Full access to MCP service (Chat, StartServers, etc.)
@@ -580,6 +584,7 @@ func (s *Service) startRun(ctx context.Context, goal string, cfg *RunConfig) (*S
 	if cfg.resumedNotes == "" {
 		cfg.resumedNotes = s.notesForRun(ctx)
 	}
+	s.resolveProjectInstructions(cfg)
 
 	startedAt := time.Now()
 	s.persistRunTaskState(session, taskID, taskRunStateOptions{

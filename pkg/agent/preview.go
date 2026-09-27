@@ -115,6 +115,7 @@ func (s *Service) Preview(ctx context.Context, goal string, opts ...RunOption) (
 	if cfg.resumedNotes == "" {
 		cfg.resumedNotes = s.notesForRun(ctx)
 	}
+	s.resolveProjectInstructions(cfg)
 
 	constraints, skipped := s.previewConstraints(goal, cfg)
 	cfg.resolvedConstraints = &constraints
