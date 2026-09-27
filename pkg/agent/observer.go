@@ -239,6 +239,35 @@ type CompactionInfo struct {
 	// same field once, and the log line read "est 317280 tokens" while
 	// compacting a 25k conversation.
 	EstimatedTokens int
+
+	// ContextTokensAfter is the same measure as ContextTokens, after this step.
+	ContextTokensAfter int
+	// Threshold is the context size the run compacts at, and ThresholdSource
+	// where it came from: CompactionThresholdConfigured,
+	// CompactionThresholdModelWindow, or CompactionThresholdDefault — the
+	// last meaning nothing knew the model's window and the fixed default was
+	// used.
+	Threshold       int
+	ThresholdSource string
+	// Mode is how the history was shrunk: CompactionModeClip (old tool
+	// results replaced by stubs, no model call), CompactionModeSummary (a
+	// model-written summary), or CompactionModeFallback (a mechanical summary,
+	// because the summariser kept failing).
+	Mode string
+	// ClippedResults is how many tool results were replaced by stubs.
+	ClippedResults int
+	// TrimmedResults is how many oversized recent tool results were cut to
+	// their head and tail.
+	TrimmedResults int
+	// NoProgress is true when the step freed less than a tenth of the
+	// context; compaction then holds off until the context grows again.
+	NoProgress bool
+	// SummaryCalls is how many summariser calls this step made (0 or 1).
+	SummaryCalls int
+	// SummaryError is the summariser's error when it was asked and failed.
+	SummaryError string
+	// Degraded is true when the history was folded without a model summary.
+	Degraded bool
 }
 
 // ErrorInfo describes one error the runtime reported.

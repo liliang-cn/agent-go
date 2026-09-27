@@ -385,9 +385,19 @@ type RunConfig struct {
 	// older history into a summary and continues. CompactionKeepRecent
 	// is the number of most-recent rounds preserved verbatim (default 6).
 	// Zero values fall back to defaults; use WithAutoCompaction to set.
+	//
+	// A zero threshold is derived from the model's context window
+	// (pool.RegisterModelWindow); when the window is unknown the run falls
+	// back to CompactionDefaultThresholdTokens and says so.
 	CompactionThresholdTokens int
 	CompactionKeepRecent      int
 	DisableAutoCompaction     bool
+	// CompactionClipAfterRounds is how many of the most recent tool rounds
+	// keep their results verbatim when compaction clips; older results become
+	// a one-line stub before any summary is asked for. Zero means
+	// CompactionDefaultClipAfterRounds; negative turns clipping off. Set with
+	// WithCompactionClipping.
+	CompactionClipAfterRounds int
 	// PlanKey is the scratchpad list this run's plan lives under. Empty means
 	// the scratchpad's own default. RunSegments sets it so every segment of a
 	// task reads and writes one list, scoped to the task.
@@ -646,6 +656,16 @@ func WithAutoCompaction(thresholdTokens, keepRecent int) RunOption {
 			c.CompactionKeepRecent = keepRecent
 		}
 	}
+}
+
+// WithCompactionClipping sets how many of the most recent tool rounds keep
+// their results verbatim when compaction runs. Results older than that are
+// replaced by a one-line stub (tool, arguments, size, first and last line)
+// before any summary is asked for, and when that alone brings the context
+// under the threshold no summary is asked for at all. Pass a negative number
+// to turn clipping off; 0 keeps CompactionDefaultClipAfterRounds.
+func WithCompactionClipping(keepRounds int) RunOption {
+	return func(c *RunConfig) { c.CompactionClipAfterRounds = keepRounds }
 }
 
 // WithoutAutoCompaction disables in-loop compaction entirely so the runtime

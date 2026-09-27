@@ -115,13 +115,18 @@ func TestCompactMessages_PreservesHeadAndTail(t *testing.T) {
 		t.Errorf("system head not preserved: %+v", out[0])
 	}
 
-	// Second message is the summary, as a user turn: a system-role summary
-	// followed by an assistant tool_calls tail is a hard 400 on Gemini.
-	if out[1].Role != "user" || !strings.Contains(out[1].Content, "COMPACTED CONVERSATION SUMMARY") {
-		t.Errorf("expected summary as second message with user role, got: %+v", out[1])
+	// The first user message — the goal — is protected like the system head.
+	if out[1].Role != "user" || out[1].Content != "old turn 1" {
+		t.Errorf("first user message not preserved: %+v", out[1])
 	}
-	if !strings.Contains(out[1].Content, "tool Y returned Z") {
-		t.Errorf("summary content missing: %s", out[1].Content)
+
+	// Then the summary, as a user turn: a system-role summary followed by an
+	// assistant tool_calls tail is a hard 400 on Gemini.
+	if out[2].Role != "user" || !strings.Contains(out[2].Content, "COMPACTED CONVERSATION SUMMARY") {
+		t.Errorf("expected summary as third message with user role, got: %+v", out[2])
+	}
+	if !strings.Contains(out[2].Content, "tool Y returned Z") {
+		t.Errorf("summary content missing: %s", out[2].Content)
 	}
 
 	// Tail (last 3) preserved verbatim
@@ -312,7 +317,9 @@ func TestRuntime_AutoCompaction_FullFlow(t *testing.T) {
 		Description("Echo input").
 		Param("msg", TypeString, "message", Required()).
 		Handler(func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-			return fmt.Sprintf("echoed:%v", args["msg"]), nil
+			// Big enough that folding the middle is worth a summary; a
+			// middle smaller than a tenth of the context is not summarised.
+			return fmt.Sprintf("echoed:%v %s", args["msg"], strings.Repeat("padding ", 600)), nil
 		}).
 		Build())
 
