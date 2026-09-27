@@ -53,6 +53,8 @@ type toolRoundOutcome struct {
 	Terminal    string
 	Blocked     bool
 	AwaitAnswer bool
+	// Truncations are the tool results the output cap cut for the model.
+	Truncations []ToolOutputTruncation
 }
 
 // dropSupersededDuplicateHints removes a "not run again" hint for any call
@@ -86,10 +88,11 @@ func dropSupersededDuplicateHints(duplicates, executed []ToolExecutionResult) []
 func (s *Service) buildToolRoundOutcome(messages []domain.Message, taskID string, result *domain.GenerationResult, duplicateToolResults, toolResults []ToolExecutionResult, filteredToolCalls []domain.ToolCall) toolRoundOutcome {
 	duplicateToolResults = dropSupersededDuplicateHints(duplicateToolResults, toolResults)
 	allResults := append(append([]ToolExecutionResult(nil), duplicateToolResults...), toolResults...)
-	nextMessages := s.appendToolRoundToMessages(messages, taskID, result, allResults)
+	nextMessages, cuts := s.appendToolRoundToMessages(messages, taskID, result, allResults)
 	outcome := toolRoundOutcome{
 		Messages:    nextMessages,
 		ToolResults: allResults,
+		Truncations: cuts,
 	}
 	if blocked := blockedToolExecutionResult(allResults); blocked != "" {
 		outcome.Terminal = blocked

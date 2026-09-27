@@ -175,6 +175,13 @@ func (l *ActivityLog) OnCompaction(_ context.Context, info CompactionInfo) {
 		info.Round, info.Trigger, info.MessagesBefore, info.MessagesAfter, info.ContextTokens)
 }
 
+// OnToolOutputTruncated records a tool result cut down before the model saw
+// it — the model was handed the head and the tail, not the whole thing.
+func (l *ActivityLog) OnToolOutputTruncated(_ context.Context, info ToolOutputTruncation) {
+	l.line("r%-3d truncate %s %dB -> %dB (limit %d)",
+		info.Round, info.ToolName, info.OriginalBytes, info.KeptBytes, info.Limit)
+}
+
 // OnError records what went wrong. A long run's tool failures reach nobody
 // otherwise: its events go to whoever called RunStream, and on a run that
 // lasts hours that is a channel nobody is reading.

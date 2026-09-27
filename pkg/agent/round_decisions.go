@@ -39,6 +39,7 @@ type postToolRoundDecision struct {
 	AwaitAnswer bool
 	Reason      string
 	Transition  string
+	Truncations []ToolOutputTruncation
 }
 
 type handoffDecision struct {
@@ -68,6 +69,7 @@ func (s *Service) decidePostToolRound(messages []domain.Message, taskID string, 
 		Terminal:    outcome.Terminal,
 		Blocked:     outcome.Blocked,
 		AwaitAnswer: outcome.AwaitAnswer,
+		Truncations: outcome.Truncations,
 		Reason:      "tool batch completed; continue to next turn",
 		Transition:  queryLoopTransitionToolBatch,
 	}

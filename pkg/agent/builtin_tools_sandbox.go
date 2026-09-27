@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/sandbox"
 )
@@ -77,9 +78,38 @@ func toolErr(msg string) map[string]interface{} {
 	return map[string]interface{}{"ok": false, "error": msg}
 }
 
-// withLineNumbers renders text Claude-Code style: "   1\tfoo". offset is 0-based,
-// limit caps the number of lines returned (0 = all).
-func withLineNumbers(content string, offset, limit int) string {
+// fs_read paging. A read with no limit used to return the whole file, so one
+// call on a 10,000-line log put a megabyte into the conversation and every
+// later round paid for it again. With no limit a read now returns one page —
+// at most fsReadDefaultLines lines and at most fsReadPageBytes of rendered
+// text, whichever comes first — and says where the next page starts. An
+// explicit limit is honoured as given; the uniform tool-output cap
+// (tool_output_cap.go) is the backstop for that case.
+const (
+	fsReadDefaultLines = 2000
+	fsReadPageBytes    = 24000
+	// fsReadMaxLineChars bounds one rendered line, so a minified file whose
+	// single line is a megabyte still pages instead of arriving whole.
+	fsReadMaxLineChars = 2000
+)
+
+// readPage is one rendered page of a file.
+type readPage struct {
+	Text       string
+	TotalLines int
+	// StartLine and EndLine are 1-based and inclusive; both 0 when the page
+	// is empty.
+	StartLine int
+	EndLine   int
+	// NextOffset is the offset to pass to continue, or -1 when the page ran
+	// to the end of the file.
+	NextOffset int
+}
+
+// withLineNumbers renders text Claude-Code style: "   1\tfoo". offset is
+// 0-based. limit > 0 returns up to that many lines; limit <= 0 returns one
+// default page (fsReadDefaultLines lines, fsReadPageBytes bytes).
+func withLineNumbers(content string, offset, limit int) readPage {
 	lines := strings.Split(content, "\n")
 	// Drop a trailing empty element produced by a final newline so we don't
 	// number a phantom blank line.
@@ -92,15 +122,45 @@ func withLineNumbers(content string, offset, limit int) string {
 	if offset > len(lines) {
 		offset = len(lines)
 	}
+	maxLines, maxBytes := limit, 0
+	if limit <= 0 {
+		maxLines, maxBytes = fsReadDefaultLines, fsReadPageBytes
+	}
 	end := len(lines)
-	if limit > 0 && offset+limit < end {
-		end = offset + limit
+	if offset+maxLines < end {
+		end = offset + maxLines
 	}
 	var b strings.Builder
-	for i := offset; i < end; i++ {
-		fmt.Fprintf(&b, "%6d\t%s\n", i+1, lines[i])
+	i := offset
+	for ; i < end; i++ {
+		line := lines[i]
+		if len(line) > fsReadMaxLineChars {
+			cut := fsReadMaxLineChars
+			for cut > 0 && !utf8.RuneStart(line[cut]) {
+				cut--
+			}
+			line = fmt.Sprintf("%s… [line truncated: %d of %d bytes shown]", line[:cut], cut, len(line))
+		}
+		rendered := fmt.Sprintf("%6d\t%s\n", i+1, line)
+		// Always return at least one line, or a page could never advance.
+		if maxBytes > 0 && i > offset && b.Len()+len(rendered) > maxBytes {
+			break
+		}
+		b.WriteString(rendered)
 	}
-	return b.String()
+	page := readPage{TotalLines: len(lines), NextOffset: -1}
+	if i > offset {
+		page.StartLine, page.EndLine = offset+1, i
+	}
+	if i < len(lines) {
+		page.NextOffset = i
+		// The trailer sits in the text itself, where the model reads, not
+		// only in a structured field it may not look at.
+		fmt.Fprintf(&b, "[lines %d-%d of %d shown; call fs_read with offset=%d to continue]\n",
+			page.StartLine, page.EndLine, page.TotalLines, i)
+	}
+	page.Text = b.String()
+	return page
 }
 
 // RegisterSandboxTools registers the built-in filesystem and shell tools on a
@@ -124,13 +184,13 @@ func RegisterSandboxTools(svc *Service, sb sandbox.Sandbox) {
 	if !has("fs_read") {
 		svc.AddToolWithMetadata(
 			"fs_read",
-			"Read a file in the workspace and return its text with line numbers (e.g. \"   1\\tfoo\"). Optional offset (first line to read, 0-based) and limit (max lines to read).",
+			"Read a file in the workspace and return its text with line numbers (e.g. \"   1\\tfoo\"). Without a limit it returns one page (up to 2000 lines or about 24KB); total_lines and, when more remains, next_offset say where to continue. Optional offset (first line to read, 0-based) and limit (max lines to read).",
 			map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"path":   map[string]interface{}{"type": "string", "description": "Path relative to the workspace root"},
 					"offset": map[string]interface{}{"type": "integer", "description": "Start line (0-based), default 0"},
-					"limit":  map[string]interface{}{"type": "integer", "description": "Max lines to read; 0 means all"},
+					"limit":  map[string]interface{}{"type": "integer", "description": "Max lines to read; omit or 0 for one default page"},
 				},
 				"required": []string{"path"},
 			},
@@ -143,8 +203,16 @@ func RegisterSandboxTools(svc *Service, sb sandbox.Sandbox) {
 				if err != nil {
 					return toolErr(err.Error()), nil
 				}
-				out := withLineNumbers(string(data), toolArgInt(args, "offset"), toolArgInt(args, "limit"))
-				return toolOK(map[string]interface{}{"path": path, "content": out}), nil
+				page := withLineNumbers(string(data), toolArgInt(args, "offset"), toolArgInt(args, "limit"))
+				out := map[string]interface{}{
+					"path":        path,
+					"content":     page.Text,
+					"total_lines": page.TotalLines,
+				}
+				if page.NextOffset >= 0 {
+					out["next_offset"] = page.NextOffset
+				}
+				return toolOK(out), nil
 			},
 			roMeta,
 		)

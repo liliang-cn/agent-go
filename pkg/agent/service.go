@@ -180,6 +180,10 @@ type Service struct {
 	// the endpoint, which only the person configuring it knows.
 	promptCache domain.PromptCacheMode
 
+	// toolOutputLimit caps one tool result as the model sees it. 0 means
+	// DefaultToolOutputLimit, negative means no cap. See tool_output_cap.go.
+	toolOutputLimit int
+
 	// notesFile is the workspace file whose contents ride in every later run's
 	// hand-off. Empty means DefaultNotesFile. See notes_handoff.go.
 	notesFile string

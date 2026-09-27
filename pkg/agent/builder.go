@@ -149,6 +149,8 @@ type Builder struct {
 	autonomy      AutonomyProfile
 	promptCache   domain.PromptCacheMode
 	notesFile     string
+	// toolOutputLimit is WithToolOutputLimit: 0 = default, <0 = off.
+	toolOutputLimit int
 
 	// cached result
 	svc *Service
@@ -814,6 +816,7 @@ func (b *Builder) build() (*Service, error) {
 		RegisterDeliverableTools(svc, b.sandbox)
 	}
 	svc.promptCache = b.promptCache
+	svc.toolOutputLimit = b.toolOutputLimit
 	svc.notesFile = b.notesFile
 	if isRoundBudgetSet(b.autonomy.MaxRounds) || b.autonomy.LintRetryBudget > 0 || b.autonomy.Scratchpad ||
 		b.autonomy.CheckpointEveryRounds > 0 {
