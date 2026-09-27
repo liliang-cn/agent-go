@@ -256,6 +256,12 @@ type CompactionInfo struct {
 	Mode string
 	// ClippedResults is how many tool results were replaced by stubs.
 	ClippedResults int
+	// TrimmedResults is how many oversized recent tool results were cut to
+	// their head and tail.
+	TrimmedResults int
+	// NoProgress is true when the step freed less than a tenth of the
+	// context; compaction then holds off until the context grows again.
+	NoProgress bool
 	// SummaryCalls is how many summariser calls this step made (0 or 1).
 	SummaryCalls int
 	// SummaryError is the summariser's error when it was asked and failed.

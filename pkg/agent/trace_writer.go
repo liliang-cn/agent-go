@@ -123,6 +123,8 @@ type traceLine struct {
 	ThresholdSource string `json:"threshold_source,omitempty"`
 	Mode            string `json:"mode,omitempty"`
 	Clipped         int    `json:"clipped_results,omitempty"`
+	Trimmed         int    `json:"trimmed_results,omitempty"`
+	NoProgress      bool   `json:"no_progress,omitempty"`
 	SummaryCalls    int    `json:"summary_calls,omitempty"`
 	Degraded        bool   `json:"degraded,omitempty"`
 	Marker          string `json:"marker,omitempty"`
@@ -433,6 +435,8 @@ func (t *TraceWriter) OnCompaction(_ context.Context, info CompactionInfo) {
 		ThresholdSource: info.ThresholdSource,
 		Mode:            info.Mode,
 		Clipped:         info.ClippedResults,
+		Trimmed:         info.TrimmedResults,
+		NoProgress:      info.NoProgress,
 		SummaryCalls:    info.SummaryCalls,
 		Degraded:        info.Degraded,
 		Error:           info.SummaryError,

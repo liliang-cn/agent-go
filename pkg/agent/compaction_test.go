@@ -317,7 +317,9 @@ func TestRuntime_AutoCompaction_FullFlow(t *testing.T) {
 		Description("Echo input").
 		Param("msg", TypeString, "message", Required()).
 		Handler(func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-			return fmt.Sprintf("echoed:%v", args["msg"]), nil
+			// Big enough that folding the middle is worth a summary; a
+			// middle smaller than a tenth of the context is not summarised.
+			return fmt.Sprintf("echoed:%v %s", args["msg"], strings.Repeat("padding ", 600)), nil
 		}).
 		Build())
 

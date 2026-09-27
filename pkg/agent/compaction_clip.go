@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 )
@@ -29,6 +30,13 @@ const (
 	// clipStubMarker opens every stub, so a stub is never clipped again and a
 	// reader can tell one from real output.
 	clipStubMarker = "[clipped tool result]"
+	// clipTrimMarker sits in the middle of a result trimmed to head and tail.
+	clipTrimMarker = "[… trimmed:"
+	// clipOversizeChars is the size above which a tool result is trimmed to
+	// head and tail even inside the recent rounds (see
+	// trimOversizedToolResults); trimKeepChars is how much of each end stays.
+	clipOversizeChars = 12000
+	trimKeepChars     = 2000
 	// clipLineChars bounds the first/last line quoted in a stub.
 	clipLineChars = 120
 	// clipArgsChars bounds the argument summary in a stub.
@@ -55,22 +63,7 @@ func clipOldToolResults(msgs []domain.Message, protectEnd, keepRounds int) ([]do
 	if keepRounds < 0 {
 		return msgs, 0
 	}
-	// Find the assistant message that opens the oldest round still kept
-	// verbatim; everything before it is eligible.
-	boundary := len(msgs)
-	rounds := 0
-	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i].Role == "assistant" && len(msgs[i].ToolCalls) > 0 {
-			if rounds == keepRounds {
-				break
-			}
-			rounds++
-			boundary = i
-		}
-	}
-	if keepRounds == 0 {
-		boundary = len(msgs)
-	}
+	boundary := toolRoundBoundary(msgs, keepRounds)
 
 	calls := map[string]domain.ToolCall{}
 	for _, m := range msgs[:boundary] {
@@ -100,6 +93,85 @@ func clipOldToolResults(msgs []domain.Message, protectEnd, keepRounds int) ([]do
 		return msgs, 0
 	}
 	return out, clipped
+}
+
+// toolRoundBoundary returns the index of the assistant message that opens the
+// oldest of the last keepRounds tool rounds; everything before it is older.
+// keepRounds <= 0 returns len(msgs).
+func toolRoundBoundary(msgs []domain.Message, keepRounds int) int {
+	boundary := len(msgs)
+	if keepRounds <= 0 {
+		return boundary
+	}
+	rounds := 0
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "assistant" && len(msgs[i].ToolCalls) > 0 {
+			if rounds == keepRounds {
+				break
+			}
+			rounds++
+			boundary = i
+		}
+	}
+	return boundary
+}
+
+// trimOversizedToolResults cuts any tool result longer than capChars down to
+// its head and tail, whatever its age — except in the newest keepNewest tool
+// rounds. The newest round's results have not been shown to the model yet
+// (compaction runs before the turn that reads them), so they are always kept
+// whole.
+//
+// This is the part age-based clipping cannot reach. Seen live: one bash call
+// printed a whole log, the prompt went from 23k to 85k tokens in a round, and
+// because that result sat inside the recent rounds clipping stubbed nothing
+// and two summary calls folded the small middle around it, freeing nothing.
+// Head and tail are kept rather than a one-line stub because a result this
+// recent is often still being worked from.
+func trimOversizedToolResults(msgs []domain.Message, protectEnd, keepNewest, capChars int) ([]domain.Message, int) {
+	if capChars <= 0 {
+		return msgs, 0
+	}
+	if keepNewest < 1 {
+		keepNewest = 1
+	}
+	boundary := toolRoundBoundary(msgs, keepNewest)
+	var out []domain.Message
+	trimmed := 0
+	for i := protectEnd; i < boundary; i++ {
+		m := msgs[i]
+		if m.Role != "tool" || len(m.Parts) > 0 || len(m.Content) <= capChars ||
+			strings.HasPrefix(m.Content, clipStubMarker) {
+			continue
+		}
+		if out == nil {
+			out = append([]domain.Message(nil), msgs...)
+		}
+		out[i].Content = trimHeadTail(m.Content, trimKeepChars)
+		trimmed++
+	}
+	if trimmed == 0 {
+		return msgs, 0
+	}
+	return out, trimmed
+}
+
+// trimHeadTail keeps keep characters from each end of s and says, in the
+// middle, how much was taken out and how to get it back. Deterministic, so a
+// trimmed history stays byte-stable.
+func trimHeadTail(s string, keep int) string {
+	if len(s) <= 2*keep {
+		return s
+	}
+	head := truncateRunes(s, keep)
+	tailStart := len(s) - keep
+	for tailStart < len(s) && !utf8.RuneStart(s[tailStart]) {
+		tailStart++
+	}
+	tail := s[tailStart:]
+	return fmt.Sprintf("%s\n%s %d of %d chars elided from the middle of this result to fit the context budget; "+
+		"call again with a narrower range if you need them …]\n%s",
+		head, clipTrimMarker, len(s)-len(head)-len(tail), len(s), tail)
 }
 
 // toolResultStub is the one line an old tool result becomes: what was called,

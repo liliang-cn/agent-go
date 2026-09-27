@@ -70,6 +70,14 @@ var fallbackWindows = map[string]ModelWindow{
 	"gemini-1.5-pro":    {ContextTokens: 2097152, MaxOutputTokens: 8192},
 	"gemini-1.5-flash":  {ContextTokens: 1048576, MaxOutputTokens: 8192},
 	"gemini-2.5":        {ContextTokens: 1048576, MaxOutputTokens: 65536},
+	// DeepSeek's /models lists deepseek-flash at 1,048,576, and probing
+	// deepseek-chat and deepseek-v4-flash on the API answers as
+	// "model":"deepseek-flash" — the same model under older names.
+	// deepseek-v4-pro is the same generation. Without these a 1M model
+	// compacted at the 60k fallback.
+	"deepseek-flash": {ContextTokens: 1048576},
+	"deepseek-chat":  {ContextTokens: 1048576},
+	"deepseek-v4":    {ContextTokens: 1048576},
 }
 
 // LookupModelWindow resolves a model's context window, reporting whether any

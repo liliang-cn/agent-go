@@ -241,21 +241,41 @@ type compactLoopLLM struct {
 	resultChars  int
 	failSummary  bool
 	reportPrompt int // provider-reported prompt tokens per turn; 0 = none
+	// reportFromInput makes the fake provider report what it was actually
+	// sent — messages (system prompt included) and tool schemas — sized
+	// with a tokenizer that reads 10% more than the local estimate.
+	reportFromInput bool
+	// resultCharsAt overrides resultChars for particular reads (1-based).
+	resultCharsAt map[int]int
 
 	mu           sync.Mutex
 	turns        int
+	reports      []int
 	summaryCalls int32
 }
 
-func (l *compactLoopLLM) reply() *domain.GenerationResult {
+func (l *compactLoopLLM) charsFor(read int) int {
+	if n, ok := l.resultCharsAt[read]; ok {
+		return n
+	}
+	return l.resultChars
+}
+
+func (l *compactLoopLLM) reply(msgs []domain.Message, tools []domain.ToolDefinition) *domain.GenerationResult {
 	l.mu.Lock()
 	l.turns++
 	n := l.turns
-	l.mu.Unlock()
 	var usage *domain.TokenUsage
-	if l.reportPrompt > 0 {
+	switch {
+	case l.reportFromInput:
+		tc := pool.NewTokenCounter()
+		prompt := int(1.1 * float64(tc.EstimateConversationTokens(msgs, "")+tc.EstimateToolsTokens(tools, "")))
+		l.reports = append(l.reports, prompt)
+		usage = &domain.TokenUsage{PromptTokens: prompt, CompletionTokens: 20}
+	case l.reportPrompt > 0:
 		usage = &domain.TokenUsage{PromptTokens: l.reportPrompt, CompletionTokens: 20}
 	}
+	l.mu.Unlock()
 	if n > l.rounds {
 		return &domain.GenerationResult{Content: "The root cause is a nil map in cache.go; fixed and tests pass.", FinishReason: "stop", Usage: usage}
 	}
@@ -282,11 +302,11 @@ func (l *compactLoopLLM) Generate(_ context.Context, prompt string, _ *domain.Ge
 func (l *compactLoopLLM) Stream(context.Context, string, *domain.GenerationOptions, func(string)) error {
 	return nil
 }
-func (l *compactLoopLLM) GenerateWithTools(context.Context, []domain.Message, []domain.ToolDefinition, *domain.GenerationOptions) (*domain.GenerationResult, error) {
-	return l.reply(), nil
+func (l *compactLoopLLM) GenerateWithTools(_ context.Context, msgs []domain.Message, tools []domain.ToolDefinition, _ *domain.GenerationOptions) (*domain.GenerationResult, error) {
+	return l.reply(msgs, tools), nil
 }
-func (l *compactLoopLLM) StreamWithTools(_ context.Context, _ []domain.Message, _ []domain.ToolDefinition, _ *domain.GenerationOptions, cb domain.ToolCallCallback) error {
-	return cb(l.reply())
+func (l *compactLoopLLM) StreamWithTools(_ context.Context, msgs []domain.Message, tools []domain.ToolDefinition, _ *domain.GenerationOptions, cb domain.ToolCallCallback) error {
+	return cb(l.reply(msgs, tools))
 }
 func (l *compactLoopLLM) GenerateStructured(context.Context, string, interface{}, *domain.GenerationOptions) (*domain.StructuredResult, error) {
 	return &domain.StructuredResult{Valid: true, Raw: "{}"}, nil
@@ -300,11 +320,39 @@ type compactLoopOutcome struct {
 	compactions  []CompactionInfo
 	summaryCalls int
 	reads        int32
+	// triggers counts PreCompact hooks: every time the loop decided the
+	// context was over budget, whether or not anything could be done.
+	triggers int32
+	// turnAt[i] is how many model turns had run when compactions[i] was
+	// reported; reports[turnAt[i]] is the provider's count of the turn
+	// that followed it.
+	turnAt  []int
+	reports []int
+}
+
+// turnTrackingObserver records each compaction with the number of model
+// turns run before it.
+type turnTrackingObserver struct {
+	BaseObserver
+	llm    *compactLoopLLM
+	mu     sync.Mutex
+	seen   []CompactionInfo
+	turnAt []int
+}
+
+func (o *turnTrackingObserver) OnCompaction(_ context.Context, info CompactionInfo) {
+	o.llm.mu.Lock()
+	turns := o.llm.turns
+	o.llm.mu.Unlock()
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.seen = append(o.seen, info)
+	o.turnAt = append(o.turnAt, turns)
 }
 
 func runCompactLoop(t *testing.T, llm *compactLoopLLM, opts ...RunOption) compactLoopOutcome {
 	t.Helper()
-	obs := &recordingCompactionObserver{}
+	obs := &turnTrackingObserver{llm: llm}
 	svc, err := New("compaction-measure").
 		WithConfig(testAgentConfig(t.TempDir())).
 		WithLLM(llm).
@@ -320,9 +368,14 @@ func runCompactLoop(t *testing.T, llm *compactLoopLLM, opts ...RunOption) compac
 			"path": map[string]interface{}{"type": "string"}}},
 		func(_ context.Context, args map[string]interface{}) (interface{}, error) {
 			n := atomic.AddInt32(&reads, 1)
-			return syntheticSource(int(n), llm.resultChars), nil
+			return syntheticSource(int(n), llm.charsFor(int(n))), nil
 		},
 		ToolMetadata{ReadOnly: true, ConcurrencySafe: true})
+	var triggers int32
+	svc.RegisterHook(HookEventPreCompact, func(context.Context, HookEvent, HookData) (interface{}, error) {
+		atomic.AddInt32(&triggers, 1)
+		return nil, nil
+	})
 
 	all := append([]RunOption{WithConstraintExtraction(false), WithMaxTurns(llm.rounds + 10)}, opts...)
 	res, err := svc.Run(context.Background(), "Find the root cause and make the tests pass.", all...)
@@ -331,11 +384,16 @@ func runCompactLoop(t *testing.T, llm *compactLoopLLM, opts ...RunOption) compac
 	}
 	obs.mu.Lock()
 	defer obs.mu.Unlock()
+	llm.mu.Lock()
+	defer llm.mu.Unlock()
 	return compactLoopOutcome{
 		result:       res,
 		compactions:  append([]CompactionInfo(nil), obs.seen...),
 		summaryCalls: int(atomic.LoadInt32(&llm.summaryCalls)),
 		reads:        atomic.LoadInt32(&reads),
+		triggers:     atomic.LoadInt32(&triggers),
+		turnAt:       append([]int(nil), obs.turnAt...),
+		reports:      append([]int(nil), llm.reports...),
 	}
 }
 
@@ -443,16 +501,18 @@ func TestCompactionSurvivesASummariserThatAlwaysFails(t *testing.T) {
 func TestCompactionTriggerAnchorsOnReportedUsage(t *testing.T) {
 	llm := &compactLoopLLM{rounds: 6, resultChars: 200, reportPrompt: 100000}
 	out := runCompactLoop(t, llm, WithAutoCompaction(60000, 0))
-	if len(out.compactions) == 0 {
+	if out.triggers == 0 {
 		t.Fatal("reported usage above the threshold did not trigger compaction")
 	}
-	if got := out.compactions[0].ContextTokens; got < 100000 {
-		t.Fatalf("compaction measured %d tokens, want the anchored >= 100000", got)
+	// Nothing here is worth folding (the whole context is the provider's
+	// overhead), so the trigger must back off rather than fire every round.
+	if out.triggers > 2 {
+		t.Fatalf("compaction triggered %d times on a history it could not shrink", out.triggers)
 	}
 
 	control := runCompactLoop(t, &compactLoopLLM{rounds: 6, resultChars: 200}, WithAutoCompaction(60000, 0))
-	if len(control.compactions) != 0 {
-		t.Fatalf("without a report the same run compacted %d times", len(control.compactions))
+	if control.triggers != 0 {
+		t.Fatalf("without a report the same run triggered compaction %d times", control.triggers)
 	}
 }
 
@@ -548,7 +608,7 @@ func TestMeasureEstimateErrorPureVsAnchored(t *testing.T) {
 // on a history that alone is under it. The control is the same run without
 // the extra tools.
 func TestCompactionTriggerCountsToolSchemas(t *testing.T) {
-	run := func(extraTools int) []CompactionInfo {
+	run := func(extraTools int) int32 {
 		llm := &compactLoopLLM{rounds: 6, resultChars: 200}
 		obs := &recordingCompactionObserver{}
 		svc, err := New("compaction-tools").
@@ -567,6 +627,11 @@ func TestCompactionTriggerCountsToolSchemas(t *testing.T) {
 				return syntheticSource(1, llm.resultChars), nil
 			},
 			ToolMetadata{ReadOnly: true, ConcurrencySafe: true})
+		var triggers int32
+		svc.RegisterHook(HookEventPreCompact, func(context.Context, HookEvent, HookData) (interface{}, error) {
+			atomic.AddInt32(&triggers, 1)
+			return nil, nil
+		})
 		for i := 0; i < extraTools; i++ {
 			svc.AddTool(fmt.Sprintf("extra_tool_%02d", i), strings.Repeat("A tool with a long, detailed description of its behaviour. ", 8),
 				map[string]interface{}{"type": "object", "properties": map[string]interface{}{
@@ -577,20 +642,15 @@ func TestCompactionTriggerCountsToolSchemas(t *testing.T) {
 			WithConstraintExtraction(false), WithMaxTurns(16), WithAutoCompaction(5000, 0)); err != nil {
 			t.Fatalf("Run: %v", err)
 		}
-		obs.mu.Lock()
-		defer obs.mu.Unlock()
-		return append([]CompactionInfo(nil), obs.seen...)
+		_ = obs
+		return atomic.LoadInt32(&triggers)
 	}
 
-	if control := run(0); len(control) != 0 {
-		t.Fatalf("control compacted %d times; the history alone should be under the threshold", len(control))
+	if control := run(0); control != 0 {
+		t.Fatalf("control triggered compaction %d times; the history alone should be under the threshold", control)
 	}
-	seen := run(40)
-	if len(seen) == 0 {
+	if run(40) == 0 {
 		t.Fatal("forty tool schemas over the threshold did not trigger compaction")
-	}
-	if seen[0].ContextTokens < 5000 {
-		t.Fatalf("compaction measured %d tokens, below the threshold that triggered it", seen[0].ContextTokens)
 	}
 }
 
@@ -626,5 +686,150 @@ func TestUsageAnchorFollowsClipping(t *testing.T) {
 	folded := foldHistory(clipped, 1, len(clipped)-3, "summary", false)
 	if r.anchor.covers(folded) {
 		t.Fatal("an anchor covered a folded history it never saw")
+	}
+}
+
+// ---- Regression: the live DeepSeek shape ----
+//
+// Seen live (deepseek-flash, TASK=hard): one round's bash output printed a
+// whole log, the prompt jumped from 23k to 85k tokens, and because the bulk
+// sat inside the recent rounds clipping stubbed nothing — two summary calls
+// folded the small middle around it and left 92k of 104k, then 93k of 94k,
+// rewriting the prompt each time (cache hits 91% -> 82%).
+//
+// Shape: small reads, then one read the size of a log; the provider reports
+// what it was actually sent every turn; the threshold is the 60k fallback.
+
+func TestCompactionHandlesAnOversizedRecentResult(t *testing.T) {
+	const rounds = 14
+	llm := &compactLoopLLM{
+		rounds: rounds, resultChars: 2000, reportFromInput: true,
+		resultCharsAt: map[int]int{6: 260000},
+	}
+	out := runCompactLoop(t, llm, WithAutoCompaction(CompactionDefaultThresholdTokens, 0))
+
+	maxAfter := 0
+	for i, r := range out.reports {
+		if i >= 8 && r > maxAfter {
+			maxAfter = r
+		}
+	}
+	peak := 0
+	for _, r := range out.reports {
+		if r > peak {
+			peak = r
+		}
+	}
+	t.Logf("MEASURE oversized recent result: provider prompt per turn %v", out.reports)
+	for i, c := range out.compactions {
+		t.Logf("MEASURE   compaction %d (after turn %d): %s ~%d -> ~%d, clipped %d, trimmed %d, no_progress %v",
+			i, out.turnAt[i], c.Mode, c.ContextTokens, c.ContextTokensAfter, c.ClippedResults, c.TrimmedResults, c.NoProgress)
+	}
+	t.Logf("MEASURE   triggers %d, compactions %d, summary calls %d, peak prompt %d, max prompt after turn 8 %d",
+		out.triggers, len(out.compactions), out.summaryCalls, peak, maxAfter)
+
+	if !out.result.Success {
+		t.Fatalf("run did not complete: %+v", out.result)
+	}
+	if out.summaryCalls != 0 {
+		t.Fatalf("%d summary calls on a history whose bulk is one tool result; folding the middle cannot free it", out.summaryCalls)
+	}
+	trimmed := false
+	for _, c := range out.compactions {
+		if c.TrimmedResults > 0 {
+			trimmed = true
+		}
+	}
+	if !trimmed {
+		t.Fatal("the oversized result was never trimmed")
+	}
+	// The log was shown to the model once, then cut: every prompt after
+	// that is a fraction of the peak.
+	if maxAfter > peak/3 {
+		t.Fatalf("prompt stayed at %d after the trim (peak %d)", maxAfter, peak)
+	}
+	// No compaction is repeated on a history it could not shrink.
+	for i := 1; i < len(out.compactions); i++ {
+		if out.compactions[i-1].NoProgress && out.compactions[i].NoProgress {
+			t.Fatalf("two no-progress compactions in a row (%d, %d)", i-1, i)
+		}
+	}
+}
+
+// After a fold the estimate must be of the new history — the next turn's
+// provider count — not the old one plus the new. Many moderate results make
+// the middle foldable; the provider reports what it was sent every turn.
+func TestCompactionEstimateTracksTheFoldedHistory(t *testing.T) {
+	const rounds = 30
+	llm := &compactLoopLLM{rounds: rounds, resultChars: 6000, reportFromInput: true}
+	out := runCompactLoop(t, llm, WithAutoCompaction(12000, 0), WithCompactionClipping(-1))
+
+	if len(out.compactions) == 0 || out.summaryCalls == 0 {
+		t.Fatalf("scenario did not fold: %d compactions, %d summaries", len(out.compactions), out.summaryCalls)
+	}
+	worstAfter, worstBefore := 0.0, 0.0
+	for i, c := range out.compactions {
+		turn := out.turnAt[i]
+		if turn >= len(out.reports) {
+			continue
+		}
+		next := float64(out.reports[turn]) // the provider's count of the first turn after this compaction
+		errAfter := math.Abs(float64(c.ContextTokensAfter)-next) / next
+		if errAfter > worstAfter {
+			worstAfter = errAfter
+		}
+		if i > 0 && turn > 0 {
+			prev := float64(out.reports[turn-1])
+			// Before the next compaction, the estimate may exceed the last
+			// report only by what one round added — never by a whole history.
+			if ratio := float64(c.ContextTokens) / prev; ratio > worstBefore {
+				worstBefore = ratio
+			}
+		}
+	}
+	t.Logf("MEASURE fold tracking: %d compactions, worst |after-est − next report|/report %.1f%%, worst before-est / last report %.2fx",
+		len(out.compactions), 100*worstAfter, worstBefore)
+	if worstAfter > 0.25 {
+		t.Fatalf("after a fold the estimate was %.0f%% off the provider's next count", 100*worstAfter)
+	}
+	if worstBefore > 1.6 {
+		t.Fatalf("an estimate reached %.2fx the last report: it is carrying the pre-fold history", worstBefore)
+	}
+}
+
+func TestTrimOversizedToolResultsKeepsTheNewestRound(t *testing.T) {
+	msgs := toolHeavyHistory(3, 30000)
+	out, n := trimOversizedToolResults(msgs, protectedHeadEnd(msgs), 1, clipOversizeChars)
+	if n != 2 {
+		t.Fatalf("trimmed %d results, want the 2 outside the newest round", n)
+	}
+	if out[len(out)-2].Content != msgs[len(msgs)-2].Content {
+		t.Fatal("the newest round's result, not yet seen by the model, was trimmed")
+	}
+	got := out[2].Content
+	if len(got) > 2*trimKeepChars+300 || !strings.Contains(got, clipTrimMarker) {
+		t.Fatalf("trimmed result is %d chars / missing its marker", len(got))
+	}
+	if !strings.HasPrefix(got, msgs[2].Content[:100]) || !strings.HasSuffix(got, msgs[2].Content[len(msgs[2].Content)-100:]) {
+		t.Fatal("trim did not keep head and tail")
+	}
+	if sanitizeForTest(out) != len(out) {
+		t.Fatal("trim broke pairing")
+	}
+	again, n2 := trimOversizedToolResults(out, protectedHeadEnd(out), 1, clipOversizeChars)
+	if n2 != 0 || again[2].Content != got {
+		t.Fatal("trim is not idempotent")
+	}
+}
+
+func TestDeepSeekWindowsAreKnown(t *testing.T) {
+	for _, m := range []string{"deepseek-flash", "deepseek-chat", "deepseek-v4-flash", "deepseek-v4-pro"} {
+		w, ok := pool.LookupModelWindow(m)
+		if !ok || w.ContextTokens != 1048576 {
+			t.Errorf("%s window = %+v %v, want 1048576", m, w, ok)
+		}
+		if n, src := resolveCompactionThreshold(0, m, 8192); src != CompactionThresholdModelWindow || n < 500000 {
+			t.Errorf("%s threshold = %d %s", m, n, src)
+		}
 	}
 }

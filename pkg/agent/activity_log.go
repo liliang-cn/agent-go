@@ -196,9 +196,12 @@ func (l *ActivityLog) OnCompaction(_ context.Context, info CompactionInfo) {
 	if info.Degraded {
 		mode += " DEGRADED"
 	}
-	l.line("r%-3d compact  %s %s msgs %d -> %d (context ~%d -> ~%d tokens, threshold %d %s, clipped %d)",
+	if info.NoProgress {
+		mode += " NO-PROGRESS"
+	}
+	l.line("r%-3d compact  %s %s msgs %d -> %d (context ~%d -> ~%d tokens, threshold %d %s, clipped %d, trimmed %d)",
 		info.Round, info.Trigger, mode, info.MessagesBefore, info.MessagesAfter,
-		info.ContextTokens, info.ContextTokensAfter, info.Threshold, info.ThresholdSource, info.ClippedResults)
+		info.ContextTokens, info.ContextTokensAfter, info.Threshold, info.ThresholdSource, info.ClippedResults, info.TrimmedResults)
 	if info.SummaryError != "" {
 		l.line("r%-3d compact  summariser failed: %s", info.Round, oneLine(info.SummaryError, 160))
 	}

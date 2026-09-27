@@ -109,8 +109,9 @@ func TestCompactionIsObservable(t *testing.T) {
 		t.Fatal("history was compacted but no observer heard about it")
 	}
 	got := obs.seen[0]
-	if got.MessagesAfter >= got.MessagesBefore {
-		t.Fatalf("reported no shrink: %d -> %d", got.MessagesBefore, got.MessagesAfter)
+	if got.ContextTokensAfter >= got.ContextTokens {
+		t.Fatalf("reported no shrink: ~%d -> ~%d tokens (%d -> %d msgs)",
+			got.ContextTokens, got.ContextTokensAfter, got.MessagesBefore, got.MessagesAfter)
 	}
 	if got.Trigger == "" {
 		t.Error("compaction reported without a trigger")
