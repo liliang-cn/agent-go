@@ -915,6 +915,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			}
 
 			decision := r.svc.decidePostToolRound(messages, taskID, streamResult, duplicateToolResults, toolResults, filteredToolCalls)
+			r.reportToolOutputTruncations(ctx, decision.Truncations)
 			messages = decision.Messages
 			state.Messages = messages
 			state.recordToolResults(decision.ToolResults)

@@ -139,6 +139,12 @@ type traceLine struct {
 	Message         string `json:"message,omitempty"`
 	Error           string `json:"error,omitempty"`
 
+	// Tool output cut for the model (event "tool_output_truncated").
+	OriginalBytes int   `json:"original_bytes,omitempty"`
+	KeptBytes     int   `json:"kept_bytes,omitempty"`
+	Limit         int   `json:"limit,omitempty"`
+	StructureKept *bool `json:"structure_kept,omitempty"`
+
 	// Checkpoints and segments.
 	CheckpointReason string  `json:"checkpoint_reason,omitempty"`
 	SegmentIndex     *int    `json:"segment_index,omitempty"`
@@ -531,4 +537,25 @@ func traceValueText(v any) string {
 		return string(encoded)
 	}
 	return ""
+}
+
+// OnToolOutputTruncated records a tool result the output cap cut before the
+// model saw it. Without this line a run that re-reads the same file page by
+// page looks redundant; with it, the reason is on the record.
+func (t *TraceWriter) OnToolOutputTruncated(_ context.Context, info ToolOutputTruncation) {
+	kept := info.StructureKept
+	t.write(traceLine{
+		Event:         "tool_output_truncated",
+		TaskID:        info.TaskID,
+		RunID:         info.RunID,
+		SessionID:     info.SessionID,
+		Agent:         info.AgentName,
+		Round:         info.Round,
+		CallID:        info.ToolCallID,
+		Tool:          info.ToolName,
+		OriginalBytes: info.OriginalBytes,
+		KeptBytes:     info.KeptBytes,
+		Limit:         info.Limit,
+		StructureKept: &kept,
+	}, time.Now())
 }

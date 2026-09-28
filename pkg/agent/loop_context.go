@@ -262,8 +262,13 @@ func buildConversationContextMessage(summary, memoryContext, ragContext string) 
 	}
 }
 
-// appendToolRoundToMessages appends the assistant message and tool result messages.
-func (s *Service) appendToolRoundToMessages(messages []domain.Message, taskID string, result *domain.GenerationResult, toolResults []ToolExecutionResult) []domain.Message {
+// appendToolRoundToMessages appends the assistant message and tool result
+// messages. It is the one place a tool result becomes something the model
+// reads, so it is where the uniform output cap applies; every cut it made is
+// returned so the runtime can report it.
+func (s *Service) appendToolRoundToMessages(messages []domain.Message, taskID string, result *domain.GenerationResult, toolResults []ToolExecutionResult) ([]domain.Message, []ToolOutputTruncation) {
+	var cuts []ToolOutputTruncation
+	limit := s.toolOutputCap()
 	messages = append(messages, withTaskID(domain.Message{
 		Role:             "assistant",
 		Content:          result.Content,
@@ -278,6 +283,11 @@ func (s *Service) appendToolRoundToMessages(messages []domain.Message, taskID st
 		// actually see) and a cleaned text result. No-op for text results.
 		imageParts, res := extractToolImageParts(res)
 		resStr := toolResultToString(res)
+		if capped, cut, ok := capToolResult(res, resStr, limit); ok {
+			resStr = capped
+			cut.ToolName, cut.ToolCallID = tr.ToolName, tr.ToolCallID
+			cuts = append(cuts, cut)
+		}
 		messages = append(messages, withTaskID(domain.Message{
 			Role:       "tool",
 			Content:    resStr,
@@ -297,7 +307,7 @@ func (s *Service) appendToolRoundToMessages(messages []domain.Message, taskID st
 			}, taskID))
 		}
 	}
-	return messages
+	return messages, cuts
 }
 
 func (s *Service) buildRelevantSkillReminder(ctx context.Context, goal string, session *Session, dryRun bool) *skillReminder {
