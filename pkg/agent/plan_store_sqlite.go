@@ -20,7 +20,9 @@ package agent
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -53,7 +55,82 @@ func NewSQLitePlanStore(db *sql.DB) (*SQLitePlanStore, error) {
 		`CREATE INDEX IF NOT EXISTS idx_plan_items_key ON plan_items(plan_key, idx)`); err != nil {
 		return nil, fmt.Errorf("agent: index plan_items: %w", err)
 	}
+	if err := migratePlanItemsGraph(db); err != nil {
+		return nil, err
+	}
 	return &SQLitePlanStore{db: db}, nil
+}
+
+// migratePlanItemsGraph adds the two columns a plan-as-graph needs to a table
+// created before steps had IDs. Additive only: existing rows read back with
+// an empty id and no predecessors, which is the flat plan they always were.
+func migratePlanItemsGraph(db *sql.DB) error {
+	rows, err := db.Query(`PRAGMA table_info(plan_items)`)
+	if err != nil {
+		return fmt.Errorf("agent: inspect plan_items: %w", err)
+	}
+	have := map[string]bool{}
+	for rows.Next() {
+		var (
+			cid     int
+			name    string
+			ctype   string
+			notnull int
+			dflt    sql.NullString
+			pk      int
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			rows.Close()
+			return fmt.Errorf("agent: inspect plan_items: %w", err)
+		}
+		have[strings.ToLower(name)] = true
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("agent: inspect plan_items: %w", err)
+	}
+	for _, col := range []string{"step_id", "after_ids"} {
+		if have[col] {
+			continue
+		}
+		if _, err := db.Exec(`ALTER TABLE plan_items ADD COLUMN ` + col + ` TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("agent: add plan_items.%s: %w", col, err)
+		}
+	}
+	return nil
+}
+
+// encodePlanAfter stores a step's predecessors as a JSON array, "" for none.
+func encodePlanAfter(after []string) string {
+	if len(after) == 0 {
+		return ""
+	}
+	raw, _ := json.Marshal(after)
+	return string(raw)
+}
+
+func decodePlanAfter(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+// planItemEqual compares two steps, predecessors included.
+func planItemEqual(a, b PlanItem) bool {
+	if a.Text != b.Text || a.Done != b.Done || a.Note != b.Note || a.ID != b.ID || len(a.After) != len(b.After) {
+		return false
+	}
+	for i := range a.After {
+		if a.After[i] != b.After[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // LoadPlan returns the stored plan for a key, in step order. An unknown key is
@@ -63,7 +140,7 @@ func (s *SQLitePlanStore) LoadPlan(ctx context.Context, key string) ([]PlanItem,
 		return nil, nil
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT text, done, note FROM plan_items WHERE plan_key = ? ORDER BY idx`, key)
+		`SELECT text, done, note, step_id, after_ids FROM plan_items WHERE plan_key = ? ORDER BY idx`, key)
 	if err != nil {
 		return nil, fmt.Errorf("agent: load plan %q: %w", key, err)
 	}
@@ -72,13 +149,15 @@ func (s *SQLitePlanStore) LoadPlan(ctx context.Context, key string) ([]PlanItem,
 	var out []PlanItem
 	for rows.Next() {
 		var (
-			item PlanItem
-			done int
+			item  PlanItem
+			done  int
+			after string
 		)
-		if err := rows.Scan(&item.Text, &done, &item.Note); err != nil {
+		if err := rows.Scan(&item.Text, &done, &item.Note, &item.ID, &after); err != nil {
 			return nil, fmt.Errorf("agent: scan plan %q: %w", key, err)
 		}
 		item.Done = done != 0
+		item.After = decodePlanAfter(after)
 		out = append(out, item)
 	}
 	return out, rows.Err()
@@ -102,21 +181,23 @@ func (s *SQLitePlanStore) SavePlan(ctx context.Context, key string, items []Plan
 
 	existing := map[int]PlanItem{}
 	rows, err := tx.QueryContext(ctx,
-		`SELECT idx, text, done, note FROM plan_items WHERE plan_key = ?`, key)
+		`SELECT idx, text, done, note, step_id, after_ids FROM plan_items WHERE plan_key = ?`, key)
 	if err != nil {
 		return fmt.Errorf("agent: save plan %q: %w", key, err)
 	}
 	for rows.Next() {
 		var (
-			idx  int
-			it   PlanItem
-			done int
+			idx   int
+			it    PlanItem
+			done  int
+			after string
 		)
-		if err := rows.Scan(&idx, &it.Text, &done, &it.Note); err != nil {
+		if err := rows.Scan(&idx, &it.Text, &done, &it.Note, &it.ID, &after); err != nil {
 			rows.Close()
 			return fmt.Errorf("agent: save plan %q: %w", key, err)
 		}
 		it.Done = done != 0
+		it.After = decodePlanAfter(after)
 		existing[idx] = it
 	}
 	rows.Close()
@@ -127,7 +208,7 @@ func (s *SQLitePlanStore) SavePlan(ctx context.Context, key string, items []Plan
 	now := time.Now().UTC()
 	for i, item := range items {
 		prev, had := existing[i]
-		if had && prev == item {
+		if had && planItemEqual(prev, item) {
 			continue // untouched: leave its timestamps alone
 		}
 		done := 0
@@ -145,21 +226,22 @@ func (s *SQLitePlanStore) SavePlan(ctx context.Context, key string, items []Plan
 				doneAt = now
 			}
 		}
+		after := encodePlanAfter(item.After)
 		if had {
 			if item.Done && doneAt == nil {
 				_, err = tx.ExecContext(ctx,
-					`UPDATE plan_items SET text=?, done=?, note=?, updated_at=? WHERE plan_key=? AND idx=?`,
-					item.Text, done, item.Note, now, key, i)
+					`UPDATE plan_items SET text=?, done=?, note=?, step_id=?, after_ids=?, updated_at=? WHERE plan_key=? AND idx=?`,
+					item.Text, done, item.Note, item.ID, after, now, key, i)
 			} else {
 				_, err = tx.ExecContext(ctx,
-					`UPDATE plan_items SET text=?, done=?, note=?, updated_at=?, done_at=? WHERE plan_key=? AND idx=?`,
-					item.Text, done, item.Note, now, doneAt, key, i)
+					`UPDATE plan_items SET text=?, done=?, note=?, step_id=?, after_ids=?, updated_at=?, done_at=? WHERE plan_key=? AND idx=?`,
+					item.Text, done, item.Note, item.ID, after, now, doneAt, key, i)
 			}
 		} else {
 			_, err = tx.ExecContext(ctx,
-				`INSERT INTO plan_items (plan_key, idx, text, done, note, created_at, updated_at, done_at)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-				key, i, item.Text, done, item.Note, now, now, doneAt)
+				`INSERT INTO plan_items (plan_key, idx, text, done, note, step_id, after_ids, created_at, updated_at, done_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				key, i, item.Text, done, item.Note, item.ID, after, now, now, doneAt)
 		}
 		if err != nil {
 			return fmt.Errorf("agent: save plan %q step %d: %w", key, i, err)

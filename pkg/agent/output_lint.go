@@ -58,6 +58,10 @@ type LintContext struct {
 	// has to look there — the process's own working directory is the one place
 	// the file will never be.
 	Workspace string
+	// Plan is the run's plan and which of its open steps are ready, filled
+	// only when this run used the scratchpad tools. Empty otherwise, so a
+	// lint reading it holds nobody to a plan they are not working on.
+	Plan PlanView
 
 	IsRetry    bool
 	RetryCount int

@@ -43,7 +43,7 @@ func TestSQLitePlanStoreRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+	if len(got) != 2 || !planItemEqual(got[0], want[0]) || !planItemEqual(got[1], want[1]) {
 		t.Fatalf("round trip lost data: %+v", got)
 	}
 }

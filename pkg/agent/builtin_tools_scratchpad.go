@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 )
 
@@ -40,6 +41,9 @@ type scratchpadItem struct {
 	Done bool   `json:"done"`
 	// Note is what the step produced. See PlanItem.
 	Note string `json:"note,omitempty"`
+	// ID and After make the plan a graph. See PlanItem and plan_dag.go.
+	ID    string   `json:"id,omitempty"`
+	After []string `json:"after,omitempty"`
 }
 
 // scratchpadManager holds one service's plan lists.
@@ -86,13 +90,49 @@ func (m *scratchpadManager) set(key string, items []string) []scratchpadItem {
 	return list
 }
 
+// setSteps replaces the plan with steps that may name IDs and predecessors.
+// A plan with a cycle, a duplicate ID or a reference to no step is refused
+// and the stored plan is left as it was.
+func (m *scratchpadManager) setSteps(key string, steps []scratchpadItem) ([]scratchpadItem, error) {
+	list := cloneScratchpadItems(steps)
+	for i := range list {
+		list[i].Done = false
+		list[i].Note = ""
+	}
+	if err := validatePlanGraph(list); err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.loaded == nil {
+		m.loaded = map[string]bool{}
+	}
+	m.loaded[key] = true
+	m.lists[key] = list
+	m.savePlan(key, list)
+	return cloneScratchpadItems(list), nil
+}
+
 func (m *scratchpadManager) add(key, text string) []scratchpadItem {
+	list, _ := m.addStep(key, scratchpadItem{Text: text})
+	return list
+}
+
+// addStep appends one step, refusing it when its ID or predecessors would
+// leave the plan something other than a DAG.
+func (m *scratchpadManager) addStep(key string, step scratchpadItem) ([]scratchpadItem, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.ensureLoaded(key)
-	m.lists[key] = append(m.lists[key], scratchpadItem{Text: text})
+	step.Done, step.Note = false, ""
+	step.After = cloneStrings(step.After)
+	next := append(cloneScratchpadItems(m.lists[key]), step)
+	if err := validatePlanGraph(next); err != nil {
+		return nil, err
+	}
+	m.lists[key] = next
 	m.savePlan(key, m.lists[key])
-	return append([]scratchpadItem(nil), m.lists[key]...)
+	return cloneScratchpadItems(m.lists[key]), nil
 }
 
 func (m *scratchpadManager) check(key string, index int, note string) ([]scratchpadItem, error) {
@@ -103,6 +143,9 @@ func (m *scratchpadManager) check(key string, index int, note string) ([]scratch
 	if index < 0 || index >= len(list) {
 		return nil, fmt.Errorf("index %d out of range (list has %d items)", index, len(list))
 	}
+	if refusal := planCheckRefusal(list, index); refusal != nil {
+		return nil, refusal
+	}
 	list[index].Done = true
 	if note != "" {
 		// Only overwritten when something was said. Re-checking a step to
@@ -110,7 +153,7 @@ func (m *scratchpadManager) check(key string, index int, note string) ([]scratch
 		list[index].Note = note
 	}
 	m.savePlan(key, list)
-	return append([]scratchpadItem(nil), list...), nil
+	return cloneScratchpadItems(list), nil
 }
 
 // note records what a step is in the middle of, without claiming it is done.
@@ -131,7 +174,7 @@ func (m *scratchpadManager) note(key string, index int, note string) ([]scratchp
 	}
 	list[index].Note = note
 	m.savePlan(key, list)
-	return append([]scratchpadItem(nil), list...), nil
+	return cloneScratchpadItems(list), nil
 }
 
 func (m *scratchpadManager) get(key string) []scratchpadItem {
@@ -140,7 +183,7 @@ func (m *scratchpadManager) get(key string) []scratchpadItem {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.ensureLoaded(key)
-	return append([]scratchpadItem(nil), m.lists[key]...)
+	return cloneScratchpadItems(m.lists[key])
 }
 
 // scratchpadDefaultKey is the list a plan lands in when the model does not
@@ -160,13 +203,85 @@ func scratchpadKey(ctx context.Context, args map[string]interface{}) string {
 }
 
 func scratchpadItemsPayload(list []scratchpadItem) []map[string]interface{} {
+	// ready is only reported for a plan that states an order; a flat plan's
+	// payload is what it always was.
+	var ready map[int]bool
+	if planHasDependencies(list) {
+		ready = map[int]bool{}
+		for _, i := range planReadySteps(list) {
+			ready[i] = true
+		}
+	}
 	out := make([]map[string]interface{}, 0, len(list))
 	for i, it := range list {
 		item := map[string]interface{}{"index": i, "text": it.Text, "done": it.Done}
 		if it.Note != "" {
 			item["note"] = it.Note
 		}
+		if it.ID != "" {
+			item["id"] = it.ID
+		}
+		if len(it.After) > 0 {
+			item["after"] = append([]string(nil), it.After...)
+		}
+		if ready != nil && !it.Done {
+			item["ready"] = ready[i]
+		}
 		out = append(out, item)
+	}
+	return out
+}
+
+// scratchpadToolError renders a refusal: a plan-graph refusal keeps its
+// structure, anything else is a plain message.
+func scratchpadToolError(err error) map[string]interface{} {
+	if pg, ok := err.(*planGraphError); ok {
+		return pg.payload()
+	}
+	return toolErr(err.Error())
+}
+
+// toolArgPlanSteps reads scratchpad_set's steps argument: an array of
+// {id, text, after} objects.
+func toolArgPlanSteps(args map[string]interface{}) ([]scratchpadItem, error) {
+	var raw []interface{}
+	switch v := args["steps"].(type) {
+	case []interface{}:
+		raw = v
+	case []map[string]interface{}:
+		for _, m := range v {
+			raw = append(raw, m)
+		}
+	default:
+		return nil, fmt.Errorf("steps must be an array of {id, text, after} objects")
+	}
+	out := make([]scratchpadItem, 0, len(raw))
+	for i, e := range raw {
+		obj, ok := e.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("steps[%d] must be an object with text, and optionally id and after", i)
+		}
+		step := scratchpadItem{
+			Text: strings.TrimSpace(toolArgString(obj, "text")),
+			ID:   strings.TrimSpace(toolArgString(obj, "id")),
+		}
+		if step.Text == "" {
+			return nil, fmt.Errorf("steps[%d] needs text", i)
+		}
+		if after, ok := toolArgStringSlice(obj, "after"); ok {
+			step.After = trimNonEmpty(after)
+		}
+		out = append(out, step)
+	}
+	return out, nil
+}
+
+func trimNonEmpty(in []string) []string {
+	var out []string
+	for _, s := range in {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
 	}
 	return out
 }
@@ -191,21 +306,48 @@ func RegisterScratchpadTools(svc *Service) {
 	if !has("scratchpad_set") {
 		svc.AddToolWithMetadata(
 			"scratchpad_set",
-			"Replace the whole plan list with a set of todo items (items is an array of strings). Use it to write down the plan when starting a multi-step task. Optional key selects one of several lists.",
+			"Replace the whole plan list. Pass items (an array of strings) for a plain checklist, or steps (objects with id, text and after) when some steps can only happen after others; steps with no after can be done in any order. Use it to write down the plan when starting a multi-step task. Optional key selects one of several lists.",
 			map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"key":   map[string]interface{}{"type": "string", "description": "List identifier, default \"default\""},
-					"items": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Array of todo item texts"},
+					"items": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Array of todo item texts, for a plan with no ordering between steps"},
+					"steps": map[string]interface{}{
+						"type":        "array",
+						"description": "Steps with dependencies, instead of items. A step can be checked only after every step named in its after is done; a circular or unknown after is refused.",
+						"items": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"id":    map[string]interface{}{"type": "string", "description": "Short unique name other steps can refer to"},
+								"text":  map[string]interface{}{"type": "string", "description": "What the step is"},
+								"after": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "ids of steps that must be done first"},
+							},
+							"required": []string{"text"},
+						},
+					},
 				},
-				"required": []string{"items"},
 			},
 			func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+				key := scratchpadKey(ctx, args)
+				if _, hasSteps := args["steps"]; hasSteps {
+					if _, hasItems := args["items"]; hasItems {
+						return toolErr("pass items or steps, not both"), nil
+					}
+					steps, err := toolArgPlanSteps(args)
+					if err != nil {
+						return toolErr(err.Error()), nil
+					}
+					list, err := pad.setSteps(key, steps)
+					if err != nil {
+						return scratchpadToolError(err), nil
+					}
+					return toolOK(map[string]interface{}{"items": scratchpadItemsPayload(list)}), nil
+				}
 				items, ok := toolArgStringSlice(args, "items")
 				if !ok {
-					return toolErr("items must be an array of strings"), nil
+					return toolErr("items must be an array of strings (or pass steps)"), nil
 				}
-				list := pad.set(scratchpadKey(ctx, args), items)
+				list := pad.set(key, items)
 				return toolOK(map[string]interface{}{"items": scratchpadItemsPayload(list)}), nil
 			},
 			destMeta,
@@ -216,12 +358,14 @@ func RegisterScratchpadTools(svc *Service) {
 	if !has("scratchpad_add") {
 		svc.AddToolWithMetadata(
 			"scratchpad_add",
-			"Append one todo item to the plan list. Optional key.",
+			"Append one todo item to the plan list. Optional id names it; optional after lists ids of steps that must be done first. Optional key.",
 			map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"key":  map[string]interface{}{"type": "string", "description": "List identifier, default \"default\""},
-					"text": map[string]interface{}{"type": "string", "description": "Todo item text"},
+					"key":   map[string]interface{}{"type": "string", "description": "List identifier, default \"default\""},
+					"text":  map[string]interface{}{"type": "string", "description": "Todo item text"},
+					"id":    map[string]interface{}{"type": "string", "description": "Short unique name other steps can refer to"},
+					"after": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "ids of steps that must be done before this one"},
 				},
 				"required": []string{"text"},
 			},
@@ -230,7 +374,14 @@ func RegisterScratchpadTools(svc *Service) {
 				if text == "" {
 					return toolErr("text required"), nil
 				}
-				list := pad.add(scratchpadKey(ctx, args), text)
+				step := scratchpadItem{Text: text, ID: strings.TrimSpace(toolArgString(args, "id"))}
+				if after, ok := toolArgStringSlice(args, "after"); ok {
+					step.After = trimNonEmpty(after)
+				}
+				list, err := pad.addStep(scratchpadKey(ctx, args), step)
+				if err != nil {
+					return scratchpadToolError(err), nil
+				}
 				return toolOK(map[string]interface{}{"items": scratchpadItemsPayload(list)}), nil
 			},
 			destMeta,
@@ -241,7 +392,7 @@ func RegisterScratchpadTools(svc *Service) {
 	if !has("scratchpad_check") {
 		svc.AddToolWithMetadata(
 			"scratchpad_check",
-			"Mark the todo item at position index (0-based) as done. Pass note to record what the step produced — that note is what lets this task be picked up later without redoing the work. Optional key.",
+			"Mark the todo item at position index (0-based) as done. A step that comes after unfinished steps is refused until they are done. Pass note to record what the step produced — that note is what lets this task be picked up later without redoing the work. Optional key.",
 			map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -254,7 +405,7 @@ func RegisterScratchpadTools(svc *Service) {
 			func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 				list, err := pad.check(scratchpadKey(ctx, args), toolArgInt(args, "index"), toolArgString(args, "note"))
 				if err != nil {
-					return toolErr(err.Error()), nil
+					return scratchpadToolError(err), nil
 				}
 				return toolOK(map[string]interface{}{"items": scratchpadItemsPayload(list)}), nil
 			},

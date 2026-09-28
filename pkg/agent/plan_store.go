@@ -34,6 +34,13 @@ type PlanItem struct {
 	// is done" is not enough to carry on from — a run resumed knowing only
 	// which steps finished has to redo them to find out what they concluded.
 	Note string `json:"note,omitempty"`
+	// ID names the step so another can come After it. Optional: a plan
+	// written before steps had IDs, or one with no ordering to state, leaves
+	// it empty and behaves as the flat checklist it always was.
+	ID string `json:"id,omitempty"`
+	// After lists the IDs of steps that must be done before this one can be
+	// checked. The scratchpad tools refuse a cycle or an unknown ID.
+	After []string `json:"after,omitempty"`
 }
 
 // PlanStore persists a plan so a task interrupted partway can be picked up.
@@ -72,11 +79,7 @@ func (m *scratchpadManager) loadPlan(key string) []scratchpadItem {
 		agentgolog.WithModule("agent.scratchpad").Warn("load plan", "key", key, "error", err)
 		return nil
 	}
-	out := make([]scratchpadItem, 0, len(items))
-	for _, it := range items {
-		out = append(out, scratchpadItem{Text: it.Text, Done: it.Done, Note: it.Note})
-	}
-	return out
+	return scratchpadItemsFrom(items)
 }
 
 // savePlan writes a key through to the store, best effort.
@@ -88,10 +91,7 @@ func (m *scratchpadManager) savePlan(key string, list []scratchpadItem) {
 	if m.store == nil {
 		return
 	}
-	items := make([]PlanItem, 0, len(list))
-	for _, it := range list {
-		items = append(items, PlanItem{Text: it.Text, Done: it.Done, Note: it.Note})
-	}
+	items := planItemsFrom(list)
 	ctx, cancel := context.WithTimeout(context.Background(), planStoreTimeout)
 	defer cancel()
 	if err := m.store.SavePlan(ctx, key, items); err != nil {
@@ -157,6 +157,17 @@ func (s *Service) PlanSummary(key string) string {
 		return ""
 	}
 
+	// Only a plan that states an order gets the ready/waiting marks; a flat
+	// one renders exactly as it always did, so a stored plan from before
+	// steps had IDs is handed over unchanged.
+	graph := planHasDependencies(items)
+	ready := map[int]bool{}
+	if graph {
+		for _, i := range planReadySteps(items) {
+			ready[i] = true
+		}
+	}
+
 	out := "Plan in progress (" + itoa(done) + " of " + itoa(len(items)) + " steps done):\n"
 	for i, it := range items {
 		mark := "[ ]"
@@ -164,6 +175,9 @@ func (s *Service) PlanSummary(key string) string {
 			mark = "[x]"
 		}
 		out += mark + " " + itoa(i) + ". " + it.Text
+		if graph {
+			out += planStepGraphLabel(items, i, ready[i])
+		}
 		if it.Note != "" {
 			// The note is the reason to read this at all; give it its own line
 			// so a long one does not bury the step it belongs to. On an
@@ -177,9 +191,44 @@ func (s *Service) PlanSummary(key string) string {
 		}
 		out += "\n"
 	}
+	if graph {
+		out += "Carry on with a step marked ready; ready steps do not depend on each other and can be done in any order. " +
+			"A waiting step cannot be checked until the steps it comes after are done. Do not repeat finished ones, " +
+			"and pick up an in-progress one where it was left rather than starting it again."
+		return out
+	}
 	out += "Carry on from the first unchecked step. Do not repeat finished ones, " +
 		"and pick up an in-progress one where it was left rather than starting it again."
 	return out
+}
+
+// planStepGraphLabel is the id/after/ready suffix a step carries in the
+// summary of a plan that states an order.
+func planStepGraphLabel(items []scratchpadItem, i int, ready bool) string {
+	it := items[i]
+	var parts []string
+	if it.ID != "" {
+		parts = append(parts, "id: "+it.ID)
+	}
+	if len(it.After) > 0 {
+		parts = append(parts, "after: "+strings.Join(it.After, ", "))
+	}
+	label := ""
+	if len(parts) > 0 {
+		label = " (" + strings.Join(parts, "; ") + ")"
+	}
+	if it.Done {
+		return label
+	}
+	if ready {
+		return label + " — ready"
+	}
+	open := planOpenPredecessors(items, i)
+	waits := make([]string, 0, len(open))
+	for _, j := range open {
+		waits = append(waits, itoa(j))
+	}
+	return label + " — waiting on step " + strings.Join(waits, ", ")
 }
 
 // scratchpadStore returns this service's plan lists, building them on first

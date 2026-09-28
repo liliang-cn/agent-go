@@ -424,7 +424,7 @@ func (s *Service) runSegments(ctx context.Context, goal string, cfg LongRunConfi
 			// hit the ceiling mid-flight, the label has to survive the trip
 			// back up or a task that spent its budget reports "blocked".
 			out.Stop = LongRunStopCostLimit
-		case result.Blocked && result.StopReason != StopReasonMaxTurns:
+		case result.Blocked && result.StopReason != StopReasonMaxTurns && !s.segmentRejectedOnOpenPlan(result, cfg):
 			// A considered "I cannot proceed" is an answer. Starting another
 			// segment would spend the budget arriving at it again.
 			//
@@ -489,6 +489,21 @@ func (s *Service) segmentFinishedTheTask(result *ExecutionResult, cfg LongRunCon
 		return true
 	}
 	return !s.planHasUnfinishedSteps(cfg.PlanKey)
+}
+
+// segmentRejectedOnOpenPlan reports a segment that was blocked because its
+// final answers kept failing the lints while the plan still had open steps.
+//
+// That is not a considered "I cannot proceed": the model kept declaring the
+// work done and the plan kept saying otherwise. Inside a single run the lint
+// is right to push back; across segments the answer is the one the plan gate
+// already gives a segment that stops early — hand the task to a fresh
+// segment — not ending the whole task as blocked.
+func (s *Service) segmentRejectedOnOpenPlan(result *ExecutionResult, cfg LongRunConfig) bool {
+	if result == nil || result.StopReason != StopReasonLintExhausted || cfg.AllowIncompletePlan {
+		return false
+	}
+	return s.planHasUnfinishedSteps(cfg.PlanKey)
 }
 
 // planHasUnfinishedSteps reports whether the stored plan still has work in it.

@@ -869,6 +869,8 @@ func (b *Builder) build() (*Service, error) {
 	svc.RegisterOutputLint(RequestedActionContract())
 	svc.RegisterOutputLint(NoToolScaffoldingAnswer())
 	svc.RegisterOutputLint(DeliverableBlockMustCarryWork())
+	// ...and a run working a plan cannot finish with ready steps unchecked.
+	svc.RegisterOutputLint(PlanReadyStepsDone())
 
 	// Graph-aware mode: expose the graph_recall tool so the loop can query the
 	// knowledge graph. Registered when WithGraphMemory() opted in.
