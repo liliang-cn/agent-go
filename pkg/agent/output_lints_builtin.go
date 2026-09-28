@@ -191,4 +191,5 @@ func RegisterDefaultOutputLints(svc *Service) {
 	svc.RegisterOutputLint(RequestedActionContract())
 	svc.RegisterOutputLint(NoToolScaffoldingAnswer())
 	svc.RegisterOutputLint(DeliverableBlockMustCarryWork())
+	svc.RegisterOutputLint(PlanReadyStepsDone())
 }

@@ -354,6 +354,8 @@ func registerLints(svc *agent.Service, names []string) error {
 			svc.RegisterOutputLint(agent.RequestedActionContract())
 		case "no_planning_only_finish":
 			svc.RegisterOutputLint(agent.NoPlanningOnlyFinish())
+		case "plan_ready_steps_done":
+			svc.RegisterOutputLint(agent.PlanReadyStepsDone())
 		default:
 			return fmt.Errorf("unknown lint %q", name)
 		}

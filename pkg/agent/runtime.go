@@ -148,6 +148,7 @@ func (r *Runtime) runFinalLints(content string, turn int) *LintViolation {
 		IsRetry:          r.lintRetryBudget < defaultLintRetryBudget,
 		RetryCount:       defaultLintRetryBudget - r.lintRetryBudget,
 		OutputParts:      r.outputParts,
+		Plan:             r.planViewForLint(),
 	}
 	if reg := r.svc.OutputLints(); reg != nil {
 		if v := reg.Run(content, lintCtx); v != nil {
