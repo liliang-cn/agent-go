@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +14,16 @@ import (
 // MockMemoryStore is a mock implementation of domain.MemoryStore
 type MockMemoryStore struct {
 	mock.Mock
+}
+
+// expects reports whether the test configured any call to method.
+func (m *MockMemoryStore) expects(method string) bool {
+	for _, call := range m.ExpectedCalls {
+		if call.Method == method {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *MockMemoryStore) Store(ctx context.Context, memory *domain.Memory) error {
@@ -50,6 +61,12 @@ func (m *MockMemoryStore) StoreWithScope(ctx context.Context, memory *domain.Mem
 }
 
 func (m *MockMemoryStore) SearchByText(ctx context.Context, query string, topK int) ([]*domain.MemoryWithScore, error) {
+	// The write path looks up reconciliation candidates on every
+	// extraction. A test that never configured a text search is not asking
+	// about that lookup, so it finds nothing rather than panicking.
+	if !m.expects("SearchByText") {
+		return nil, nil
+	}
 	args := m.Called(ctx, query, topK)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -84,6 +101,9 @@ func (m *MockMemoryStore) GetByType(ctx context.Context, memoryType domain.Memor
 }
 
 func (m *MockMemoryStore) List(ctx context.Context, limit, offset int) ([]*domain.Memory, int, error) {
+	if !m.expects("List") {
+		return nil, 0, nil
+	}
 	args := m.Called(ctx, limit, offset)
 	if args.Get(0) == nil {
 		return nil, args.Int(1), args.Error(2)
@@ -501,6 +521,10 @@ func TestService_StoreIfWorthwhile(t *testing.T) {
 
 		llm.On("GenerateStructured", ctx, mock.Anything, mock.Anything, mock.Anything).Return(structuredResult, nil)
 
+		// Reconciliation looks up similar memories for the interaction
+		// before the extraction call — an embedding, not a model call.
+		allowReconcileLookup(embedder, store)
+
 		// Add() will be called internally, which calls Embed and Store
 		embedder.On("Embed", ctx, "Project status updated to 60%.").Return([]float64{0.1, 0.2, 0.3}, nil)
 		store.On("Store", ctx, mock.MatchedBy(func(m *domain.Memory) bool {
@@ -557,6 +581,7 @@ func TestService_StoreIfWorthwhile(t *testing.T) {
 		isolatedLLM := new(MockGenerator)
 		isolatedEmbedder := new(MockEmbedder)
 		isolatedService := NewService(isolatedStore, isolatedLLM, isolatedEmbedder, nil)
+		allowReconcileLookup(isolatedEmbedder, isolatedStore)
 
 		req := &domain.MemoryStoreRequest{
 			SessionID:  "session-heuristic",
@@ -583,6 +608,7 @@ func TestService_StoreIfWorthwhile(t *testing.T) {
 		isolatedLLM := new(MockGenerator)
 		isolatedEmbedder := new(MockEmbedder)
 		isolatedService := NewService(isolatedStore, isolatedLLM, isolatedEmbedder, nil)
+		allowReconcileLookup(isolatedEmbedder, isolatedStore)
 
 		req := &domain.MemoryStoreRequest{
 			SessionID:  "session-question",
@@ -608,6 +634,7 @@ func TestService_StoreIfWorthwhile(t *testing.T) {
 		isolatedLLM := new(MockGenerator)
 		isolatedEmbedder := new(MockEmbedder)
 		isolatedService := NewService(isolatedStore, isolatedLLM, isolatedEmbedder, nil)
+		allowReconcileLookup(isolatedEmbedder, isolatedStore)
 
 		req := &domain.MemoryStoreRequest{
 			SessionID:  "session-question-2",
@@ -638,6 +665,7 @@ func TestService_StoreIfWorthwhile(t *testing.T) {
 		isolatedLLM := new(MockGenerator)
 		isolatedEmbedder := new(MockEmbedder)
 		isolatedService := NewService(isolatedStore, isolatedLLM, isolatedEmbedder, nil)
+		allowReconcileLookup(isolatedEmbedder, isolatedStore)
 
 		req := &domain.MemoryStoreRequest{
 			SessionID:  "session-2",
@@ -674,6 +702,7 @@ func TestService_StoreIfWorthwhile(t *testing.T) {
 		isolatedLLM := new(MockGenerator)
 		isolatedEmbedder := new(MockEmbedder)
 		isolatedService := NewService(isolatedStore, isolatedLLM, isolatedEmbedder, nil)
+		allowReconcileLookup(isolatedEmbedder, isolatedStore)
 
 		req := &domain.MemoryStoreRequest{
 			SessionID:  "session-3",
@@ -730,4 +759,14 @@ func TestService_Clear(t *testing.T) {
 	}
 
 	store.AssertExpectations(t)
+}
+
+// allowReconcileLookup lets the write path's candidate lookup — one
+// embedding of the interaction (goal + "\n" + result) and one scoped vector
+// search — through, for tests that are about something else.
+func allowReconcileLookup(embedder *MockEmbedder, store *MockMemoryStore) {
+	embedder.On("Embed", mock.Anything, mock.MatchedBy(func(q string) bool { return strings.Contains(q, "\n") })).
+		Return([]float64{0.3, 0.2, 0.1}, nil).Maybe()
+	store.On("SearchByScope", mock.Anything, mock.Anything, mock.Anything, reconcileCandidateLimit*2).
+		Return([]*domain.MemoryWithScore{}, nil).Maybe()
 }

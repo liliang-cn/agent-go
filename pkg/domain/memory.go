@@ -218,7 +218,23 @@ type MemoryItem struct {
 	PromotionReason string              `json:"promotion_reason,omitempty"`
 	Tags            FlexibleStringArray `json:"tags,omitempty"`
 	Entities        FlexibleStringArray `json:"entities,omitempty"`
+
+	// Kind is what sort of claim the item makes; see MemoryKind.
+	Kind MemoryKind `json:"kind,omitempty"`
+	// Op is the extraction call's reconciliation verdict against the
+	// existing memories it was shown: "add" (new), "update" (replaces
+	// TargetID, which stops being current) or "noop" (TargetID already says
+	// this; nothing is stored). Empty means add.
+	Op       string `json:"op,omitempty"`
+	TargetID string `json:"target_id,omitempty"`
 }
+
+// Reconciliation verdicts for MemoryItem.Op.
+const (
+	MemoryOpAdd    = "add"
+	MemoryOpUpdate = "update"
+	MemoryOpNoop   = "noop"
+)
 
 // MemoryStore defines the interface for memory persistence
 type MemoryStore interface {

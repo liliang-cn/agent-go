@@ -72,6 +72,9 @@ func Run(t *testing.T, newStore Factory, opts Options) {
 		}
 		anotherSessionsMemoryStaysOut(t, newStore, opts)
 	})
+	t.Run("SupersededMemoryStaysOut", func(t *testing.T) {
+		supersededMemoryStaysOut(t, newStore, opts)
+	})
 	t.Run("StoreLevelRoundTrip", func(t *testing.T) {
 		storeLevelRoundTrip(t, newStore, opts)
 	})
@@ -177,6 +180,58 @@ func anotherSessionsMemoryStaysOut(t *testing.T, newStore Factory, opts Options)
 	}
 	if strings.Contains(text, tok) {
 		t.Fatalf("another session's memory leaked into this one's prompt:\n%s", text)
+	}
+}
+
+// A memory replaced by a newer one is history, not a current fact. Two
+// contradicting memories both injected as current leave the model to pick
+// one — which is how "where do I live?" gets answered with the old city.
+//
+// Superseding is optional (domain.MemoryStaleMarker); a backend without it
+// says so with the sentinel and the case is skipped. One that claims it must
+// persist the mark so that the replacement reaches the prompt and the
+// original does not — on every path into the prompt, not only the ranked one.
+func supersededMemoryStaysOut(t *testing.T, newStore Factory, opts Options) {
+	ctx := context.Background()
+	svc := serviceOver(newStore(t))
+	tok := marker()
+
+	old := &domain.Memory{
+		ID: uuid.NewString(), Type: domain.MemoryTypeFact, ScopeType: domain.MemoryScopeGlobal,
+		Content: "The " + tok + " office is in Berlin.", CreatedAt: time.Now().Add(-time.Hour), Importance: 0.9,
+	}
+	if err := svc.Add(ctx, old); err != nil {
+		t.Fatalf("Add old: %v", err)
+	}
+	replacement := &domain.Memory{
+		ID: uuid.NewString(), Type: domain.MemoryTypeFact, ScopeType: domain.MemoryScopeGlobal,
+		Content: "The " + tok + " office is in Vienna.", CreatedAt: time.Now(), Importance: 0.9,
+	}
+	if err := svc.Add(ctx, replacement); err != nil {
+		t.Fatalf("Add replacement: %v", err)
+	}
+	if err := svc.Supersede(ctx, old.ID, replacement.ID); err != nil {
+		if unsupported(err) {
+			t.Skip("backend cannot supersede a memory")
+		}
+		t.Fatalf("Supersede: %v", err)
+	}
+
+	injected := eventually(t, opts, func() string {
+		text, _, err := svc.RetrieveAndInject(ctx, "where is the "+tok+" office?", "")
+		if err != nil {
+			t.Fatalf("RetrieveAndInject: %v", err)
+		}
+		return text
+	}, "Vienna")
+
+	if !strings.Contains(injected, "Vienna") {
+		t.Fatalf("the replacement never reached the prompt:\n%s", injected)
+	}
+	if strings.Contains(injected, "Berlin") {
+		t.Fatalf("a superseded memory was injected as current.\n"+
+			"Check that the backend persists the mark (ValidTo/SupersededBy or their metadata mirrors)\n"+
+			"and that every path into the prompt reads it.\ninjected:\n%s", injected)
 	}
 }
 

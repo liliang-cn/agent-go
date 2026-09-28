@@ -385,6 +385,29 @@ func (s *MemoryStore) IncrementAccess(ctx context.Context, id string) error {
 	return err
 }
 
+// MarkStale records that id has been superseded by supersededByID: its
+// validity ends now and it points at its replacement. The row is kept — the
+// history of what was once true is still there for GetEvolution — and the
+// read path stops injecting it. Implements domain.MemoryStaleMarker.
+func (s *MemoryStore) MarkStale(ctx context.Context, id string, supersededByID string) error {
+	row, err := s.loadStoredMemoryRow(ctx, id)
+	if err != nil {
+		return err
+	}
+	metadata := cloneMetadata(row.Metadata)
+	if metadata == nil {
+		metadata = make(map[string]interface{})
+	}
+	metadata[domain.MemorySupersededByMetadataKey] = supersededByID
+	metadata[domain.MemoryValidToMetadataKey] = time.Now().UTC().Format(time.RFC3339Nano)
+
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		return err
+	}
+	return s.execWithRetry(ctx, `UPDATE messages SET metadata = ? WHERE id = ?`, metadataJSON, id)
+}
+
 func (s *MemoryStore) GetByType(ctx context.Context, memoryType domain.MemoryType, limit int) ([]*domain.Memory, error) {
 	all, _, err := s.List(ctx, max(limit, 1000), 0)
 	if err != nil {
@@ -1006,7 +1029,15 @@ func (r *storedMemoryRow) toDomainMemory() *domain.Memory {
 	accessCount, _ := intFromAny(metadata["access_count"])
 	lastAccessed := timeFromAny(metadata["last_accessed"])
 
+	supersededBy, _ := stringFromAny(metadata[domain.MemorySupersededByMetadataKey])
+	var validTo *time.Time
+	if t := timeFromAny(metadata[domain.MemoryValidToMetadataKey]); !t.IsZero() {
+		validTo = &t
+	}
+
 	return &domain.Memory{
+		ValidTo:      validTo,
+		SupersededBy: supersededBy,
 		ID:           r.ID,
 		SessionID:    logicalBankID,
 		ScopeType:    scope.Type,
