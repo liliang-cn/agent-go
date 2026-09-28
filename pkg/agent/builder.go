@@ -117,24 +117,26 @@ type Builder struct {
 	// Custom Embedder service (optional - used with custom LLM for RAG/Memory)
 	embedService domain.Embedder
 
-	enableRAG          bool
-	ragCfg             RAGConfig
-	enableMCP          bool
-	mcpCfgPaths        []string
-	enableMemory       bool
-	memoryCfg          MemoryConfig
-	memoryService      domain.MemoryService
-	registerGraphTool  bool
-	runMemory          RunMemory
-	planStore          PlanStore
-	decisionEngine     decision.Engine
-	decisionConfidence float64
-	modelRouter        ModelRouter
-	taskStore          TaskStore
-	enableSkills       bool
-	skillsPaths        []string
-	requiredSkills     []string // Build() fails if any of these aren't installed
-	toolPolicy         ToolExecutionPolicy
+	enableRAG            bool
+	ragCfg               RAGConfig
+	enableMCP            bool
+	mcpCfgPaths          []string
+	enableMemory         bool
+	memoryCfg            MemoryConfig
+	memoryService        domain.MemoryService
+	registerGraphTool    bool
+	runMemory            RunMemory
+	planStore            PlanStore
+	toolArgValidationOff bool
+	toolReliabilityStore ToolReliabilityStore
+	decisionEngine       decision.Engine
+	decisionConfidence   float64
+	modelRouter          ModelRouter
+	taskStore            TaskStore
+	enableSkills         bool
+	skillsPaths          []string
+	requiredSkills       []string // Build() fails if any of these aren't installed
+	toolPolicy           ToolExecutionPolicy
 
 	tools        []*Tool // pre-registered via WithTool/WithTools
 	extraModules []Module
@@ -243,6 +245,24 @@ func (b *Builder) WithGraphMemory(opts ...MemoryOption) *Builder {
 // cortexbridge.NewRunMemory provides a CortexDB-backed implementation.
 func (b *Builder) WithRunMemory(rm RunMemory) *Builder {
 	b.runMemory = rm
+	return b
+}
+
+// WithToolArgValidation turns validation of model-issued tool arguments
+// against each tool's declared parameter schema on or off. It is on by
+// default: a call that fails its schema is not executed, and the model gets
+// the failing field paths back as the tool's error so it can fix the call.
+// Schemas the validator cannot compile, and remote $refs, always pass through.
+func (b *Builder) WithToolArgValidation(enabled bool) *Builder {
+	b.toolArgValidationOff = !enabled
+	return b
+}
+
+// WithToolReliabilityStore sets where per-tool success/error/latency counts
+// are persisted. Without it they go to the Service's own database when it has
+// one, and stay in memory otherwise.
+func (b *Builder) WithToolReliabilityStore(rs ToolReliabilityStore) *Builder {
+	b.toolReliabilityStore = rs
 	return b
 }
 
@@ -810,6 +830,20 @@ func (b *Builder) build() (*Service, error) {
 				"error", err)
 		} else {
 			svc.SetPlanStore(ps)
+		}
+	}
+	svc.skipToolArgValidation = b.toolArgValidationOff
+	if b.toolReliabilityStore != nil {
+		svc.SetToolReliabilityStore(b.toolReliabilityStore)
+	} else if db := svc.store.DB(); db != nil {
+		// Same reasoning as the plan store: the Service owns a database, and
+		// a tool's track record is worth most across the runs that built it.
+		if rs, err := NewSQLiteToolReliabilityStore(db); err != nil {
+			agentgolog.WithModule("agent.builder").Warn(
+				"tool reliability persistence unavailable; counts will not survive this process",
+				"error", err)
+		} else {
+			svc.SetToolReliabilityStore(rs)
 		}
 	}
 	if b.taskStore != nil {

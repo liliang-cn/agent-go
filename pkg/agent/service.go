@@ -158,6 +158,15 @@ type Service struct {
 	scratchpad   *scratchpadManager
 	planStore    PlanStore
 
+	// Tool-call argument validation (tool_arg_validation.go). The zero value
+	// validates: an opt-out, so a Service built any way at all gets it.
+	skipToolArgValidation bool
+	argSchemas            sync.Map // schema cache key -> *compiledArgSchema
+
+	// toolReliability counts each tool's outcomes (tool_reliability.go).
+	toolReliabilityOnce sync.Once
+	toolReliability     *toolReliabilityTracker
+
 	// decisionEngine, when non-nil, answers small closed questions in
 	// milliseconds so the runtime can skip a model call it would otherwise
 	// make. Optional by construction: every gate that consults it also works

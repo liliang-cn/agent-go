@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 	"github.com/liliang-cn/agent-go/v3/pkg/skills"
@@ -64,6 +65,20 @@ func (s *Service) executeDirectToolCall(ctx context.Context, currentAgent *Agent
 		}
 	}
 
+	// Checked after the pre-tool hooks, so it judges the arguments that
+	// would actually run, and before permission, so nobody is asked to
+	// approve a call that cannot run. A refused call is answered with the
+	// failing fields — an error the model can act on, never an empty result.
+	if argErr := s.validateToolCallArgs(resolvedToolName, currentAgent, tc.Function.Arguments); argErr != nil {
+		s.recordToolOutcome(ctx, ToolOutcome{
+			Tool:      resolvedToolName,
+			Kind:      ToolOutcomeInvalidArgs,
+			Error:     argErr.Error(),
+			SessionID: currentSessionID(session),
+		})
+		return nil, argErr, false
+	}
+
 	metadata := s.lookupToolMetadataForAgent(resolvedToolName, currentAgent)
 	decision, err := s.decideTool(ctx, PermissionRequest{
 		ToolName:        resolvedToolName,
@@ -79,7 +94,24 @@ func (s *Service) executeDirectToolCall(ctx context.Context, currentAgent *Agent
 		return nil, err, false
 	}
 
+	started := time.Now()
 	result, execErr := s.dispatchResolvedTool(ctx, currentAgent, resolvedToolName, tc)
+	if !isTaskTerminalToolName(resolvedToolName) {
+		outcome := ToolOutcome{
+			Tool:      resolvedToolName,
+			Kind:      ToolOutcomeSuccess,
+			Latency:   time.Since(started),
+			SessionID: currentSessionID(session),
+		}
+		if execErr != nil {
+			outcome.Kind = ToolOutcomeError
+			outcome.Error = execErr.Error()
+		} else if blocked, ok := result.(terminalRunResult); ok && blocked.Blocked {
+			outcome.Kind = ToolOutcomeError
+			outcome.Error = blocked.Text
+		}
+		s.recordToolOutcome(ctx, outcome)
+	}
 
 	hookData.ToolResult = result
 	hookData.ToolError = execErr
