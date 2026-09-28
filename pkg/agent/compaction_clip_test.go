@@ -352,12 +352,23 @@ func (o *turnTrackingObserver) OnCompaction(_ context.Context, info CompactionIn
 
 func runCompactLoop(t *testing.T, llm *compactLoopLLM, opts ...RunOption) compactLoopOutcome {
 	t.Helper()
+	return runCompactLoopWith(t, llm, nil, opts...)
+}
+
+// runCompactLoopWith is runCompactLoop with a hook on the builder, for a test
+// that needs a service-level setting — the tool output cap, which otherwise
+// stops an oversized result before compaction ever sees it.
+func runCompactLoopWith(t *testing.T, llm *compactLoopLLM, tweak func(*Builder) *Builder, opts ...RunOption) compactLoopOutcome {
+	t.Helper()
 	obs := &turnTrackingObserver{llm: llm}
-	svc, err := New("compaction-measure").
+	b := New("compaction-measure").
 		WithConfig(testAgentConfig(t.TempDir())).
 		WithLLM(llm).
-		WithObserver(obs).
-		Build()
+		WithObserver(obs)
+	if tweak != nil {
+		b = tweak(b)
+	}
+	svc, err := b.Build()
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -706,7 +717,11 @@ func TestCompactionHandlesAnOversizedRecentResult(t *testing.T) {
 		rounds: rounds, resultChars: 2000, reportFromInput: true,
 		resultCharsAt: map[int]int{6: 260000},
 	}
-	out := runCompactLoop(t, llm, WithAutoCompaction(CompactionDefaultThresholdTokens, 0))
+	// The tool output cap would cut this result to 32KB before it reached the
+	// history (TestOutputCapKeepsAnOversizedResultOutOfCompaction); switched
+	// off, this is the history a host that raised or disabled the cap gets.
+	out := runCompactLoopWith(t, llm, func(b *Builder) *Builder { return b.WithToolOutputLimit(-1) },
+		WithAutoCompaction(CompactionDefaultThresholdTokens, 0))
 
 	maxAfter := 0
 	for i, r := range out.reports {
@@ -753,6 +768,38 @@ func TestCompactionHandlesAnOversizedRecentResult(t *testing.T) {
 		if out.compactions[i-1].NoProgress && out.compactions[i].NoProgress {
 			t.Fatalf("two no-progress compactions in a row (%d, %d)", i-1, i)
 		}
+	}
+}
+
+// With both defaults on, the same oversized result never reaches compaction:
+// the output cap cuts it to 32KB on the way into the history, so the prompt
+// never grows large enough to need a trim and no summary is ever bought.
+func TestOutputCapKeepsAnOversizedResultOutOfCompaction(t *testing.T) {
+	llm := &compactLoopLLM{
+		rounds: 14, resultChars: 2000, reportFromInput: true,
+		resultCharsAt: map[int]int{6: 260000},
+	}
+	out := runCompactLoop(t, llm, WithAutoCompaction(CompactionDefaultThresholdTokens, 0))
+
+	peak := 0
+	for _, r := range out.reports {
+		if r > peak {
+			peak = r
+		}
+	}
+	t.Logf("MEASURE capped oversized result: peak prompt %d, compactions %d, summary calls %d",
+		peak, len(out.compactions), out.summaryCalls)
+
+	if !out.result.Success {
+		t.Fatalf("run did not complete: %+v", out.result)
+	}
+	if out.summaryCalls != 0 {
+		t.Fatalf("%d summary calls; the cap should have kept the history small", out.summaryCalls)
+	}
+	// 260000 chars is ~65k tokens uncapped; capped it is ~8k on top of the
+	// running history.
+	if peak > 30000 {
+		t.Fatalf("peak prompt %d; the capped result should keep it well under 30000", peak)
 	}
 }
 
