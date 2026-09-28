@@ -11,6 +11,7 @@ import (
 
 	"github.com/liliang-cn/agent-go/v3/pkg/agent"
 	"github.com/liliang-cn/agent-go/v3/pkg/config"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 )
 
 // LiveBuilder constructs a real-LLM Service for live-mode runs. Callers
@@ -49,6 +50,17 @@ type RunResult struct {
 	LintViolations map[string]int `json:"lint_violations,omitempty"` // summed across runs
 	Status         string         `json:"status"`                    // status of the most recent run
 	FinalText      string         `json:"final_text,omitempty"`      // last successful run's final text (or last attempt)
+
+	// TokensMeasured is true only when every run's provider reported token
+	// accounting. Tokens is then the per-run average; otherwise it is null,
+	// which means "not measured" — never "used none".
+	TokensMeasured bool        `json:"tokens_measured"`
+	Tokens         *TokenStats `json:"tokens"`
+	// CostUnpriced is true when any run could not be priced (unknown model,
+	// no terminal event, or a result written before cost was recorded).
+	// AvgCostUSD is then null: unpriced is unknown spend, not free.
+	CostUnpriced bool     `json:"cost_unpriced"`
+	AvgCostUSD   *float64 `json:"avg_cost_usd"`
 }
 
 // Run executes a scenario for sc.Runs iterations and returns an aggregated
@@ -71,6 +83,10 @@ func Run(ctx context.Context, sc *Scenario, opts RunOptions) (*RunResult, error)
 
 	totalLLMCalls := 0
 	totalDuration := time.Duration(0)
+	var tokenSum TokenStats
+	tokensMeasured := true
+	costSum := 0.0
+	costUnpriced := false
 	for i := 0; i < iterations; i++ {
 		single, err := runOnce(ctx, sc, opts)
 		if err != nil {
@@ -78,6 +94,15 @@ func Run(ctx context.Context, sc *Scenario, opts RunOptions) (*RunResult, error)
 		}
 		totalLLMCalls += single.LLMCalls
 		totalDuration += single.duration
+		if single.Usage != nil {
+			tokenSum.PromptTokens += float64(single.Usage.PromptTokens)
+			tokenSum.CachedPromptTokens += float64(single.Usage.CachedPromptTokens)
+			tokenSum.CompletionTokens += float64(single.Usage.CompletionTokens)
+		} else {
+			tokensMeasured = false
+		}
+		costSum += single.CostUSD
+		costUnpriced = costUnpriced || single.CostUnpriced
 		for k, v := range single.LintViolations {
 			out.LintViolations[k] += v
 		}
@@ -96,6 +121,20 @@ func Run(ctx context.Context, sc *Scenario, opts RunOptions) (*RunResult, error)
 	out.AvgLLMCalls = float64(totalLLMCalls) / float64(iterations)
 	out.AvgDurationMs = float64(totalDuration.Milliseconds()) / float64(iterations)
 	out.Pass = out.FailCount == 0
+	out.TokensMeasured = tokensMeasured
+	if tokensMeasured {
+		n := float64(iterations)
+		out.Tokens = &TokenStats{
+			PromptTokens:       tokenSum.PromptTokens / n,
+			CachedPromptTokens: tokenSum.CachedPromptTokens / n,
+			CompletionTokens:   tokenSum.CompletionTokens / n,
+		}
+	}
+	out.CostUnpriced = costUnpriced
+	if !costUnpriced {
+		avg := costSum / float64(iterations)
+		out.AvgCostUSD = &avg
+	}
 	return out, nil
 }
 
@@ -122,23 +161,11 @@ func RunAll(ctx context.Context, dir string, opts RunOptions) ([]*RunResult, err
 // document with summary fields, suitable for writing to
 // eval/results/<ts>.json.
 func MarshalResults(results []*RunResult, profile string) ([]byte, error) {
-	pass, fail := 0, 0
-	for _, r := range results {
-		if r.Pass {
-			pass++
-		} else {
-			fail++
-		}
-	}
-	out := map[string]any{
-		"timestamp": time.Now().UTC().Format(time.RFC3339),
-		"profile":   profile,
-		"summary": map[string]int{
-			"total": len(results),
-			"pass":  pass,
-			"fail":  fail,
-		},
-		"results": results,
+	out := ResultsFile{
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Profile:   profile,
+		Summary:   Summarize(results),
+		Results:   results,
 	}
 	return json.MarshalIndent(out, "", "  ")
 }
@@ -154,6 +181,9 @@ type singleRun struct {
 	LLMCalls        int
 	MaxToolsOffered int
 	LintViolations  map[string]int
+	Usage           *domain.TokenUsage
+	CostUSD         float64
+	CostUnpriced    bool
 	duration        time.Duration
 }
 
@@ -184,6 +214,7 @@ func runOnce(ctx context.Context, sc *Scenario, opts RunOptions) (*singleRun, er
 	case ModeMock, "":
 		mock = NewMockLLM(sc.LLMReplies)
 		mock.SetConstraints(sc.Constraints)
+		mock.SetUsage(sc.MockUsage)
 		svc, buildErr = buildMockService(sc, home, mock)
 	case ModeLive:
 		if opts.Live == nil {
@@ -212,7 +243,7 @@ func runOnce(ctx context.Context, sc *Scenario, opts RunOptions) (*singleRun, er
 		return nil, fmt.Errorf("scenario %s: RunStream failed: %w", sc.Name, err)
 	}
 
-	final, blocked, sawError := collectEvents(events, res.LintViolations)
+	final, blocked, sawError := collectEvents(events, res)
 	if mock != nil {
 		res.LLMCalls = mock.CallCount()
 		res.MaxToolsOffered = mock.MaxToolsOffered()
@@ -338,15 +369,38 @@ func registerLints(svc *agent.Service, names []string) error {
 //	"output lint <name> repeatedly rejected the response: <reason>"
 var lintRejectMessage = regexp.MustCompile(`^output lint ([a-zA-Z0-9_]+) (?:rejected|repeatedly rejected)\b`)
 
-func collectEvents(events <-chan *agent.Event, lintCounts map[string]int) (final string, blocked string, sawError bool) {
+// collectEvents drains the stream, counting lint rejections and taking the
+// run's usage and cost from its terminal event, which carries the totals. A
+// run that never reached one has no known cost, and is marked unpriced.
+func collectEvents(events <-chan *agent.Event, res *singleRun) (final string, blocked string, sawError bool) {
+	lintCounts := res.LintViolations
+	sawTerminal := false
+	terminal := func(evt *agent.Event) {
+		sawTerminal = true
+		res.Usage = evt.Usage
+		res.CostUSD = evt.EstimatedCostUSD
+		res.CostUnpriced = evt.CostUnpriced
+	}
+	defer func() {
+		if !sawTerminal {
+			res.CostUnpriced = true
+		}
+	}()
 	for evt := range events {
 		switch evt.Type {
 		case agent.EventTypeComplete:
 			final = evt.Content
+			terminal(evt)
 		case agent.EventTypeBlocked:
 			blocked = evt.Content
+			terminal(evt)
+		case agent.EventTypeCancelled:
+			terminal(evt)
 		case agent.EventTypeError:
 			sawError = true
+			if evt.StopReason != "" {
+				terminal(evt)
+			}
 			if m := lintRejectMessage.FindStringSubmatch(evt.Content); len(m) == 2 {
 				lintCounts[m[1]]++
 			}
