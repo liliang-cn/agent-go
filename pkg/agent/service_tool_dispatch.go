@@ -57,7 +57,7 @@ func (s *Service) executeDirectToolCall(ctx context.Context, currentAgent *Agent
 	}
 
 	metadata := s.lookupToolMetadataForAgent(resolvedToolName, currentAgent)
-	if err := s.authorizeTool(ctx, PermissionRequest{
+	decision, err := s.decideTool(ctx, PermissionRequest{
 		ToolName:        resolvedToolName,
 		ToolArgs:        tc.Function.Arguments,
 		SessionID:       currentSessionID(session),
@@ -65,7 +65,9 @@ func (s *Service) executeDirectToolCall(ctx context.Context, currentAgent *Agent
 		ReadOnly:        metadata.ReadOnly,
 		Destructive:     metadata.Destructive,
 		ConcurrencySafe: metadata.ConcurrencySafe,
-	}); err != nil {
+	})
+	s.emitPermissionDecision(ctx, currentAgent, session, tc.ID, decision)
+	if err != nil {
 		return nil, err, false
 	}
 

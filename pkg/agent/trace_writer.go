@@ -99,6 +99,14 @@ type traceLine struct {
 	Inner  bool           `json:"inner,omitempty"`
 	Result string         `json:"result,omitempty"`
 
+	// Permission decisions, one line per tool call that reached the gate.
+	Decision    string         `json:"decision,omitempty"`
+	Decider     string         `json:"decider,omitempty"`
+	DecidedBy   string         `json:"decided_by,omitempty"`
+	Required    bool           `json:"required,omitempty"`
+	Destructive bool           `json:"destructive,omitempty"`
+	Metadata    map[string]any `json:"metadata,omitempty"`
+
 	// Sub-agents.
 	SubAgent   string `json:"subagent,omitempty"`
 	SubAgentID string `json:"subagent_id,omitempty"`
@@ -312,6 +320,32 @@ func (t *TraceWriter) OnToolEnd(_ context.Context, info ToolInfo, result any, er
 		line.Result = t.clip(traceValueText(result))
 	}
 	t.write(line, now)
+}
+
+// OnPermissionDecision records one permission decision. Every call that
+// reaches the gate gets a line, the ungated ones included, so "every
+// destructive call has a record" is checkable by counting — a missing line
+// is a defect, never a way of saying "no approval was needed".
+func (t *TraceWriter) OnPermissionDecision(_ context.Context, d PermissionDecisionInfo) {
+	t.write(traceLine{
+		Event:       "permission",
+		TaskID:      d.TaskID,
+		RunID:       d.RunID,
+		SessionID:   d.SessionID,
+		Agent:       d.AgentName,
+		CallID:      d.CallID,
+		Tool:        d.Tool,
+		Args:        d.Args,
+		Decision:    string(d.Decision),
+		Decider:     string(d.Decider),
+		DecidedBy:   d.DecidedBy,
+		Required:    d.Required,
+		Destructive: d.Destructive,
+		Reason:      t.clip(d.Reason),
+		Error:       t.clip(d.Error),
+		Metadata:    d.Metadata,
+		DurationMs:  d.Duration.Milliseconds(),
+	}, time.Now())
 }
 
 func (t *TraceWriter) OnSubAgentStart(_ context.Context, info SubAgentInfo) {

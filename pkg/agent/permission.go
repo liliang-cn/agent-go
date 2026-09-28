@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"strings"
+	"time"
 )
 
 // PermissionRequest describes a tool execution that may require approval.
@@ -18,9 +19,14 @@ type PermissionRequest struct {
 
 // PermissionResponse is the decision returned by a PermissionHandler.
 type PermissionResponse struct {
-	Allowed  bool                   `json:"allowed"`
-	Reason   string                 `json:"reason,omitempty"`
-	Metadata map[string]interface{} `json:"metadata,omitempty"`
+	Allowed bool   `json:"allowed"`
+	Reason  string `json:"reason,omitempty"`
+	// DecidedBy names who or what made the decision — a user id, an
+	// approver's name, "auto-approve-reads". Opaque to the runtime, which
+	// only carries it into the permission record so "who approved this
+	// destructive call?" has an answer after the fact.
+	DecidedBy string                 `json:"decided_by,omitempty"`
+	Metadata  map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // PermissionHandler authorizes a tool execution at runtime.
@@ -69,30 +75,67 @@ func (s *Service) SetPermissionPolicy(policy PermissionPolicy) {
 	s.permissionPolicy = policy
 }
 
+// authorizeTool is the permission gate. decideTool is the same decision with
+// its provenance attached.
 func (s *Service) authorizeTool(ctx context.Context, req PermissionRequest) error {
+	_, err := s.decideTool(ctx, req)
+	return err
+}
+
+// decideTool makes the permission decision and describes how it was made. The
+// error is exactly what the gate has always returned; the description is a
+// record of the decision, never an input to it.
+func (s *Service) decideTool(ctx context.Context, req PermissionRequest) (PermissionDecisionInfo, error) {
 	s.permissionMu.RLock()
 	handler := s.permissionHandler
 	policy := s.permissionPolicy
 	s.permissionMu.RUnlock()
 
-	if handler == nil {
-		return nil
-	}
-	if policy != nil && !policy(req) {
-		return nil
+	info := PermissionDecisionInfo{
+		Tool:        req.ToolName,
+		Args:        req.ToolArgs,
+		SessionID:   req.SessionID,
+		AgentID:     req.AgentID,
+		ReadOnly:    req.ReadOnly,
+		Destructive: req.Destructive,
 	}
 
+	if handler == nil {
+		info.Decision = PermissionNotRequired
+		info.Decider = PermissionDeciderNone
+		return info, nil
+	}
+	if policy != nil && !policy(req) {
+		info.Decision = PermissionNotRequired
+		info.Decider = PermissionDeciderPolicy
+		return info, nil
+	}
+
+	info.Required = true
+	info.Decider = PermissionDeciderHandler
+	started := time.Now()
 	resp, err := handler(ctx, req)
+	info.Duration = time.Since(started)
+	if resp != nil {
+		info.DecidedBy = resp.DecidedBy
+		info.Reason = resp.Reason
+		info.Metadata = resp.Metadata
+	}
 	if err != nil {
-		return err
+		info.Decision = PermissionDecisionError
+		info.Error = err.Error()
+		return info, err
 	}
 	if resp == nil || !resp.Allowed {
+		info.Decision = PermissionDenied
 		if resp != nil && resp.Reason != "" {
-			return PermissionDeniedError{Reason: resp.Reason}
+			return info, PermissionDeniedError{Reason: resp.Reason}
 		}
-		return PermissionDeniedError{Reason: "permission denied"}
+		info.Reason = "permission denied"
+		return info, PermissionDeniedError{Reason: "permission denied"}
 	}
-	return nil
+	info.Decision = PermissionAllowed
+	return info, nil
 }
 
 // PermissionDeniedError indicates a user or policy rejection.
