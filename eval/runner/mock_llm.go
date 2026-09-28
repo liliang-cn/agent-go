@@ -29,6 +29,43 @@ type MockLLM struct {
 	// call, so a scenario can exercise the forbid-tools / deliverables gates
 	// end to end instead of relying on the runtime guessing from the goal text.
 	constraints string
+
+	// usage, when set, is reported on every tool turn; nil reports none, which
+	// the runtime and the results both read as "not measured".
+	usage *MockUsage
+}
+
+// SetUsage makes every tool turn report u as its token accounting.
+func (m *MockLLM) SetUsage(u *MockUsage) {
+	m.mu.Lock()
+	m.usage = u
+	m.mu.Unlock()
+}
+
+// UsageModel names the model the mock claims to be, so pricing can find it.
+// Empty unless a scenario's mock_usage names one; an unnamed model is
+// unpriced, and the results say so.
+func (m *MockLLM) UsageModel() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.usage == nil {
+		return ""
+	}
+	return m.usage.Model
+}
+
+func (m *MockLLM) withUsage(res *domain.GenerationResult) *domain.GenerationResult {
+	m.mu.Lock()
+	u := m.usage
+	m.mu.Unlock()
+	if u != nil {
+		res.Usage = &domain.TokenUsage{
+			PromptTokens:       u.PromptTokens,
+			CompletionTokens:   u.CompletionTokens,
+			CachedPromptTokens: u.CachedPromptTokens,
+		}
+	}
+	return res
 }
 
 // NewMockLLM constructs a MockLLM with the given scripted replies. The
@@ -126,12 +163,12 @@ func (m *MockLLM) Stream(ctx context.Context, prompt string, opts *domain.Genera
 
 func (m *MockLLM) GenerateWithTools(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions) (*domain.GenerationResult, error) {
 	m.noteTools(tools)
-	return m.replyResult(), nil
+	return m.withUsage(m.replyResult()), nil
 }
 
 func (m *MockLLM) StreamWithTools(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions, callback domain.ToolCallCallback) error {
 	m.noteTools(tools)
-	return callback(m.replyResult())
+	return callback(m.withUsage(m.replyResult()))
 }
 
 func (m *MockLLM) GenerateStructured(ctx context.Context, prompt string, schema interface{}, opts *domain.GenerationOptions) (*domain.StructuredResult, error) {

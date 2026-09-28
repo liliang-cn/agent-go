@@ -1,4 +1,4 @@
-.PHONY: help test check clean deps coverage-core eval eval-verbose eval-live
+.PHONY: help test check clean deps coverage-core eval eval-verbose eval-live eval-diff
 
 CORE_COVERAGE_PKGS := ./pkg/config ./pkg/cache ./pkg/prompt ./pkg/rag/embedder ./pkg/scheduler/executors
 
@@ -15,6 +15,7 @@ help:
 	@echo "  eval          - Run behavioral eval harness (mock-LLM scenarios, CI-safe)"
 	@echo "  eval-verbose  - Same, with -v output"
 	@echo "  eval-live     - Run live-LLM scenarios against the configured provider pool"
+	@echo "  eval-diff     - Compare two result files: make eval-diff A=old.json B=new.json [MAX_COST_RISE=0.2]"
 	@echo "  clean         - Clean local dev databases"
 	@echo "  deps          - go mod download && tidy"
 	@echo ""
@@ -55,6 +56,13 @@ eval-verbose:
 # local sanity / regression checks. Results are saved to eval/results/.
 eval-live:
 	@AGENTGO_EVAL_LIVE=1 go test ./eval/runner/ -run TestLiveScenarios -count=1 -v -timeout 1200s
+
+# Compare two saved result files. Prints per-scenario changes and totals, and
+# exits non-zero when the pass rate drops — or, with MAX_COST_RISE set (a
+# fraction, 0.2 = 20%), when cost per passed scenario rises beyond it.
+MAX_COST_RISE ?= -1
+eval-diff:
+	@go run ./eval/diff -a "$(A)" -b "$(B)" -max-cost-rise $(MAX_COST_RISE)
 
 clean:
 	@rm -rf .agentgo/data/*.db

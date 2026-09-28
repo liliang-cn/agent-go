@@ -77,6 +77,13 @@ type Scenario struct {
 	// Empty means the run has no constraints. Mock mode only.
 	Constraints string `yaml:"constraints"`
 
+	// MockUsage makes the mock LLM report token accounting on every tool
+	// turn, the way a provider would. Without it a mock run reports none and
+	// its tokens read "not measured" in the results, not zero. Model names
+	// what the mock claims to be, so a registered price can apply to it.
+	// Mock mode only.
+	MockUsage *MockUsage `yaml:"mock_usage"`
+
 	// Runs is the number of times to execute the scenario. >1 is mainly
 	// useful in live mode to amortize model non-determinism into a pass
 	// rate. Defaults to 1.
@@ -95,6 +102,14 @@ type StubTool struct {
 	// Result is the string handed back when the tool is called. Defaults to
 	// a generic success marker.
 	Result string `yaml:"result"`
+}
+
+// MockUsage is the per-turn usage a mock LLM reports.
+type MockUsage struct {
+	Model              string `yaml:"model"`
+	PromptTokens       int    `yaml:"prompt_tokens"`
+	CompletionTokens   int    `yaml:"completion_tokens"`
+	CachedPromptTokens int    `yaml:"cached_prompt_tokens"`
 }
 
 // ExpectSpec lists the assertions for a scenario.
@@ -212,6 +227,9 @@ func validateScenario(sc *Scenario, path string) error {
 	case ModeLive:
 		if len(sc.LLMReplies) > 0 {
 			return fmt.Errorf("scenario %s: llm_replies must be empty for live mode (the real model decides)", path)
+		}
+		if sc.MockUsage != nil {
+			return fmt.Errorf("scenario %s: mock_usage is mock-only (live runs report the provider's usage)", path)
 		}
 		if len(sc.Tools) > 0 {
 			return fmt.Errorf("scenario %s: tools are mock-only (live runs use the real tool surface)", path)

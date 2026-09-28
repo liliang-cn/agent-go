@@ -44,6 +44,7 @@ make clean          # removes .agentgo/data/*.db (local dev databases)
 make eval           # mock profile, deterministic, CI-safe
 make eval-verbose   # same with -v
 make eval-live      # AGENTGO_EVAL_LIVE=1 go test ./eval/runner -run TestLiveScenarios
+make eval-diff A=old.json B=new.json [MAX_COST_RISE=0.2]  # exit 1 when pass rate drops / cost per pass rises
 ```
 
 ### Running tests
