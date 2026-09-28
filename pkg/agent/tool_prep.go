@@ -568,11 +568,31 @@ func (s *Service) webSearchSurfaceMode() domain.WebSearchMode {
 	}
 	if supported, known := s.nativeWebSearchVerdict(); known {
 		if supported {
+			// Declared support says the field works, not that the model
+			// will search with it — measured on DashScope, qwen declined to
+			// search unless forced, and with the MCP tools hidden the agent
+			// had no way to search at all. Only proof hides them.
+			if !s.nativeWebSearchProven() {
+				return domain.WebSearchModeAuto
+			}
 			return domain.WebSearchModeNative
 		}
 		return domain.WebSearchModeMCP
 	}
 	return mode
+}
+
+// nativeWebSearchProven reports whether a supported verdict was observed in a
+// response rather than only declared. Generators that cannot tell are taken as
+// proven, which is what their verdict always meant.
+func (s *Service) nativeWebSearchProven() bool {
+	if s == nil {
+		return false
+	}
+	if e, ok := s.llmService.(domain.NativeWebSearchEvidence); ok {
+		return e.NativeWebSearchProven()
+	}
+	return true
 }
 
 // webSearchGenerationMode is the mode the generation options should carry.

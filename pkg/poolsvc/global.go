@@ -880,6 +880,46 @@ type llmServiceWrapper struct {
 	hint pool.SelectionHint
 }
 
+// NativeWebSearchVerdict implements domain.NativeWebSearchReporter, so a
+// service built over the global pool — every Manager agent — can see what the
+// provider behind it declared or proved. Without it the verdict was always
+// unknown on this path, and a declaration could never take effect.
+//
+// A hint that names a provider asks that provider; one that does not is served
+// by whichever client the strategy picks next, so it gets the pool's combined
+// verdict instead.
+func (w *llmServiceWrapper) NativeWebSearchVerdict() (supported, known bool) {
+	if w == nil || w.pool == nil {
+		return false, false
+	}
+	if w.hint.PreferredProvider == "" {
+		return w.pool.NativeWebSearchVerdict()
+	}
+	client, err := w.pool.GetWithHint(w.hint)
+	if err != nil {
+		return false, false
+	}
+	defer w.pool.Release(client)
+	return client.NativeWebSearchVerdict()
+}
+
+// NativeWebSearchProven implements domain.NativeWebSearchEvidence, choosing
+// the client the same way NativeWebSearchVerdict does.
+func (w *llmServiceWrapper) NativeWebSearchProven() bool {
+	if w == nil || w.pool == nil {
+		return false
+	}
+	if w.hint.PreferredProvider == "" {
+		return w.pool.NativeWebSearchProven()
+	}
+	client, err := w.pool.GetWithHint(w.hint)
+	if err != nil {
+		return false
+	}
+	defer w.pool.Release(client)
+	return client.NativeWebSearchProven()
+}
+
 func (w *llmServiceWrapper) GetModelName() string {
 	client, err := w.pool.GetWithHint(w.hint)
 	if err != nil {

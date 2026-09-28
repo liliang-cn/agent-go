@@ -124,12 +124,12 @@ func TestBuildRequestUnchangedWhenPromptCacheIsOff(t *testing.T) {
 	tools := []domain.ToolDefinition{{Type: "function"}}
 
 	off, err := json.Marshal(buildPoolGenerateWithToolsRequest("m", messages, tools,
-		&domain.GenerationOptions{}))
+		&domain.GenerationOptions{}, ""))
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
 	explicit, err := json.Marshal(buildPoolGenerateWithToolsRequest("m", messages, tools,
-		&domain.GenerationOptions{PromptCache: domain.PromptCacheExplicit}))
+		&domain.GenerationOptions{PromptCache: domain.PromptCacheExplicit}, ""))
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}

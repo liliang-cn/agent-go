@@ -474,13 +474,15 @@ func llmProviderFromResource(res resource.Resource) (pool.Provider, bool) {
 	capability := resourceInt(res.Metadata, "capability", 3)
 	name := firstNonEmptyConfig(resourceString(res.Metadata, "provider_name"), res.Name, strings.TrimPrefix(res.ID, "llm:"))
 	return pool.Provider{
-		Name:           name,
-		BaseURL:        baseURL,
-		Key:            key,
-		ModelName:      model,
-		Models:         resourceStringSlice(res.Metadata, "models"),
-		MaxConcurrency: maxConcurrency,
-		Capability:     capability,
+		Name:                   name,
+		BaseURL:                baseURL,
+		Key:                    key,
+		ModelName:              model,
+		Models:                 resourceStringSlice(res.Metadata, "models"),
+		MaxConcurrency:         maxConcurrency,
+		Capability:             capability,
+		NativeWebSearch:        resourceString(res.Metadata, "native_web_search"),
+		NativeWebSearchOptions: resourceMap(res.Metadata, "native_web_search_options"),
 	}, true
 }
 
@@ -777,4 +779,14 @@ func GetEnvOrDefaultBool(key string, defaultValue bool) bool {
 		}
 	}
 	return defaultValue
+}
+
+func resourceMap(metadata map[string]interface{}, key string) map[string]interface{} {
+	if metadata == nil {
+		return nil
+	}
+	if m, ok := metadata[key].(map[string]interface{}); ok && len(m) > 0 {
+		return m
+	}
+	return nil
 }

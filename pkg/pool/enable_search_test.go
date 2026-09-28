@@ -9,7 +9,7 @@ import (
 
 func TestPoolRequestEnableSearch(t *testing.T) {
 	// native web search -> both web_search_options and enable_search present
-	req := buildPoolGenerateWithToolsRequest("m", nil, nil, &domain.GenerationOptions{WebSearchMode: domain.WebSearchModeAuto})
+	req := buildPoolGenerateWithToolsRequest("m", nil, nil, &domain.GenerationOptions{WebSearchMode: domain.WebSearchModeAuto}, "")
 	if req["enable_search"] != true {
 		t.Fatalf("expected enable_search=true, got %v", req["enable_search"])
 	}
@@ -17,7 +17,7 @@ func TestPoolRequestEnableSearch(t *testing.T) {
 		t.Fatal("expected web_search_options present")
 	}
 	// no web search -> neither present
-	req2 := buildPoolGenerateWithToolsRequest("m", nil, nil, &domain.GenerationOptions{})
+	req2 := buildPoolGenerateWithToolsRequest("m", nil, nil, &domain.GenerationOptions{}, "")
 	if _, ok := req2["enable_search"]; ok {
 		t.Fatal("did not expect enable_search without web search mode")
 	}

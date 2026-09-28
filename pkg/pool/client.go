@@ -46,8 +46,38 @@ func NewClient(providerName, baseURL, key, modelName string) (*Client, error) {
 			Timeout: 600 * time.Second,
 		},
 		promptManager: prompt.NewManager(),
-		nativeSearch:  &nativeSearchState{},
+		nativeSearch:  newNativeSearchState(providerName, domain.NativeWebSearchUndeclared, nil),
 	}, nil
+}
+
+// SetNativeWebSearch declares whether this client's upstream has built-in web
+// search, and which request field turns it on. It is the programmatic form of
+// Provider.NativeWebSearch / NativeWebSearchOptions, for a client built with
+// NewClient and handed to an agent with Builder.WithLLM. Call it before the
+// client serves requests.
+//
+// options, when given, are sent inside the declared field: DashScope's
+// search_options (e.g. {"forced_search": true}), extra keys of OpenAI's
+// web_search_options, or the google_search tool's own config.
+func (c *Client) SetNativeWebSearch(format domain.NativeWebSearchFormat, options ...map[string]interface{}) error {
+	f, err := domain.ParseNativeWebSearchFormat(string(format))
+	if err != nil {
+		return err
+	}
+	var opts map[string]interface{}
+	for _, o := range options {
+		for k, v := range o {
+			if opts == nil {
+				opts = map[string]interface{}{}
+			}
+			opts[k] = v
+		}
+	}
+	if err := domain.ValidateNativeWebSearchOptions(f, opts); err != nil {
+		return err
+	}
+	c.nativeSearch = newNativeSearchState(c.providerName, f, opts)
+	return nil
 }
 
 // GetProviderName returns the provider name
@@ -219,7 +249,7 @@ func (c *Client) Stream(ctx context.Context, prompt string, opts *domain.Generat
 	return nil
 }
 
-func buildPoolGenerateWithToolsRequest(modelName string, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions) map[string]interface{} {
+func buildPoolGenerateWithToolsRequest(modelName string, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions, searchFormat domain.NativeWebSearchFormat, searchOptions ...map[string]interface{}) map[string]interface{} {
 	apiMessages := make([]map[string]interface{}, len(messages))
 	for i, msg := range messages {
 		apiMessages[i] = map[string]interface{}{
@@ -314,19 +344,56 @@ func buildPoolGenerateWithToolsRequest(modelName string, messages []domain.Messa
 			reqBody["response_format"] = rf
 		}
 		if domain.UsesNativeWebSearch(opts.WebSearchMode) {
-			// OpenAI-style native web search.
-			reqBody["web_search_options"] = map[string]interface{}{
-				"search_context_size": domain.NormalizeWebSearchContextSize(opts.WebSearchContextSize),
+			var extra map[string]interface{}
+			if len(searchOptions) > 0 {
+				extra = searchOptions[0]
 			}
-			// DashScope ignores web_search_options and triggers retrieval via the
-			// non-standard enable_search flag instead. Send both; providers ignore
-			// the one they don't know, and applyPoolRetryFallbacks drops native
-			// web search entirely if an upstream rejects it.
-			reqBody["enable_search"] = true
+			applyNativeWebSearch(reqBody, searchFormat, opts.WebSearchContextSize, extra)
 		}
 	}
 
 	return reqBody
+}
+
+// applyNativeWebSearch adds the field that turns on the upstream's own web
+// search. A declared format sends exactly its field, with the declared
+// options inside it; an undeclared provider gets every field we know, and
+// applyPoolRetryFallbacks drops them all if the upstream rejects one.
+func applyNativeWebSearch(reqBody map[string]interface{}, format domain.NativeWebSearchFormat, contextSize string, extra map[string]interface{}) {
+	openAI := func(extra map[string]interface{}) {
+		o := map[string]interface{}{
+			"search_context_size": domain.NormalizeWebSearchContextSize(contextSize),
+		}
+		for k, v := range extra {
+			o[k] = v
+		}
+		reqBody["web_search_options"] = o
+	}
+	switch format {
+	case domain.NativeWebSearchNone:
+	case domain.NativeWebSearchOpenAI:
+		openAI(extra)
+	case domain.NativeWebSearchDashScope:
+		reqBody["enable_search"] = true
+		if len(extra) > 0 {
+			reqBody["search_options"] = extra
+		}
+	case domain.NativeWebSearchGoogle:
+		// A built-in tool, listed beside the function tools rather than
+		// replacing them.
+		cfg := map[string]interface{}{}
+		for k, v := range extra {
+			cfg[k] = v
+		}
+		existing, _ := reqBody["tools"].([]map[string]interface{})
+		reqBody["tools"] = append(existing, map[string]interface{}{"google_search": cfg})
+	default:
+		// Undeclared. DashScope ignores web_search_options and triggers
+		// retrieval via the non-standard enable_search flag instead, so send
+		// both; providers ignore the one they don't know.
+		openAI(nil)
+		reqBody["enable_search"] = true
+	}
 }
 
 func shouldRetryPoolWithoutNativeWebSearch(opts *domain.GenerationOptions, err error) bool {
@@ -337,6 +404,13 @@ func shouldRetryPoolWithoutNativeWebSearch(opts *domain.GenerationOptions, err e
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "web_search_options") ||
 		strings.Contains(msg, "enable_search") ||
+		strings.Contains(msg, "search_options") ||
+		strings.Contains(msg, "google_search") ||
+		// Gemini refuses a built-in tool beside function tools unless a
+		// tool_config flag is set, which OpenAI-compatible gateways do not
+		// all pass through.
+		strings.Contains(msg, "built-in tools") ||
+		strings.Contains(msg, "server_side_tool_invocations") ||
 		strings.Contains(msg, "web search") ||
 		strings.Contains(msg, "unsupported parameter") ||
 		strings.Contains(msg, "unknown field")
@@ -451,7 +525,7 @@ func (c *Client) GenerateWithTools(ctx context.Context, messages []domain.Messag
 	if opts == nil {
 		opts = &domain.GenerationOptions{}
 	}
-	reqBody := buildPoolGenerateWithToolsRequest(c.modelName, messages, tools, opts)
+	reqBody := buildPoolGenerateWithToolsRequest(c.modelName, messages, tools, opts, c.nativeSearch.sendFormat(), c.nativeSearch.sendOptions())
 
 	resp, err := c.doRequest(ctx, "/chat/completions", reqBody)
 	// Iterate the compatibility fallbacks: a provider can reject several
@@ -466,7 +540,7 @@ func (c *Client) GenerateWithTools(ctx context.Context, messages []domain.Messag
 			break
 		}
 		curOpts = retryOpts
-		resp, err = c.doRequest(ctx, "/chat/completions", buildPoolGenerateWithToolsRequest(c.modelName, messages, tools, curOpts))
+		resp, err = c.doRequest(ctx, "/chat/completions", buildPoolGenerateWithToolsRequest(c.modelName, messages, tools, curOpts, c.nativeSearch.sendFormat(), c.nativeSearch.sendOptions()))
 	}
 	if err != nil {
 		return nil, fmt.Errorf("request failed (model=%s): %w", c.modelName, err)

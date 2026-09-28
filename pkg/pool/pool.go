@@ -40,6 +40,15 @@ type Provider struct {
 	Models         []string `mapstructure:"models" json:"models,omitempty"`
 	MaxConcurrency int      `mapstructure:"max_concurrency" json:"max_concurrency"`
 	Capability     int      `mapstructure:"capability" json:"capability"` // capability level, 1-5
+	// NativeWebSearch declares the provider's built-in web search: "none",
+	// "openai" (web_search_options), "dashscope" (enable_search) or
+	// "google_search" (Gemini grounding). Empty leaves it undeclared, and the
+	// client learns from responses instead. See domain.NativeWebSearchFormat.
+	NativeWebSearch string `mapstructure:"native_web_search" json:"native_web_search,omitempty"`
+	// NativeWebSearchOptions are sent inside the declared field, e.g.
+	// {"forced_search": true, "search_strategy": "max"} for DashScope's
+	// search_options. Requires NativeWebSearch.
+	NativeWebSearchOptions map[string]interface{} `mapstructure:"native_web_search_options" json:"native_web_search_options,omitempty"`
 }
 
 type SelectionHint struct {
@@ -194,6 +203,9 @@ func newClientForProvider(prov Provider, model string, promptMgr *prompt.Manager
 	client, err := NewClient(prov.Name, prov.BaseURL, prov.Key, resolvedModel)
 	if err != nil {
 		return nil, err
+	}
+	if err := client.SetNativeWebSearch(domain.NativeWebSearchFormat(prov.NativeWebSearch), prov.NativeWebSearchOptions); err != nil {
+		return nil, fmt.Errorf("provider %q: %w", prov.Name, err)
 	}
 	if promptMgr != nil {
 		client.SetPromptManager(promptMgr)

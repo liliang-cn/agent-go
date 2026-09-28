@@ -3,6 +3,8 @@ package pool
 import (
 	"bytes"
 	"encoding/json"
+	"log/slog"
+	"sync"
 	"sync/atomic"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
@@ -24,8 +26,70 @@ import (
 //
 // The state lives behind a pointer shared by every client derived from the
 // same provider (model overrides included), so one verdict serves them all.
+//
+// A declared format (Provider.NativeWebSearch) sets the verdict at
+// construction. Absence of evidence never moves it — that is the point of
+// declaring, since a gateway that strips grounding metadata (cpa does) can
+// never prove support by evidence. A rejection still does: it is the upstream
+// refusing the very field the declaration names, and honouring the
+// declaration past that would hide the MCP search tools behind a search that
+// cannot run. So a rejected declaration falls back to unsupported, and says so
+// at ERROR, because it is a configuration mistake somebody has to fix.
 type nativeSearchState struct {
-	v atomic.Int32 // 0 unknown, 1 supported, 2 unsupported
+	v        atomic.Int32 // 0 unknown, 1 supported, 2 unsupported
+	format   domain.NativeWebSearchFormat
+	options  map[string]interface{}
+	declared bool
+	// proven is set when a response carried grounding evidence. A declared
+	// verdict says the field works; only proof says the model actually
+	// searches with it, and only proof may hide the MCP search tools.
+	proven   atomic.Bool
+	provider string
+	rejected sync.Once
+}
+
+// newNativeSearchState builds the state for one provider, applying its
+// declaration when there is one.
+func newNativeSearchState(provider string, format domain.NativeWebSearchFormat, options map[string]interface{}) *nativeSearchState {
+	s := &nativeSearchState{format: format, options: cloneSearchOptions(options), provider: provider}
+	switch format {
+	case domain.NativeWebSearchUndeclared:
+	case domain.NativeWebSearchNone:
+		s.declared = true
+		s.v.Store(nativeSearchUnsupported)
+	default:
+		s.declared = true
+		s.v.Store(nativeSearchSupported)
+	}
+	return s
+}
+
+// sendFormat is the request shape to use when native search is requested:
+// the declared one, or undeclared (send every known field and learn).
+func (s *nativeSearchState) sendFormat() domain.NativeWebSearchFormat {
+	if s == nil {
+		return domain.NativeWebSearchUndeclared
+	}
+	return s.format
+}
+
+// sendOptions are the declared extra parameters for the declared field.
+func (s *nativeSearchState) sendOptions() map[string]interface{} {
+	if s == nil {
+		return nil
+	}
+	return s.options
+}
+
+func cloneSearchOptions(in map[string]interface{}) map[string]interface{} {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]interface{}, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 const (
@@ -38,6 +102,12 @@ func (s *nativeSearchState) markUnsupported() {
 	if s == nil {
 		return
 	}
+	if s.declared && s.format != domain.NativeWebSearchNone {
+		s.rejected.Do(func() {
+			slog.Error("provider rejected the native web-search field it was declared to support; falling back to MCP search — fix native_web_search or the gateway",
+				"module", "pool", "provider", s.provider, "declared", string(s.format))
+		})
+	}
 	s.v.Store(nativeSearchUnsupported)
 }
 
@@ -45,7 +115,25 @@ func (s *nativeSearchState) markSupported() {
 	if s == nil {
 		return
 	}
-	s.v.CompareAndSwap(nativeSearchUnknown, nativeSearchSupported)
+	if s.declared {
+		// Evidence never moves a declared verdict, but it does prove that a
+		// declared "supported" is real.
+		if s.format != domain.NativeWebSearchNone {
+			s.proven.Store(true)
+		}
+		return
+	}
+	if s.v.CompareAndSwap(nativeSearchUnknown, nativeSearchSupported) || s.v.Load() == nativeSearchSupported {
+		s.proven.Store(true)
+	}
+}
+
+func (s *nativeSearchState) isProven() bool {
+	if s == nil {
+		return false
+	}
+	supported, known := s.verdict()
+	return supported && known && s.proven.Load()
 }
 
 func (s *nativeSearchState) verdict() (supported, known bool) {
@@ -68,6 +156,16 @@ func (c *Client) NativeWebSearchVerdict() (supported, known bool) {
 		return false, false
 	}
 	return c.nativeSearch.verdict()
+}
+
+// NativeWebSearchProven implements domain.NativeWebSearchEvidence: whether a
+// response has shown this client's upstream actually searching, as opposed to
+// support that was only declared.
+func (c *Client) NativeWebSearchProven() bool {
+	if c == nil {
+		return false
+	}
+	return c.nativeSearch.isProven()
 }
 
 // NativeWebSearchVerdict implements domain.NativeWebSearchReporter for the
@@ -95,6 +193,31 @@ func (p *Pool) NativeWebSearchVerdict() (supported, known bool) {
 		anySupported = true
 	}
 	return anySupported, anySupported
+}
+
+// NativeWebSearchProven implements domain.NativeWebSearchEvidence for the
+// pool: true only when every client that reports support has proven it, since
+// any of them may serve the next request.
+func (p *Pool) NativeWebSearchProven() bool {
+	if p == nil {
+		return false
+	}
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	anyProven := false
+	for _, w := range p.clients {
+		if w == nil || w.client == nil {
+			continue
+		}
+		if s, k := w.client.NativeWebSearchVerdict(); !(s && k) {
+			continue
+		}
+		if !w.client.NativeWebSearchProven() {
+			return false
+		}
+		anyProven = true
+	}
+	return anyProven
 }
 
 // recordNativeWebSearch turns one completed request into verdict evidence.

@@ -370,6 +370,12 @@ func (s *AgentGoDB) initSchema() error {
 	if err != nil {
 		return fmt.Errorf("failed to create llm_providers table: %w", err)
 	}
+	if err := s.ensureColumnExistsLocked("llm_providers", "native_web_search", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return fmt.Errorf("failed to add native_web_search column to llm_providers: %w", err)
+	}
+	if err := s.ensureColumnExistsLocked("llm_providers", "native_web_search_options", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return fmt.Errorf("failed to add native_web_search_options column to llm_providers: %w", err)
+	}
 
 	_, err = s.db.Exec(`
 		CREATE TABLE IF NOT EXISTS llm_provider_models (

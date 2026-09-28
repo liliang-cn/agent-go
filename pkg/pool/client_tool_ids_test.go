@@ -27,7 +27,7 @@ func TestBuildPoolGenerateWithToolsRequestNormalizesToolCallIDs(t *testing.T) {
 			Content:    "done",
 			ToolCallID: "call_old_1",
 		},
-	}, nil, nil)
+	}, nil, nil, "")
 
 	messages, ok := req["messages"].([]map[string]interface{})
 	if !ok || len(messages) != 2 {

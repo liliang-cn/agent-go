@@ -1,25 +1,33 @@
 package store
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 	"github.com/liliang-cn/agent-go/v3/pkg/pool"
 )
 
 // LLMProvider persisted provider configuration.
 type LLMProvider struct {
-	Name           string    `json:"name"`
-	BaseURL        string    `json:"base_url"`
-	Key            string    `json:"key"`
-	ModelName      string    `json:"model_name"`
-	Models         []string  `json:"models,omitempty"`
-	MaxConcurrency int       `json:"max_concurrency"`
-	Capability     int       `json:"capability"`
-	Enabled        bool      `json:"enabled"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	Name           string   `json:"name"`
+	BaseURL        string   `json:"base_url"`
+	Key            string   `json:"key"`
+	ModelName      string   `json:"model_name"`
+	Models         []string `json:"models,omitempty"`
+	MaxConcurrency int      `json:"max_concurrency"`
+	Capability     int      `json:"capability"`
+	// NativeWebSearch declares the provider's built-in web search; see
+	// pool.Provider.NativeWebSearch. Empty means undeclared.
+	NativeWebSearch string `json:"native_web_search,omitempty"`
+	// NativeWebSearchOptions are sent inside the declared field; see
+	// pool.Provider.NativeWebSearchOptions. Stored as JSON.
+	NativeWebSearchOptions map[string]interface{} `json:"native_web_search_options,omitempty"`
+	Enabled                bool                   `json:"enabled"`
+	CreatedAt              time.Time              `json:"created_at"`
+	UpdatedAt              time.Time              `json:"updated_at"`
 }
 
 // SaveProvider inserts or replaces an LLM provider record.
@@ -30,6 +38,25 @@ func (s *AgentGoDB) SaveProvider(p *LLMProvider) error {
 	normalizeLLMProvider(p)
 	if p.ModelName == "" {
 		return fmt.Errorf("provider %q must have a default model", p.Name)
+	}
+	// Refused here rather than when the pool builds the client: by then the
+	// row is written, and a typo would sit in the database failing every
+	// start.
+	format, err := domain.ParseNativeWebSearchFormat(p.NativeWebSearch)
+	if err != nil {
+		return fmt.Errorf("provider %q: %w", p.Name, err)
+	}
+	p.NativeWebSearch = string(format)
+	if err := domain.ValidateNativeWebSearchOptions(format, p.NativeWebSearchOptions); err != nil {
+		return fmt.Errorf("provider %q: %w", p.Name, err)
+	}
+	searchOptions := ""
+	if len(p.NativeWebSearchOptions) > 0 {
+		raw, merr := json.Marshal(p.NativeWebSearchOptions)
+		if merr != nil {
+			return fmt.Errorf("provider %q: native_web_search_options: %w", p.Name, merr)
+		}
+		searchOptions = string(raw)
 	}
 
 	now := time.Now()
@@ -52,17 +79,19 @@ func (s *AgentGoDB) SaveProvider(p *LLMProvider) error {
 	}()
 
 	_, err = tx.Exec(`
-		INSERT INTO llm_providers (name, base_url, key, model_name, max_concurrency, capability, enabled, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO llm_providers (name, base_url, key, model_name, max_concurrency, capability, native_web_search, native_web_search_options, enabled, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(name) DO UPDATE SET
-			base_url        = excluded.base_url,
-			key             = excluded.key,
-			model_name      = excluded.model_name,
-			max_concurrency = excluded.max_concurrency,
-			capability      = excluded.capability,
-			enabled         = excluded.enabled,
-			updated_at      = excluded.updated_at
-	`, p.Name, p.BaseURL, p.Key, p.ModelName, p.MaxConcurrency, p.Capability, p.Enabled, p.CreatedAt, p.UpdatedAt)
+			base_url          = excluded.base_url,
+			key               = excluded.key,
+			model_name        = excluded.model_name,
+			max_concurrency   = excluded.max_concurrency,
+			capability        = excluded.capability,
+			native_web_search = excluded.native_web_search,
+			native_web_search_options = excluded.native_web_search_options,
+			enabled           = excluded.enabled,
+			updated_at        = excluded.updated_at
+	`, p.Name, p.BaseURL, p.Key, p.ModelName, p.MaxConcurrency, p.Capability, p.NativeWebSearch, searchOptions, p.Enabled, p.CreatedAt, p.UpdatedAt)
 	if err != nil {
 		return err
 	}
@@ -90,7 +119,7 @@ func (s *AgentGoDB) GetProvider(name string) (*LLMProvider, error) {
 	defer s.mu.RUnlock()
 
 	row := s.db.QueryRow(`
-		SELECT name, base_url, key, model_name, max_concurrency, capability, enabled, created_at, updated_at
+		SELECT name, base_url, key, model_name, max_concurrency, capability, native_web_search, native_web_search_options, enabled, created_at, updated_at
 		FROM llm_providers WHERE name = ?`, name)
 
 	p, err := scanProvider(row)
@@ -109,7 +138,7 @@ func (s *AgentGoDB) ListProviders() ([]*LLMProvider, error) {
 	defer s.mu.RUnlock()
 
 	rows, err := s.db.Query(`
-		SELECT name, base_url, key, model_name, max_concurrency, capability, enabled, created_at, updated_at
+		SELECT name, base_url, key, model_name, max_concurrency, capability, native_web_search, native_web_search_options, enabled, created_at, updated_at
 		FROM llm_providers ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -159,13 +188,15 @@ func (s *AgentGoDB) DeleteProvider(name string) error {
 func ToPoolProvider(p *LLMProvider) pool.Provider {
 	normalizeLLMProvider(p)
 	return pool.Provider{
-		Name:           p.Name,
-		BaseURL:        p.BaseURL,
-		Key:            p.Key,
-		ModelName:      p.ModelName,
-		Models:         append([]string(nil), p.Models...),
-		MaxConcurrency: p.MaxConcurrency,
-		Capability:     p.Capability,
+		Name:                   p.Name,
+		BaseURL:                p.BaseURL,
+		Key:                    p.Key,
+		ModelName:              p.ModelName,
+		Models:                 append([]string(nil), p.Models...),
+		MaxConcurrency:         p.MaxConcurrency,
+		Capability:             p.Capability,
+		NativeWebSearch:        p.NativeWebSearch,
+		NativeWebSearchOptions: p.NativeWebSearchOptions,
 	}
 }
 
@@ -175,10 +206,16 @@ type providerScanner interface {
 
 func scanProvider(s providerScanner) (*LLMProvider, error) {
 	var p LLMProvider
+	var searchOptions string
 	err := s.Scan(&p.Name, &p.BaseURL, &p.Key, &p.ModelName,
-		&p.MaxConcurrency, &p.Capability, &p.Enabled, &p.CreatedAt, &p.UpdatedAt)
+		&p.MaxConcurrency, &p.Capability, &p.NativeWebSearch, &searchOptions, &p.Enabled, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return nil, err
+	}
+	if searchOptions != "" {
+		if err := json.Unmarshal([]byte(searchOptions), &p.NativeWebSearchOptions); err != nil {
+			return nil, fmt.Errorf("provider %q: native_web_search_options: %w", p.Name, err)
+		}
 	}
 	return &p, nil
 }

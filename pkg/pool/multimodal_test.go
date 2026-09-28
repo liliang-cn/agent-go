@@ -26,7 +26,7 @@ func TestMessagePartsReachTheWire(t *testing.T) {
 		Role:    "user",
 		Content: "What is in this picture?",
 		Parts:   []domain.MessagePart{domain.ImageLocalPathPart(png)},
-	}}, nil, nil)
+	}}, nil, nil, "")
 
 	raw, err := json.Marshal(req)
 	if err != nil {
@@ -48,7 +48,7 @@ func TestMessagePartsReachTheWire(t *testing.T) {
 // string would do is a difference some servers notice, and every message in
 // an ordinary run has no parts.
 func TestPlainMessagesStayPlain(t *testing.T) {
-	req := buildPoolGenerateWithToolsRequest("m", []domain.Message{{Role: "user", Content: "hello"}}, nil, nil)
+	req := buildPoolGenerateWithToolsRequest("m", []domain.Message{{Role: "user", Content: "hello"}}, nil, nil, "")
 	msgs := req["messages"].([]map[string]interface{})
 	if _, ok := msgs[0]["content"].(string); !ok {
 		t.Fatalf("content = %T, want a plain string", msgs[0]["content"])
