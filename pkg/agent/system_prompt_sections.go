@@ -20,6 +20,10 @@ type systemPromptOptions struct {
 	// forbidTools drops every rule that teaches the model to reach for a tool.
 	// The run will be offered none, so mentioning them only invites refusals.
 	forbidTools bool
+	// projectInstructions is the run's snapshot of its instruction files.
+	// When not resolved (a prompt built outside a run) they are read fresh.
+	projectInstructions         string
+	projectInstructionsResolved bool
 }
 
 type systemPromptSectionData struct {
@@ -27,6 +31,8 @@ type systemPromptSectionData struct {
 	agent   *Agent
 	options systemPromptOptions
 	data    map[string]interface{}
+	// projectInstructions is the rendered instruction files for this prompt.
+	projectInstructions string
 }
 
 func (s *Service) renderPromptSection(key string, data map[string]interface{}) string {
@@ -109,6 +115,13 @@ func (s *Service) ensureSystemPromptSectionRegistry() {
 		}
 		return prompt.Section{Name: "system_context", Content: s.renderPromptSection(prompt.AgentSystemContext, data.data)}, nil
 	})
+	s.promptManager.RegisterSection("project_instructions", func(ctx context.Context, raw interface{}) (prompt.Section, error) {
+		data, ok := raw.(systemPromptSectionData)
+		if !ok {
+			return prompt.Section{}, fmt.Errorf("unexpected section data type %T", raw)
+		}
+		return prompt.Section{Name: "project_instructions", Content: data.projectInstructions}, nil
+	})
 	s.promptManager.RegisterSection("memory", func(ctx context.Context, raw interface{}) (prompt.Section, error) {
 		data, ok := raw.(systemPromptSectionData)
 		if !ok {
@@ -184,11 +197,17 @@ func (s *Service) buildSystemPromptSections(ctx context.Context, agent *Agent, o
 		"SystemContext":     systemCtx.FormatForPrompt(),
 	}
 
+	projectInstructions := opts.projectInstructions
+	if !opts.projectInstructionsResolved {
+		projectInstructions = s.projectInstructionsForRun()
+	}
+
 	sectionData := systemPromptSectionData{
-		service: s,
-		agent:   agent,
-		options: opts,
-		data:    data,
+		service:             s,
+		agent:               agent,
+		options:             opts,
+		data:                data,
+		projectInstructions: projectInstructions,
 	}
 	if s.promptManager == nil {
 		return nil
@@ -197,6 +216,10 @@ func (s *Service) buildSystemPromptSections(ctx context.Context, agent *Agent, o
 		"identity",
 		"operational",
 		"system_context",
+		// Static, right after the ambient context: the files change when a
+		// person edits them, not per round, so they belong in the cached
+		// prefix. Empty (and dropped) unless WithProjectInstructions is on.
+		"project_instructions",
 		"frc",
 	}
 	// The length anchors are on by default and only leave the prompt when the
@@ -246,6 +269,9 @@ func (s *Service) buildSystemPromptSections(ctx context.Context, agent *Agent, o
 	}
 	if contextSection != "" {
 		sections = append(sections, systemPromptSection{name: "system_context", content: contextSection})
+	}
+	if projectInstructions != "" {
+		sections = append(sections, systemPromptSection{name: "project_instructions", content: projectInstructions})
 	}
 	return sections
 }

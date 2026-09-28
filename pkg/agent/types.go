@@ -282,6 +282,12 @@ type RunConfig struct {
 	// across segments. See notes_handoff.go.
 	resumedNotes string
 
+	// projectInstructions is the rendered project instruction files, read
+	// once at run start so every round of the run sees the same bytes even if
+	// the agent edits the files meanwhile. See project_instructions.go.
+	projectInstructions         string
+	projectInstructionsResolved bool
+
 	// ToolsDisabled attaches no tools at all to this run. Set it directly with
 	// WithToolsDisabled() when the caller already knows tools are off limits;
 	// the runtime also sets it from extracted constraints when the user's own

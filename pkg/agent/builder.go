@@ -149,6 +149,8 @@ type Builder struct {
 	delegation *bool
 	// omitLengthLimits drops the numeric length anchors from the system prompt.
 	omitLengthLimits bool
+	// projectInstructions is nil unless WithProjectInstructions was called.
+	projectInstructions *ProjectInstructions
 
 	// Execution capabilities (all optional, zero-value = disabled)
 	sandbox       sandbox.Sandbox
@@ -907,6 +909,7 @@ func (b *Builder) build() (*Service, error) {
 	// wins over what the sub-agent configuration implies.
 	svc.delegationTools = b.delegation
 	svc.omitLengthLimits = b.omitLengthLimits
+	svc.projectInstructions = b.projectInstructions
 	if err := svc.startExtensions(context.Background()); err != nil {
 		_ = svc.store.Close()
 		return nil, err
