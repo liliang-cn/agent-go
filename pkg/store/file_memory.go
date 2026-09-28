@@ -960,7 +960,7 @@ func upsertEntryInFile(path string, entry MemoryIndexEntry, formatLine func(Memo
 
 // IsStale returns true if the memory has been superseded.
 func IsStale(m *domain.Memory) bool {
-	return m.ValidTo != nil || m.SupersededBy != ""
+	return domain.MemoryIsSuperseded(m)
 }
 
 // indexDir returns the path to the _index/ directory
@@ -1037,7 +1037,9 @@ func (s *FileMemoryStore) ListHeaders(ctx context.Context, limit int) ([]FileMem
 	}
 	headers := make([]FileMemoryHeader, 0, len(all))
 	for _, m := range all {
-		if m.Archived {
+		// Headers are rendered into the prompt; a superseded memory is not
+		// one the agent should read as current.
+		if m.Archived || IsStale(m) {
 			continue
 		}
 		headers = append(headers, FileMemoryHeader{
@@ -1541,7 +1543,10 @@ func (s *FileMemoryStore) rebuildEntrypointLocked() error {
 		files, _ := filepath.Glob(filepath.Join(s.baseDir, cat, "*.md"))
 		for _, f := range files {
 			m, err := s.readFile(f)
-			if err != nil || m.Archived {
+			// The entrypoint is prepended to the prompt as the index of
+			// active memories; a superseded one listed there is injected as
+			// current, whatever the ranked path does with it.
+			if err != nil || m.Archived || IsStale(m) {
 				continue
 			}
 			entries = append(entries, entry{

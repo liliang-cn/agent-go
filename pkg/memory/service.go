@@ -323,12 +323,18 @@ func (s *Service) RetrieveAndInjectWithContextAndLogic(ctx context.Context, quer
 		}
 	}
 
-	// 5. Noise filtering
+	// 5. Validity. A memory that has been superseded is not current, and
+	// injecting it beside its replacement leaves the model to pick one.
+	// Applied here, whatever backend answered, so every backend behaves the
+	// same way.
+	allMemories = dropSuperseded(allMemories)
+
+	// 6. Noise filtering
 	if s.noiseFilter != nil {
 		allMemories = s.noiseFilter.Filter(allMemories)
 	}
 
-	// 6. Scoring and ranking
+	// 7. Scoring and ranking
 	if s.scorer != nil {
 		allMemories = s.scorer.ScoreAll(allMemories)
 	} else {
@@ -343,7 +349,7 @@ func (s *Service) RetrieveAndInjectWithContextAndLogic(ctx context.Context, quer
 	// scorer and MaxMemories already narrow this list; guessing intent from
 	// wording only ever removed memories the agent should have seen.
 
-	// 7. Limit results
+	// 8. Limit results
 	if len(allMemories) > s.maxMemories {
 		allMemories = allMemories[:s.maxMemories]
 	}
@@ -390,7 +396,16 @@ func (s *Service) storeIfWorthwhileSync(ctx context.Context, req *domain.MemoryS
 		writtenAt = writtenAt.In(loc)
 	}
 
-	prompt := s.buildSummaryPrompt(req) + timeaware.PromptRules(writtenAt)
+	// The memories this interaction might revise, shown in the same call so
+	// the model can say "this replaces that" instead of adding a second,
+	// contradicting row. No extra model call.
+	candidates := s.reconcileCandidates(ctx, req)
+	shown := make(map[string]struct{}, len(candidates))
+	for _, c := range candidates {
+		shown[c.ID] = struct{}{}
+	}
+
+	prompt := s.buildSummaryPrompt(req) + timeaware.PromptRules(writtenAt) + reconcilePromptRules(candidates)
 	schema := map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
@@ -430,6 +445,15 @@ func (s *Service) storeIfWorthwhileSync(ctx context.Context, req *domain.MemoryS
 		if required, ok := items["required"].([]string); ok {
 			items["required"] = append(required, timeaware.RequiredFields()...)
 		}
+		// Reconciliation and kind ride along the same way.
+		if props, ok := items["properties"].(map[string]interface{}); ok {
+			for name, spec := range reconcileSchemaFields() {
+				props[name] = spec
+			}
+		}
+		if required, ok := items["required"].([]string); ok {
+			items["required"] = append(required, reconcileRequiredFields()...)
+		}
 	}
 
 	result, err := s.llm.GenerateStructured(ctx, prompt, schema, &domain.GenerationOptions{Temperature: 0.1})
@@ -465,6 +489,25 @@ func (s *Service) storeIfWorthwhileSync(ctx context.Context, req *domain.MemoryS
 
 	factScopeCounts := make(map[string]int)
 	for itemIndex, item := range summary.Memories {
+		op := strings.ToLower(strings.TrimSpace(item.Op))
+		target := strings.TrimSpace(item.TargetID)
+		if target != "" {
+			if _, ok := shown[target]; !ok {
+				// An id the model was not shown is not one it can know is
+				// the memory being revised. Keep the item; drop the claim.
+				agentgolog.WithModule("memory.autostore").Warn("extraction named a target it was not shown; storing as new",
+					"op", op, "target_id", target)
+				op, target = domain.MemoryOpAdd, ""
+			}
+		}
+		if op == domain.MemoryOpNoop && target != "" {
+			// Already known. Storing it again is how one fact becomes three.
+			continue
+		}
+		if op == domain.MemoryOpUpdate && target == "" {
+			op = domain.MemoryOpAdd
+		}
+
 		baseScope, initialScope, finalScope, placementMeta := resolveMemoryPlacement(req, item)
 		_ = baseScope
 		_ = initialScope
@@ -491,7 +534,18 @@ func (s *Service) storeIfWorthwhileSync(ctx context.Context, req *domain.MemoryS
 		if ref, ok := timeRefs.For(itemIndex); ok && ref.Resolved() {
 			mem.Metadata = setMemoryTimeReference(mem.Metadata, ref)
 		}
-		_ = s.Add(ctx, mem)
+		domain.SetMemoryKind(mem, item.Kind)
+		if op == domain.MemoryOpUpdate {
+			mem.Metadata["supersedes"] = target
+		}
+		if err := s.Add(ctx, mem); err != nil {
+			continue
+		}
+		if op == domain.MemoryOpUpdate {
+			// After the replacement is stored, never before: a failure
+			// between the two must leave the old fact current, not neither.
+			s.supersedeOrKeep(ctx, target, mem.ID)
+		}
 		if item.Type == domain.MemoryTypeFact {
 			factScopeCounts[mem.SessionID]++
 		}
@@ -880,7 +934,7 @@ func (s *Service) formatMemoriesForQuery(ctx context.Context, query string, quer
 		if note != "" {
 			note = " " + note
 		}
-		sb.WriteString(fmt.Sprintf("[%d] [%s]%s: %s\n\n", i+1, m.Type, note, m.Content))
+		sb.WriteString(fmt.Sprintf("[%d] [%s]%s: %s\n\n", i+1, memoryLabel(m.Memory), note, m.Content))
 	}
 	return sb.String()
 }
