@@ -75,6 +75,10 @@ func main() {
 Without `WithLLM`, the provider comes from `AGENTGO_HOME` (default `~/.agentgo`), where
 providers live in `data/agentgo.db`. `examples/quickstart` is the config-driven variant.
 
+Wiring memory, a CortexDB knowledge graph, built-in web search and durable plans into a
+real host: [docs/getting-started.md](docs/getting-started.md), runnable as
+`examples/integration`.
+
 Every entry point runs the same loop:
 
 | call | returns | use when |
@@ -520,9 +524,15 @@ Provider quirks are handled in the library: a reasoner that rejects a pinned
 `tool_choice`, `response_format` fallbacks, `reasoning_content`, split streaming tool-call
 deltas, servers that omit usage on streams. Optional request fields (`web_search_options`,
 `tool_choice`, cache markers) follow one shape: send, detect the rejection, strip, retry
-once. Native web search is **detected, never assumed**: a rejection proves unsupported,
-grounding evidence in a response proves supported, acceptance alone proves nothing —
-there is no model-name capability table.
+once. Native web search is **declared or detected, never assumed**: an operator can declare
+it per provider (`native_web_search = "none" | "openai" | "dashscope" | "google_search"`,
+or `Client.SetNativeWebSearch`); undeclared, a rejection proves unsupported, grounding
+evidence in a response proves supported, and acceptance alone proves nothing — there is no
+model-name capability table.
+
+Structured output on a reasoning model: a reply cut off by the token cap before writing
+anything is re-asked with a larger budget (×4, twice at most), and a provider that refuses
+`response_format` json_schema is asked in prompt form from then on.
 
 **Usage and cache metering.** Every `domain.GenerationResult` carries the provider's
 `Usage`: `PromptTokens`, `CompletionTokens`, `CachedPromptTokens` (the cache-hit portion,

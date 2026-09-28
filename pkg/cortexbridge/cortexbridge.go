@@ -99,6 +99,28 @@ type config struct {
 	deny        map[string]bool
 	prefix      string
 	argDefaults map[string]interface{}
+	memoryTools bool // register MemoryTools even beside agent-go memory
+}
+
+// memoryHost is what a sink may report about its own memory. *agent.Service
+// implements it; a sink that does not is treated as having no memory.
+type memoryHost interface {
+	HasMemory() bool
+	MemoryUserID(ctx context.Context) string
+}
+
+// toolHost reports tools already registered, so a CortexDB tool never
+// silently replaces one of the host's.
+type toolHost interface {
+	HasTool(name string) bool
+}
+
+// serviceSink adapts *agent.Service to the sink interfaces.
+type serviceSink struct{ *agent.Service }
+
+func (s serviceSink) HasTool(name string) bool {
+	reg := s.GetToolRegistry()
+	return reg != nil && reg.Has(name)
 }
 
 // MemoryTools are CortexDB's own memory tools. A service whose memory is
@@ -108,18 +130,24 @@ type config struct {
 // these too gives the model a second, same-named path that does none of that —
 // measured in superai: an explicit save skipped reconciliation, failed with
 // "user_id is required for user scope" when the model picked a user scope,
-// and wrote to the local file even with a shared brain configured. Pass them
-// to WithDeny in that case.
+// and wrote to the local file even with a shared brain configured.
+//
+// So Register leaves them out whenever the service has memory of its own.
+// WithCortexMemoryTools puts them back; a service without memory gets them,
+// since then they are the only memory the agent has.
 var MemoryTools = []string{
 	"memory_save", "memory_search", "memory_get", "memory_update", "memory_delete", "memory_list_all",
 }
 
 // WithArgDefaults fills arguments a call leaves out, for tools whose input
-// schema declares them. The use it exists for is user_id: CortexDB rejects a
-// user-scoped write without one, a single-user host knows the answer, and the
-// model does not. Only absent or empty-string values are filled; a value the
-// model supplied is never overwritten, and a tool that does not declare the
+// schema declares them. Only absent or empty-string values are filled; a value
+// the model supplied is never overwritten, and a tool that does not declare the
 // argument never receives it.
+//
+// user_id needs no option in the usual case: Register fills it from the run's
+// memory user scope (Service.MemoryUserID — the session's, else
+// SetMemoryScope's), per call, so two users on one service stay apart. A
+// default given here wins over that.
 func WithArgDefaults(defaults map[string]interface{}) Option {
 	return func(c *config) {
 		if c.argDefaults == nil {
@@ -131,15 +159,27 @@ func WithArgDefaults(defaults map[string]interface{}) Option {
 	}
 }
 
+// WithCortexMemoryTools registers MemoryTools even on a service that has
+// agent-go memory. Names agent-go already uses are still skipped (see
+// Register); give a prefix with WithNamePrefix to keep both.
+func WithCortexMemoryTools() Option {
+	return func(c *config) { c.memoryTools = true }
+}
+
+func declares(schema map[string]interface{}, arg string) bool {
+	props, _ := schema["properties"].(map[string]interface{})
+	_, ok := props[arg]
+	return ok
+}
+
 // declaredDefaults is the subset of defaults this tool's schema declares.
 func declaredDefaults(schema map[string]interface{}, defaults map[string]interface{}) map[string]interface{} {
 	if len(defaults) == 0 {
 		return nil
 	}
-	props, _ := schema["properties"].(map[string]interface{})
 	out := map[string]interface{}{}
 	for k, v := range defaults {
-		if _, ok := props[k]; ok {
+		if declares(schema, k) {
 			out[k] = v
 		}
 	}
@@ -183,8 +223,14 @@ func WithNamePrefix(prefix string) Option {
 
 // Register adapts a CortexDB database's GraphRAG/KG/memory toolbox onto the
 // AgentGo service and returns the tool names it registered (with prefix
-// applied). It panics on neither nil argument; passing a nil svc or db is a
-// programming error and returns an error instead.
+// applied). Passing a nil svc or db returns an error.
+//
+// Three defaults keep one agent from having two answers to one question:
+//   - MemoryTools are left out when the service has memory of its own
+//     (WithCortexMemoryTools overrides);
+//   - a tool whose final name the service already has is skipped, never
+//     replaced — the host's tool wins;
+//   - user_id is filled from the run's memory user scope when a call omits it.
 func Register(svc *agent.Service, db *cortexdb.DB, opts ...Option) ([]string, error) {
 	if svc == nil {
 		return nil, fmt.Errorf("cortexbridge: nil agent service")
@@ -192,7 +238,7 @@ func Register(svc *agent.Service, db *cortexdb.DB, opts ...Option) ([]string, er
 	if db == nil {
 		return nil, fmt.Errorf("cortexbridge: nil cortexdb handle")
 	}
-	return register(svc, db.GraphRAGTools(), opts...)
+	return register(serviceSink{svc}, db.GraphRAGTools(), opts...)
 }
 
 // RegisterToolbox adapts any CortexDB in-process Toolbox (GraphRAG, importflow,
@@ -206,7 +252,7 @@ func RegisterToolbox(svc *agent.Service, tb Toolbox, opts ...Option) ([]string, 
 	if tb == nil {
 		return nil, fmt.Errorf("cortexbridge: nil toolbox")
 	}
-	return register(svc, tb, opts...)
+	return register(serviceSink{svc}, tb, opts...)
 }
 
 // register is the testable core that works against the toolbox + sink interfaces.
@@ -214,6 +260,14 @@ func register(svc toolSink, tb Toolbox, opts ...Option) ([]string, error) {
 	cfg := &config{}
 	for _, opt := range opts {
 		opt(cfg)
+	}
+
+	mem, _ := svc.(memoryHost)
+	hostTools, _ := svc.(toolHost)
+	dropMemory := !cfg.memoryTools && mem != nil && mem.HasMemory()
+	isMemoryTool := make(map[string]bool, len(MemoryTools))
+	for _, n := range MemoryTools {
+		isMemoryTool[n] = true
 	}
 
 	var registered []string
@@ -225,6 +279,13 @@ func register(svc toolSink, tb Toolbox, opts ...Option) ([]string, error) {
 		if cfg.deny[name] {
 			continue
 		}
+		if dropMemory && isMemoryTool[name] {
+			continue
+		}
+		toolName := cfg.prefix + name
+		if hostTools != nil && hostTools.HasTool(toolName) {
+			continue
+		}
 
 		ro := ReadOnlyTools[name]
 		meta := agent.ToolMetadata{
@@ -234,15 +295,21 @@ func register(svc toolSink, tb Toolbox, opts ...Option) ([]string, error) {
 			InterruptBehavior: agent.InterruptBehaviorCancel,
 		}
 		fill := declaredDefaults(def.InputSchema, cfg.argDefaults)
+		scopedUser := mem != nil && declares(def.InputSchema, "user_id")
 		handler := func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-			if len(fill) > 0 {
-				merged := make(map[string]interface{}, len(args)+len(fill))
+			if len(fill) > 0 || scopedUser {
+				merged := make(map[string]interface{}, len(args)+len(fill)+1)
 				for k, v := range args {
 					merged[k] = v
 				}
 				for k, v := range fill {
-					if cur, ok := merged[k]; !ok || cur == nil || cur == "" {
+					if absent(merged, k) {
 						merged[k] = v
+					}
+				}
+				if scopedUser && absent(merged, "user_id") {
+					if id := mem.MemoryUserID(ctx); id != "" {
+						merged["user_id"] = id
 					}
 				}
 				args = merged
@@ -254,9 +321,13 @@ func register(svc toolSink, tb Toolbox, opts ...Option) ([]string, error) {
 			return tb.Call(ctx, name, json.RawMessage(raw))
 		}
 
-		toolName := cfg.prefix + name
 		svc.AddToolWithMetadata(toolName, def.Description, def.InputSchema, handler, meta)
 		registered = append(registered, toolName)
 	}
 	return registered, nil
+}
+
+func absent(args map[string]interface{}, key string) bool {
+	cur, ok := args[key]
+	return !ok || cur == nil || cur == ""
 }

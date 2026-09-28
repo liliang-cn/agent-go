@@ -18,6 +18,11 @@ const (
 	toolSearchNoMatches       = "No tools found matching the query."
 	toolSearchSummaryRequest  = "Please provide a final summary of these results to the user."
 	toolSearchNoMappingPrefix = "Found tools: "
+	// toolSearchBuiltInSearch follows an empty result whenever the model has
+	// built-in search, whatever the query was. An empty catalog was read as
+	// "this runtime cannot search the web" with the search results already
+	// in context (measured on DashScope, 3 runs in 6).
+	toolSearchBuiltInSearch = "Note: this model has built-in web search, run by the provider with no tool to call. If you were looking for web search, you already have it: web results in your context came from it and are live."
 )
 
 // SearchAndExecute searches for tools matching the query and optionally executes them.
@@ -100,6 +105,14 @@ func (s *Service) SearchAndExecute(ctx context.Context, query string, instructio
 		s.toolRegistry.ActivateForSession(sessionID, m.Function.Name)
 	}
 
+	// Nothing matched: there is nothing to execute an instruction with either.
+	if len(matches) == 0 {
+		if s.modelHasBuiltInWebSearch() {
+			return toolSearchNoMatches + " " + toolSearchBuiltInSearch, nil
+		}
+		return toolSearchNoMatches, nil
+	}
+
 	// Automatic execution if instruction provided
 	if instruction != "" {
 		if s.llmService == nil {
@@ -135,9 +148,6 @@ func (s *Service) SearchAndExecute(ctx context.Context, query string, instructio
 	}
 
 	// Just return found tools metadata
-	if len(matches) == 0 {
-		return toolSearchNoMatches, nil
-	}
 
 	var result []map[string]interface{}
 	for _, m := range matches {

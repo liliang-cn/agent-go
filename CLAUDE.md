@@ -946,6 +946,39 @@ The pattern across all five: **the store layer passes while the agent sees
 nothing.** That is why the suite asserts on the injected prompt text, and why
 every one of these was run against a live server before it was believed.
 
+### What a host gets without asking (DX defaults)
+
+Found by building `examples/integration` and running it live, not by reading
+code. Each was a trap a correct-looking integration fell into.
+
+- **`cortexbridge.Register` reads the service first.** CortexDB's own
+  `memory_*` tools are left out when the service has memory (they were a
+  second, same-named path that skipped reconciliation and wrote to the wrong
+  store); a tool the service already has is never replaced; `user_id` is
+  filled per call from `Service.MemoryUserID(ctx)`. Register *after* `Build`.
+  `WithCortexMemoryTools()` / `WithArgDefaults` override.
+- **`agent.WithMemoryUser(id)` is the per-run user.** `RunConfig.InheritedMemoryUserID`
+  had existed for sub-agents and nothing ever set it, so a service serving
+  several people had no way to say whose memory a run used.
+- **Custom plan stores run `pkg/agent/planstoretest`.** It compares whole
+  `PlanItem`s, so a field added later is covered the day it is added. Its
+  first run found `SQLitePlanStore` answering concurrent saves with
+  `SQLITE_BUSY` on any handle but the Service's own one-connection handle —
+  it serialises its writes now.
+- **Built-in search is not a tool, and the prompt says so.** Told to trust its
+  tool list and search the catalog before claiming a capability is missing,
+  qwen with forced search answered with that day's news and said it had no web
+  access — 6 runs in 12. The web-search note now says there is no tool to call,
+  the fixed rules no longer name `mcp_websearch_*`, and an empty catalog search
+  says the model already searches: 0 in 12.
+- **Structured calls escalate a truncated empty reply.** DeepSeek refuses
+  `response_format` json_schema (remembered per client now, not re-sent) and
+  deepseek-v4-flash spent 356–1437 reasoning tokens on a classification capped
+  at 400, returning `finish_reason: length` with no content. Constraint
+  extraction failed on 3 runs of 4 and cost ~5s each. Both `pkg/pool` and
+  `pkg/providers` now re-ask ×4, twice at most — the same rule the loop already
+  applies to turns (`token_budget.go`).
+
 ### Memory ≠ cache ≠ RAG
 
 - `pkg/memory` — durable per-conversation/per-task memory, with file-backed `MEMORY.md` and `_session/*.md` writers in `pkg/store/file_memory.go`. Background durable writer.

@@ -1,8 +1,7 @@
 // Package main demonstrates the simplest way to get started with AgentGo.
 //
-// AgentGo is a Go framework centered on Agent / Team runtimes.
-// Capabilities such as RAG, memory, MCP, skills, and PTC can be attached
-// to the same framework core as needed.
+// One agent, one loop. Capabilities such as memory, MCP, skills and RAG
+// attach to it as needed; examples/integration wires the common ones together.
 //
 // Usage:
 //

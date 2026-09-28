@@ -721,6 +721,15 @@ func WithToolsDisabled() RunOption {
 	return func(c *RunConfig) { c.ToolsDisabled = true }
 }
 
+// WithMemoryUser names the user this run acts for. Memory retrieval then
+// includes that user's scope, the session remembers it for later runs, and
+// tools that take a user_id — CortexDB's, through cortexbridge — receive it
+// when the model leaves it out. For a service serving several people this is
+// the per-run form of SetMemoryScope; identity is still the session.
+func WithMemoryUser(userID string) RunOption {
+	return func(c *RunConfig) { c.InheritedMemoryUserID = userID }
+}
+
 // WithRequiredDeliverables declares the side effects this run must perform
 // before it may complete. The delivery-contract lint refuses to let the run
 // finish until each has a matching successful tool call.

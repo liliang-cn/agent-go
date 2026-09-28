@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/gorilla/websocket"
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
@@ -26,6 +27,9 @@ type OpenAILLMProvider struct {
 	client        openai.Client
 	config        *domain.OpenAIProviderConfig
 	promptManager *prompt.Manager
+	// structuredSchemaRejected is set once the upstream refuses
+	// response_format json_schema; structured calls then use the prompt form.
+	structuredSchemaRejected atomic.Bool
 }
 
 // OpenAIRealtimeSession handles bidirectional WebSocket communication
@@ -905,6 +909,9 @@ func (p *OpenAILLMProvider) GenerateStructured(ctx context.Context, prompt strin
 	if err := ValidateGenerationOptions(opts); err != nil {
 		return nil, err
 	}
+	if p.structuredSchemaRejected.Load() {
+		return p.generateStructuredFallback(ctx, prompt, schema, opts)
+	}
 
 	messages := []openai.ChatCompletionMessageParamUnion{
 		openai.UserMessage(prompt),
@@ -935,10 +942,13 @@ func (p *OpenAILLMProvider) GenerateStructured(ctx context.Context, prompt strin
 		params.MaxCompletionTokens = openai.Int(int64(opts.MaxTokens))
 	}
 
-	resp, err := p.client.Chat.Completions.New(ctx, params, extraRequestOptions(opts)...)
+	resp, err := p.structuredCompletion(ctx, params, opts)
 	if err != nil {
 		// Fallback: some OpenAI-compatible providers reject response_format entirely.
 		// Retry as a plain chat completion asking for JSON in the prompt.
+		if isResponseFormatRejection(err) {
+			p.structuredSchemaRejected.Store(true)
+		}
 		return p.generateStructuredFallback(ctx, prompt, schema, opts)
 	}
 
@@ -947,6 +957,9 @@ func (p *OpenAILLMProvider) GenerateStructured(ctx context.Context, prompt strin
 	}
 
 	rawJSON := resp.Choices[0].Message.Content
+	if strings.TrimSpace(rawJSON) == "" {
+		return p.generateStructuredFallback(ctx, prompt, schema, opts)
+	}
 
 	// Try to parse the JSON into the provided schema
 	var isValid bool
@@ -988,7 +1001,7 @@ func (p *OpenAILLMProvider) generateStructuredFallback(ctx context.Context, prom
 		}
 	}
 
-	resp, err := p.client.Chat.Completions.New(ctx, params, extraRequestOptions(opts)...)
+	resp, err := p.structuredCompletion(ctx, params, opts)
 	if err != nil {
 		return nil, WrapStructuredOutputError(domain.ProviderOpenAI, err)
 	}
@@ -1010,6 +1023,41 @@ func (p *OpenAILLMProvider) generateStructuredFallback(ctx context.Context, prom
 		Raw:   rawJSON,
 		Valid: isValid,
 	}, nil
+}
+
+// structuredEscalations bounds how often a truncated structured reply is
+// re-asked with a larger budget; each step multiplies it by four.
+const structuredEscalations = 2
+
+// structuredCompletion sends one structured request. A reply cut off by the
+// token cap with nothing written is re-asked with four times the budget, at
+// most structuredEscalations times: on a model that reasons before it writes,
+// the reasoning comes out of the same budget first (deepseek-v4-flash spent
+// 356–1437 reasoning tokens on a classification capped at 400, and answered
+// finish_reason "length" with empty content).
+func (p *OpenAILLMProvider) structuredCompletion(ctx context.Context, params openai.ChatCompletionNewParams, opts *domain.GenerationOptions) (*openai.ChatCompletion, error) {
+	for step := 0; ; step++ {
+		resp, err := p.client.Chat.Completions.New(ctx, params, extraRequestOptions(opts)...)
+		if err != nil || len(resp.Choices) == 0 {
+			return resp, err
+		}
+		choice := resp.Choices[0]
+		truncatedEmpty := string(choice.FinishReason) == "length" && strings.TrimSpace(choice.Message.Content) == ""
+		if !truncatedEmpty || !params.MaxCompletionTokens.Valid() || step >= structuredEscalations {
+			return resp, nil
+		}
+		params.MaxCompletionTokens = openai.Int(params.MaxCompletionTokens.Value * 4)
+	}
+}
+
+// isResponseFormatRejection reports whether a provider refused the
+// response_format field itself, as opposed to failing for another reason.
+func isResponseFormatRejection(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "400") && strings.Contains(msg, "response_format")
 }
 
 // extractJSON pulls the first JSON object or array from a string,

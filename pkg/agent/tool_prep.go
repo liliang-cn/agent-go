@@ -582,6 +582,20 @@ func (s *Service) webSearchSurfaceMode() domain.WebSearchMode {
 	return mode
 }
 
+// modelHasBuiltInWebSearch reports whether the model searches on its own this
+// turn: configured native, or auto with a supported verdict, declared or
+// proven.
+func (s *Service) modelHasBuiltInWebSearch() bool {
+	switch s.webSearchSurfaceMode() {
+	case domain.WebSearchModeNative:
+		return true
+	case domain.WebSearchModeAuto:
+		supported, known := s.nativeWebSearchVerdict()
+		return known && supported
+	}
+	return false
+}
+
 // nativeWebSearchProven reports whether a supported verdict was observed in a
 // response rather than only declared. Generators that cannot tell are taken as
 // proven, which is what their verdict always meant.

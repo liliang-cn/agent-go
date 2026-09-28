@@ -23,13 +23,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 )
 
 // SQLitePlanStore persists plans as rows in the database a Service already
 // owns. Safe for concurrent use; every write is one transaction.
+//
+// Writes are serialised here, not left to the handle. The Service's own handle
+// has one connection and a busy timeout, so it never noticed; a handle opened
+// with sql.Open and nothing else — which is what a caller of this constructor
+// has — answered two concurrent saves with SQLITE_BUSY (found by planstoretest).
 type SQLitePlanStore struct {
-	db *sql.DB
+	db      *sql.DB
+	writeMu sync.Mutex
 }
 
 // NewSQLitePlanStore creates the table if needed and returns a store over db.
@@ -173,6 +180,8 @@ func (s *SQLitePlanStore) SavePlan(ctx context.Context, key string, items []Plan
 	if s == nil || s.db == nil {
 		return nil
 	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("agent: save plan %q: %w", key, err)

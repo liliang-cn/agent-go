@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
@@ -26,6 +27,9 @@ type Client struct {
 	// web-search support (see native_search.go). Shared by pointer across
 	// clients derived from the same provider.
 	nativeSearch *nativeSearchState
+	// structuredSchemaRejected is set once the upstream refuses
+	// response_format json_schema; structured calls then use the prompt form.
+	structuredSchemaRejected atomic.Bool
 }
 
 // NewClient creates a new client.
@@ -638,9 +642,21 @@ func (c *Client) StreamWithTools(ctx context.Context, messages []domain.Message,
 }
 
 // GenerateStructured generates structured (JSON) output.
+//
+// Two things about real providers shape it. Some reject response_format
+// json_schema outright (DeepSeek: "This response_format type is unavailable
+// now"); that answer is remembered, so later calls go straight to the prompt
+// form instead of paying a doomed request each time. And a model that reasons
+// before it writes can spend a small max_tokens on reasoning alone —
+// deepseek-v4-flash used 356–1437 reasoning tokens on a one-line
+// classification capped at 400, and returned finish_reason "length" with no
+// content, which read as "the model gave no JSON". See structuredCompletion.
 func (c *Client) GenerateStructured(ctx context.Context, prompt string, schema interface{}, opts *domain.GenerationOptions) (*domain.StructuredResult, error) {
 	if opts == nil {
 		opts = &domain.GenerationOptions{}
+	}
+	if c.structuredSchemaRejected.Load() {
+		return c.generateStructuredFallback(ctx, prompt, schema, opts)
 	}
 
 	reqBody := map[string]interface{}{
@@ -658,38 +674,20 @@ func (c *Client) GenerateStructured(ctx context.Context, prompt string, schema i
 			},
 		},
 	}
-
 	if opts.Temperature > 0 {
 		reqBody["temperature"] = opts.Temperature
 	}
-	if opts.MaxTokens > 0 {
-		reqBody["max_tokens"] = opts.MaxTokens
-	}
 
-	resp, err := c.doRequest(ctx, "/chat/completions", reqBody)
+	content, err := c.structuredCompletion(ctx, reqBody, opts.MaxTokens)
 	if err != nil {
+		if isResponseFormatRejection(err) {
+			c.structuredSchemaRejected.Store(true)
+		}
 		// Fallback: provider rejected response_format, retry as plain JSON prompt.
 		return c.generateStructuredFallback(ctx, prompt, schema, opts)
 	}
 
-	var result struct {
-		Choices []struct {
-			Message struct {
-				Content          string `json:"content"`
-				ReasoningContent string `json:"reasoning_content"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-
-	if err := json.Unmarshal(resp, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	if len(result.Choices) == 0 {
-		return nil, fmt.Errorf("no choices in response")
-	}
-
-	raw := extractPoolJSON(result.Choices[0].Message.Content)
+	raw := extractPoolJSON(content)
 	if raw == "" {
 		// Provider returned empty content; fall back to plain JSON prompt.
 		return c.generateStructuredFallback(ctx, prompt, schema, opts)
@@ -716,35 +714,20 @@ func (c *Client) generateStructuredFallback(ctx context.Context, prompt string, 
 			{"role": "user", "content": augmented},
 		},
 	}
+	maxTokens := 0
 	if opts != nil {
 		if opts.Temperature > 0 {
 			reqBody["temperature"] = opts.Temperature
 		}
-		if opts.MaxTokens > 0 {
-			reqBody["max_tokens"] = opts.MaxTokens
-		}
+		maxTokens = opts.MaxTokens
 	}
 
-	resp, err := c.doRequest(ctx, "/chat/completions", reqBody)
+	content, err := c.structuredCompletion(ctx, reqBody, maxTokens)
 	if err != nil {
 		return nil, fmt.Errorf("structured fallback request failed: %w", err)
 	}
 
-	var result struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-	if err := json.Unmarshal(resp, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse fallback response: %w", err)
-	}
-	if len(result.Choices) == 0 {
-		return nil, fmt.Errorf("no choices in fallback response")
-	}
-
-	raw := extractPoolJSON(result.Choices[0].Message.Content)
+	raw := extractPoolJSON(content)
 	if raw == "" {
 		return nil, fmt.Errorf("empty JSON content in fallback response")
 	}
@@ -753,6 +736,58 @@ func (c *Client) generateStructuredFallback(ctx context.Context, prompt string, 
 		Raw:   raw,
 		Valid: true,
 	}, nil
+}
+
+// structuredEscalations bounds how often a truncated structured reply is
+// re-asked with a larger budget; each step multiplies it by four.
+const structuredEscalations = 2
+
+// structuredCompletion sends one chat completion and returns its content.
+// A reply cut off by max_tokens with nothing written is re-asked with four
+// times the budget, at most structuredEscalations times: the caller's cap
+// was sized for the answer, and on a reasoning model the reasoning comes out
+// of the same budget first. A truncated reply that did write something is
+// returned as is — the budget reached the answer, and the caller judges it.
+func (c *Client) structuredCompletion(ctx context.Context, reqBody map[string]interface{}, maxTokens int) (string, error) {
+	for step := 0; ; step++ {
+		if maxTokens > 0 {
+			reqBody["max_tokens"] = maxTokens
+		}
+		resp, err := c.doRequest(ctx, "/chat/completions", reqBody)
+		if err != nil {
+			return "", err
+		}
+		var result struct {
+			Choices []struct {
+				FinishReason string `json:"finish_reason"`
+				Message      struct {
+					Content string `json:"content"`
+				} `json:"message"`
+			} `json:"choices"`
+		}
+		if err := json.Unmarshal(resp, &result); err != nil {
+			return "", fmt.Errorf("failed to parse response: %w", err)
+		}
+		if len(result.Choices) == 0 {
+			return "", fmt.Errorf("no choices in response")
+		}
+		choice := result.Choices[0]
+		truncatedEmpty := choice.FinishReason == "length" && strings.TrimSpace(choice.Message.Content) == ""
+		if !truncatedEmpty || maxTokens <= 0 || step >= structuredEscalations {
+			return choice.Message.Content, nil
+		}
+		maxTokens *= 4
+	}
+}
+
+// isResponseFormatRejection reports whether a provider refused the
+// response_format field itself, as opposed to failing for another reason.
+func isResponseFormatRejection(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "status 400") && strings.Contains(msg, "response_format")
 }
 
 // extractPoolJSON strips markdown code fences and finds the first JSON object/array.

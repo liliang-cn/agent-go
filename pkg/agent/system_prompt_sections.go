@@ -176,7 +176,7 @@ func (s *Service) buildSystemPromptSections(ctx context.Context, agent *Agent, o
 	} else {
 		rules = append(rules,
 			"- Call task_complete as soon as you have the final answer. Call task_blocked only when a concrete blocker prevents completion.",
-			"- For file operations use fs_* tools (fs_read/fs_write/fs_edit/fs_list/...); for web search use mcp_websearch_* tools.",
+			"- For file operations use fs_* tools (fs_read/fs_write/fs_edit/fs_list/...). How to search the web, if at all, is stated under Web search capability.",
 			"- Treat the visible callable tool list as the authoritative source of what can actually be executed in this runtime.",
 			"- Do not invent hidden tool or API names such as generic run/status/start methods when concrete callable tool names are already exposed.",
 			"- If you are unsure which exact tool fits a request, call `search_available_tools` before claiming the capability is unavailable.",

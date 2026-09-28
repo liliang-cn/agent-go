@@ -17,6 +17,11 @@ type verdictGenerator struct {
 
 func (g *verdictGenerator) NativeWebSearchVerdict() (bool, bool) { return g.supported, g.known }
 
+// declaredGenerator is a verdict stated by the operator, not observed.
+type declaredGenerator struct{ verdictGenerator }
+
+func (g *declaredGenerator) NativeWebSearchProven() bool { return false }
+
 func autoModeService(gen domain.Generator) *Service {
 	return &Service{
 		cfg: &config.Config{Tooling: config.ToolingConfig{
@@ -111,5 +116,38 @@ func TestExplicitModesIgnoreVerdict(t *testing.T) {
 		if got := svc.webSearchGenerationMode(); got != want {
 			t.Errorf("mode %s: generation = %v, want %v", mode, got, want)
 		}
+	}
+}
+
+// Built-in search is not a tool, and the note must say so wherever the model
+// has it: told only to trust its tool list, a model searched the catalog,
+// found nothing and told the user it had no web access — with that day's
+// search results in its context.
+func TestBuiltInSearchNoteSaysThereIsNoToolToCall(t *testing.T) {
+	declared := autoModeService(&declaredGenerator{verdictGenerator{supported: true, known: true}}).buildWebSearchPromptNote(nil)
+	native := autoModeService(&verdictGenerator{supported: true, known: true}).buildWebSearchPromptNote(nil)
+	for name, note := range map[string]string{"declared": declared, "proven": native} {
+		if !strings.Contains(note, "no tool to call") {
+			t.Errorf("%s note does not say there is no tool to call: %q", name, note)
+		}
+		if !strings.Contains(note, "never tell the user you cannot access the web") {
+			t.Errorf("%s note does not rule out denying web access: %q", name, note)
+		}
+	}
+	if !strings.Contains(declared, "fallback") {
+		t.Errorf("a declared-but-unproven provider keeps the fallback: %q", declared)
+	}
+}
+
+// An empty catalog search says the model already searches, when it does.
+func TestEmptyToolSearchMentionsBuiltInSearch(t *testing.T) {
+	if !autoModeService(&declaredGenerator{verdictGenerator{supported: true, known: true}}).modelHasBuiltInWebSearch() {
+		t.Fatal("a declared provider has built-in search")
+	}
+	if autoModeService(&verdictGenerator{}).modelHasBuiltInWebSearch() {
+		t.Fatal("an unknown verdict is not built-in search")
+	}
+	if autoModeService(&verdictGenerator{supported: false, known: true}).modelHasBuiltInWebSearch() {
+		t.Fatal("a rejected provider is not built-in search")
 	}
 }

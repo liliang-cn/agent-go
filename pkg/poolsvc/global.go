@@ -146,8 +146,8 @@ var noEmbeddingHintOnce sync.Once
 func hintNoEmbeddingProvider() {
 	noEmbeddingHintOnce.Do(func() {
 		fmt.Fprintln(os.Stderr, "ℹ️  No embedding provider configured — vector memory/RAG are disabled "+
-			"(text chat, tools, and skills all work). To enable them, add one, e.g.:\n"+
-			"    agentgo embedding add --name ollama --url http://localhost:11434/v1 --model nomic-embed-text")
+			"(text chat, tools, and skills all work). To enable them, pass Builder.WithEmbedder(...), or add a\n"+
+			"    [[rag.embedding.providers]] entry (name, base_url, model_name) to agentgo.toml")
 	})
 }
 

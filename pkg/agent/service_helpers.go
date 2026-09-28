@@ -207,12 +207,33 @@ func (s *Service) addRAGSources(sources []domain.Chunk) {
 	}
 }
 
+// Built-in search is not a tool. The provider runs it and puts the results in
+// the model's context, so nothing in the tool list names it — and a model told
+// to trust the tool list, and to search the catalog before claiming a missing
+// capability, did exactly that: measured on DashScope with forced_search, the
+// answer carried that day's news and opened with "this runtime has no live
+// web-search tool available (I ran a tool search and got nothing usable)".
+// Every native line therefore says there is no tool to call.
+const (
+	webSearchBuiltInNote = "- This model has built-in web search. The provider runs it for you: there is no tool to call for it and nothing to look for in the tool catalog. " +
+		"Search results reach your context with the request; treat them as live web content, cite them, and never tell the user you cannot access the web."
+	webSearchMaybeBuiltInNote = "- This model may have built-in web search, run by the provider with no tool to call. " +
+		"Web results that appear in your context came from it: treat them as live web content and cite them."
+	webSearchFallbackNote = "- If built-in results are missing or insufficient, use a web search tool from your tool list as a fallback, when one is listed."
+)
+
 func (s *Service) buildWebSearchPromptNote(currentAgent *Agent) string {
 	switch s.webSearchSurfaceMode() {
 	case domain.WebSearchModeNative:
-		return "Web search capability:\n- Up-to-date web lookups are available through the model's native web search capability.\n- Do not search the tool catalog for mcp_websearch tools when you need current web information."
+		return "Web search capability:\n" + webSearchBuiltInNote + "\n- Do not search the tool catalog for web search tools; up-to-date lookups go through the native web search capability."
 	case domain.WebSearchModeAuto:
-		return "Web search capability:\n- Prefer the model's native web search capability for up-to-date web lookups.\n- If native search is unavailable or insufficient, use the available mcp_websearch_* tools as a fallback."
+		if supported, known := s.nativeWebSearchVerdict(); known && supported {
+			// Declared (the proven case resolves to native above).
+			return "Web search capability:\n" + webSearchBuiltInNote + "\n" + webSearchFallbackNote
+		}
+		return "Web search capability:\n" + webSearchMaybeBuiltInNote + "\n" + webSearchFallbackNote
+	case domain.WebSearchModeMCP:
+		return "Web search capability:\n- Built-in model search is not used here. Up-to-date web lookups go through a web search tool in your tool list, when one is listed."
 	case domain.WebSearchModeOff:
 		return "Web search capability:\n- Web search is disabled for this run.\n- Do not look for mcp_websearch tools."
 	default:

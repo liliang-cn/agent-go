@@ -179,3 +179,18 @@ func resolveConversationSummary(session *Session) string {
 	}
 	return strings.TrimSpace(session.GetSummary())
 }
+
+// HasMemory reports whether the service currently has a memory backend.
+func (s *Service) HasMemory() bool {
+	return s.memory() != nil
+}
+
+// MemoryUserID is the user scope a memory operation made under ctx would use:
+// the session's own user scope when one was recorded, else the service's
+// (SetMemoryScope). Empty when neither names a user.
+func (s *Service) MemoryUserID(ctx context.Context) string {
+	if s == nil {
+		return ""
+	}
+	return s.resolveMemoryQueryContextFromContext(ctx).UserID
+}
