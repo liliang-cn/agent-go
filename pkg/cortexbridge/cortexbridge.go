@@ -95,9 +95,58 @@ type toolSink interface {
 type Option func(*config)
 
 type config struct {
-	allow  map[string]bool // nil => expose all
-	deny   map[string]bool
-	prefix string
+	allow       map[string]bool // nil => expose all
+	deny        map[string]bool
+	prefix      string
+	argDefaults map[string]interface{}
+}
+
+// MemoryTools are CortexDB's own memory tools. A service whose memory is
+// agent-go's (WithMemory, the file / cortex / cortex-remote backends) already
+// has memory_save / memory_recall / memory_update / memory_delete, which
+// reconcile, scope themselves and write to the configured backend. Registering
+// these too gives the model a second, same-named path that does none of that —
+// measured in superai: an explicit save skipped reconciliation, failed with
+// "user_id is required for user scope" when the model picked a user scope,
+// and wrote to the local file even with a shared brain configured. Pass them
+// to WithDeny in that case.
+var MemoryTools = []string{
+	"memory_save", "memory_search", "memory_get", "memory_update", "memory_delete", "memory_list_all",
+}
+
+// WithArgDefaults fills arguments a call leaves out, for tools whose input
+// schema declares them. The use it exists for is user_id: CortexDB rejects a
+// user-scoped write without one, a single-user host knows the answer, and the
+// model does not. Only absent or empty-string values are filled; a value the
+// model supplied is never overwritten, and a tool that does not declare the
+// argument never receives it.
+func WithArgDefaults(defaults map[string]interface{}) Option {
+	return func(c *config) {
+		if c.argDefaults == nil {
+			c.argDefaults = make(map[string]interface{}, len(defaults))
+		}
+		for k, v := range defaults {
+			c.argDefaults[k] = v
+		}
+	}
+}
+
+// declaredDefaults is the subset of defaults this tool's schema declares.
+func declaredDefaults(schema map[string]interface{}, defaults map[string]interface{}) map[string]interface{} {
+	if len(defaults) == 0 {
+		return nil
+	}
+	props, _ := schema["properties"].(map[string]interface{})
+	out := map[string]interface{}{}
+	for k, v := range defaults {
+		if _, ok := props[k]; ok {
+			out[k] = v
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // WithAllow restricts registration to the named tools (whitelist). Calling it
@@ -184,7 +233,20 @@ func register(svc toolSink, tb Toolbox, opts ...Option) ([]string, error) {
 			Destructive:       DestructiveTools[name],
 			InterruptBehavior: agent.InterruptBehaviorCancel,
 		}
+		fill := declaredDefaults(def.InputSchema, cfg.argDefaults)
 		handler := func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+			if len(fill) > 0 {
+				merged := make(map[string]interface{}, len(args)+len(fill))
+				for k, v := range args {
+					merged[k] = v
+				}
+				for k, v := range fill {
+					if cur, ok := merged[k]; !ok || cur == nil || cur == "" {
+						merged[k] = v
+					}
+				}
+				args = merged
+			}
 			raw, err := json.Marshal(args)
 			if err != nil {
 				return nil, fmt.Errorf("cortexbridge: marshal args for %s: %w", name, err)

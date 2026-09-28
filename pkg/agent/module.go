@@ -184,7 +184,7 @@ func (m *memoryModule) RegisterTools(registry *ToolRegistry) error {
 		if m.onSaved != nil {
 			m.onSaved()
 		}
-		err := m.svc.Add(ctx, &domain.Memory{
+		mem := &domain.Memory{
 			Type:       domain.MemoryType(memType),
 			SessionID:  memoryBankIDFromScope(scope),
 			ScopeType:  scope.Type,
@@ -192,8 +192,24 @@ func (m *memoryModule) RegisterTools(registry *ToolRegistry) error {
 			Content:    content,
 			Importance: 0.8,
 			Metadata:   map[string]interface{}{"source": "tool_call"},
-		})
-		if err != nil {
+		}
+		// Reconciled like the automatic writer when the service can: an
+		// explicit save used to be added blindly, so a revised fact stayed
+		// current beside the one it revised.
+		if ra, ok := m.svc.(domain.MemoryReconcilingAdder); ok {
+			out, err := ra.AddReconciled(ctx, mem)
+			if err != nil {
+				return nil, err
+			}
+			switch out.Op {
+			case domain.MemoryOpNoop:
+				return map[string]interface{}{"status": "already_known", "matches": out.TargetID, "content": content}, nil
+			case domain.MemoryOpUpdate:
+				return map[string]interface{}{"status": "saved", "id": out.ID, "replaces": out.TargetID, "content": content}, nil
+			}
+			return map[string]interface{}{"status": "saved", "id": out.ID, "content": content}, nil
+		}
+		if err := m.svc.Add(ctx, mem); err != nil {
 			return nil, err
 		}
 		return map[string]interface{}{"status": "saved", "content": content}, nil
