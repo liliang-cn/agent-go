@@ -39,6 +39,14 @@ func (s *Service) executeDirectToolCall(ctx context.Context, currentAgent *Agent
 	resolvedToolName := s.resolveExecutableToolNameForAgent(tc.Function.Name, currentAgent)
 	ctx = withCurrentSession(ctx, session)
 
+	// This path carries only calls the model made. A delegation tool the
+	// service does not offer is refused here, where a model can reach it by
+	// name without ever having been shown it; a host or PTC calling the
+	// handler directly does not come through here and still can.
+	if !s.offersDelegationTools() && subagentDelegationToolNames[resolvedToolName] {
+		return nil, fmt.Errorf("tool %q is not available to this agent: it has no sub-agents to delegate to. Do the work with the tools you were given", resolvedToolName), false
+	}
+
 	hookData := HookData{
 		ToolName:  resolvedToolName,
 		ToolArgs:  tc.Function.Arguments,

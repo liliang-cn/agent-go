@@ -35,7 +35,7 @@ func (s *Service) SearchAndExecute(ctx context.Context, query string, instructio
 	}
 
 	// Search all registered tools (not just deferred)
-	matches := s.filterToolDefinitionsForAgent(currentAgent, s.toolRegistry.SearchAllTools(query))
+	matches := s.withoutWithheldDelegationTools(s.filterToolDefinitionsForAgent(currentAgent, s.toolRegistry.SearchAllTools(query)))
 
 	// Search MCP tools if available
 	if s.mcpService != nil {
@@ -229,6 +229,25 @@ func matchesToolSearchKeywords(tool domain.ToolDefinition, keywords []string) bo
 		}
 	}
 	return false
+}
+
+// withoutWithheldDelegationTools drops the delegation tools a service with no
+// sub-agents does not offer. The schema already leaves them out
+// (collectTools), and so does the constraint catalogue; search was the one
+// path that still handed them back — measured: a run with no sub-agents found
+// delegate_async through search_available_tools and spawned a background
+// sub-agent with it.
+func (s *Service) withoutWithheldDelegationTools(defs []domain.ToolDefinition) []domain.ToolDefinition {
+	if s.offersDelegationTools() || len(defs) == 0 {
+		return defs
+	}
+	out := defs[:0:0]
+	for _, d := range defs {
+		if !subagentDelegationToolNames[d.Function.Name] {
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 func (s *Service) filterToolDefinitionsForAgent(currentAgent *Agent, defs []domain.ToolDefinition) []domain.ToolDefinition {

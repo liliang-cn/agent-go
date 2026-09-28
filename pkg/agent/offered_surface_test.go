@@ -286,3 +286,52 @@ func TestTheConstraintCatalogueOmitsToolsTheRunWillNeverBeOffered(t *testing.T) 
 		t.Error("a service that does offer delegation must still describe it to the extraction")
 	}
 }
+
+// Search was the one path that still handed the withheld delegation tools
+// back: a live run with no sub-agents found delegate_async through
+// search_available_tools and spawned a background sub-agent with it.
+func TestToolSearchDoesNotSurfaceWithheldDelegationTools(t *testing.T) {
+	t.Parallel()
+
+	withheld := newFourToolService(t, &wireRecorder{}, nil)
+	out, err := withheld.SearchAndExecute(context.Background(), "delegate async sub agent background task", "", "")
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	for _, name := range []string{"delegate_to_subagent", "delegate_async", "subagent_send_message"} {
+		if strings.Contains(fmt.Sprint(out), name) {
+			t.Errorf("search surfaced %s on a service with no sub-agents: %v", name, out)
+		}
+	}
+
+	offered := newFourToolService(t, &wireRecorder{}, func(b *Builder) *Builder {
+		return b.WithSubagents(SubagentSpec{Name: "researcher", Description: "Researches.", Instructions: "Research."})
+	})
+	out, err = offered.SearchAndExecute(context.Background(), "delegate async sub agent background task", "", "")
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if !strings.Contains(fmt.Sprint(out), "delegate_async") {
+		t.Errorf("with sub-agents configured, search must still find delegate_async: %v", out)
+	}
+}
+
+// A model can name a tool it was never shown. The model's calls are refused
+// for a withheld delegation tool — a tool error it can recover from — while
+// the handler stays registered for a host or PTC calling it directly.
+func TestTheModelCannotCallAWithheldDelegationToolByName(t *testing.T) {
+	t.Parallel()
+
+	svc := newFourToolService(t, &wireRecorder{}, nil)
+	_, err, _ := svc.executeDirectToolCall(context.Background(), svc.agent, nil, domain.ToolCall{
+		ID:       "call-1",
+		Type:     "function",
+		Function: domain.FunctionCall{Name: "delegate_async", Arguments: map[string]interface{}{"goal": "look for a web tool", "name": "finder"}},
+	}, DirectToolExecutionOptions{})
+	if err == nil || !strings.Contains(err.Error(), "not available to this agent") {
+		t.Fatalf("a model call to a withheld delegation tool ran; err = %v", err)
+	}
+	if !svc.toolRegistry.Has("delegate_async") {
+		t.Fatal("the handler must stay registered for direct callers")
+	}
+}
