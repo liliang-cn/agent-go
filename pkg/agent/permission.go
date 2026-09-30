@@ -27,6 +27,12 @@ type PermissionResponse struct {
 	// destructive call?" has an answer after the fact.
 	DecidedBy string                 `json:"decided_by,omitempty"`
 	Metadata  map[string]interface{} `json:"metadata,omitempty"`
+	// ContinueRun makes a denial the one tool call's result instead of the
+	// end of the run: the model reads the reason and can try another way.
+	// Without it a denial blocks the run, which is right when a person said
+	// "stop" and wrong when nobody was there to answer — an unattended run
+	// then throws away everything it did before the call it could not make.
+	ContinueRun bool `json:"continue_run,omitempty"`
 }
 
 // PermissionHandler authorizes a tool execution at runtime.
@@ -128,6 +134,9 @@ func (s *Service) decideTool(ctx context.Context, req PermissionRequest) (Permis
 	}
 	if resp == nil || !resp.Allowed {
 		info.Decision = PermissionDenied
+		if resp != nil && resp.ContinueRun {
+			return info, PermissionRefusedError{Reason: resp.Reason}
+		}
 		if resp != nil && resp.Reason != "" {
 			return info, PermissionDeniedError{Reason: resp.Reason}
 		}
@@ -152,4 +161,17 @@ func (e PermissionDeniedError) Error() string {
 
 func (e PermissionDeniedError) BlockedReason() string {
 	return e.Error()
+}
+
+// PermissionRefusedError is a denial that leaves the run going: see
+// PermissionResponse.ContinueRun. It is deliberately not a blocker.
+type PermissionRefusedError struct {
+	Reason string
+}
+
+func (e PermissionRefusedError) Error() string {
+	if e.Reason == "" {
+		return "permission denied"
+	}
+	return "permission denied: " + e.Reason
 }
