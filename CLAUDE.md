@@ -613,6 +613,37 @@ the hive found three places they were.
 
 `examples/remote-workers` runs all three against an in-process worker server.
 
+### A message into a run that is already going
+
+`Service.Steer(sessionID, msg)` / `SteerRun(runID, msg)` (`steer.go`). A run
+reads its conversation once, at the start; after that only tool results reach
+the model. A host that learns something mid-run — a hive peer has a message
+for this agent, the person typed a correction — had an inbox the model might
+read, or the end of the run. Steer is the third way: the message is queued on
+the run's registry handle and the loop appends it at the next round boundary,
+after that round's tool results and before the next model call, as a user
+message, persisted into the session at that moment (most completion paths
+persist only the answer) and announced as `EventTypeSteer`.
+
+Two decisions worth not relitigating:
+
+- **A steer during the final model call is not lost.** When the model has just
+  answered without a tool call and something is queued, `steerBeforeFinal`
+  makes the answer the assistant's turn, applies the steer after it, and the
+  loop takes one more round instead of completing. The same check sits in
+  front of a `task_complete` terminal. Without it a message landing during the
+  last call vanished with the run looking finished.
+- **Never mid-tool, and a drop is reported.** Only a run that ends some other
+  way — cancelled, blocked, failed — drops what it could not apply, and it
+  emits `EventTypeSteerDropped` per message before the stream closes, so the
+  host starts a turn with it. `Steer` returns false when no run on the session
+  is active, for the same reason.
+
+Sub-agents are not steerable: they are not in the registry. The test for the
+cancel case registers its slow tool with `InterruptBehaviorCancel` on purpose
+— a tool that leaves it unset is treated as blocking, and every cancel waits
+for it.
+
 ### Multimodal, and the two places it was quietly broken
 
 Images in and images out both work now, and both were broken in the same way:

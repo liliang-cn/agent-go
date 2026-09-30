@@ -64,6 +64,7 @@ const (
 	queryLoopTransitionTextResponse         = "text_response"
 	queryLoopTransitionMaxTurnsExceeded     = "max_turns_exceeded"
 	queryLoopTransitionLintRetry            = "lint_retry"
+	queryLoopTransitionSteer                = "steer"
 )
 
 type queryLoopState struct {

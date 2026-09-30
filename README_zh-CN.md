@@ -69,6 +69,7 @@ func main() {
 | `svc.Run(ctx, goal, opts...)` | `*ExecutionResult` | 带工具和运行选项的目标 |
 | `svc.RunStream(ctx, goal)` / `RunStreamWithOptions` | `<-chan *Event` | 每一个运行时事件 |
 | `svc.RunSegments(ctx, goal, LongRunConfig{...})` | `*LongRunResult` | 一个任务跨多次运行 |
+| `svc.Steer(sessionID, msg)` / `SteerRun(runID, msg)` | `bool` | 往正在跑的 run 里塞一条消息；没有在跑的返回 false |
 
 把记忆、知识图谱、联网搜索、计划接进宿主程序：[docs/getting-started.md](docs/getting-started.md)。可运行示例，每个功能一个目录：[`examples/`](examples/)。
 

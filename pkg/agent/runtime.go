@@ -340,6 +340,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 	)
 	r.logger.Debug("run started", slog.String("agent", r.currentAgentName()))
 	defer func() {
+		r.dropSteers()
 		close(r.eventChan)
 	}()
 	ctx = withCurrentSession(ctx, r.session)
@@ -528,6 +529,10 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 				// record for the same reason.
 			}
 		}
+
+		// A message the host queued while the last round ran lands here:
+		// after that round's tool results, before this round's model call.
+		r.applySteers(&messages, state)
 
 		state.beginRound()
 		r.currentRound = round + 1
@@ -922,6 +927,9 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			state.recordToolResults(decision.ToolResults)
 
 			if final := decision.Terminal; final != "" {
+				if r.steerBeforeFinal(final, &messages, state) {
+					continue
+				}
 				if r.lintGate(goal, final, &messages, state, round) {
 					return
 				}
@@ -959,6 +967,13 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 				state.Messages = messages
 				state.setLoopTransition(textDecision.Transition, textDecision.Reason)
 				state.noteRoundCompleted()
+				continue
+			}
+
+			// A steer that landed while this answer was being written is not
+			// lost: the answer becomes the assistant's turn and the model gets
+			// one more round with the message after it.
+			if r.steerBeforeFinal(result.Content, &messages, state) {
 				continue
 			}
 

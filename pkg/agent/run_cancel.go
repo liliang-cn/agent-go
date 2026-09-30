@@ -4,10 +4,12 @@ import (
 	"context"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 )
 
 // Cancelling a run.
@@ -70,6 +72,10 @@ type runHandle struct {
 	cancel   context.CancelFunc
 	seq      uint64
 	progress atomic.Pointer[runProgress]
+	// steers are messages a host queued for this run (Steer / SteerRun),
+	// applied by the loop at its next round boundary. See steer.go.
+	steerMu sync.Mutex
+	steers  []domain.Message
 }
 
 // registerRun derives a cancellable context for one run and records it so
