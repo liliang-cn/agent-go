@@ -1,8 +1,7 @@
 // Package main shows how a run decides when to compact, and what it does.
 //
-// The threshold comes from the model's context window. The bundled table knows
-// a handful of models; for anything else — a gateway alias most often — state
-// the window with pool.RegisterModelWindow, or the run falls back to a fixed
+// The threshold comes from the model's context window, which the caller
+// states with pool.RegisterModelWindow; without it the run falls back to a fixed
 // 60000 tokens and says so (a log warning, CompactionInfo.ThresholdSource, and
 // a Doctor check).
 //

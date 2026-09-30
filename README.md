@@ -122,7 +122,7 @@ model_name = "deepseek-v4-flash"
 native_web_search = "none"   # none | openai | dashscope | google_search
 ```
 
-`pool.NewPool` load-balances across providers. `pool.RegisterModelPricing` prices a model the bundled table does not know; an unpriced model reports `CostUnpriced`, not `$0`.
+`pool.NewPool` load-balances across providers. There is no built-in price table: `pool.RegisterModelPricing` prices the models you run, and an unpriced model reports `CostUnpriced`, not `$0`.
 
 ## Storage
 

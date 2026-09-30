@@ -107,9 +107,10 @@ func TestRuntime_MaxBudgetUSD_BlocksRun(t *testing.T) {
 		t.Fatalf("build: %v", err)
 	}
 	defer svc.Close()
-	// Force a model name that pkg/usage's pricing table recognizes so
-	// CalculateCost returns a non-zero number for this synthetic LLM.
-	svc.modelName = "gpt-4"
+	// A priced model, so CalculateCost returns a non-zero number for this
+	// synthetic LLM.
+	svc.modelName = "priced-test-model"
+	priceModel(t, svc.modelName, 0.03, 0.06)
 
 	events, err := svc.RunStreamWithOptions(context.Background(),
 		"Say something verbose.",

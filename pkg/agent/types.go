@@ -633,10 +633,9 @@ func WithInputImages(paths ...string) RunOption {
 // the limit, the runtime stops with StopReasonMaxBudgetUSD as the final
 // outcome. Pass 0 (or omit) to leave the run unbounded.
 //
-// Cost is estimated using pkg/usage's per-model pricing table. Providers
-// that don't have a row in the table report cost as 0 — the cap effectively
-// has no force for those models. Add pricing in pkg/usage/token_counter.go
-// to enable caps on new providers.
+// Cost is estimated from the rates registered with pool.RegisterModelPricing.
+// A model nobody priced reports cost as 0 and CostUnpriced — the cap has no
+// force for it until it is registered.
 func WithMaxBudgetUSD(amount float64) RunOption {
 	return func(c *RunConfig) {
 		if amount < 0 {

@@ -134,7 +134,7 @@ func (s *queryLoopState) noteTokens(tokens int) {
 }
 
 // noteCost adds input/output tokens to the running totals and recomputes
-// the estimated cost via pkg/usage's per-model pricing table. Called once
+// the estimated cost from the registered model prices. Called once
 // per LLM round so the runtime can enforce MaxBudgetUSD.
 func (s *queryLoopState) noteCost(inputTokens, outputTokens int, costUSD float64) {
 	if inputTokens > 0 {

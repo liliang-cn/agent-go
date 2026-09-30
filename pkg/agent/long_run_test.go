@@ -483,7 +483,8 @@ func TestRunSegmentsStopsOnTheCostLimit(t *testing.T) {
 	llm := &scriptedLLM{finishAt: 99}
 	svc := buildSegmentedService(t, "segments-cost-limit", llm, nil)
 	defer svc.Close()
-	svc.modelName = "gpt-4" // a model the pricing table knows, so cost is non-zero
+	svc.modelName = "priced-test-model"
+	priceModel(t, svc.modelName, 0.03, 0.06) // so the run has a cost to limit
 
 	res, err := svc.RunSegments(context.Background(), "Work forever.", LongRunConfig{
 		MaxSegments:      50,

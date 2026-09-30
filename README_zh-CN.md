@@ -122,7 +122,7 @@ model_name = "deepseek-v4-flash"
 native_web_search = "none"   # none | openai | dashscope | google_search
 ```
 
-`pool.NewPool` 在多个 provider 间负载均衡。`pool.RegisterModelPricing` 给内置价格表没有的模型定价；没定价的模型报 `CostUnpriced`，而不是 `$0`。
+`pool.NewPool` 在多个 provider 间负载均衡。没有内置价格表：用 `pool.RegisterModelPricing` 给你用的模型定价；没定价的模型报 `CostUnpriced`，而不是 `$0`。
 
 ## 存储
 

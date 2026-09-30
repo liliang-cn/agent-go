@@ -41,9 +41,9 @@ fallbacks. Without `WithLLM`, providers come from `agentgo.db` in the home.
 Reasoning models (deepseek-v4-flash, qwen with thinking) spend part of every
 token budget on reasoning you never see. The framework raises a budget that ran
 out before any text was written — for turns and for structured calls — so you
-should not need to size one yourself. If a model is not in the bundled pricing
-table, cost reads as *unpriced*, not `$0`: call `pool.RegisterModelPricing`, or
-`MaxTotalCostUSD` has nothing to stop on.
+should not need to size one yourself. Nothing is priced until you say
+what it costs: call `pool.RegisterModelPricing` for the models you run, or cost
+reads as *unpriced* (not `$0`) and `MaxTotalCostUSD` has nothing to stop on.
 
 ## 3. Web search a provider has built in
 

@@ -139,8 +139,7 @@ type Event struct {
 	// pricing). Populated on terminal events; zero elsewhere.
 	EstimatedCostUSD float64 `json:"estimated_cost_usd,omitempty"`
 	// CostUnpriced is true when at least one model turn of this run could
-	// not be priced — the model is not in the pricing table and nobody
-	// registered rates. EstimatedCostUSD then reads 0 and means "unknown",
+	// not be priced — nobody registered rates for its model. EstimatedCostUSD then reads 0 and means "unknown",
 	// not "free"; a caller showing spend should say so rather than print $0.
 	CostUnpriced bool `json:"cost_unpriced,omitempty"`
 

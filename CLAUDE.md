@@ -143,7 +143,7 @@ A second round of soaks, this time against **DeepSeek direct** rather than throu
 - **`DefaultRunConfig` shadowed the budget it was supposed to default.** `MaxTokens: 2000` sat three lines under `MaxTurns: 0` and its comment explaining why that one must be left unset. `r.maxTokens()` reads `cfg.MaxTokens` first, so raising `defaultRunMaxTokens` changed nothing a run could see. **Two defaults for one knob, the nearer one winning silently** — check for this shape whenever you add a resolver.
 - **The system prompt named the host's directory, not the sandbox.** `buildSystemContext` used `os.Getwd()` unconditionally. With a sandbox configured, file tools are jailed under its workspace and bash runs there — so the first line of context named a directory the agent's own tools could not reach. A model does what it is told: given `Dir: /somewhere/else`, the agent opens round one with `cd /somewhere/else` and works there, the jail bypassed by a shell builtin. Observed directly — a soak launched from this checkout created its project *inside this checkout*. `cd` still leaves a `LocalSandbox`, which never claimed to isolate; the bug was telling the model to.
 
-And one about money, which is a stop condition here and not just a readout: **`CalculateCost` returned 0 for any model missing from its table.** Silently. `LongRunConfig.MaxTotalCostUSD` is built on that number, so an unlisted model removed the only spending ceiling a multi-hour run has. `pool.RegisterModelPricing` now lets an operator state their own rates (they win over the bundled table, which is an explicitly-fallible fallback), `CalculateCostDetailed` prices the cache split, and "nothing could price this model" is a `known bool` the caller reads instead of a zero it cannot tell from free. The runtime warns once per run when it hits one.
+And one about money, which is a stop condition here and not just a readout: **`CalculateCost` returned 0 for any model missing from its table.** Silently. `LongRunConfig.MaxTotalCostUSD` is built on that number, so an unlisted model removed the only spending ceiling a multi-hour run has. `pool.RegisterModelPricing` now lets an operator state their own rates (the bundled table they once overrode is gone: it went stale, pricing gpt-4 and claude-3 and nothing anyone ran), `CalculateCostDetailed` prices the cache split, and "nothing could price this model" is a `known bool` the caller reads instead of a zero it cannot tell from free. The runtime warns once per run when it hits one.
 
 **When you add a retry, add its observer callback in the same commit.** Both re-asks inside a model turn — transient provider error, and budget escalation — happen inside one span, so a turn that took three attempts looked identical to one that took one. `Observer.OnModelRetry` closes that, the way `OnLint` closed the lint layer. A unit test on the escalation function alone stays green whether or not the runtime ever calls it; the loop-level test is what caught the shadowed default above.
 
@@ -169,8 +169,8 @@ scenario, so run one before believing a release is fine.
   with another task's finished plan and "carry on from the first unchecked
   step". An unnamed plan is now keyed `default:<task_id>` on every path
   (`taskScopedPlanKey`); the bare list serves only a run with no task at all.
-- **"$0" is not a price.** The bundled table prices OpenAI, Anthropic and
-  DeepSeek names; a gateway alias like `gemini-3.8-flash-high` is unpriced, so
+- **"$0" is not a price.** Only registered models are priced; a gateway alias
+  like `gemini-3.8-flash-high` that nobody registered is unpriced, so
   cost read 0 for 1.4M tokens and `MaxTotalCostUSD` could never fire. The
   state is now visible instead of silent: `Event.CostUnpriced`,
   `ExecutionResult.CostUnpriced`, `SegmentInfo.Unpriced`,

@@ -159,10 +159,12 @@ func TestCompactionThresholdForWindow(t *testing.T) {
 }
 
 func TestResolveCompactionThresholdSources(t *testing.T) {
-	if n, src := resolveCompactionThreshold(12345, "gpt-4o", 8192); n != 12345 || src != CompactionThresholdConfigured {
+	pool.RegisterModelWindow("windowed-test-model", pool.ModelWindow{ContextTokens: 128000})
+	defer pool.UnregisterModelWindow("windowed-test-model")
+	if n, src := resolveCompactionThreshold(12345, "windowed-test-model", 8192); n != 12345 || src != CompactionThresholdConfigured {
 		t.Fatalf("explicit threshold = %d %s", n, src)
 	}
-	if n, src := resolveCompactionThreshold(0, "gpt-4o", 8192); src != CompactionThresholdModelWindow || n != CompactionThresholdForWindow(128000, 8192) {
+	if n, src := resolveCompactionThreshold(0, "windowed-test-model", 8192); src != CompactionThresholdModelWindow || n != CompactionThresholdForWindow(128000, 8192) {
 		t.Fatalf("known window = %d %s", n, src)
 	}
 	if n, src := resolveCompactionThreshold(0, "some-gateway-alias", 8192); n != CompactionDefaultThresholdTokens || src != CompactionThresholdDefault {
@@ -866,17 +868,5 @@ func TestTrimOversizedToolResultsKeepsTheNewestRound(t *testing.T) {
 	again, n2 := trimOversizedToolResults(out, protectedHeadEnd(out), 1, clipOversizeChars)
 	if n2 != 0 || again[2].Content != got {
 		t.Fatal("trim is not idempotent")
-	}
-}
-
-func TestDeepSeekWindowsAreKnown(t *testing.T) {
-	for _, m := range []string{"deepseek-flash", "deepseek-chat", "deepseek-v4-flash", "deepseek-v4-pro"} {
-		w, ok := pool.LookupModelWindow(m)
-		if !ok || w.ContextTokens != 1048576 {
-			t.Errorf("%s window = %+v %v, want 1048576", m, w, ok)
-		}
-		if n, src := resolveCompactionThreshold(0, m, 8192); src != CompactionThresholdModelWindow || n < 500000 {
-			t.Errorf("%s threshold = %d %s", m, n, src)
-		}
 	}
 }

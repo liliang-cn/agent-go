@@ -14,9 +14,8 @@ func TestUnknownModelIsUnpricedNotFree(t *testing.T) {
 	}
 }
 
-// Registered prices beat the bundled table, which is the point: an operator
-// who knows their contract must never depend on this package being current.
-func TestRegisteredPricingWinsOverTable(t *testing.T) {
+// A registration prices every model whose name contains its pattern.
+func TestARegisteredPatternPricesTheModelsItNames(t *testing.T) {
 	RegisterModelPricing("gpt-4o", ModelPricing{InputPer1K: 1, OutputPer1K: 2})
 	defer UnregisterModelPricing("gpt-4o")
 
@@ -55,7 +54,21 @@ func TestCachedPromptTokensAreBilledAtTheCacheRate(t *testing.T) {
 
 // Longest match wins, so a specific entry is never shadowed by a generic one.
 func TestLongestPricingPatternWins(t *testing.T) {
-	if p, _ := LookupModelPricing("gpt-5.5-turbo"); p.InputPer1K != 0.005 {
+	RegisterModelPricing("gpt-5", ModelPricing{InputPer1K: 1})
+	RegisterModelPricing("gpt-5.5", ModelPricing{InputPer1K: 2})
+	defer UnregisterModelPricing("gpt-5")
+	defer UnregisterModelPricing("gpt-5.5")
+	if p, _ := LookupModelPricing("gpt-5.5-turbo"); p.InputPer1K != 2 {
 		t.Fatalf("unexpected pricing for gpt-5.5: %+v", p)
+	}
+}
+
+// Nothing is priced until someone says what it costs: a bundled table went
+// stale and priced models nobody runs any more.
+func TestNothingIsPricedUntilRegistered(t *testing.T) {
+	for _, m := range []string{"gpt-4o", "claude-3-opus", "deepseek-chat", "gemini-3.8-flash-high"} {
+		if _, known := LookupModelPricing(m); known {
+			t.Errorf("%s is priced with nothing registered", m)
+		}
 	}
 }
