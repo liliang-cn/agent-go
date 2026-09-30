@@ -21,6 +21,15 @@ type ToolMetadata struct {
 	Destructive       bool
 	InterruptBehavior string
 	ExposureMode      ToolExposureMode
+	// OutputLimit is this tool's own cap on one result as the model sees it,
+	// in bytes. Zero takes the service's cap (WithToolOutputLimit); negative
+	// turns the cap off for this tool alone. For a tool whose result is many
+	// independent reports — a fan-out over workers, a batch of jobs — the
+	// uniform cap cuts the middle reports out and tells the model to call
+	// again asking for less, which for work that cost money to produce means
+	// paying for it twice. Such a tool sets its own limit, or none, and pages
+	// its results itself.
+	OutputLimit int
 }
 
 type ToolExposureMode string

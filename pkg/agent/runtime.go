@@ -1269,7 +1269,9 @@ func (r *Runtime) completeRunWithStop(goal, content string, messages []domain.Me
 
 	// Background, but owned: Close waits for it, so it cannot write into a
 	// directory the caller has already torn down.
-	r.svc.goBackground(func() { r.saveToMemory(context.Background(), goal, content) })
+	if r.cfg == nil || !r.cfg.DisableMemoryAutoStore {
+		r.svc.goBackground(func() { r.saveToMemory(context.Background(), goal, content) })
+	}
 
 	// Run-memory capture belongs here, at the one place a run completes, for
 	// the same reason recall moved to startRun: it used to live in

@@ -413,6 +413,10 @@ type RunConfig struct {
 	// runtime stops with StopReasonMaxBudgetUSD. Zero = unlimited. Use
 	// WithMaxBudgetUSD to set.
 	MaxBudgetUSD float64
+
+	// DisableMemoryAutoStore skips the post-run memory extraction for this
+	// run only. Retrieval still happens. Set with WithoutMemoryAutoStore.
+	DisableMemoryAutoStore bool
 }
 
 // ErrorHandlerFunc handles errors during agent execution
@@ -671,6 +675,18 @@ func WithAutoCompaction(thresholdTokens, keepRecent int) RunOption {
 // to turn clipping off; 0 keeps CompactionDefaultClipAfterRounds.
 func WithCompactionClipping(keepRounds int) RunOption {
 	return func(c *RunConfig) { c.CompactionClipAfterRounds = keepRounds }
+}
+
+// WithoutMemoryAutoStore turns the automatic memory write off for this run
+// only; retrieval, and the agent's own memory_save, still work. The
+// Builder-level WithMemoryAutoStore(false) is for a service that never wants
+// it; this is for a service that does, except on some runs — a worker that
+// takes orders from a fan-out: every order is a fresh session, so the
+// extraction pass runs once per order per worker, and N workers given the
+// same order write N extractions of the same content into a memory they
+// share. The one who gave the order already remembered giving it.
+func WithoutMemoryAutoStore() RunOption {
+	return func(c *RunConfig) { c.DisableMemoryAutoStore = true }
 }
 
 // WithoutAutoCompaction disables in-loop compaction entirely so the runtime

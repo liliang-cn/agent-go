@@ -74,6 +74,22 @@ func (s *Service) toolOutputCap() int {
 	}
 }
 
+// toolOutputCapFor is the cap for one tool: its own OutputLimit when it
+// declared one, else the service's. Negative on the tool means no cap.
+func (s *Service) toolOutputCapFor(toolName string, serviceCap int) int {
+	if s == nil || s.toolRegistry == nil {
+		return serviceCap
+	}
+	switch own := s.toolRegistry.MetadataOf(toolName).OutputLimit; {
+	case own < 0:
+		return 0
+	case own > 0:
+		return own
+	default:
+		return serviceCap
+	}
+}
+
 // ToolOutputTruncation describes one tool result the cap cut down.
 type ToolOutputTruncation struct {
 	TaskID     string

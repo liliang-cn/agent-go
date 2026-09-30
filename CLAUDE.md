@@ -584,6 +584,35 @@ in-process kind, `"cli"` here) and `Provider`. `OnSubAgentEnd` carries a
 `CLIAgentRunResult`, so an observer adding up what a run cost does not fold a
 separate subscription's tokens into this one's.
 
+### A host's own workers, over a network
+
+superai's hive — a queen commanding workers over HTTP — is composition the
+framework does not own and should not: there is still no team here. What the
+framework owes such a host is that its workers are not invisible, and reading
+the hive found three places they were.
+
+- **`Service.SubAgentBracket(ctx, info)`** announces a sub-agent the host runs
+  itself, `Kind: "remote"`, and returns the end function; it fills run, session
+  and task from the tool's ctx and ends once. `RemoteAgentRunResult` is the
+  result shape, `CLIAgentRunResult`'s twin: usage, cost and `CostUnpriced`
+  as the remote side reported them. Without it a fan-out was one opaque tool
+  call in every trace, and the run's cost — so `MaxBudgetUSD` and a long run's
+  `MaxTotalCostUSD` — read the workers as free: "$0 is not a price", one
+  level up. A host still sums the remote spend itself; the runtime does not
+  fold another process's bill into this run's.
+- **`ToolMetadata.OutputLimit`** is a tool's own cap (negative: none). The
+  uniform 32 KB cap cuts the *middle* of a result and tells the model to call
+  again asking for less; for a fan-out result — 40 workers × 2 KB, one report
+  each — that drops half the reports and re-calling means paying for the work
+  twice. A fan-out tool sets its own limit and pages its results itself.
+- **`WithoutMemoryAutoStore()`** is the per-run switch. `WithMemoryAutoStore`
+  was Builder-level only, so a worker that serves a person *and* takes orders
+  could not turn the write off for orders alone — and N workers given one
+  order ran N extractions of it into the memory they share, each reconciling
+  in its own process against a remote that had not seen the others yet.
+
+`examples/remote-workers` runs all three against an in-process worker server.
+
 ### Multimodal, and the two places it was quietly broken
 
 Images in and images out both work now, and both were broken in the same way:

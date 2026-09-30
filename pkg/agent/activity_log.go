@@ -163,6 +163,14 @@ func (l *ActivityLog) OnSubAgentEnd(_ context.Context, info SubAgentInfo, result
 		l.line("     sub<    %s FAILED %s", info.Name, oneLine(err.Error(), 120))
 		return
 	}
+	if r, ok := result.(RemoteAgentRunResult); ok {
+		cost := fmt.Sprintf("$%.4f", r.CostUSD)
+		if r.CostUnpriced || (r.Usage == nil && r.CostUSD == 0) {
+			cost = "unpriced"
+		}
+		l.line("     sub<    %s ok %dms %s %s", info.Name, r.Duration, cost, oneLine(r.Summary, 100))
+		return
+	}
 	l.line("     sub<    %s ok %s", info.Name, oneLine(fmt.Sprintf("%v", result), 100))
 }
 

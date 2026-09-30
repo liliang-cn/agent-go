@@ -283,7 +283,7 @@ func (s *Service) appendToolRoundToMessages(messages []domain.Message, taskID st
 		// actually see) and a cleaned text result. No-op for text results.
 		imageParts, res := extractToolImageParts(res)
 		resStr := toolResultToString(res)
-		if capped, cut, ok := capToolResult(res, resStr, limit); ok {
+		if capped, cut, ok := capToolResult(res, resStr, s.toolOutputCapFor(tr.ToolName, limit)); ok {
 			resStr = capped
 			cut.ToolName, cut.ToolCallID = tr.ToolName, tr.ToolCallID
 			cuts = append(cuts, cut)
