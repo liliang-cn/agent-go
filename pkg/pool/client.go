@@ -630,17 +630,6 @@ func (c *Client) GenerateWithTools(ctx context.Context, messages []domain.Messag
 	return response, nil
 }
 
-// StreamWithTools streams a tool-calling generation.
-func (c *Client) StreamWithTools(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions, callback domain.ToolCallCallback) error {
-	// Simplified implementation: fetch the whole result first, then replay it through the callback.
-	result, err := c.GenerateWithTools(ctx, messages, tools, opts)
-	if err != nil {
-		return err
-	}
-
-	return callback(result)
-}
-
 // GenerateStructured generates structured (JSON) output.
 //
 // Two things about real providers shape it. Some reject response_format
