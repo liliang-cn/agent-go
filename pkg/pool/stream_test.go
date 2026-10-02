@@ -200,3 +200,56 @@ func TestThinkSplitterHoldsOnlyWhatCouldBeATag(t *testing.T) {
 		t.Fatalf("a held '<' that was not a tag was lost: %q", text)
 	}
 }
+
+// A model that keeps reasoning past the budget without saying anything is
+// asked once more with thinking off, and that answer is the one kept.
+func TestAModelThatWillNotStopThinkingIsAskedAgainWithoutIt(t *testing.T) {
+	var mu sync.Mutex
+	var thinking []any
+	c := streamClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		thinking = append(thinking, body["enable_thinking"])
+		mu.Unlock()
+		w.Header().Set("Content-Type", "text/event-stream")
+		if body["enable_thinking"] == false {
+			sse(w, `{"choices":[{"delta":{"content":"hostname-1"},"finish_reason":"stop"}]}`, `[DONE]`)
+			return
+		}
+		for i := 0; i < 200; i++ {
+			select {
+			case <-r.Context().Done():
+				return
+			default:
+			}
+			sse(w, `{"choices":[{"delta":{"reasoning_content":"still calibrating the clock… "}}]}`)
+		}
+	})
+	c.SetReasoningBudget(200, -1)
+	text, reasoning, _, _ := collect(t, c, nil)
+	if text != "hostname-1" {
+		t.Fatalf("text %q", text)
+	}
+	if reasoning == "" || len(reasoning) > 400 {
+		t.Fatalf("reasoning kept %d bytes", len(reasoning))
+	}
+	if len(thinking) != 2 || thinking[0] != nil || thinking[1] != false {
+		t.Fatalf("requests %v", thinking)
+	}
+}
+
+func TestAModelThatThinksBrieflyIsLeftAlone(t *testing.T) {
+	calls := 0
+	c := streamClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "text/event-stream")
+		sse(w, `{"choices":[{"delta":{"reasoning_content":"short"}}]}`,
+			`{"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}`, `[DONE]`)
+	})
+	c.SetReasoningBudget(200, -1)
+	text, _, _, _ := collect(t, c, nil)
+	if text != "ok" || calls != 1 {
+		t.Fatalf("text %q calls %d", text, calls)
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 )
@@ -51,12 +52,11 @@ func (c *Client) StreamWithTools(ctx context.Context, messages []domain.Message,
 	if err != nil {
 		return fmt.Errorf("request failed (model=%s): %w", c.modelName, err)
 	}
-	defer resp.Body.Close()
-
 	// An upstream that ignores "stream" answers with one JSON document. Read
 	// it as the non-streaming reply it is rather than as an empty stream.
 	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "event-stream") {
 		raw, rerr := io.ReadAll(resp.Body)
+		resp.Body.Close()
 		if rerr != nil {
 			return rerr
 		}
@@ -73,8 +73,17 @@ func (c *Client) StreamWithTools(ctx context.Context, messages []domain.Message,
 
 	st := &poolStreamState{}
 	grounded := false
-	sc := bufio.NewScanner(resp.Body)
+	// thought counts reasoning bytes before the answer starts. A model that
+	// is still reasoning past the budget is cut off once and asked again
+	// with thinking off: a hive worker on glm-5.3 reasoned for seventeen
+	// minutes about the timing of "sleep 25 && hostname".
+	thought, rethought := 0, false
+	var thinkingSince time.Time
+	body2 := resp.Body
+	defer func() { body2.Close() }()
+	sc := bufio.NewScanner(body2)
 	sc.Buffer(make([]byte, 0, 64<<10), 8<<20)
+scan:
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		data, ok := strings.CutPrefix(line, "data:")
@@ -97,6 +106,29 @@ func (c *Client) StreamWithTools(ctx context.Context, messages []domain.Message,
 		}
 		delta, done := st.absorb(chunk)
 		if delta != nil {
+			if delta.ReasoningContent != "" && thinkingSince.IsZero() {
+				thinkingSince = time.Now()
+			}
+			thought += len(delta.ReasoningContent)
+			if !rethought && c.overThinking(thought, thinkingSince) && st.content.Len() == 0 && len(st.calls) == 0 {
+				rethought = true
+				b := body(curOpts)
+				b["enable_thinking"] = false
+				next, err := c.openStream(ctx, "/chat/completions", b)
+				if err == nil && strings.Contains(next.Header.Get("Content-Type"), "event-stream") {
+					body2.Close()
+					body2 = next.Body
+					st = &poolStreamState{}
+					sc = bufio.NewScanner(body2)
+					sc.Buffer(make([]byte, 0, 64<<10), 8<<20)
+					continue scan
+				}
+				if err == nil {
+					next.Body.Close()
+				}
+				// The upstream would not answer without thinking; let the
+				// first stream run on.
+			}
 			if err := callback(delta); err != nil {
 				return err
 			}
@@ -115,6 +147,36 @@ func (c *Client) StreamWithTools(ctx context.Context, messages []domain.Message,
 	}
 	c.recordNativeWebSearch(opts, curOpts, groundingProof)
 	return callback(st.finish())
+}
+
+// Defaults for SetReasoningBudget: about ten thousand tokens of reasoning, or
+// four minutes of it, whichever comes first.
+const (
+	defaultReasoningBytes = 32 << 10
+	defaultReasoningTime  = 4 * time.Minute
+)
+
+// SetReasoningBudget caps how long a streamed reply may reason before it has
+// said anything. Past either limit the request is sent again with
+// enable_thinking off, once; an upstream that refuses that keeps the first
+// stream. Zero restores the default for that limit; a negative value turns it
+// off.
+func (c *Client) SetReasoningBudget(bytes int, d time.Duration) {
+	c.reasoningBytes, c.reasoningTime = bytes, d
+}
+
+func (c *Client) overThinking(bytes int, since time.Time) bool {
+	limit, d := c.reasoningBytes, c.reasoningTime
+	if limit == 0 {
+		limit = defaultReasoningBytes
+	}
+	if d == 0 {
+		d = defaultReasoningTime
+	}
+	if limit > 0 && bytes > limit {
+		return true
+	}
+	return d > 0 && !since.IsZero() && time.Since(since) > d
 }
 
 // openStream posts a request and returns the response once the upstream has

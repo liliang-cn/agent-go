@@ -30,6 +30,10 @@ type Client struct {
 	// structuredSchemaRejected is set once the upstream refuses
 	// response_format json_schema; structured calls then use the prompt form.
 	structuredSchemaRejected atomic.Bool
+	// reasoningBytes and reasoningTime are the streamed-reasoning budget;
+	// see SetReasoningBudget.
+	reasoningBytes int
+	reasoningTime  time.Duration
 }
 
 // NewClient creates a new client.
