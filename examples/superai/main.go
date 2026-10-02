@@ -415,7 +415,7 @@ func announceReminder(title string) {
 }
 
 // ----------------------------------------------------------------------------
-// Tools — the assistant's hands. Each returns a stable {ok,data} shape (PTC-safe).
+// Tools — the assistant's hands. Each returns a stable {ok,data} shape.
 // ----------------------------------------------------------------------------
 
 func registerTools(svc *agent.Service, db *store) {

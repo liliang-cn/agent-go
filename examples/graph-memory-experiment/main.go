@@ -1,7 +1,7 @@
 // Graph-memory in three acts: does run memory let a FRESH agent recall a
 // prior decision — and can we see exactly why?
 //
-// This example uses the first-class API: agent.WithRunMemory wired to a
+// This example uses the first-class API: Builder.WithRunMemory wired to a
 // CortexDB-backed cortexbridge.RunMemory. Capture and recall are automatic —
 // the code below only adds observability printing.
 //

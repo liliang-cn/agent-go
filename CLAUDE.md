@@ -29,12 +29,12 @@ v3 deliberately has exactly seven things in it. If a change does not fit one of 
 6. **Session + Checkpoint** — a session UUID owns the conversation; every terminal state writes a replayable checkpoint.
 7. **Events** — the single output channel. `Run()` is `RunStream()` plus a collector.
 
-There is **no** team, dispatcher, router, handoff or built-in role hierarchy. Composition happens inside one agent via `WithSubagents(...)`, which exposes a single `task(agent_name, prompt)` tool.
+There is **no** team, dispatcher, router, handoff or built-in role hierarchy. Composition happens inside one agent via `WithSubagents(...)`, which exposes a `task(agent_name, prompt)` tool (and, unless `WithDelegation(false)`, the three generic delegation tools beside it).
 
 ## Development commands
 
 ```bash
-make test           # go test ./...
+make test           # go test ./... (plus the separate examples/extensions-thirdparty module)
 make check          # fmt + vet + test
 make coverage-core  # focused coverage report for the packages in $CORE_COVERAGE_PKGS
 make deps           # go mod download && tidy
@@ -79,13 +79,13 @@ When extending runtime behavior, push it into the shared helpers rather than for
 | `loop_context.go` | what the model sees before its turn: memory/RAG retrieval, history filtering, the recent/older split, skill reminders, compaction |
 | `tool_prep.go` | what a turn may call: tool collection, allow/deny lists, constraints, skill-first policy, generation options |
 | `tool_round.go` | what happens inside one tool round: normalise, dedupe, execute, decide terminal |
-| `service.go` | lifecycle and the public entry points (`Run`, `RunStream`, `Ask`, `Chat`, structured output) |
+| `service.go` | the public entry points `Run` / `RunStream` and `startRun`, the single way into the loop (`Ask` / `Chat` live in `service_session.go`, `Close` in `service_close.go`, structured output in `structured_output.go`) |
 
 Tool execution has its own state model — `ReadOnly`, `ConcurrencySafe`, `Destructive`, `InterruptBehavior`, plus `queued`/`executing`/`completed` lifecycle. New tools should declare these honestly so batching, permissioning, and cancel work.
 
 ### Sub-agents are tools
 
-`WithSubagents(specs...)` registers one tool: `task(agent_name, prompt)`. Calling it runs the named sub-agent through the same loop and returns only its final answer; its events bubble up nested. That is the whole composition story — there is no team, no dispatcher, no router, no handoff.
+`WithSubagents(specs...)` registers one tool: `task(agent_name, prompt)`. Calling it runs the named sub-agent through the same loop and returns only its final answer; its events bubble up nested. That is the whole composition story — there is no team, no dispatcher, no router, no handoff. Configuring named sub-agents also puts the three generic delegation tools (`delegate_to_subagent`, `delegate_async`, `subagent_send_message`) into the schema; `WithDelegation(false)` withholds them when `task` should be the only route.
 
 `agent.Manager` is the application-level host, not an orchestrator: it owns the `Store` (agent definitions, sessions, tasks, checkpoints), caches one `*Service` per named agent, and exposes the task surface. `Manager.SetStreamOverride` is the single dispatch seam if an embedder needs to intercept runs.
 
@@ -209,10 +209,10 @@ Three ways it reaches you, all the same reading:
   where a long run's memory curve lives; by the time a process is killed the
   curve is the only evidence left.
 - **`pkg/otelobserver`** — observable gauges (`agentgo.process.heap.bytes`,
-  `.heap.objects`, `.goroutines`, `.rss.bytes`, `.rss.peak_bytes`,
-  `.cpu.seconds`). Observable, not pushed, so they keep reporting while the
-  service sits idle between runs — which is when a leak is easiest to see and
-  when nothing else emits anything.
+  `.heap.objects`, `.goroutines`, `.rss.bytes`, `.rss.peak_bytes`) and an
+  observable counter (`.cpu.seconds`). Observable, not pushed, so they keep
+  reporting while the service sits idle between runs — which is when a leak is
+  easiest to see and when nothing else emits anything.
 
 `ActivityLog` prints a `res` line on the first reading, the last, every tenth
 round, and any round where heap or goroutines grew by a quarter — a leak
@@ -349,16 +349,17 @@ changed nothing. A gate that never clears its floor is pure added latency, and
 that is invisible in a log that only shows the times it worked.
 
 What this is not: it is not model routing. Choosing a different *generating*
-model per run needs a seam that does not exist — `RunConfig` carries no model,
-and neither does `SubagentSpec`. A classifier with nowhere to route is half the
-pattern.
+model per run needed a seam that did not exist when this gate was written —
+`RunConfig` carried no model, and neither did `SubagentSpec`; both do now (next
+section). A classifier with nowhere to route is half the pattern.
 
 ### Which model answers a run
 
 `RunConfig.Model` / `WithModel(model, provider…)`, `GenerationOptions.Model`,
 and a `ModelRouter` seam. Before these, a run could not be pointed at a model
 at all: `RunConfig` carried none, the pool's `GetWithHint` was unreachable from
-the agent layer, and `SubagentSpec` still carries none.
+the agent layer, and `SubagentSpec` carried none either (it has `Model` /
+`Provider` now, applied to the sub-agent's runs exactly as `WithModel` is).
 
 The chain is options → `Pool.clientFor` → `GetWithHint`. A pool client is one
 provider and one model (`c.modelName` is baked into every request body), so
@@ -504,7 +505,7 @@ tomorrow)` with no model call at all.
 ### Background work: the agent's own, not only the host's
 
 Half of this existed. A **host** could always start detached work
-(`Manager.SubmitAgentTask`, `PromptScheduler.Schedule`); the **agent** could
+(`Manager.Tasks().Submit`, `PromptScheduler.Schedule`); the **agent** could
 not, so every consumer that wanted it wrote its own tool — superai's
 `schedule_prompt` is exactly that, and a scheduler is not a background task.
 
@@ -545,12 +546,13 @@ event channel, tokens accounted apart from the parent's.
 
 Everything about the CLIs themselves — which are installed, how each is
 driven, stream-json parsing, usage accounting, the PTY runner — comes from
-`github.com/liliang-cn/agentexec` (`Discover`, `RegistryFrom`, the four
-providers). This package owns the *tool*: the roots a run may work in, the
-approval posture, the timeouts, and turning a result into a sub-agent bracket.
-It must not grow knowledge of a CLI's flags or output; that belongs in
-agentexec, and a `pkg/agent/cliagents` that once held discovery and the
-cursor provider was removed for exactly that reason.
+`github.com/liliang-cn/agentexec` (`Discover`, `RegistryFrom`, a provider per
+CLI it knows — thirteen as of v0.5.0, these four among them). This package
+owns the *tool*: the roots a run may work in, the approval posture, the
+timeouts, and turning a result into a sub-agent bracket. It must not grow
+knowledge of a CLI's flags or output; that belongs in agentexec, and a
+`pkg/agent/cliagents` that once held discovery and the cursor provider was
+removed for exactly that reason.
 
 Five things that are not guesses:
 
@@ -722,7 +724,7 @@ answering "No image was provided" — so the first answer came from the picture
 
 ### Task checkpoint + replay
 
-Every terminal `completeRun` / `blockRun` writes a `TaskCheckpoint` snapshot of the message history to `task_checkpoints` (capped at `MaxCheckpointsPerTask=32`, pruned by `checkpointWriter`). The wiring lives in `pkg/agent/task_checkpoint.go` + `task_checkpoint_manager.go`; `Service.SetCheckpointSink(...)` is what the runtime calls — `Manager.buildServiceForModel` auto-wires this, services built directly via `agent.New(...).Build()` skip persistence.
+Every terminal `completeRun` / `blockRun` writes a `TaskCheckpoint` snapshot of the message history to `task_checkpoints` (capped at `MaxCheckpointsPerTask=32`, pruned by `checkpointWriter`). The wiring lives in `pkg/agent/task_checkpoint.go` + `task_checkpoint_manager.go`; `Service.SetCheckpointSink(...)` installs the sink the runtime writes to — `Manager.buildServiceForModel` wires the Manager in, and `agent.New(...).Build()` wires a default sink over the Service's own store (`checkpoint_sink_default.go`) whenever it has one.
 
 To re-run a crashed/cancelled task from its latest snapshot: `manager.Tasks().ResumeFromCheckpoint(ctx, taskID, CheckpointResumeOptions{FollowUp: "..."})`.
 
@@ -738,6 +740,10 @@ Every service built through `agent.New(...).Build()` gets the built-in set autom
 - `file_task_must_write` — a task that asked for a file must have produced one
 - `non_empty_final_answer` — a run cannot terminate with no text at all
 - `task_delivery_contract` — a goal that names a delivery action (send the mail, post the message, write the file) cannot complete unless a matching tool was actually called *and* such a tool was available
+- `requested_action_contract` — a task that asked the agent to do something with a tool (set a reminder, add a calendar entry, record a note) cannot complete while that tool sat unused
+- `no_tool_scaffolding_answer` — the framework's own tool plumbing ("No tools found matching the query.") cannot be the final answer
+- `deliverable_block_must_carry_work` — a run that blocks on a missing delivery tool must still report the work it could do
+- `plan_ready_steps_done` — a run working a plan cannot finish with ready steps unchecked
 
 `LintContext` carries `ToolCalls` (what ran) and `AvailableTools` (what could have run), so a lint can tell "the agent skipped a capability it had" from "the agent never had it".
 
@@ -794,12 +800,13 @@ A user who refuses tool use is obeyed by *withholding the tools* — `prepareTur
 
 ```go
 type RunConstraints struct {
-    ForbidTools  bool
-    Deliverables []DeliverableRequirement // kind: email|file|message|other
+    ForbidTools      bool
+    Deliverables     []DeliverableRequirement // kind: email|file|message|other
+    RequestedActions []RequestedAction        // set a reminder, add a calendar entry, record a note
 }
 ```
 
-`ForbidTools` empties the tool list; `Deliverables` reach `task_delivery_contract` and `file_task_must_write` through `LintContext`. Callers who already know skip the call entirely with `WithToolsDisabled()` / `WithRequiredDeliverables(...)`; `WithConstraintExtraction(false)` turns the pass off. Extraction failure degrades to "no constraints" and warns — it must never block an ordinary run.
+`ForbidTools` empties the tool list; `Deliverables` reach `task_delivery_contract` and `file_task_must_write` through `LintContext`, and `RequestedActions` reach `requested_action_contract` the same way. Callers who already know skip the call entirely with `WithToolsDisabled()` / `WithRequiredDeliverables(...)` / `WithRequestedActions(...)`; `WithConstraintExtraction(false)` turns the pass off. Extraction failure degrades to "no constraints" and warns — it must never block an ordinary run.
 
 This replaced four hardcoded phrase tables (`noToolInstructionPhrases`, delivery `GoalMarkers`, `fileOutputIntentPatterns`, the auto-memory hook). They are the same disease as the deleted `isExplicitMemoryRecallQuery`: a list only enforces the languages someone thought to enumerate, and silently does nothing for everyone else. If you find yourself adding a phrase to a list to change runtime behavior, that is the signal to extract a constraint instead.
 
@@ -889,8 +896,9 @@ is a registration, not a new `case`.** The seams, in priority order:
    self-registers `cortex-remote` in `init()`) can import — `pkg/config` imports
    `pkg/store`, and `pkg/memory` imports `pkg/store`, so neither could host it.
    The factory receives `domain.MemoryStoreConfig{Name, Path, DSN, Options,
-   Embedder, Generator}`; `WithMemoryDSN` / `WithMemoryOption(s)` and
-   agentgo.toml's `[memory] dsn` / `[memory.options]` feed it.
+   Embedder, Generator}`; `WithMemoryDSN` / `WithMemoryOption(s)` feed it, as
+   do `Memory.DSN` / `Memory.Options` on a `config.Config` passed to
+   `WithConfig` (no file fills those: `config.Load()` reads no toml).
    Registration is strict: blank name, nil factory, built-in name, or duplicate
    is an error. `UnregisterMemoryStore` replaces one deliberately.
 2. `WithMemoryStore(domain.MemoryStore)` — inject an instance; wins over
@@ -1094,23 +1102,23 @@ code. Each was a trap a correct-looking integration fell into.
 ~/.agentgo/                      # override with AGENTGO_HOME=...
 ├── data/
 │   ├── agentgo.db               # config, providers, agents, tasks, checkpoints (SQLite)
-│   └── cortex.db                # optional memory/vector/graph (cortexdb)
-├── memories/                    # file memory when enabled
+│   ├── cortex.db                # optional memory/vector/graph (cortexdb)
+│   └── memories/                # file memory when enabled
 ├── skills/                      # local skills (SKILL.md format)
 └── workspace/                   # agent working directory
 ```
 
-`agentgo.toml` at repo root is the dev config; `home = '/Users/.../.agentgo'` redirects all of the above.
+`config.Load()` reads no config file: the home comes from `AGENTGO_HOME` (default `~/.agentgo`), and providers and settings come from `agentgo.db`. The `agentgo.toml` at repo root is not read by anything in the framework.
 
 ## Conventions that bite if you don't know them
 
 - **Identity = session UUID, not userID.** Conversations are keyed by UUID. Don't introduce `userID` as a primary identity field for chat or task APIs. Use `github.com/google/uuid`.
 - **Concurrency.** Run `go test -race ./pkg/agent/...` for changes touching `pkg/agent/runtime.go`, `pkg/agent/manager.go`, `pkg/agent/subagent*.go`, `pkg/agent/async_tasks*`, or `pkg/agent/store.go`.
-- **Provider compatibility fallbacks.** `pkg/pool/client.go` and `pkg/providers/openai.go` both have `applyRetryFallbacks` helpers that strip `web_search_options` or `tool_choice` and retry once when the upstream rejects them with "unsupported / does not support / invalid" errors. DeepSeek's reasoner (e.g. `deepseek-v4-flash`) needs the `tool_choice` fallback. When adding new optional params, mirror the same shape: detect the rejection, strip, retry once.
+- **Provider compatibility fallbacks.** `pkg/pool/client.go` and `pkg/providers/openai.go` both have retry-fallback helpers (`applyPoolRetryFallbacks`, `applyOpenAIRetryFallbacks`) that strip native web search, `tool_choice` or `response_format` (the pool's also drops prompt-cache markers) and retry once when the upstream rejects them with "unsupported / does not support / invalid" errors. DeepSeek's reasoner (e.g. `deepseek-v4-flash`) needs the `tool_choice` fallback. When adding new optional params, mirror the same shape: detect the rejection, strip, retry once.
 - **Native web search is detected or declared, never assumed.** Web-search mode defaults to `auto`: tool rounds carry `web_search_options`/`enable_search`, and `pkg/pool/native_search.go` accumulates evidence per provider — a rejection proves *unsupported* (stop sending, keep MCP search tools), grounding evidence in a response (`url_citation` annotations, grounding metadata) proves *supported* (hide the redundant MCP search tools). Mere acceptance proves nothing: most servers silently ignore unknown fields, and treating acceptance as capability would hide real search behind a fake one. There is no model-name capability table and there must never be one — the verdict comes from `domain.NativeWebSearchReporter`, and explicit `native`/`mcp`/`off` config always wins. An operator can instead *declare* it per provider — `native_web_search = "none" | "openai" | "dashscope" | "google_search"` on `pool.Provider` / `store.LLMProvider` (a DB column), or `Client.SetNativeWebSearch` for a client handed to `WithLLM`. It is a wire format, not a bool, because "yes" alone leaves the client guessing which field to send; a declared client sends only its field and its verdict is known from the first request. Absence of grounding never moves a declared verdict (cpa strips grounding metadata, so evidence could never prove it there); a *rejection* of the declared field does, logged at ERROR, because honouring it would hide MCP search behind a search that cannot run. Measured on cpa: only `tools:[{google_search:{}}]` searches — `web_search_options`/`enable_search` are silently ignored — and Gemini 400s a built-in tool beside function tools unless `tool_config.include_server_side_tool_invocations` is set, which cpa's OpenAI endpoint does not pass through. A declaration can carry options sent inside its field (`native_web_search_options`, e.g. DashScope `search_options.forced_search`). **Declared is not proven**: a declared-supported provider keeps the MCP search tools, because the field working does not mean the model searches — measured on the Aliyun MaaS endpoint, qwen3.8-flash with only `enable_search` did not search (prompt stayed 87 tokens) and, with MCP search hidden, the agent could not search at all; with `forced_search` it searched (4.2k prompt tokens) and worked beside function tools. Only grounding evidence (`domain.NativeWebSearchEvidence`) or explicit `mode = "native"` hides MCP search. DashScope's OpenAI-compatible responses carry no search fields, so evidence can never prove it there — declare it. A declaration is operator-stated and named, which is why it is allowed where a model-name table is not. `poolsvc`'s service wrapper did not implement `NativeWebSearchReporter` at all until this, so every Manager agent's verdict was permanently unknown.
 - **`tool_choice` JSON shape.** `"auto" / "required" / "none"` go in as plain strings; named-tool choice is `{"type":"function","function":{"name":"X"}}`. Don't reuse the named-tool form for `"required"` — DeepSeek and some OpenAI variants reject that.
 - **Use random high ports** (3000+, e.g. 3076, 6759, 43510) for any new dev port; avoid 8080 and other common defaults.
-- **Releases:** the `/release` slash command in `.claude/commands/release.md` does the version bump. Manual: `git tag -a vX.Y.Z`, then `git push --tags`. Bump rules: `feat:` → minor, `fix:`/`docs:`/`chore:` → patch, `BREAKING CHANGE:` → major. **No co-author lines in commits.**
+- **Releases:** tag by hand: `git tag -a vX.Y.Z`, then `git push --tags`. Bump rules: `feat:` → minor, `fix:`/`docs:`/`chore:` → patch, `BREAKING CHANGE:` → major. **No co-author lines in commits.**
 - **No summary docs** unless explicitly requested. Don't create `*_SUMMARY.md` / `NOTES.md` / `IMPLEMENTATION.md` after finishing work.
 - **Examples:** new public features should ship with a runnable example under `examples/<feature>/main.go` (each in its own folder, full imports + cleanup).
 
@@ -1118,6 +1126,6 @@ code. Each was a trap a correct-looking integration fell into.
 
 - Behavioral eval: `make eval` (mock) / `make eval-live` (real provider)
 - Provider connectivity / compat: `examples/` + `pkg/poolsvc` (`poolsvc.Global().Initialize(...)`); provider fallback behavior lives in `pkg/pool/client.go`
-- MCP: `pkg/mcp` client logs land in `~/.agentgo/logs/`
-- Tasks / checkpoints: `Manager.Tasks()` API — list, trace, `ResumeFromCheckpoint`
+- MCP: `pkg/mcp` client logs go through `pkg/log` (slog to stderr unless the host calls `log.SetLogger`)
+- Tasks / checkpoints: `Manager.Tasks()` API — `List`, `ListCheckpoints`, `ResumeFromCheckpoint`
 - Tracing: wire an observer (`pkg/otelobserver`) into the service to see per-round loop state

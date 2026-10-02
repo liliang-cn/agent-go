@@ -4,26 +4,24 @@
 // Undeclared, a provider is probed: each tool round sends both the OpenAI and
 // the DashScope search field, and the MCP search tools stay until a response
 // proves the provider searched. A declaration skips that: the verdict is known
-// from the first request, only the named field is sent, and the MCP search
-// tools are hidden (or, for "none", kept and no field is ever sent).
+// from the first request and only the named field is sent (for "none", no
+// field is ever sent).
 //
-// The same declaration in config form, for providers in agentgo.toml:
+// The same declaration for a provider stored in agentgo.db:
 //
-//	[[llm.providers]]
-//	name = "cpa"
-//	base_url = "https://cpa.superleo.app/v1"
-//	model_name = "gemini-3.8-flash-high"
-//	native_web_search = "google_search"   # none | openai | dashscope | google_search
-//
-//	[llm.providers.native_web_search_options]   # sent inside the declared field
-//	forced_search = true                        # e.g. DashScope's search_options
+//	poolsvc.Global().SaveProvider(&store.LLMProvider{
+//		Name:            "cpa",
+//		BaseURL:         "https://cpa.superleo.app/v1",
+//		ModelName:       "gemini-3.8-flash-high",
+//		NativeWebSearch: "google_search", // none | openai | dashscope | google_search
+//		// sent inside the declared field, e.g. DashScope's search_options
+//		NativeWebSearchOptions: map[string]interface{}{"forced_search": true},
+//		Enabled:                true,
+//	})
 //
 // A declaration keeps the MCP search tools available: it says the field
 // works, not that the model will search with it. Only a response that shows
 // the model searching (grounding / url_citation) takes them away.
-//
-// and for providers stored in agentgo.db, the native_web_search field of
-// store.LLMProvider (poolsvc.Global().SaveProvider).
 //
 // Usage:
 //

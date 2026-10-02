@@ -79,7 +79,7 @@ turn; each side has one switch (`WithMemoryRetrieval(false)`,
 changed replaces the old one instead of sitting beside it.
 
 For a memory shared between machines use `cortex-remote`; for another backend,
-see "Memory backends" in the README. A backend you write should pass
+see "Builder options" in the README. A backend you write should pass
 `pkg/memory/memorystoretest`.
 
 Whose memory is it? For a single-user service, once:
@@ -124,7 +124,7 @@ resumes a flat checklist.
   model turn, tool call and checkpoint.
 - `svc.StatusSnapshot()`: what every run in flight is doing, without being its
   caller.
-- `agent.Doctor(ctx, ...)`: providers reachable, pricing known, store
+- `agent.Doctor(ctx, ...)`: providers configured, pricing known, store
   writable.
 
 Logs you will see and can ignore: "constraint extraction timed out" means the

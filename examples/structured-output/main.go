@@ -16,7 +16,7 @@
 //   - Tier A (post-validation): a deterministic lint validates the final text
 //     against the schema and re-prompts on mismatch — works on every provider.
 //
-// Needs an LLM configured in AGENTGO_HOME / agentgo.toml (same as `agentgo chat`).
+// Needs an LLM provider configured in AGENTGO_HOME's agentgo.db (as in quickstart).
 //
 // Usage:
 //
@@ -52,8 +52,8 @@ func main() {
 	defer cancel()
 
 	// Structured output is about the final answer's shape, not multi-step
-	// tools — so disable PTC and tell the model to answer directly from its
-	// own knowledge instead of delegating or calling tools.
+	// tools — so withhold the tools and tell the model to answer directly
+	// from its own knowledge instead of delegating or calling any.
 	svc, err := agent.New("structured-output-demo").
 		WithSystemPrompt("You are a concise equity analyst. Answer ONLY from your own knowledge. " +
 			"Do NOT call any tools, do NOT delegate to sub-agents, do NOT search the web. " +

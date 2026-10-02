@@ -51,21 +51,21 @@ func main() {
 	// 2. The mapping. This is the whole integration.
 	// ------------------------------------------------------------------
 	//
-	// In agentgo.toml, against a real server, the same thing reads:
+	// Through the builder, against a real server, the same thing reads:
 	//
-	//	[memory]
-	//	store_type = "mcp-memory"
-	//	dsn        = "https://memory.example.com/mcp"   # or a stdio command
-	//
-	//	[memory.options]
-	//	"tool.store"        = "stash"
-	//	"arg.store.content" = "body"
-	//	...
+	//	agent.New("x").WithMemory(
+	//	    agent.WithMemoryStoreType("mcp-memory"),
+	//	    agent.WithMemoryDSN("https://memory.example.com/mcp"), // or a stdio command
+	//	    agent.WithMemoryOptions(map[string]string{
+	//	        "tool.store":        "stash",
+	//	        "arg.store.content": "body",
+	//	        // ...
+	//	    }),
+	//	)
 	//
 	// or, for a server someone already wrote a preset for:
 	//
-	//	[memory.options]
-	//	profile = "cortexdb"
+	//	agent.WithMemoryOption("profile", "cortexdb")
 	options := map[string]string{
 		"tool.store":  "stash",
 		"tool.search": "dig",

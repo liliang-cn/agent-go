@@ -80,12 +80,12 @@ Wiring memory, a knowledge graph, web search and plans into a host: [docs/gettin
 | --- | --- |
 | `WithLLM(gen)` / `WithConfig(cfg)` | the model, or a config that names providers |
 | `WithPrompt(s)` / `WithSystemPrompt(s)` | the system prompt |
-| `WithMemory(opts...)` / `WithGraphMemory()` / `WithMemoryService(svc)` | durable memory; `store_type` file, cortex, cortex-remote, mcp-memory, mem0, qdrant, meilisearch, weaviate, surrealdb, or `RegisterMemoryStore` |
+| `WithMemory(opts...)` / `WithGraphMemory()` / `WithMemoryService(svc)` | durable memory; `store_type` file, cortex, memoryflow, graphflow, cortex-remote, mcp-memory, mem0, qdrant, meilisearch, weaviate, surrealdb, or `RegisterMemoryStore` |
 | `WithEmbedder(e)` / `WithRAG()` | document retrieval |
 | `WithMCP(opts...)` / `WithSkills()` | tools from MCP servers; SKILL.md workflows |
 | `WithTool(s)(...)` / `AddToolWithMetadata` | your own tools; `ToolMetadata{ReadOnly, Destructive, OutputLimit, ...}` |
 | `WithSubagents(specs...)` | a `task(agent_name, prompt)` tool |
-| `WithSandbox(sb)` / `WithAutonomy(profile)` / `WithMaxTurns(n)` | where tools run; round budget |
+| `WithSandbox(sb)` / `WithAutonomy(profile)` | where tools run; round budget |
 | `WithPlanStore(ps)` / `WithTaskStore(ts)` / `WithRunMemory(rm)` | persistence for plans, tasks, run memory |
 | `WithExtensions(...)` / `WithObserver(...)` | seams: logging, pii, usage, bashguard, exec; ActivityLog, TraceWriter, OTel |
 | `WithPromptCache(...)` / `WithToolOutputLimit(n)` | prompt cache breakpoints; cap on one tool result |
@@ -113,14 +113,18 @@ Wiring memory, a knowledge graph, web search and plans into a host: [docs/gettin
 
 Any OpenAI-compatible endpoint: OpenAI, DeepSeek, Ollama, vLLM, DashScope/Qwen, gateways.
 
-```toml
-# agentgo.toml
-[[llm.providers]]
-name = "deepseek"
-base_url = "https://api.deepseek.com/v1"
-key = "..."
-model_name = "deepseek-v4-flash"
-native_web_search = "none"   # none | openai | dashscope | google_search
+```go
+llm, err := pool.NewPool(pool.PoolConfig{
+	Enabled:  true,
+	Strategy: pool.StrategyRoundRobin,
+	Providers: []pool.Provider{{
+		Name:            "deepseek",
+		BaseURL:         "https://api.deepseek.com/v1",
+		Key:             os.Getenv("DEEPSEEK_API_KEY"),
+		ModelName:       "deepseek-v4-flash",
+		NativeWebSearch: "none", // none | openai | dashscope | google_search
+	}},
+})
 ```
 
 `pool.NewPool` load-balances across providers. There is no built-in price table: `pool.RegisterModelPricing` prices the models you run, and an unpriced model reports `CostUnpriced`, not `$0`.
@@ -131,7 +135,7 @@ native_web_search = "none"   # none | openai | dashscope | google_search
 ~/.agentgo/                  # AGENTGO_HOME
 ├── data/agentgo.db          # config, providers, sessions, tasks, checkpoints, plans
 ├── data/cortex.db           # optional memory / vector / graph
-├── memories/                # file memory
+├── data/memories/           # file memory
 ├── skills/                  # SKILL.md
 └── workspace/               # agent working directory
 ```

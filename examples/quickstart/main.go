@@ -44,7 +44,7 @@ func main() {
 	fmt.Println()
 
 	// Chat() — multi-turn conversation, returns *ExecutionResult with
-	// session ID, RAG sources, PTC details. Use result.Text() for the reply.
+	// session ID, sources and usage. Use result.Text() for the reply.
 	fmt.Println("Q: What is 2+2?")
 	fmt.Print("A: ")
 

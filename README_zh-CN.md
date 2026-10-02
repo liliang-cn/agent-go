@@ -80,12 +80,12 @@ func main() {
 | --- | --- |
 | `WithLLM(gen)` / `WithConfig(cfg)` | 模型，或一份列出 provider 的配置 |
 | `WithPrompt(s)` / `WithSystemPrompt(s)` | 系统提示词 |
-| `WithMemory(opts...)` / `WithGraphMemory()` / `WithMemoryService(svc)` | 持久记忆；`store_type` 可选 file、cortex、cortex-remote、mcp-memory、mem0、qdrant、meilisearch、weaviate、surrealdb，或用 `RegisterMemoryStore` 注册 |
+| `WithMemory(opts...)` / `WithGraphMemory()` / `WithMemoryService(svc)` | 持久记忆；`store_type` 可选 file、cortex、memoryflow、graphflow、cortex-remote、mcp-memory、mem0、qdrant、meilisearch、weaviate、surrealdb，或用 `RegisterMemoryStore` 注册 |
 | `WithEmbedder(e)` / `WithRAG()` | 文档检索 |
 | `WithMCP(opts...)` / `WithSkills()` | MCP 服务器的工具；SKILL.md 工作流 |
 | `WithTool(s)(...)` / `AddToolWithMetadata` | 自定义工具；`ToolMetadata{ReadOnly, Destructive, OutputLimit, ...}` |
 | `WithSubagents(specs...)` | 一个 `task(agent_name, prompt)` 工具 |
-| `WithSandbox(sb)` / `WithAutonomy(profile)` / `WithMaxTurns(n)` | 工具在哪里跑；轮数预算 |
+| `WithSandbox(sb)` / `WithAutonomy(profile)` | 工具在哪里跑；轮数预算 |
 | `WithPlanStore(ps)` / `WithTaskStore(ts)` / `WithRunMemory(rm)` | 计划、任务、运行记忆的持久化 |
 | `WithExtensions(...)` / `WithObserver(...)` | 接缝扩展：logging、pii、usage、bashguard、exec；观察者：ActivityLog、TraceWriter、OTel |
 | `WithPromptCache(...)` / `WithToolOutputLimit(n)` | 提示缓存断点；单个工具结果上限 |
@@ -113,14 +113,18 @@ func main() {
 
 任何 OpenAI 兼容端点：OpenAI、DeepSeek、Ollama、vLLM、DashScope/Qwen、各类网关。
 
-```toml
-# agentgo.toml
-[[llm.providers]]
-name = "deepseek"
-base_url = "https://api.deepseek.com/v1"
-key = "..."
-model_name = "deepseek-v4-flash"
-native_web_search = "none"   # none | openai | dashscope | google_search
+```go
+llm, err := pool.NewPool(pool.PoolConfig{
+	Enabled:  true,
+	Strategy: pool.StrategyRoundRobin,
+	Providers: []pool.Provider{{
+		Name:            "deepseek",
+		BaseURL:         "https://api.deepseek.com/v1",
+		Key:             os.Getenv("DEEPSEEK_API_KEY"),
+		ModelName:       "deepseek-v4-flash",
+		NativeWebSearch: "none", // none | openai | dashscope | google_search
+	}},
+})
 ```
 
 `pool.NewPool` 在多个 provider 间负载均衡。没有内置价格表：用 `pool.RegisterModelPricing` 给你用的模型定价；没定价的模型报 `CostUnpriced`，而不是 `$0`。
@@ -131,7 +135,7 @@ native_web_search = "none"   # none | openai | dashscope | google_search
 ~/.agentgo/                  # AGENTGO_HOME
 ├── data/agentgo.db          # 配置、provider、会话、任务、检查点、计划
 ├── data/cortex.db           # 可选的记忆 / 向量 / 图
-├── memories/                # 文件记忆
+├── data/memories/           # 文件记忆
 ├── skills/                  # SKILL.md
 └── workspace/               # agent 工作目录
 ```
