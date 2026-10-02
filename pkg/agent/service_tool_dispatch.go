@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -47,6 +48,18 @@ func (s *Service) executeDirectToolCall(ctx context.Context, currentAgent *Agent
 	if !s.offersDelegationTools() && subagentDelegationToolNames[resolvedToolName] {
 		return nil, fmt.Errorf("tool %q is not available to this agent: it has no sub-agents to delegate to. Do the work with the tools you were given", resolvedToolName), false
 	}
+	// The run's allow/deny lists (WithToolAllowlist / WithToolDenylist) were
+	// applied to the schema; a call that names a withheld tool anyway is
+	// refused here, with a reason the model can act on. Found by a standing
+	// scan — reading tools only — whose model called a destructive tool it
+	// had not been offered, and the tool ran.
+	// Delegation tools are left to their own refusal: a sub-agent at the
+	// depth limit has `task` on its deny list AND answers with a structured
+	// depth refusal the child can act on, which this generic one would
+	// pre-empt.
+	if reason, refused := toolRefusedByPolicy(ctx, resolvedToolName); refused && !subagentDelegationToolNames[resolvedToolName] && resolvedToolName != subagentTaskToolName {
+		return nil, errors.New(reason), false
+	}
 
 	hookData := HookData{
 		ToolName:  resolvedToolName,
@@ -84,6 +97,7 @@ func (s *Service) executeDirectToolCall(ctx context.Context, currentAgent *Agent
 		ToolName:        resolvedToolName,
 		ToolArgs:        tc.Function.Arguments,
 		SessionID:       currentSessionID(session),
+		TaskID:          currentTaskID(session),
 		AgentID:         currentAgentID(currentAgent, s.agent),
 		ReadOnly:        metadata.ReadOnly,
 		Destructive:     metadata.Destructive,

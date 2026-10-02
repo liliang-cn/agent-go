@@ -70,6 +70,7 @@ func main() {
 | `svc.RunStream(ctx, goal)` / `RunStreamWithOptions` | `<-chan *Event` | 每一个运行时事件 |
 | `svc.RunSegments(ctx, goal, LongRunConfig{...})` | `*LongRunResult` | 一个任务跨多次运行 |
 | `svc.Steer(sessionID, msg)` / `SteerRun(runID, msg)` | `bool` | 往正在跑的 run 里塞一条消息；没有在跑的返回 false |
+| `agent.NewStanding(svc, ...)` → `Add` / `Deliver` / `WakeNow` / `Status` | `*Standing` | 常驻职责：自己定时醒、按计划醒、事件唤醒、只读巡检 |
 
 把记忆、知识图谱、联网搜索、计划接进宿主程序：[docs/getting-started.md](docs/getting-started.md)。可运行示例，每个功能一个目录：[`examples/`](examples/)。
 

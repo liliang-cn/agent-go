@@ -1,6 +1,9 @@
 package agent
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
 
 type eventSinkContextKey struct{}
 type runDebugContextKey struct{}
@@ -97,4 +100,51 @@ func currentRunSessionID(ctx context.Context) string {
 	}
 	id, _ := ctx.Value(sessionContextKeyType{}).(string)
 	return id
+}
+
+// toolPolicy is a run's allow/deny lists, carried on the context so the
+// dispatch path can refuse a call the schema filter never offered. The
+// schema is what the model is shown; a model can still name a tool it was
+// not shown, and a scripted or misbehaving one does. Withholding a capability
+// means not offering it AND not running it when asked anyway.
+type toolPolicy struct {
+	allow map[string]bool
+	deny  map[string]bool
+}
+
+type toolPolicyKey struct{}
+
+func withToolPolicy(ctx context.Context, allow, deny []string) context.Context {
+	if len(allow) == 0 && len(deny) == 0 {
+		return ctx
+	}
+	p := &toolPolicy{}
+	if len(allow) > 0 {
+		p.allow = make(map[string]bool, len(allow))
+		for _, n := range allow {
+			p.allow[n] = true
+		}
+	}
+	if len(deny) > 0 {
+		p.deny = make(map[string]bool, len(deny))
+		for _, n := range deny {
+			p.deny[n] = true
+		}
+	}
+	return context.WithValue(ctx, toolPolicyKey{}, p)
+}
+
+// toolRefusedByPolicy says whether the run's lists exclude a tool, and why.
+func toolRefusedByPolicy(ctx context.Context, name string) (string, bool) {
+	p, _ := ctx.Value(toolPolicyKey{}).(*toolPolicy)
+	if p == nil {
+		return "", false
+	}
+	if p.deny[name] {
+		return fmt.Sprintf("tool %q is not available in this run: it is on the run's deny list. Use the tools you were given", name), true
+	}
+	if p.allow != nil && !p.allow[name] {
+		return fmt.Sprintf("tool %q is not available in this run: only the tools you were shown may be called", name), true
+	}
+	return "", false
 }

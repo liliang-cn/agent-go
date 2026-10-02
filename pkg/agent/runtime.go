@@ -345,6 +345,10 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 	}()
 	ctx = withCurrentSession(ctx, r.session)
 	ctx = withCurrentPlanKey(ctx, r.planKey())
+	if r.cfg != nil {
+		// The run's allow/deny lists reach dispatch, not only the schema.
+		ctx = withToolPolicy(ctx, r.cfg.ToolAllowlist, r.cfg.ToolDenylist)
+	}
 	// Install a tool-use sink so inner tool calls made by PTC
 	// (execute_javascript → fs_write, web_search, ...) are recorded as used,
 	// making them visible to goal-aware output lints.

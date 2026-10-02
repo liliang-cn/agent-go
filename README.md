@@ -70,6 +70,7 @@ Without `WithLLM`, providers come from `AGENTGO_HOME/data/agentgo.db`.
 | `svc.RunStream(ctx, goal)` / `RunStreamWithOptions` | `<-chan *Event` | every runtime event |
 | `svc.RunSegments(ctx, goal, LongRunConfig{...})` | `*LongRunResult` | one task across many runs |
 | `svc.Steer(sessionID, msg)` / `SteerRun(runID, msg)` | `bool` | put a message into a run in flight; false when none is |
+| `agent.NewStanding(svc, ...)` → `Add` / `Deliver` / `WakeNow` / `Status` | `*Standing` | an agent that is never finished: wakes on its own, on a schedule, on an event, or for a read-only scan |
 
 Wiring memory, a knowledge graph, web search and plans into a host: [docs/getting-started.md](docs/getting-started.md). Runnable examples, one per feature: [`examples/`](examples/).
 

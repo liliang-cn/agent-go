@@ -44,6 +44,7 @@ func (s *Service) isConcurrencySafeToolCall(toolCall domain.ToolCall, session *S
 		ToolName:  toolCall.Function.Name,
 		ToolArgs:  toolCall.Function.Arguments,
 		SessionID: currentSessionID(session),
+		TaskID:    currentTaskID(session),
 		AgentID:   currentAgentID(currentAgent, s.agent),
 	}
 

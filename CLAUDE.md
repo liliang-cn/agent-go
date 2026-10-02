@@ -644,6 +644,45 @@ cancel case registers its slow tool with `InterruptBehaviorCancel` on purpose
 — a tool that leaves it unset is treated as blocking, and every cancel waits
 for it.
 
+### A responsibility that is never finished
+
+`Standing` (`standing.go`, `standing_tools.go`, `standing_store.go`). Every
+other unit here ends; a `Responsibility` does not. It is the shape the
+always-on products converged on — what should stay true, what to watch, what
+warrants telling the person, what must never happen — and it is **not a
+second engine**: every wake is `svc.Run` with options, a fresh session over
+one task id, exactly as `RunSegments` does. What `Standing` owns is the clock
+(four reasons to wake: `standing_wake_me`, `Every`, a delivered event, an idle
+scan), the agent's own notes between wakes, and the two ceilings — wakes per
+day and cost per day — without which an agent that never finishes spends
+without end. Past a ceiling it pauses itself until tomorrow and the host is
+told (`Notification{Kind: "paused"}`); an unpriced wake counts toward wakes
+and not cost, and `UnpricedToday` says so.
+
+Decisions worth not relitigating:
+
+- **The three tools find their responsibility by task id.** A wake's task id
+  is the responsibility's id, so `standing_notify` / `standing_note` /
+  `standing_wake_me` refuse any run that is not a wake. Not the tenant: a
+  tenant that routes behaviour is configuration by string matching.
+- **An event is never dropped.** `Deliver` steers a wake in flight; otherwise
+  it queues the event and starts a wake that opens with it. The hive's
+  message path is one source; a webhook or a mailbox is another.
+- **A scan can only look.** Its allowlist is every tool that declared
+  `ReadOnly` plus the standing tools; MCP tools are outside the registry and
+  so outside a scan. Writing that test found that **allow/deny lists were
+  schema-only**: a model that named a withheld tool anyway had it run.
+  `toolRefusedByPolicy` now refuses at dispatch (`executeDirectToolCall`),
+  for every run, with a reason the model can act on. Sub-agents already did
+  this; plain runs did not.
+- **Notes are the whole hand-off**, as `PlanItem.Note` is for segments. The
+  brief tells the agent to write down what the next wake would otherwise
+  have to rediscover, and `standing_note` replaces rather than appends.
+
+`StandingStore` persists after every change; the Service's own database gets
+a table by default. `examples/standing` drives a host wake, an event wake and
+a scan against a service whose health changes between reads.
+
 ### Multimodal, and the two places it was quietly broken
 
 Images in and images out both work now, and both were broken in the same way:

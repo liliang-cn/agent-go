@@ -8,13 +8,18 @@ import (
 
 // PermissionRequest describes a tool execution that may require approval.
 type PermissionRequest struct {
-	ToolName        string                 `json:"tool_name"`
-	ToolArgs        map[string]interface{} `json:"tool_args,omitempty"`
-	SessionID       string                 `json:"session_id,omitempty"`
-	AgentID         string                 `json:"agent_id,omitempty"`
-	ReadOnly        bool                   `json:"read_only,omitempty"`
-	Destructive     bool                   `json:"destructive,omitempty"`
-	ConcurrencySafe bool                   `json:"concurrency_safe,omitempty"`
+	ToolName  string                 `json:"tool_name"`
+	ToolArgs  map[string]interface{} `json:"tool_args,omitempty"`
+	SessionID string                 `json:"session_id,omitempty"`
+	// TaskID is the run's task. For a standing responsibility's wake it is
+	// the responsibility's id, so a host mapping an approval request back to
+	// the responsibility that made it reads this rather than scanning
+	// sessions.
+	TaskID          string `json:"task_id,omitempty"`
+	AgentID         string `json:"agent_id,omitempty"`
+	ReadOnly        bool   `json:"read_only,omitempty"`
+	Destructive     bool   `json:"destructive,omitempty"`
+	ConcurrencySafe bool   `json:"concurrency_safe,omitempty"`
 }
 
 // PermissionResponse is the decision returned by a PermissionHandler.
