@@ -35,7 +35,7 @@ import (
 
 // filePlanStore would normally persist somewhere durable; the point of the
 // interface is that agent-go does not care where. See cortexbridge for a
-// CortexDB-backed one, or superai-desktop's GraphPlanStore.
+// CortexDB-backed one, or superai's GraphPlanStore.
 type memoryPlanStore struct{ plans map[string][]agent.PlanItem }
 
 func (m *memoryPlanStore) LoadPlan(_ context.Context, key string) ([]agent.PlanItem, error) {

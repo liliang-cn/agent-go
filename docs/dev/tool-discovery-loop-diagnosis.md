@@ -2,9 +2,9 @@
 
 来源：agentbench 用 `gemini-3.6-flash-high` 跑 superai 50 题的完整工具调用日志。
 
-结论先说：**问题在 agent-go 核心（`pkg/agent`），不在 superai-desktop。**
+结论先说：**问题在 agent-go 核心（`pkg/agent`），不在 superai。**
 `search_available_tools` / `task_complete` / `task_blocked` / `execute_javascript`
-四个工具全部由框架注册，superai-desktop 的 `backend/` 里没有它们的定义。
+四个工具全部由框架注册，superai 的 `backend/` 里没有它们的定义。
 
 | 工具 | 注册位置 |
 |---|---|
