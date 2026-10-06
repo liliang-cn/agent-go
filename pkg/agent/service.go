@@ -736,12 +736,6 @@ func (s *Service) runWithConfigTee(ctx context.Context, goal string, cfg *RunCon
 		if evt.StopReason != "" {
 			result.StopReason = evt.StopReason
 		}
-		if evt.EstimatedCostUSD > result.EstimatedCostUSD {
-			result.EstimatedCostUSD = evt.EstimatedCostUSD
-		}
-		if evt.CostUnpriced {
-			result.CostUnpriced = true
-		}
 		if len(evt.OutputParts) > 0 {
 			result.OutputParts = evt.OutputParts
 		}

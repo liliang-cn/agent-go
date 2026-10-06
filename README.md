@@ -97,7 +97,7 @@ Wiring memory, a knowledge graph, web search and plans into a host: [docs/gettin
 | option | effect |
 | --- | --- |
 | `WithMaxTurns(n)` / `WithMaxTokens(n)` / `WithTemperature(t)` / `WithThinking(bool)` | budget and sampling |
-| `WithLLMRetries(n)` / `WithMaxBudgetUSD(x)` | retries; stop when spend exceeds the budget |
+| `WithLLMRetries(n)` | retries on transient provider errors |
 | `WithToolsDisabled()` / `WithToolAllowlist(names)` / `WithToolDenylist(names)` | the tool surface |
 | `WithStructuredOutput(spec)` / `WithStructuredOutputType[T]()` | enforce a JSON shape |
 | `WithRequiredDeliverables(...)` / `WithRequestedActions(...)` / `WithConstraintExtraction(bool)` | the delivery contract |
@@ -127,7 +127,7 @@ llm, err := pool.NewPool(pool.PoolConfig{
 })
 ```
 
-`pool.NewPool` load-balances across providers. There is no built-in price table: `pool.RegisterModelPricing` prices the models you run, and an unpriced model reports `CostUnpriced`, not `$0`.
+`pool.NewPool` load-balances across providers. The framework reports tokens, not money: `ExecutionResult.Usage` carries prompt, completion and cached tokens, and a host that wants a cost figure multiplies them by its own rates.
 
 ## Storage
 
@@ -146,7 +146,7 @@ llm, err := pool.NewPool(pool.PoolConfig{
 pkg/agent         agent, loop, tools, context, hooks/lints, sessions, checkpoints, long runs
 pkg/domain        shared types and interfaces
 pkg/providers     OpenAI-compatible providers, LLMPool
-pkg/pool          provider pool, pricing, cost, native web search
+pkg/pool          provider pool, token counting, context windows, native web search
 pkg/memory        memory service, BaseStore, memorystoretest
 pkg/store         SQLite storage, memory store plugins
 pkg/cortexbridge  CortexDB tools, RunMemory

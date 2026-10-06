@@ -193,7 +193,6 @@ func (o *Observer) OnSegment(ctx context.Context, info agent.SegmentInfo) {
 			attribute.String("agentgo.segment.stop_reason", string(info.StopReason)),
 			attribute.Int64("agentgo.segment.duration_ms", info.Duration.Milliseconds()),
 			attribute.Bool("agentgo.segment.productive", info.Productive),
-			attribute.Float64("agentgo.segment.cost_usd", info.CostUSD),
 		)
 		if info.Err != "" {
 			span.SetAttributes(attribute.String("agentgo.segment.error", info.Err))

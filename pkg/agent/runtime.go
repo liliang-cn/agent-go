@@ -69,10 +69,6 @@ type Runtime struct {
 	// refusals on the terminal event.
 	lastFinishReason string
 
-	// warnedUnpriced keeps the "nothing can price this model" warning to
-	// once per run rather than once per round.
-	warnedUnpriced bool
-
 	// anchor is the provider's prompt count for a prefix of the history, so
 	// the compaction trigger measures what the provider measures
 	// (compaction_anchor.go). threshold/thresholdSource are the run's
@@ -91,8 +87,8 @@ type Runtime struct {
 	outputParts []domain.MessagePart
 
 	// budgetSnapshot is a pointer to the per-run budget block, kept on
-	// the runtime so terminal-event emitters can read the running cost
-	// without threading state through every call site.
+	// the runtime so terminal-event emitters can read the running token
+	// totals without threading state through every call site.
 	budgetSnapshot *queryLoopBudget
 }
 
@@ -273,12 +269,12 @@ func (r *Runtime) forceFinalSynthesis(ctx context.Context, state *queryLoopState
 			"fully achieved, state clearly what was completed and what still remains.",
 	})
 	// Observer seam: the synthesis pass is a model turn like every other one,
-	// and it was the only one that emitted nothing. Its tokens and cost go
-	// into the run's budget — and therefore into ExecutionResult.Usage and
-	// EstimatedCostUSD — so an observer's totals disagreed with the run's own
-	// on exactly the runs that ended at the round ceiling, which are the runs
-	// most worth measuring. Measured on a live probe: the run reported 3141
-	// prompt tokens and the metrics 1867.
+	// and it was the only one that emitted nothing. Its tokens go into the
+	// run's budget — and therefore into ExecutionResult.Usage — so an
+	// observer's totals disagreed with the run's own on exactly the runs that
+	// ended at the round ceiling, which are the runs most worth measuring.
+	// Measured on a live probe: the run reported 3141 prompt tokens and the
+	// metrics 1867.
 	modelInfo := ModelInfo{
 		TaskID:    currentTaskID(r.session),
 		RunID:     r.runID(),
@@ -300,7 +296,7 @@ func (r *Runtime) forceFinalSynthesis(ctx context.Context, state *queryLoopState
 		return ""
 	}
 
-	// Accrue this out-of-loop call's tokens/cost so budget reporting isn't
+	// Accrue this out-of-loop call's tokens so usage reporting isn't
 	// undercounted by the synthesis pass. The observer is told the same
 	// numbers the budget was told, estimates included, because two accounts of
 	// one turn that do not match are worse than one rough account.
@@ -310,7 +306,7 @@ func (r *Runtime) forceFinalSynthesis(ctx context.Context, state *queryLoopState
 	outputTokens := tc.EstimateTokens(res.Content, model)
 	if state != nil {
 		state.noteTokens(inputTokens + outputTokens)
-		state.noteCost(inputTokens, outputTokens, pool.CalculateCost(model, inputTokens, outputTokens))
+		state.noteUsage(inputTokens, outputTokens)
 	}
 	r.svc.emitObserver(func(o Observer) {
 		o.OnModelEnd(ctx, modelInfo, &ModelResult{
@@ -656,11 +652,11 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		r.CheckpointEnd("llm_call")
 		state.noteRecovery(recovery)
 
-		// Account tokens for this turn, accrue cost, and emit LLM latency
-		// analytics. Provider-reported usage wins when present (exact, and
-		// carries the prompt-cache hit split); the tokenizer estimate is the
-		// fallback for servers that don't report usage. Split input vs output
-		// tokens so cost estimation matches provider pricing tables.
+		// Account tokens for this turn and emit LLM latency analytics.
+		// Provider-reported usage wins when present (exact, and carries the
+		// prompt-cache hit split); the tokenizer estimate is the fallback for
+		// servers that don't report usage. Input and output are kept apart
+		// because a host reading the totals needs them apart.
 		llmDur := time.Since(llmStart)
 		turnTokens := 0
 		cachedTokens := 0
@@ -690,13 +686,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			turnTokens = inputTokens + outputTokens
 			promptTokens, completionTokens = inputTokens, outputTokens
 			state.noteTokens(inputTokens + outputTokens)
-			// Price the cache split, not just the totals: on a long run most
-			// prompt tokens are hits, billed at a fraction of the fresh rate.
-			cost, priced := pool.CalculateCostDetailed(model, inputTokens, cachedTokens, outputTokens)
-			if !priced {
-				r.warnUnpricedModel(model)
-			}
-			state.noteCost(inputTokens, outputTokens, cost)
+			state.noteUsage(inputTokens, outputTokens)
 		}
 		r.emitLLMLatency(round+1, state.Budget.EstimatedTokens, turnTokens, llmDur)
 
@@ -728,16 +718,6 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		// terminal events.
 		if result != nil && result.FinishReason != "" {
 			r.lastFinishReason = result.FinishReason
-		}
-
-		// Budget cap: stop the run before the next round if the
-		// estimated cost crossed MaxBudgetUSD. Zero = unlimited.
-		if r.cfg != nil && r.cfg.MaxBudgetUSD > 0 && state.Budget.EstimatedCostUSD >= r.cfg.MaxBudgetUSD {
-			r.blockRunWithStop(goal,
-				fmt.Sprintf("MaxBudgetUSD cap reached: spent $%.4f of $%.4f after %d round(s)",
-					state.Budget.EstimatedCostUSD, r.cfg.MaxBudgetUSD, state.Budget.CompletedRounds+1),
-				messages, true, StopReasonMaxBudgetUSD)
-			return
 		}
 
 		// Terminal task signal detected in stream — terminate immediately.
@@ -1271,18 +1251,16 @@ func (r *Runtime) completeRunWithStop(goal, content string, messages []domain.Me
 
 	r.emitTurnState(TurnStageCompleted, "run completed", 0, 0)
 	r.eventChan <- &Event{
-		ID:               uuid.New().String(),
-		Type:             EventTypeComplete,
-		AgentName:        r.currentAgent.Name(),
-		AgentID:          r.currentAgent.ID(),
-		Content:          content,
-		Sources:          r.collectAllSources(),
-		StopReason:       reason,
-		EstimatedCostUSD: r.currentCostUSD(),
-		CostUnpriced:     r.warnedUnpriced,
-		OutputParts:      r.outputParts,
-		Usage:            r.currentUsage(),
-		Timestamp:        time.Now(),
+		ID:          uuid.New().String(),
+		Type:        EventTypeComplete,
+		AgentName:   r.currentAgent.Name(),
+		AgentID:     r.currentAgent.ID(),
+		Content:     content,
+		Sources:     r.collectAllSources(),
+		StopReason:  reason,
+		OutputParts: r.outputParts,
+		Usage:       r.currentUsage(),
+		Timestamp:   time.Now(),
 	}
 	r.clearCollectedSources()
 
@@ -1326,18 +1304,16 @@ func (r *Runtime) blockRunWithStop(goal, blocker string, messages []domain.Messa
 
 	r.emitTurnState(TurnStageCompleted, "run blocked", 0, 0)
 	r.eventChan <- &Event{
-		ID:               uuid.New().String(),
-		Type:             EventTypeBlocked,
-		AgentName:        r.currentAgent.Name(),
-		AgentID:          r.currentAgent.ID(),
-		Content:          strings.TrimSpace(blocker),
-		Sources:          r.collectAllSources(),
-		StopReason:       reason,
-		EstimatedCostUSD: r.currentCostUSD(),
-		CostUnpriced:     r.warnedUnpriced,
-		OutputParts:      r.outputParts,
-		Usage:            r.currentUsage(),
-		Timestamp:        time.Now(),
+		ID:          uuid.New().String(),
+		Type:        EventTypeBlocked,
+		AgentName:   r.currentAgent.Name(),
+		AgentID:     r.currentAgent.ID(),
+		Content:     strings.TrimSpace(blocker),
+		Sources:     r.collectAllSources(),
+		StopReason:  reason,
+		OutputParts: r.outputParts,
+		Usage:       r.currentUsage(),
+		Timestamp:   time.Now(),
 	}
 	if persistHistory {
 		r.persistMessages(messages)
@@ -1372,17 +1348,15 @@ func (r *Runtime) cancelRun(messages []domain.Message) {
 
 	r.emitTurnState(TurnStageCompleted, "run cancelled", 0, 0)
 	r.eventChan <- &Event{
-		ID:               uuid.New().String(),
-		Type:             EventTypeCancelled,
-		AgentName:        r.currentAgent.Name(),
-		AgentID:          r.currentAgent.ID(),
-		Content:          cancelledRunText,
-		StopReason:       StopReasonCancelled,
-		EstimatedCostUSD: r.currentCostUSD(),
-		CostUnpriced:     r.warnedUnpriced,
-		OutputParts:      r.outputParts,
-		Usage:            r.currentUsage(),
-		Timestamp:        time.Now(),
+		ID:          uuid.New().String(),
+		Type:        EventTypeCancelled,
+		AgentName:   r.currentAgent.Name(),
+		AgentID:     r.currentAgent.ID(),
+		Content:     cancelledRunText,
+		StopReason:  StopReasonCancelled,
+		OutputParts: r.outputParts,
+		Usage:       r.currentUsage(),
+		Timestamp:   time.Now(),
 	}
 	r.clearCollectedSources()
 	r.emitRunEnd(r.goal, StopReasonCancelled, cancelledRunText, false, true)
@@ -1410,17 +1384,15 @@ func (r *Runtime) failRun(cause error, messages []domain.Message) {
 
 	r.emitTurnState(TurnStageCompleted, "run failed", 0, 0)
 	r.eventChan <- &Event{
-		ID:               uuid.New().String(),
-		Type:             EventTypeError,
-		AgentName:        r.currentAgent.Name(),
-		AgentID:          r.currentAgent.ID(),
-		Content:          fmt.Sprintf("LLM error: %v", cause),
-		StopReason:       StopReasonErrorDuringExecution,
-		EstimatedCostUSD: r.currentCostUSD(),
-		CostUnpriced:     r.warnedUnpriced,
-		OutputParts:      r.outputParts,
-		Usage:            r.currentUsage(),
-		Timestamp:        time.Now(),
+		ID:          uuid.New().String(),
+		Type:        EventTypeError,
+		AgentName:   r.currentAgent.Name(),
+		AgentID:     r.currentAgent.ID(),
+		Content:     fmt.Sprintf("LLM error: %v", cause),
+		StopReason:  StopReasonErrorDuringExecution,
+		OutputParts: r.outputParts,
+		Usage:       r.currentUsage(),
+		Timestamp:   time.Now(),
 	}
 	r.clearCollectedSources()
 }
@@ -1438,15 +1410,6 @@ func (r *Runtime) classifyCompletionStopReason(content string) StopReason {
 		return StopReasonRefusal
 	}
 	return StopReasonEndTurn
-}
-
-// currentCostUSD returns the running estimated cost for this run.
-// Returns 0 when no cost has been accrued or the runtime is mid-init.
-func (r *Runtime) currentCostUSD() float64 {
-	if r == nil || r.budgetSnapshot == nil {
-		return 0
-	}
-	return r.budgetSnapshot.EstimatedCostUSD
 }
 
 // currentUsage returns the run's provider-reported token totals, or nil when

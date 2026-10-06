@@ -6,12 +6,11 @@
 //     call, retry, compaction and checkpoint
 //   - pii      — masks personal data in tool results before the model sees
 //     them, and rejects a final answer that still leaks
-//   - usage    — a ledger of tokens by model with the cache split, priced
-//     where a price is known
+//   - usage    — a ledger of tokens by model with the cache split
 //
 // The agent is given a tool that returns a customer record full of things the
 // model must not repeat. Watch the log: the tool result the model receives is
-// already masked, and the usage table at the end prices the run.
+// already masked, and the usage table at the end shows what the run used.
 //
 // Usage:
 //

@@ -194,7 +194,7 @@ runs.
 4. `git diff eval/results/<prev>.json eval/results/<latest>.json` —
    look at `pass_count` per scenario, `avg_llm_calls`,
    `avg_duration_ms`, `lint_violations` deltas.
-5. If pass rate dropped or LLM-call cost rose: revert or investigate
+5. If pass rate dropped or LLM calls per scenario rose: revert or investigate
    before merging.
 
 This is the loop OpenAI's "harness engineering" piece argues for —

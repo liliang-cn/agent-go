@@ -151,8 +151,8 @@ func TestCLIAgentRunReportsSummaryUsageAndSession(t *testing.T) {
 	if usage["input"] != int64(120) || usage["output"] != int64(34) || usage["cache"] != int64(10) {
 		t.Errorf("usage = %+v, want the result frame's totals, not the assistant frame's", usage)
 	}
-	if cost, _ := usage["cost_usd"].(float64); cost != 0.0125 {
-		t.Errorf("cost_usd = %v, want 0.0125", cost)
+	if _, ok := usage["cost_usd"]; ok {
+		t.Errorf("usage = %+v carries a cost; the tool reports tokens only", usage)
 	}
 
 	// The delegated agent's text has to reach the parent's event stream, or a
@@ -180,7 +180,7 @@ func TestCLIAgentRunReportsSummaryUsageAndSession(t *testing.T) {
 	if !ok {
 		t.Fatalf("OnSubAgentEnd result = %T, want CLIAgentRunResult", obs.results[0])
 	}
-	if accounting.Input != 120 || accounting.Output != 34 || accounting.CostUSD != 0.0125 {
+	if accounting.Input != 120 || accounting.Output != 34 {
 		t.Errorf("observer usage = %+v, want the delegated run's own tokens", accounting)
 	}
 	if accounting.Model != "claude-fake-1" {

@@ -96,16 +96,10 @@ type RunUsage struct {
 	// accounting. Without it the token counts are the tokenizer's estimate,
 	// and a zero cache split means "not measured", not "no hits".
 	ProviderReported bool `json:"provider_reported"`
-
-	CostUSD float64 `json:"cost_usd,omitempty"`
-	// CostUnpriced says CostUSD is missing at least one turn's spend because
-	// nothing could price the model. A host must show "unpriced", never
-	// "$0.00" — a budget ceiling built on that number cannot fire either.
-	CostUnpriced bool `json:"cost_unpriced,omitempty"`
 }
 
 // RunStatus is one run in flight: who owns it, what it is doing, and what it
-// has spent.
+// has used.
 type RunStatus struct {
 	// ActiveRun is the registry's own record — RunID (what CancelRun takes),
 	// SessionID, TaskID, StartedAt, Tenant.
@@ -543,7 +537,7 @@ func (s *Service) amendRunProgress(runID string, fn func(*runProgress)) {
 // publishStage records a stage announcement that carries no loop state — the
 // two phases before the first round, and the completed marker after the last.
 // It amends rather than replaces: a bare announcement must not blank out the
-// round count and the spend the previous full reading carried.
+// round count and the token totals the previous full reading carried.
 func (r *Runtime) publishStage(stage, reason string, round, toolCount int) {
 	if r == nil || r.svc == nil {
 		return
@@ -570,7 +564,7 @@ func (r *Runtime) publishStage(stage, reason string, round, toolCount int) {
 //
 // It is called wherever the loop announces a stage change to the event stream,
 // and once more when a round closes — the point at which the round's tokens
-// and cost have landed. Publishing happens BEFORE the event send, so a status
+// have landed. Publishing happens BEFORE the event send, so a status
 // reader stays current even when the event consumer has stopped reading.
 func (r *Runtime) publishProgress(state *queryLoopState) {
 	if r == nil || r.svc == nil || state == nil {
@@ -598,8 +592,6 @@ func (r *Runtime) publishProgress(state *queryLoopState) {
 			CachedPromptTokens: state.Budget.CachedPromptTokens,
 			CacheWriteTokens:   state.Budget.CacheWriteTokens,
 			ProviderReported:   state.Budget.ProviderReportedUsage,
-			CostUSD:            state.Budget.EstimatedCostUSD,
-			CostUnpriced:       r.warnedUnpriced,
 		},
 	})
 }

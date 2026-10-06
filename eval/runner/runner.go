@@ -56,11 +56,6 @@ type RunResult struct {
 	// which means "not measured" — never "used none".
 	TokensMeasured bool        `json:"tokens_measured"`
 	Tokens         *TokenStats `json:"tokens"`
-	// CostUnpriced is true when any run could not be priced (unknown model,
-	// no terminal event, or a result written before cost was recorded).
-	// AvgCostUSD is then null: unpriced is unknown spend, not free.
-	CostUnpriced bool     `json:"cost_unpriced"`
-	AvgCostUSD   *float64 `json:"avg_cost_usd"`
 }
 
 // Run executes a scenario for sc.Runs iterations and returns an aggregated
@@ -85,8 +80,6 @@ func Run(ctx context.Context, sc *Scenario, opts RunOptions) (*RunResult, error)
 	totalDuration := time.Duration(0)
 	var tokenSum TokenStats
 	tokensMeasured := true
-	costSum := 0.0
-	costUnpriced := false
 	for i := 0; i < iterations; i++ {
 		single, err := runOnce(ctx, sc, opts)
 		if err != nil {
@@ -101,8 +94,6 @@ func Run(ctx context.Context, sc *Scenario, opts RunOptions) (*RunResult, error)
 		} else {
 			tokensMeasured = false
 		}
-		costSum += single.CostUSD
-		costUnpriced = costUnpriced || single.CostUnpriced
 		for k, v := range single.LintViolations {
 			out.LintViolations[k] += v
 		}
@@ -129,11 +120,6 @@ func Run(ctx context.Context, sc *Scenario, opts RunOptions) (*RunResult, error)
 			CachedPromptTokens: tokenSum.CachedPromptTokens / n,
 			CompletionTokens:   tokenSum.CompletionTokens / n,
 		}
-	}
-	out.CostUnpriced = costUnpriced
-	if !costUnpriced {
-		avg := costSum / float64(iterations)
-		out.AvgCostUSD = &avg
 	}
 	return out, nil
 }
@@ -182,8 +168,6 @@ type singleRun struct {
 	MaxToolsOffered int
 	LintViolations  map[string]int
 	Usage           *domain.TokenUsage
-	CostUSD         float64
-	CostUnpriced    bool
 	duration        time.Duration
 }
 
@@ -372,22 +356,13 @@ func registerLints(svc *agent.Service, names []string) error {
 var lintRejectMessage = regexp.MustCompile(`^output lint ([a-zA-Z0-9_]+) (?:rejected|repeatedly rejected)\b`)
 
 // collectEvents drains the stream, counting lint rejections and taking the
-// run's usage and cost from its terminal event, which carries the totals. A
-// run that never reached one has no known cost, and is marked unpriced.
+// run's usage from its terminal event, which carries the totals. A run that
+// never reached one has no measured usage.
 func collectEvents(events <-chan *agent.Event, res *singleRun) (final string, blocked string, sawError bool) {
 	lintCounts := res.LintViolations
-	sawTerminal := false
 	terminal := func(evt *agent.Event) {
-		sawTerminal = true
 		res.Usage = evt.Usage
-		res.CostUSD = evt.EstimatedCostUSD
-		res.CostUnpriced = evt.CostUnpriced
 	}
-	defer func() {
-		if !sawTerminal {
-			res.CostUnpriced = true
-		}
-	}()
 	for evt := range events {
 		switch evt.Type {
 		case agent.EventTypeComplete:

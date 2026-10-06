@@ -197,8 +197,8 @@ type usageOnlyLLM struct{ captureStreamLLM }
 func (u *usageOnlyLLM) UsageModel() string { return "usage-only-model" }
 
 // A provider that reports its model for usage accounting must not leave the
-// service nameless: with no name every turn is unpriced and the cost
-// ceilings do nothing.
+// service nameless: with no name no context window resolves and every
+// observer sees an unnamed model.
 func TestServiceModelFallsBackToUsageModel(t *testing.T) {
 	var gen interface {
 		domain.Generator

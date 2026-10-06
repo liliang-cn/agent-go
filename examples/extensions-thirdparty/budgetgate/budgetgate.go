@@ -1,11 +1,14 @@
-// Package budgetgate is a third-party agent-go extension: a spending ceiling
+// Package budgetgate is a third-party agent-go extension: a token ceiling
 // across every run a service makes.
 //
 // It is the smallest useful extension that touches two seams. RunLifecycle
-// refuses a run once the ceiling is reached and adds up what each run cost
-// when it ends; Observer prices each model turn as it happens, so a run in
-// flight cannot overshoot by a whole run. Nothing here is registered with the
+// refuses a run once the ceiling is reached; Observer adds up each model
+// turn's tokens as it happens, so a run in flight is counted turn by turn
+// rather than only when it ends. Nothing here is registered with the
 // framework — the user lists it in WithExtensions and Build() finds the seams.
+//
+// The framework reports tokens and nothing else; a host that wants a money
+// ceiling multiplies these counts by its own rates.
 package budgetgate
 
 import (
@@ -14,23 +17,22 @@ import (
 	"sync"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/agent"
-	"github.com/liliang-cn/agent-go/v3/pkg/pool"
 )
 
-// Gate stops new runs once the service has spent its budget.
+// Gate stops new runs once the service has used its token budget.
 type Gate struct {
 	agent.BaseObserver
 
-	limit float64
+	limit int
 
-	mu       sync.Mutex
-	spent    float64
-	unpriced int
-	refused  int
+	mu      sync.Mutex
+	used    int
+	refused int
 }
 
-// New returns a gate with the given ceiling in USD.
-func New(limitUSD float64) *Gate { return &Gate{limit: limitUSD} }
+// New returns a gate with the given ceiling in tokens (prompt plus
+// completion).
+func New(limitTokens int) *Gate { return &Gate{limit: limitTokens} }
 
 // Name implements agent.Extension.
 func (g *Gate) Name() string { return "budget-gate" }
@@ -40,39 +42,32 @@ func (g *Gate) Name() string { return "budget-gate" }
 func (g *Gate) OnRunStart(_ context.Context, run agent.RunInfo) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.spent >= g.limit {
+	if g.used >= g.limit {
 		g.refused++
-		return fmt.Errorf("budget of $%.2f is spent ($%.4f so far); refusing %q", g.limit, g.spent, run.Goal)
+		return fmt.Errorf("budget of %d tokens is used (%d so far); refusing %q", g.limit, g.used, run.Goal)
 	}
 	return nil
 }
 
-// OnRunEnd implements agent.RunLifecycle. The spend was already added turn by
-// turn; this is where a real gate would persist it.
+// OnRunEnd implements agent.RunLifecycle. The tokens were already added turn
+// by turn; this is where a real gate would persist them.
 func (g *Gate) OnRunEnd(context.Context, agent.RunInfo, agent.RunOutcome) {}
 
-// OnModelEnd implements agent.Observer: price every turn as it completes.
-func (g *Gate) OnModelEnd(_ context.Context, info agent.ModelInfo, res *agent.ModelResult, _ error) {
+// OnModelEnd implements agent.Observer: count every turn as it completes.
+func (g *Gate) OnModelEnd(_ context.Context, _ agent.ModelInfo, res *agent.ModelResult, _ error) {
 	if res == nil {
 		return
 	}
-	cost, priced := pool.CalculateCostDetailed(info.Model, res.PromptTokens, res.CachedTokens, res.CompletionTokens)
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if priced {
-		g.spent += cost
-	} else {
-		g.unpriced++
-	}
+	g.used += res.PromptTokens + res.CompletionTokens
 }
 
-// Spent reports the priced spend so far and how many turns could not be
-// priced — those are unknown, not free, and a cautious caller treats a
-// non-zero count as a reason to register the model's price.
-func (g *Gate) Spent() (usd float64, unpricedTurns int) {
+// Used reports the tokens counted so far.
+func (g *Gate) Used() int {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return g.spent, g.unpriced
+	return g.used
 }
 
 // Refused is how many runs the gate turned away.
@@ -82,9 +77,9 @@ func (g *Gate) Refused() int {
 	return g.refused
 }
 
-// Add records spend from outside — a previous process, a shared ledger.
-func (g *Gate) Add(usd float64) {
+// Add records usage from outside — a previous process, a shared ledger.
+func (g *Gate) Add(tokens int) {
 	g.mu.Lock()
-	g.spent += usd
+	g.used += tokens
 	g.mu.Unlock()
 }

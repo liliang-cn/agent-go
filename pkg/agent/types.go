@@ -99,14 +99,6 @@ type ExecutionResult struct {
 	// out and the runtime synthesised an answer from what it had" — both of
 	// which report Success, and only one of which is an answer to trust.
 	StopReason StopReason `json:"stop_reason,omitempty"`
-	// EstimatedCostUSD is the run's cost estimate, copied from its terminal
-	// event. RunConfig.MaxBudgetUSD enforces a cap on it; a caller that wants
-	// to know what a run actually cost, or to budget across many runs, needs
-	// to be able to read it back.
-	EstimatedCostUSD float64 `json:"estimated_cost_usd,omitempty"`
-	// CostUnpriced says EstimatedCostUSD is 0 because nothing could price the
-	// model, not because the run was free. Copied from the terminal event.
-	CostUnpriced bool `json:"cost_unpriced,omitempty"`
 	// Tenant is the owner label the run carried, so a caller billing many
 	// customers through one service can attribute this result without
 	// keeping its own run-to-tenant map.
@@ -408,12 +400,6 @@ type RunConfig struct {
 	// task reads and writes one list, scoped to the task.
 	PlanKey string
 
-	// MaxBudgetUSD caps the estimated cumulative cost of the run in
-	// USD (input + output tokens × model pricing). When exceeded the
-	// runtime stops with StopReasonMaxBudgetUSD. Zero = unlimited. Use
-	// WithMaxBudgetUSD to set.
-	MaxBudgetUSD float64
-
 	// DisableMemoryAutoStore skips the post-run memory extraction for this
 	// run only. Retrieval still happens. Set with WithoutMemoryAutoStore.
 	DisableMemoryAutoStore bool
@@ -625,23 +611,6 @@ func WithInputImages(paths ...string) RunOption {
 			}
 			c.InputParts = append(c.InputParts, domain.ImageLocalPathPart(p))
 		}
-	}
-}
-
-// WithMaxBudgetUSD caps the run's estimated cumulative cost in USD.
-// When the running spend (input + output tokens × model pricing) crosses
-// the limit, the runtime stops with StopReasonMaxBudgetUSD as the final
-// outcome. Pass 0 (or omit) to leave the run unbounded.
-//
-// Cost is estimated from the rates registered with pool.RegisterModelPricing.
-// A model nobody priced reports cost as 0 and CostUnpriced — the cap has no
-// force for it until it is registered.
-func WithMaxBudgetUSD(amount float64) RunOption {
-	return func(c *RunConfig) {
-		if amount < 0 {
-			amount = 0
-		}
-		c.MaxBudgetUSD = amount
 	}
 }
 

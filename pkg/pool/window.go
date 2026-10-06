@@ -8,9 +8,8 @@ import (
 
 // Model context windows.
 //
-// Same shape as pricing, for the same reason. The compaction threshold used to
-// be one number for every model — 60000 tokens — which is a third of a 200k
-// window and more than a 32k window has. The window is what the threshold
+// The compaction threshold used to be one number for every model — 60000
+// tokens — which is a third of a 200k window and more than a 32k window has. The window is what the threshold
 // should be derived from, and the window is a fact about a model that this
 // package can only ever partly know. So an operator states it, and "I do not
 // know this model's window" is a value a caller reads — never a guess that

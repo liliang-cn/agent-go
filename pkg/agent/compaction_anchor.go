@@ -159,7 +159,7 @@ func (r *Runtime) dropAnchor() {
 
 // compactionThreshold resolves the run's threshold once and remembers it. A
 // run that falls back to the fixed default because nothing knows the model's
-// window says so, once, the way an unpriced model does.
+// window says so, once.
 func (r *Runtime) compactionThreshold() (int, string) {
 	if r == nil {
 		return CompactionDefaultThresholdTokens, CompactionThresholdDefault

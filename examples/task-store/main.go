@@ -86,7 +86,7 @@ func main() {
 	// The run ends with a write-time summary — a few sentences from the run
 	// that knows, for the run that will not.
 	if err := store.EndRun(ctx, runID, agent.TaskRunOutcomeBlocked,
-		"auth and routes done; blocked choosing a rate-limiter algorithm", 0.42); err != nil {
+		"auth and routes done; blocked choosing a rate-limiter algorithm"); err != nil {
 		log.Fatal(err)
 	}
 	if err := store.AddLearning(ctx, taskID,

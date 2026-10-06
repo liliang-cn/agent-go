@@ -12,11 +12,10 @@ type roundMetrics struct {
 }
 
 type executionMetrics struct {
-	toolCalls        int
-	toolsUsed        []string
-	estimatedTokens  int
-	rounds           int
-	roundStats       []roundMetrics
-	totalDurationMs  int64
-	estimatedCostUSD float64
+	toolCalls       int
+	toolsUsed       []string
+	estimatedTokens int
+	rounds          int
+	roundStats      []roundMetrics
+	totalDurationMs int64
 }

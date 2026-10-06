@@ -72,8 +72,7 @@ type TaskRun struct {
 	// Summary is written when the run ends, by the run itself — what it did,
 	// what it concluded, where it stopped. Like PlanItem.Note, it is the whole
 	// bandwidth of the hand-off: a lazy summary is paid for by the next run.
-	Summary string  `json:"summary,omitempty"`
-	CostUSD float64 `json:"cost_usd,omitempty"`
+	Summary string `json:"summary,omitempty"`
 }
 
 // Run outcomes. "The run ended" and "the task finished" are different
@@ -133,8 +132,8 @@ type TaskStore interface {
 	// BeginRun opens an episode. A blank run ID is filled in; the id actually
 	// used is returned either way.
 	BeginRun(ctx context.Context, run TaskRun) (string, error)
-	// EndRun closes an episode with its outcome, write-time summary and cost.
-	EndRun(ctx context.Context, runID, outcome, summary string, costUSD float64) error
+	// EndRun closes an episode with its outcome and write-time summary.
+	EndRun(ctx context.Context, runID, outcome, summary string) error
 	// RecentRuns returns the task's episodes, newest first, open runs
 	// included (zero EndedAt).
 	RecentRuns(ctx context.Context, taskID string, limit int) ([]TaskRun, error)

@@ -5,20 +5,19 @@ import (
 )
 
 type queryLoopBudget struct {
-	MaxRounds        int
-	CompletedRounds  int
-	EstimatedTokens  int
-	InputTokens      int
-	OutputTokens     int
-	EstimatedCostUSD float64
-	CompactionCount  int
-	RecoveryCount    int
-	RemainingRounds  int
+	MaxRounds       int
+	CompletedRounds int
+	EstimatedTokens int
+	InputTokens     int
+	OutputTokens    int
+	CompactionCount int
+	RecoveryCount   int
+	RemainingRounds int
 
 	// The prompt-cache half of the accounting, summed over the run's rounds
 	// and reported by the provider rather than estimated. On a long run this
-	// is the number that says whether the prompt is being re-read at full
-	// price every round: CachedPromptTokens is the part of InputTokens that
+	// is the number that says whether the prompt is being re-read in full
+	// every round: CachedPromptTokens is the part of InputTokens that
 	// came back warm, CacheWriteTokens the premium paid to make it so.
 	CachedPromptTokens int
 	CacheWriteTokens   int
@@ -133,18 +132,14 @@ func (s *queryLoopState) noteTokens(tokens int) {
 	s.Budget.EstimatedTokens += tokens
 }
 
-// noteCost adds input/output tokens to the running totals and recomputes
-// the estimated cost from the registered model prices. Called once
-// per LLM round so the runtime can enforce MaxBudgetUSD.
-func (s *queryLoopState) noteCost(inputTokens, outputTokens int, costUSD float64) {
+// noteUsage adds one model turn's input/output tokens to the running
+// totals. Called once per LLM round.
+func (s *queryLoopState) noteUsage(inputTokens, outputTokens int) {
 	if inputTokens > 0 {
 		s.Budget.InputTokens += inputTokens
 	}
 	if outputTokens > 0 {
 		s.Budget.OutputTokens += outputTokens
-	}
-	if costUSD > 0 {
-		s.Budget.EstimatedCostUSD += costUSD
 	}
 }
 

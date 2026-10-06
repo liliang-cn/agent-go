@@ -125,7 +125,6 @@ func (s *Service) taskMemoryEndRun(runID, taskID string, seg SegmentOutcome, res
 	defer cancel()
 
 	outcome := TaskRunOutcomeFailed
-	cost := 0.0
 	switch {
 	case result != nil && result.Cancelled:
 		outcome = TaskRunOutcomeCancelled
@@ -134,9 +133,6 @@ func (s *Service) taskMemoryEndRun(runID, taskID string, seg SegmentOutcome, res
 	case result != nil && result.Success:
 		outcome = TaskRunOutcomeSuccess
 	}
-	if result != nil {
-		cost = result.EstimatedCostUSD
-	}
 
 	summary := seg.Text
 	if seg.Error != "" {
@@ -144,7 +140,7 @@ func (s *Service) taskMemoryEndRun(runID, taskID string, seg SegmentOutcome, res
 	}
 	summary = truncateRunes(strings.TrimSpace(summary), taskRunSummaryMaxChars)
 
-	if err := ts.EndRun(ctx, runID, outcome, summary, cost); err != nil {
+	if err := ts.EndRun(ctx, runID, outcome, summary); err != nil {
 		agentgolog.WithModule("agent.taskstore").Warn("end run", "run", runID, "error", err)
 	}
 
@@ -169,8 +165,8 @@ func (s *Service) taskMemoryEndRun(runID, taskID string, seg SegmentOutcome, res
 // taskMemoryFinish writes the task's final status and its resume brief — the
 // one deterministic paragraph the next process reads first. No model is
 // consulted: the brief is assembled from what the supervisor already knows,
-// because a hidden LLM call inside a bookkeeping write is a cost and a
-// failure mode nobody asked for.
+// because a hidden LLM call inside a bookkeeping write is latency, tokens and
+// a failure mode nobody asked for.
 func (s *Service) taskMemoryFinish(taskID, goal, planKey string, out *LongRunResult) {
 	ts := s.TaskStore()
 	if ts == nil || out == nil {
@@ -184,9 +180,6 @@ func (s *Service) taskMemoryFinish(taskID, goal, planKey string, out *LongRunRes
 		fmt.Fprintf(&b, "Finished after %d segment(s)", len(out.Segments))
 	} else {
 		fmt.Fprintf(&b, "Stopped (%s) after %d segment(s)", out.Stop, len(out.Segments))
-	}
-	if out.TotalCostUSD > 0 {
-		fmt.Fprintf(&b, ", $%.2f spent", out.TotalCostUSD)
 	}
 	if done, total := s.planProgress(planKey); total > 0 {
 		fmt.Fprintf(&b, ". Plan: %d of %d steps done", done, total)

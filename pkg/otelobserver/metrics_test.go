@@ -3,7 +3,6 @@ package otelobserver
 import (
 	"context"
 	"errors"
-	"math"
 	"testing"
 	"time"
 
@@ -15,7 +14,6 @@ import (
 
 	"github.com/liliang-cn/agent-go/v3/pkg/agent"
 	"github.com/liliang-cn/agent-go/v3/pkg/extensiontest"
-	"github.com/liliang-cn/agent-go/v3/pkg/pool"
 )
 
 func newMeter() (*sdkmetric.ManualReader, *sdkmetric.MeterProvider) {
@@ -132,8 +130,7 @@ func TestNoMeterProviderIsNoOp(t *testing.T) {
 }
 
 // TestMetricsFromCallbacks drives every instrumented callback once with known
-// numbers and asserts what the reader collects — including the cost, which is
-// the one metric derived rather than reported.
+// numbers and asserts what the reader collects.
 func TestMetricsFromCallbacks(t *testing.T) {
 	_, tp := newRecorder()
 	reader, mp := newMeter()
@@ -141,10 +138,7 @@ func TestMetricsFromCallbacks(t *testing.T) {
 	ctx := context.Background()
 
 	const taskID = "task-m"
-	// Priced here: nothing is until someone registers it.
-	pool.RegisterModelPricing("priced-test-model", pool.ModelPricing{InputPer1K: 0.005, OutputPer1K: 0.015})
-	defer pool.UnregisterModelPricing("priced-test-model")
-	mi := agent.ModelInfo{TaskID: taskID, AgentName: "bot", Model: "priced-test-model", SpanID: "s1", Round: 1}
+	mi := agent.ModelInfo{TaskID: taskID, AgentName: "bot", Model: "test-model", SpanID: "s1", Round: 1}
 	obs.OnModelStart(ctx, mi)
 	obs.OnModelRetry(ctx, agent.ModelRetryInfo{
 		TaskID: taskID, AgentName: "bot", SpanID: "s1", Kind: "max_tokens_truncation",
@@ -205,26 +199,16 @@ func TestMetricsFromCallbacks(t *testing.T) {
 		t.Errorf("tokens.cached = %v, want 400", got)
 	}
 
-	// priced-test-model: 0.005/1K in (no cache discount), 0.015/1K out.
-	// 1000 prompt + 200 completion => 0.005 + 0.003.
-	want := 0.008
-	if got := mustSum(t, rm, "agentgo.cost.usd"); math.Abs(got-want) > 1e-9 {
-		t.Errorf("cost.usd = %v, want %v", got, want)
-	}
-	if _, ok := sumOf(rm, "agentgo.model.unpriced_turns"); ok {
-		t.Error("a priced model was counted as unpriced")
-	}
-
 	// Attributes: agent and model where known, and never a task or session id.
 	callAttrs := attrsOf(rm, "agentgo.model.calls")
-	if !hasAttr(callAttrs, mAttrAgent, "bot") || !hasAttr(callAttrs, mAttrModel, "priced-test-model") {
+	if !hasAttr(callAttrs, mAttrAgent, "bot") || !hasAttr(callAttrs, mAttrModel, "test-model") {
 		t.Errorf("model.calls attributes = %v", callAttrs)
 	}
 	if !hasAttr(callAttrs, mAttrStatus, statusOK) {
 		t.Error("model.calls missing an ok status")
 	}
 	for _, name := range []string{
-		"agentgo.model.calls", "agentgo.tool.calls", "agentgo.cost.usd",
+		"agentgo.model.calls", "agentgo.tool.calls", "agentgo.tokens.prompt",
 		"agentgo.lint.rejections", "agentgo.errors", "agentgo.compactions",
 	} {
 		for _, set := range attrsOf(rm, name) {
@@ -249,31 +233,6 @@ func TestMetricsFromCallbacks(t *testing.T) {
 	}
 	if !hasAttr(attrsOf(rm, "agentgo.errors"), mAttrKind, "history_persist_failed") {
 		t.Error("error kind attribute missing")
-	}
-}
-
-// TestUnpricedModelIsCountedNotPriced is the distinction CalculateCostDetailed
-// exists for: nothing knows this model's rates, so the cost counter must stay
-// silent rather than add a zero that reads as free.
-func TestUnpricedModelIsCountedNotPriced(t *testing.T) {
-	_, tp := newRecorder()
-	reader, mp := newMeter()
-	obs := New(tp, WithMeterProvider(mp))
-	ctx := context.Background()
-
-	mi := agent.ModelInfo{TaskID: "t", AgentName: "bot", Model: "some-unlisted-model-9000", SpanID: "s1"}
-	obs.OnModelStart(ctx, mi)
-	obs.OnModelEnd(ctx, mi, &agent.ModelResult{PromptTokens: 500, CompletionTokens: 100}, nil)
-
-	rm := collect(t, reader)
-	if got := mustSum(t, rm, "agentgo.model.unpriced_turns"); got != 1 {
-		t.Errorf("unpriced_turns = %v, want 1", got)
-	}
-	if v, ok := sumOf(rm, "agentgo.cost.usd"); ok && v != 0 {
-		t.Errorf("cost.usd = %v for an unpriced model, want no contribution", v)
-	}
-	if got := mustSum(t, rm, "agentgo.tokens.prompt"); got != 500 {
-		t.Errorf("tokens.prompt = %v, want 500", got)
 	}
 }
 

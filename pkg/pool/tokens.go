@@ -263,5 +263,3 @@ func ExtractTokensFromResponse(provider string, response interface{}) (input int
 
 	return input, output, total
 }
-
-// CalculateCost calculates the cost based on token usage and model pricing

@@ -38,7 +38,7 @@ func main() {
 			defer wg.Done()
 			// The tenant is an opaque label. Nothing in the loop reads it:
 			// it exists for admission control, bulk cancellation and
-			// attributing what the run cost.
+			// attributing what the run used.
 			res, err := svc.Run(ctx, "Say hello.", agent.WithTenant(tenant))
 			switch {
 			case errors.Is(err, agent.ErrTenantAtCapacity):
@@ -49,7 +49,7 @@ func main() {
 			case err != nil:
 				fmt.Printf("%-7s failed: %v\n", tenant, err)
 			default:
-				fmt.Printf("%-7s ok, cost $%.4f\n", res.Tenant, res.EstimatedCostUSD)
+				fmt.Printf("%-7s ok, %d tokens\n", res.Tenant, res.EstimatedTokens)
 			}
 		}(tenant)
 	}

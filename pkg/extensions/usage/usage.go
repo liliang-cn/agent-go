@@ -1,10 +1,12 @@
-// Package usage meters what a service spends: tokens by model with the
-// prompt-cache split, priced where a price is known, plus the retries,
-// compactions and segments a long run goes through.
+// Package usage meters what a service uses: tokens by model with the
+// prompt-cache split, plus the retries, compactions and segments a long run
+// goes through.
 //
 // It is an Observer with a ledger. ExecutionResult already carries usage for
 // one run; this is the same accounting across every run the service makes,
-// which is the number a host wants on a dashboard or a daily cap.
+// which is the number a host wants on a dashboard or a daily cap. Turning
+// tokens into money is the host's business: the per-model split here is what
+// it needs to do that.
 package usage
 
 import (
@@ -17,7 +19,6 @@ import (
 	"time"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/agent"
-	"github.com/liliang-cn/agent-go/v3/pkg/pool"
 )
 
 // Totals is the accounting for one model, or for everything.
@@ -26,11 +27,6 @@ type Totals struct {
 	PromptTokens     int
 	CachedTokens     int
 	CompletionTokens int
-	// CostUSD sums the calls that could be priced.
-	CostUSD float64
-	// Unpriced counts calls whose model had no price; their cost is unknown,
-	// not zero, and CostUSD does not include them.
-	Unpriced int
 }
 
 // Snapshot is a point-in-time copy of the ledger.
@@ -81,7 +77,6 @@ func (e *Extension) OnModelEnd(_ context.Context, info agent.ModelInfo, res *age
 	if model == "" {
 		model = "(unknown)"
 	}
-	cost, priced := pool.CalculateCostDetailed(model, res.PromptTokens, res.CachedTokens, res.CompletionTokens)
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -90,11 +85,6 @@ func (e *Extension) OnModelEnd(_ context.Context, info agent.ModelInfo, res *age
 		t.PromptTokens += res.PromptTokens
 		t.CachedTokens += res.CachedTokens
 		t.CompletionTokens += res.CompletionTokens
-		if priced {
-			t.CostUSD += cost
-		} else {
-			t.Unpriced++
-		}
 	}
 }
 
@@ -159,7 +149,7 @@ func (e *Extension) Reset() {
 func (e *Extension) Report(w io.Writer) {
 	s := e.Snapshot()
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "model\tcalls\tprompt\tcached\tcompletion\tcache hit\tcost")
+	fmt.Fprintln(tw, "model\tcalls\tprompt\tcached\tcompletion\tcache hit")
 	models := make([]string, 0, len(s.ByModel))
 	for m := range s.ByModel {
 		models = append(models, m)
@@ -175,10 +165,6 @@ func (e *Extension) Report(w io.Writer) {
 }
 
 func writeRow(w io.Writer, name string, t Totals) {
-	cost := fmt.Sprintf("$%.4f", t.CostUSD)
-	if t.Unpriced > 0 {
-		cost += fmt.Sprintf(" (+%d unpriced)", t.Unpriced)
-	}
-	fmt.Fprintf(w, "%s\t%d\t%d\t%d\t%d\t%.0f%%\t%s\n",
-		name, t.Calls, t.PromptTokens, t.CachedTokens, t.CompletionTokens, 100*t.CacheHitRate(), cost)
+	fmt.Fprintf(w, "%s\t%d\t%d\t%d\t%d\t%.0f%%\n",
+		name, t.Calls, t.PromptTokens, t.CachedTokens, t.CompletionTokens, 100*t.CacheHitRate())
 }

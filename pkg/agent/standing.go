@@ -37,8 +37,8 @@ import (
 //
 // There is still one loop. A Standing runs nothing itself: every wake is
 // svc.Run, with options. What it owns is the clock, the queue of reasons to
-// wake, the notes, and the two ceilings — wakes per day and cost per day —
-// that keep an agent that is never finished from spending without end.
+// wake, the notes, and the ceilings — wakes per day and rounds per wake —
+// that keep an agent that is never finished from running without end.
 
 // WakeKind says why a responsibility woke.
 type WakeKind string
@@ -57,7 +57,7 @@ const (
 )
 
 // Responsibility is what the person hands a standing agent. The four text
-// fields are the brief; the rest bounds what carrying it out may cost.
+// fields are the brief; the rest bounds how much carrying it out may run.
 type Responsibility struct {
 	// ID names the responsibility and is the task id of every wake. Empty on
 	// Add mints one.
@@ -87,10 +87,6 @@ type Responsibility struct {
 	// DefaultMaxWakesPerDay. A responsibility past its cap is paused until
 	// the next day, and the host is told.
 	MaxWakesPerDay int `json:"max_wakes_per_day,omitempty"`
-	// MaxCostPerDayUSD bounds what it may spend; zero means no money ceiling
-	// (the wake ceiling still holds). A wake whose model cannot be priced
-	// counts toward wakes and not toward cost, and the status says so.
-	MaxCostPerDayUSD float64 `json:"max_cost_per_day_usd,omitempty"`
 	// MaxRoundsPerWake is the round budget of one wake. Zero means
 	// DefaultStandingRounds.
 	MaxRoundsPerWake int `json:"max_rounds_per_wake,omitempty"`
@@ -150,8 +146,8 @@ type Notification struct {
 	//   paused       — the day's ceiling was reached; Message says which
 	//   error        — a wake failed or was blocked; Message is the reason
 	//   wake_started — a wake began; Wake is its record so far
-	//   wake_ended   — a wake finished; Wake carries cost, tool calls, error
-	// The last two are for a host showing "running / last ran / cost" and
+	//   wake_ended   — a wake finished; Wake carries tokens, tool calls, error
+	// The last two are for a host showing "running / last ran / usage" and
 	// keeping a history; they are not for the person.
 	Kind    string    `json:"kind"`
 	Message string    `json:"message,omitempty"`
@@ -190,11 +186,12 @@ type Wake struct {
 	RunID            string         `json:"run_id"`
 	StartedAt        time.Time      `json:"started_at"`
 	EndedAt          time.Time      `json:"ended_at,omitempty"`
-	CostUSD          float64        `json:"cost_usd"`
-	Unpriced         bool           `json:"unpriced,omitempty"`
-	ToolCalls        int            `json:"tool_calls"`
-	Error            string         `json:"error,omitempty"`
-	Notified         int            `json:"notified"`
+	// Usage is the wake's provider-reported tokens; nil when the provider
+	// reported none.
+	Usage     *domain.TokenUsage `json:"usage,omitempty"`
+	ToolCalls int                `json:"tool_calls"`
+	Error     string             `json:"error,omitempty"`
+	Notified  int                `json:"notified"`
 }
 
 // ResponsibilityStatus is one responsibility as the host sees it.
@@ -203,13 +200,9 @@ type ResponsibilityStatus struct {
 	Running        *Wake          `json:"running,omitempty"`
 	LastWake       *Wake          `json:"last_wake,omitempty"`
 	// NextDue is the earliest of the self-wake, the schedule and the scan.
-	NextDue      time.Time `json:"next_due,omitempty"`
-	NextDueKind  WakeKind  `json:"next_due_kind,omitempty"`
-	WakesToday   int       `json:"wakes_today"`
-	CostTodayUSD float64   `json:"cost_today_usd"`
-	// UnpricedToday counts wakes whose cost could not be known; the money
-	// ceiling cannot see them.
-	UnpricedToday int `json:"unpriced_today"`
+	NextDue     time.Time `json:"next_due,omitempty"`
+	NextDueKind WakeKind  `json:"next_due_kind,omitempty"`
+	WakesToday  int       `json:"wakes_today"`
 }
 
 // ErrNoResponsibility is returned for an id the Standing does not hold.
@@ -226,8 +219,6 @@ type standingItem struct {
 	nextScan time.Time
 	day      string
 	wakes    int
-	cost     float64
-	unpriced int
 	// pendingEvents arrived while a wake was starting and could not be
 	// steered; the next wake carries them.
 	pendingEvents []StandingEvent
@@ -478,8 +469,6 @@ func (st *Standing) statusLocked(it *standingItem) ResponsibilityStatus {
 	s := ResponsibilityStatus{
 		Responsibility: it.r,
 		WakesToday:     it.wakes,
-		CostTodayUSD:   it.cost,
-		UnpricedToday:  it.unpriced,
 	}
 	if it.running != nil {
 		w := *it.running
@@ -610,7 +599,7 @@ func (st *Standing) loop() {
 func (st *Standing) rollDayLocked(it *standingItem) {
 	day := st.clock().Format("2006-01-02")
 	if it.day != day {
-		it.day, it.wakes, it.cost, it.unpriced = day, 0, 0, 0
+		it.day, it.wakes = day, 0
 		if it.r.Paused && it.r.PausedReason == pausedDailyLimit {
 			it.r.Paused, it.r.PausedReason = false, ""
 		}
@@ -646,11 +635,11 @@ func (st *Standing) startWake(id string, kind WakeKind, reason string) error {
 	if maxWakes <= 0 {
 		maxWakes = DefaultMaxWakesPerDay
 	}
-	if it.wakes >= maxWakes || (it.r.MaxCostPerDayUSD > 0 && it.cost >= it.r.MaxCostPerDayUSD) {
+	if it.wakes >= maxWakes {
 		it.r.Paused, it.r.PausedReason = true, pausedDailyLimit
 		it.r.NextWake = time.Time{}
 		r := it.r
-		why := fmt.Sprintf("%s: %d wakes and $%.4f today (limits %d wakes, $%.2f)", pausedDailyLimit, it.wakes, it.cost, maxWakes, it.r.MaxCostPerDayUSD)
+		why := fmt.Sprintf("%s: %d wakes today (limit %d)", pausedDailyLimit, it.wakes, maxWakes)
 		st.mu.Unlock()
 		_ = st.store.Save(st.ctx, r)
 		st.notify(Notification{ResponsibilityID: id, Kind: NotifyPaused, Message: why, At: st.clock()})
@@ -712,9 +701,6 @@ func (st *Standing) wakeOptions(r Responsibility, w *Wake) []RunOption {
 		// the extraction pass would only re-derive it.
 		WithConstraintExtraction(false),
 	}
-	if r.MaxCostPerDayUSD > 0 {
-		opts = append(opts, WithMaxBudgetUSD(r.MaxCostPerDayUSD))
-	}
 	if w.Kind == WakeScan {
 		if r.Scan != nil && r.Scan.MaxRounds > 0 {
 			opts = append(opts, WithMaxTurns(r.Scan.MaxRounds))
@@ -733,27 +719,30 @@ func (st *Standing) wakeOptions(r Responsibility, w *Wake) []RunOption {
 }
 
 func (st *Standing) finishWake(id string, w *Wake, res *ExecutionResult, err error) {
-	w.EndedAt = st.clock()
+	endedAt := st.clock()
+	// w is it.running until the lock below clears it, and Status copies it
+	// under that lock — so it is written under the lock too.
+	st.mu.Lock()
+	w.EndedAt = endedAt
 	if err != nil {
 		w.Error = err.Error()
 	}
 	if res != nil {
-		w.CostUSD, w.Unpriced = res.EstimatedCostUSD, res.CostUnpriced
+		if res.Usage != nil {
+			u := *res.Usage
+			w.Usage = &u
+		}
 		w.ToolCalls = res.ToolCalls
 		if res.Blocked && w.Error == "" {
 			w.Error = "blocked: " + strings.TrimSpace(res.Text())
 		}
 	}
-	st.mu.Lock()
+	ended := *w
 	it, ok := st.items[id]
 	if ok {
 		it.running = nil
 		it.last = w
 		st.rollDayLocked(it)
-		it.cost += w.CostUSD
-		if w.Unpriced {
-			it.unpriced++
-		}
 		// A wake that could not end cleanly did not get to say when to wake
 		// again; the schedule, if any, still will.
 	}
@@ -765,11 +754,10 @@ func (st *Standing) finishWake(id string, w *Wake, res *ExecutionResult, err err
 	if ok {
 		_ = st.store.Save(st.ctx, r)
 	}
-	if w.Error != "" {
-		st.notify(Notification{ResponsibilityID: id, WakeID: w.ID, Kind: NotifyError, Message: w.Error, At: w.EndedAt})
+	if ended.Error != "" {
+		st.notify(Notification{ResponsibilityID: id, WakeID: ended.ID, Kind: NotifyError, Message: ended.Error, At: ended.EndedAt})
 	}
-	ended := *w
-	st.notify(Notification{ResponsibilityID: id, WakeID: w.ID, Kind: NotifyWakeEnded, Wake: &ended, At: w.EndedAt})
+	st.notify(Notification{ResponsibilityID: id, WakeID: ended.ID, Kind: NotifyWakeEnded, Wake: &ended, At: ended.EndedAt})
 	st.poke()
 }
 

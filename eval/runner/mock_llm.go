@@ -42,9 +42,9 @@ func (m *MockLLM) SetUsage(u *MockUsage) {
 	m.mu.Unlock()
 }
 
-// UsageModel names the model the mock claims to be, so pricing can find it.
-// Empty unless a scenario's mock_usage names one; an unnamed model is
-// unpriced, and the results say so.
+// UsageModel names the model the mock claims to be, so the service's
+// Info().Model and every observer see it. Empty unless a scenario's
+// mock_usage names one.
 func (m *MockLLM) UsageModel() string {
 	m.mu.Lock()
 	defer m.mu.Unlock()

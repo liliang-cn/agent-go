@@ -41,7 +41,7 @@ import (
 // falls back to a default.
 type LongRunConfig struct {
 	// MaxSegments caps how many times the task is picked back up. It is the
-	// backstop against a task that can never finish quietly costing money
+	// backstop against a task that can never finish quietly running
 	// forever.
 	MaxSegments int
 
@@ -71,19 +71,6 @@ type LongRunConfig struct {
 	// with its plan and workspace consistent, rather than being cut in half.
 	// Zero = no limit; the context's own deadline still applies and does cut.
 	MaxDuration time.Duration
-
-	// MaxTotalCostUSD caps what the whole task may spend, summed over every
-	// segment. RunConfig.MaxBudgetUSD only ever bounded one run, which on a
-	// task made of forty of them bounds nothing.
-	//
-	// It is enforced twice: no new segment starts once the total is reached,
-	// and each segment is given the remainder as its own MaxBudgetUSD so it
-	// stops mid-flight rather than overrunning the ceiling by however much a
-	// segment happens to cost. Checking only between segments made the real
-	// bound "the limit, plus one whole segment" — fine at sixty rounds,
-	// meaningless at six hundred.
-	// Zero = no limit.
-	MaxTotalCostUSD float64
 
 	// MaxUnproductiveSegments ends the task after this many segments in a row
 	// change nothing.
@@ -172,8 +159,6 @@ const (
 	LongRunStopBlocked LongRunStop = "blocked"
 	// LongRunStopTimeLimit means MaxDuration ran out with work left.
 	LongRunStopTimeLimit LongRunStop = "time_limit"
-	// LongRunStopCostLimit means MaxTotalCostUSD ran out with work left.
-	LongRunStopCostLimit LongRunStop = "cost_limit"
 	// LongRunStopUnproductive means several segments in a row changed nothing,
 	// which usually means each one is too small to get past rediscovery.
 	LongRunStopUnproductive LongRunStop = "unproductive_segments"
@@ -193,14 +178,9 @@ type LongRunResult struct {
 	// of how far an unfinished task got.
 	PlanSummary string
 	Duration    time.Duration
-	// TotalCostUSD is what every segment cost together, which is the only
-	// figure that means anything for a task made of dozens of runs.
-	TotalCostUSD float64
-	// CostUnpriced says TotalCostUSD is missing at least one segment's spend
-	// because the model has no pricing; MaxTotalCostUSD cannot have applied.
-	CostUnpriced bool
-	// TotalUsage sums the provider-reported tokens across segments. Nil when
-	// no segment's provider reported any.
+	// TotalUsage sums the provider-reported tokens across segments, which is
+	// the only figure that means anything for a task made of dozens of runs.
+	// Nil when no segment's provider reported any.
 	TotalUsage *domain.TokenUsage
 }
 
@@ -317,10 +297,6 @@ func (s *Service) runSegments(ctx context.Context, goal string, cfg LongRunConfi
 			out.Stop = LongRunStopTimeLimit
 			break
 		}
-		if cfg.MaxTotalCostUSD > 0 && out.TotalCostUSD >= cfg.MaxTotalCostUSD {
-			out.Stop = LongRunStopCostLimit
-			break
-		}
 
 		// Sit out a provider outage rather than spending the failure budget
 		// on it in seconds.
@@ -359,11 +335,6 @@ func (s *Service) runSegments(ctx context.Context, goal string, cfg LongRunConfi
 			// The tools write where the supervisor reads.
 			WithPlanKey(cfg.PlanKey),
 		)
-		// Hand the segment what is left of the task's budget, so the ceiling
-		// holds inside a segment and not merely between them.
-		if left, ok := segmentCostCeiling(cfg, out.TotalCostUSD); ok {
-			segmentOpts = append(segmentOpts, WithMaxBudgetUSD(left))
-		}
 
 		segStart := time.Now()
 		s.emitSegmentObserved(ctx, SegmentInfo{
@@ -386,8 +357,6 @@ func (s *Service) runSegments(ctx context.Context, goal string, cfg LongRunConfi
 			for _, name := range result.ToolsUsed {
 				toolsUsed[name] = struct{}{}
 			}
-			out.TotalCostUSD += result.EstimatedCostUSD
-			out.CostUnpriced = out.CostUnpriced || result.CostUnpriced
 			out.TotalUsage = addUsage(out.TotalUsage, result.Usage)
 			seg.StopReason = result.StopReason
 			seg.Text = result.Text()
@@ -402,7 +371,7 @@ func (s *Service) runSegments(ctx context.Context, goal string, cfg LongRunConfi
 		s.emitSegmentObserved(ctx, SegmentInfo{
 			TaskID: taskID, Index: i, Total: cfg.MaxSegments, SessionID: sessionID,
 			Ending: true, StopReason: seg.StopReason, Duration: seg.Duration,
-			Productive: seg.Productive, CostUSD: out.TotalCostUSD, Unpriced: out.CostUnpriced, Err: seg.Error,
+			Productive: seg.Productive, Err: seg.Error,
 		})
 		s.taskMemoryEndRun(runRecID, taskID, seg, result)
 
@@ -416,14 +385,6 @@ func (s *Service) runSegments(ctx context.Context, goal string, cfg LongRunConfi
 			if consecutiveFailures >= cfg.MaxConsecutiveFailures {
 				out.Stop = LongRunStopFailing
 			}
-		case result != nil && result.StopReason == StopReasonMaxBudgetUSD:
-			// The segment stopped because the task ran out of money, which is
-			// the task's outcome and not the segment's verdict. Before the
-			// remainder was handed down, this could only happen between
-			// segments and the loop labelled it itself; now that a segment can
-			// hit the ceiling mid-flight, the label has to survive the trip
-			// back up or a task that spent its budget reports "blocked".
-			out.Stop = LongRunStopCostLimit
 		case result.Blocked && result.StopReason != StopReasonMaxTurns && !s.segmentRejectedOnOpenPlan(result, cfg):
 			// A considered "I cannot proceed" is an answer. Starting another
 			// segment would spend the budget arriving at it again.
@@ -567,20 +528,4 @@ func (s *Service) emitSegmentObserved(ctx context.Context, info SegmentInfo) {
 		return
 	}
 	s.emitObserver(func(o Observer) { o.OnSegment(ctx, info) })
-}
-
-// segmentCostCeiling is what one segment may spend: whatever the task has left.
-//
-// Reported as (amount, ok) rather than a bare float so "no ceiling configured"
-// and "nothing left" stay distinguishable — the first must not cap a segment,
-// and the second never reaches here because the loop stops first.
-func segmentCostCeiling(cfg LongRunConfig, spent float64) (float64, bool) {
-	if cfg.MaxTotalCostUSD <= 0 {
-		return 0, false
-	}
-	left := cfg.MaxTotalCostUSD - spent
-	if left <= 0 {
-		return 0, false
-	}
-	return left, true
 }

@@ -97,7 +97,7 @@ func main() {
 | 选项 | 作用 |
 | --- | --- |
 | `WithMaxTurns(n)` / `WithMaxTokens(n)` / `WithTemperature(t)` / `WithThinking(bool)` | 预算与采样 |
-| `WithLLMRetries(n)` / `WithMaxBudgetUSD(x)` | 重试；花费超预算即停 |
+| `WithLLMRetries(n)` | provider 临时错误时重试 |
 | `WithToolsDisabled()` / `WithToolAllowlist(names)` / `WithToolDenylist(names)` | 工具面 |
 | `WithStructuredOutput(spec)` / `WithStructuredOutputType[T]()` | 强制 JSON 结构 |
 | `WithRequiredDeliverables(...)` / `WithRequestedActions(...)` / `WithConstraintExtraction(bool)` | 交付契约 |
@@ -127,7 +127,7 @@ llm, err := pool.NewPool(pool.PoolConfig{
 })
 ```
 
-`pool.NewPool` 在多个 provider 间负载均衡。没有内置价格表：用 `pool.RegisterModelPricing` 给你用的模型定价；没定价的模型报 `CostUnpriced`，而不是 `$0`。
+`pool.NewPool` 在多个 provider 间负载均衡。框架只报 token，不算钱：`ExecutionResult.Usage` 给出 prompt、completion 和缓存命中的 token 数，宿主要算成本就用自己的单价去乘。
 
 ## 存储
 
@@ -146,7 +146,7 @@ llm, err := pool.NewPool(pool.PoolConfig{
 pkg/agent         agent、循环、工具、上下文、hooks/lints、会话、检查点、长任务
 pkg/domain        共享类型与接口
 pkg/providers     OpenAI 兼容 provider、LLMPool
-pkg/pool          provider 池、定价、成本、内置联网搜索
+pkg/pool          provider 池、token 计数、上下文窗口、内置联网搜索
 pkg/memory        记忆服务、BaseStore、memorystoretest
 pkg/store         SQLite 存储、记忆后端插件
 pkg/cortexbridge  CortexDB 工具、RunMemory

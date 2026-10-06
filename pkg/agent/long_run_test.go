@@ -477,31 +477,6 @@ func TestRunSegmentsStopsOnTheTimeLimit(t *testing.T) {
 	}
 }
 
-// A per-run MaxBudgetUSD bounds one run, which on a task made of forty of them
-// bounds nothing. This is the total.
-func TestRunSegmentsStopsOnTheCostLimit(t *testing.T) {
-	llm := &scriptedLLM{finishAt: 99}
-	svc := buildSegmentedService(t, "segments-cost-limit", llm, nil)
-	defer svc.Close()
-	svc.modelName = "priced-test-model"
-	priceModel(t, svc.modelName, 0.03, 0.06) // so the run has a cost to limit
-
-	res, err := svc.RunSegments(context.Background(), "Work forever.", LongRunConfig{
-		MaxSegments:      50,
-		RoundsPerSegment: 2,
-		MaxTotalCostUSD:  0.0000001,
-	})
-	if err != nil {
-		t.Fatalf("RunSegments: %v", err)
-	}
-	if res.Stop != LongRunStopCostLimit {
-		t.Errorf("stop = %q, want %q (cost so far %f)", res.Stop, LongRunStopCostLimit, res.TotalCostUSD)
-	}
-	if res.TotalCostUSD <= 0 {
-		t.Error("the task reported no cost at all; the per-segment figure is not reaching the total")
-	}
-}
-
 // The wait after a failed segment is what makes MaxConsecutiveFailures mean
 // anything: without it three failures are spent in seconds, against outages
 // measured in tens of minutes.

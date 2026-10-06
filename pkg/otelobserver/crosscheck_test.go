@@ -11,7 +11,6 @@ import (
 	"github.com/liliang-cn/agent-go/v3/pkg/agent"
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 	"github.com/liliang-cn/agent-go/v3/pkg/extensiontest"
-	"github.com/liliang-cn/agent-go/v3/pkg/pool"
 )
 
 // The tests in this file are the ones a live probe found and the unit suite
@@ -173,7 +172,7 @@ func (c *countingObserver) snapshot() (int, int) {
 // probe exists for, reduced to a scripted run.
 //
 // A run that hits its round ceiling ends with forceFinalSynthesis: one more
-// model call, whose tokens and cost go into the budget and therefore into
+// model call, whose tokens go into the budget and therefore into
 // ExecutionResult. That call emitted no observer callback at all, so the
 // bridge's token counters came up short by exactly one turn on precisely the
 // runs a long-horizon operator is measuring.
@@ -182,12 +181,10 @@ func TestTokenMetricsCoverTheForcedSynthesisTurn(t *testing.T) {
 	counter := &countingObserver{}
 	obs := New(nil, WithMeterProvider(mp))
 
-	// A named, priced model, so the cost counter has something to say. An
-	// injected generator that answers neither question is the default, and it
-	// leaves agentgo.model empty and every turn unpriced — see namedGenerator.
+	// A named model, so the metrics carry it. An injected generator that
+	// answers neither question is the default, and it leaves agentgo.model
+	// empty — see namedGenerator.
 	const model = "otel-crosscheck-model"
-	pool.RegisterModelPricing(model, pool.ModelPricing{InputPer1K: 0.001, OutputPer1K: 0.002})
-	t.Cleanup(func() { pool.UnregisterModelPricing(model) })
 
 	llm := namedGenerator{Generator: extensiontest.Script(
 		extensiontest.CallTool("echo", map[string]interface{}{"text": "hi"}),
@@ -229,28 +226,15 @@ func TestTokenMetricsCoverTheForcedSynthesisTurn(t *testing.T) {
 		t.Errorf("tokens.prompt+completion = %v, observed TokensUsed = %d", prompt+completion, observedTokens)
 	}
 
-	// The run's own accounting is the independent second opinion, and cost is
-	// the field to compare against: EstimatedCostUSD is read off the budget,
-	// which the synthesis pass writes into, while ExecutionResult.EstimatedTokens
-	// is summed from the per-round llm_latency events — a quantity the
-	// synthesis turn is deliberately outside of, and therefore not a yardstick
-	// for whether the bridge saw every turn.
-	cost := mustSum(t, rm, "agentgo.cost.usd")
-	if diff := cost - res.EstimatedCostUSD; diff > 1e-9 || diff < -1e-9 {
-		t.Errorf("cost.usd = %.10f, ExecutionResult.EstimatedCostUSD = %.10f", cost, res.EstimatedCostUSD)
-	}
-	if cost <= 0 {
-		t.Error("the priced path recorded nothing; the model identity never reached the bridge")
-	}
-	if _, recorded := sumOf(rm, "agentgo.model.unpriced_turns"); recorded {
-		t.Error("a priced model still counted unpriced turns")
+	// The model identity must reach the bridge, or every series is unnamed.
+	if !hasAttr(attrsOf(rm, "agentgo.tokens.prompt"), mAttrModel, model) {
+		t.Errorf("tokens.prompt attributes = %v, want model %q", attrsOf(rm, "agentgo.tokens.prompt"), model)
 	}
 }
 
 // namedGenerator gives an injected generator the model identity Builder.WithLLM
 // looks for (GetModelName / GetBaseURL). Without it Service.Info().Model is
-// empty, which is the name the runtime prices every turn with and the one the
-// bridge stamps on every metric.
+// empty, which is the name the bridge stamps on every metric.
 type namedGenerator struct {
 	domain.Generator
 	model string

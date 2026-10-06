@@ -134,22 +134,13 @@ type Event struct {
 	// content. See pkg/agent/stop_reason.go for the constant set.
 	StopReason StopReason `json:"stop_reason,omitempty"`
 
-	// EstimatedCostUSD carries the run's running cost estimate at the
-	// moment the event was emitted (input + output tokens × model
-	// pricing). Populated on terminal events; zero elsewhere.
-	EstimatedCostUSD float64 `json:"estimated_cost_usd,omitempty"`
-	// CostUnpriced is true when at least one model turn of this run could
-	// not be priced — nobody registered rates for its model. EstimatedCostUSD then reads 0 and means "unknown",
-	// not "free"; a caller showing spend should say so rather than print $0.
-	CostUnpriced bool `json:"cost_unpriced,omitempty"`
-
 	// OutputParts is non-text output the run produced — an image the model
 	// drew. Present on terminal events, empty on the overwhelming majority
 	// of runs.
 	OutputParts []domain.MessagePart `json:"output_parts,omitempty"`
 
 	// Usage carries the run's provider-reported token accounting, summed
-	// over its rounds. Populated on terminal events alongside the cost, and
+	// over its rounds. Populated on terminal events, and
 	// nil when no provider on the run reported any — which is a different
 	// thing from a run that used no tokens, and worth being able to tell
 	// apart when the question is whether the prompt cache is working.

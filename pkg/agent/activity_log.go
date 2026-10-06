@@ -164,11 +164,11 @@ func (l *ActivityLog) OnSubAgentEnd(_ context.Context, info SubAgentInfo, result
 		return
 	}
 	if r, ok := result.(RemoteAgentRunResult); ok {
-		cost := fmt.Sprintf("$%.4f", r.CostUSD)
-		if r.CostUnpriced || (r.Usage == nil && r.CostUSD == 0) {
-			cost = "unpriced"
+		tokens := "tok=?"
+		if r.Usage != nil {
+			tokens = fmt.Sprintf("tok=%d/%d", r.Usage.PromptTokens, r.Usage.CompletionTokens)
 		}
-		l.line("     sub<    %s ok %dms %s %s", info.Name, r.Duration, cost, oneLine(r.Summary, 100))
+		l.line("     sub<    %s ok %dms %s %s", info.Name, r.Duration, tokens, oneLine(r.Summary, 100))
 		return
 	}
 	l.line("     sub<    %s ok %s", info.Name, oneLine(fmt.Sprintf("%v", result), 100))
@@ -271,8 +271,8 @@ func (l *ActivityLog) OnSegment(_ context.Context, info SegmentInfo) {
 	if !info.Productive {
 		productive = " (changed nothing)"
 	}
-	l.line("──── segment %d/%d end    %s %s $%.4f%s",
-		info.Index, info.Total, status, shortDuration(info.Duration), info.CostUSD, productive)
+	l.line("──── segment %d/%d end    %s %s%s",
+		info.Index, info.Total, status, shortDuration(info.Duration), productive)
 }
 
 func (l *ActivityLog) OnCheckpoint(_ context.Context, info CheckpointInfo) {

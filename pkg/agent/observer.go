@@ -110,7 +110,7 @@ type ModelInfo struct {
 	Messages  int // number of messages sent to the model
 	Tools     int // number of tools offered to the model
 	// Model is the model name the turn was sent to, so an observer can
-	// price it without asking the service.
+	// attribute its tokens without asking the service.
 	Model string
 }
 
@@ -128,12 +128,10 @@ type ModelResult struct {
 	DurationMs int64
 	TokensUsed int
 	// CachedTokens is the prompt-cache hit portion of TokensUsed, when the
-	// provider reported one (0 otherwise). Cache hits are billed at a deep
-	// discount, so TokensUsed alone overstates what the turn cost.
+	// provider reported one (0 otherwise).
 	CachedTokens int
-	// PromptTokens and CompletionTokens are the two halves of TokensUsed,
-	// which is all a price list needs: input and output are billed at
-	// different rates, and the cached share of the input at a third.
+	// PromptTokens and CompletionTokens are the two halves of TokensUsed;
+	// a host that bills by token needs them apart.
 	PromptTokens     int
 	CompletionTokens int
 }
@@ -165,10 +163,10 @@ type SubAgentInfo struct {
 	SessionID  string
 	// Kind says what sort of sub-agent this is. Empty — the zero value every
 	// existing caller produces — means the in-process kind: another Runtime on
-	// this Service, whose spend already lands in the parent's own accounting.
+	// this Service, whose tokens already land in the parent's own accounting.
 	// "cli" means the work was handed to an agent CLI installed on the
-	// machine, which is a separate process billed to a separate account, and
-	// an observer adding up what a run cost must not fold the two together.
+	// machine, which is a separate process on a separate account, and an
+	// observer adding up what a run used must not fold the two together.
 	Kind string
 	// Provider names the thing that actually ran the work when Kind is not the
 	// in-process one — "claude", "codex", "gemini", "cursor-agent". It is
@@ -298,11 +296,7 @@ type SegmentInfo struct {
 	StopReason StopReason
 	Duration   time.Duration
 	Productive bool
-	CostUSD    float64
-	// Unpriced is true when some turn so far could not be priced, so CostUSD
-	// is a floor that reads 0 for an unlisted model. Show it as unknown.
-	Unpriced bool
-	Err      string
+	Err        string
 }
 
 // CheckpointInfo describes a terminal checkpoint snapshot.

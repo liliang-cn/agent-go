@@ -232,7 +232,6 @@ When all thirteen are done and the gate command passes, reply with the final out
 		fmt.Printf("  #%-2d %-14s %-7s%s\n", s.Index, status, s.Duration.Round(time.Second), w)
 	}
 	fmt.Printf("wall clock  : %s\n", time.Since(began).Round(time.Second))
-	fmt.Printf("cost        : $%.4f\n", res.TotalCostUSD)
 	if u := res.TotalUsage; u != nil {
 		fmt.Printf("tokens      : %d prompt (%d cached), %d completion\n",
 			u.PromptTokens, u.CachedPromptTokens, u.CompletionTokens)

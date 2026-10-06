@@ -24,7 +24,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
-	gate := budgetgate.New(0.05) // five cents for the whole process
+	gate := budgetgate.New(20000) // twenty thousand tokens for the whole process
 
 	svc, err := agent.New("budgeted").
 		WithPrompt("Answer in one sentence.").
@@ -40,13 +40,12 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		spent, unpriced := gate.Spent()
 		switch {
 		case result.Blocked:
 			fmt.Printf("run %d refused: %s\n", i, result.Text())
 		default:
 			fmt.Printf("run %d: %s\n", i, result.Text())
 		}
-		fmt.Printf("   spent $%.5f, unpriced turns %d\n", spent, unpriced)
+		fmt.Printf("   used %d tokens\n", gate.Used())
 	}
 }

@@ -49,8 +49,7 @@ func NewSQLiteTaskStore(db *sql.DB) (*SQLiteTaskStore, error) {
 			started_at DATETIME NOT NULL,
 			ended_at   DATETIME,
 			outcome    TEXT NOT NULL DEFAULT '',
-			summary    TEXT NOT NULL DEFAULT '',
-			cost_usd   REAL NOT NULL DEFAULT 0
+			summary    TEXT NOT NULL DEFAULT ''
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_task_runs_task ON task_runs(task_id, started_at)`,
 		`CREATE TABLE IF NOT EXISTS task_journal (
@@ -175,14 +174,14 @@ func (s *SQLiteTaskStore) BeginRun(ctx context.Context, run TaskRun) (string, er
 	return run.ID, nil
 }
 
-// EndRun closes an episode with its outcome, summary and cost.
-func (s *SQLiteTaskStore) EndRun(ctx context.Context, runID, outcome, summary string, costUSD float64) error {
+// EndRun closes an episode with its outcome and summary.
+func (s *SQLiteTaskStore) EndRun(ctx context.Context, runID, outcome, summary string) error {
 	if s == nil || s.db == nil {
 		return nil
 	}
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE task_runs SET ended_at = ?, outcome = ?, summary = ?, cost_usd = ? WHERE id = ?`,
-		time.Now().UTC(), outcome, summary, costUSD, runID)
+		`UPDATE task_runs SET ended_at = ?, outcome = ?, summary = ? WHERE id = ?`,
+		time.Now().UTC(), outcome, summary, runID)
 	if err != nil {
 		return fmt.Errorf("agent: end run %q: %w", runID, err)
 	}
@@ -201,7 +200,7 @@ func (s *SQLiteTaskStore) RecentRuns(ctx context.Context, taskID string, limit i
 		limit = taskResumeRuns
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, task_id, started_at, ended_at, outcome, summary, cost_usd
+		SELECT id, task_id, started_at, ended_at, outcome, summary
 		FROM task_runs WHERE task_id = ?
 		ORDER BY started_at DESC, id DESC LIMIT ?`, taskID, limit)
 	if err != nil {
@@ -215,7 +214,7 @@ func (s *SQLiteTaskStore) RecentRuns(ctx context.Context, taskID string, limit i
 			r     TaskRun
 			ended sql.NullTime
 		)
-		if err := rows.Scan(&r.ID, &r.TaskID, &r.StartedAt, &ended, &r.Outcome, &r.Summary, &r.CostUSD); err != nil {
+		if err := rows.Scan(&r.ID, &r.TaskID, &r.StartedAt, &ended, &r.Outcome, &r.Summary); err != nil {
 			return nil, fmt.Errorf("agent: recent runs %q: %w", taskID, err)
 		}
 		if ended.Valid {

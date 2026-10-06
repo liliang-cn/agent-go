@@ -51,9 +51,9 @@ func main() {
 	defer os.RemoveAll(workdir)
 
 	// Off by default, like the background tools and for the same reason: a
-	// delegated call is a whole agent run billed to somebody's subscription,
-	// and an agent that can start one without its author deciding so can spend
-	// money in a loop.
+	// delegated call is a whole agent run on somebody's subscription, and an
+	// agent that can start one without its author deciding so can start them
+	// in a loop.
 	if err := agent.RegisterCLIAgentTools(svc, agent.CLIAgentConfig{
 		AllowedRoots:   []string{workdir},
 		DefaultTimeout: 3 * time.Minute,
@@ -61,10 +61,10 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// An observer is how the delegated spend gets accounted separately: the
+	// An observer is how the delegated tokens get accounted separately: the
 	// sub-agent bracket fires with Kind "cli", and the end carries the other
 	// CLI's own token counts, which are not in this run's usage.
-	svc.RegisterObserver(&billing{})
+	svc.RegisterObserver(&delegated{})
 
 	res, err := svc.Run(context.Background(),
 		"Use cli_agent_list to see which agent CLIs are installed, then ask one of them "+
@@ -75,9 +75,9 @@ func main() {
 	fmt.Println("\n" + res.Text())
 }
 
-type billing struct{ agent.BaseObserver }
+type delegated struct{ agent.BaseObserver }
 
-func (billing) OnSubAgentEnd(_ context.Context, info agent.SubAgentInfo, result any, err error) {
+func (delegated) OnSubAgentEnd(_ context.Context, info agent.SubAgentInfo, result any, err error) {
 	if info.Kind != "cli" {
 		return
 	}
@@ -85,6 +85,6 @@ func (billing) OnSubAgentEnd(_ context.Context, info agent.SubAgentInfo, result 
 	if !ok {
 		return
 	}
-	fmt.Printf("\n[%s] %d in / %d out / %d cached, $%.4f, %dms, failed=%v err=%v\n",
-		info.Provider, out.Input, out.Output, out.Cache, out.CostUSD, out.Duration, out.Failed, err)
+	fmt.Printf("\n[%s] %d in / %d out / %d cached, %dms, failed=%v err=%v\n",
+		info.Provider, out.Input, out.Output, out.Cache, out.Duration, out.Failed, err)
 }

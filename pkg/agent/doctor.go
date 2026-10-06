@@ -505,13 +505,12 @@ func doctorCheckProvider(r *DoctorReport, prefix string, p pool.Provider) {
 		r.add(check, DoctorOK, base+" — "+doctorOr(p.ModelName, strings.Join(p.Models, ","))+", key set", "")
 	}
 	if prefix == "llm.provider" {
-		doctorCheckPricing(r, check, p)
 		doctorCheckWindow(r, check, p)
 	}
 }
 
 // doctorCheckWindow says whether the runtime knows this provider's models'
-// context windows. Like pricing, an unknown window is not an error: the run
+// context windows. An unknown window is not an error: the run
 // compacts at the fixed CompactionDefaultThresholdTokens. But that number is a
 // third of a 200k window and more than a 32k window holds, so a run on an
 // unknown model is compacting at a size chosen for some other model.
@@ -534,32 +533,6 @@ func doctorCheckWindow(r *DoctorReport, check string, p pool.Provider) {
 		"no context window for "+strings.Join(unknown, ", ")+
 			fmt.Sprintf("; compaction falls back to a fixed %d-token threshold", CompactionDefaultThresholdTokens),
 		"pool.RegisterModelWindow(\""+unknown[0]+"\", pool.ModelWindow{ContextTokens: …, MaxOutputTokens: …})")
-}
-
-// doctorCheckPricing says whether the runtime can put a price on this
-// provider's models. An unpriced model is not an error — the run works — but
-// every cost figure reads 0 and the two spending ceilings (MaxBudgetUSD,
-// MaxTotalCostUSD) never trigger, which on a multi-hour task is the one
-// safeguard the operator thought they had. Seen live: a gateway alias like
-// gemini-3.8-flash-high, 900k tokens, "$0".
-func doctorCheckPricing(r *DoctorReport, check string, p pool.Provider) {
-	models := p.Models
-	if m := strings.TrimSpace(p.ModelName); m != "" {
-		models = append([]string{m}, models...)
-	}
-	var unpriced []string
-	for _, m := range models {
-		if _, known := pool.LookupModelPricing(m); !known {
-			unpriced = append(unpriced, m)
-		}
-	}
-	if len(unpriced) == 0 {
-		r.add(check+".pricing", DoctorOK, "every model is priced", "")
-		return
-	}
-	r.add(check+".pricing", DoctorWarn,
-		"no pricing for "+strings.Join(unpriced, ", ")+"; cost reads 0 and MaxBudgetUSD / MaxTotalCostUSD never trigger",
-		"pool.RegisterModelPricing(\""+unpriced[0]+"\", pool.ModelPricing{InputPer1K: …, CachedInputPer1K: …, OutputPer1K: …})")
 }
 
 func doctorCheckMemory(r *DoctorReport, cfg *config.Config) {

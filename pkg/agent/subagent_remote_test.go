@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/agent"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 	"github.com/liliang-cn/agent-go/v3/pkg/extensiontest"
 )
 
@@ -40,7 +41,7 @@ func TestSubAgentBracketAnnouncesAHostsRemoteWorker(t *testing.T) {
 	fanOut := extensiontest.ToolModule("hive_command", "fan out", func(ctx context.Context, _ map[string]interface{}) (interface{}, error) {
 		end := svc.SubAgentBracket(ctx, agent.SubAgentInfo{Name: "worker-0", Goal: "count", Provider: "superai-hive"})
 		defer end(nil, errors.New("should not be seen: the explicit end came first"))
-		end(agent.RemoteAgentRunResult{Agent: "worker-0", CostUSD: 0.02, Duration: 1200}, nil)
+		end(agent.RemoteAgentRunResult{Agent: "worker-0", Usage: &domain.TokenUsage{PromptTokens: 20}, Duration: 1200}, nil)
 		return "done", nil
 	})
 	llm := extensiontest.Script(
@@ -69,7 +70,7 @@ func TestSubAgentBracketAnnouncesAHostsRemoteWorker(t *testing.T) {
 		t.Fatalf("session id not filled from the tool's context: %+v", info)
 	}
 	res, ok := rec.result.(agent.RemoteAgentRunResult)
-	if !ok || res.CostUSD != 0.02 || rec.err != nil {
+	if !ok || res.Usage == nil || res.Usage.PromptTokens != 20 || rec.err != nil {
 		t.Fatalf("end carried result=%#v err=%v", rec.result, rec.err)
 	}
 }

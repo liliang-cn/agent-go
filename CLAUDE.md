@@ -44,7 +44,7 @@ make clean          # removes .agentgo/data/*.db (local dev databases)
 make eval           # mock profile, deterministic, CI-safe
 make eval-verbose   # same with -v
 make eval-live      # AGENTGO_EVAL_LIVE=1 go test ./eval/runner -run TestLiveScenarios
-make eval-diff A=old.json B=new.json [MAX_COST_RISE=0.2]  # exit 1 when pass rate drops / cost per pass rises
+make eval-diff A=old.json B=new.json  # exit 1 when the pass rate drops
 ```
 
 ### Running tests
@@ -143,7 +143,18 @@ A second round of soaks, this time against **DeepSeek direct** rather than throu
 - **`DefaultRunConfig` shadowed the budget it was supposed to default.** `MaxTokens: 2000` sat three lines under `MaxTurns: 0` and its comment explaining why that one must be left unset. `r.maxTokens()` reads `cfg.MaxTokens` first, so raising `defaultRunMaxTokens` changed nothing a run could see. **Two defaults for one knob, the nearer one winning silently** — check for this shape whenever you add a resolver.
 - **The system prompt named the host's directory, not the sandbox.** `buildSystemContext` used `os.Getwd()` unconditionally. With a sandbox configured, file tools are jailed under its workspace and bash runs there — so the first line of context named a directory the agent's own tools could not reach. A model does what it is told: given `Dir: /somewhere/else`, the agent opens round one with `cd /somewhere/else` and works there, the jail bypassed by a shell builtin. Observed directly — a soak launched from this checkout created its project *inside this checkout*. `cd` still leaves a `LocalSandbox`, which never claimed to isolate; the bug was telling the model to.
 
-And one about money, which is a stop condition here and not just a readout: **`CalculateCost` returned 0 for any model missing from its table.** Silently. `LongRunConfig.MaxTotalCostUSD` is built on that number, so an unlisted model removed the only spending ceiling a multi-hour run has. `pool.RegisterModelPricing` now lets an operator state their own rates (the bundled table they once overrode is gone: it went stale, pricing gpt-4 and claude-3 and nothing anyone ran), `CalculateCostDetailed` prices the cache split, and "nothing could price this model" is a `known bool` the caller reads instead of a zero it cannot tell from free. The runtime warns once per run when it hits one.
+### Tokens, not money
+
+The framework reports token usage and nothing else: `ExecutionResult.Usage`,
+`LongRunResult.TotalUsage`, `RunStatus.Usage`, `ModelResult` on every observer
+callback, `Wake.Usage`, the OTel token counters. It has no price table, no
+cost figure and no money ceiling. Pricing went stale every time it was
+written down, an unknown model read as `$0`, and a ceiling built on that
+number silently did nothing — so it was removed rather than fixed. A host that
+wants money multiplies the token split (prompt, cached, completion) by its own
+rates. The ceilings the framework enforces are rounds (`WithMaxTurns`,
+`RoundsPerSegment`), segments, wall time and wakes per day. Do not add a
+pricing table back.
 
 **When you add a retry, add its observer callback in the same commit.** Both re-asks inside a model turn — transient provider error, and budget escalation — happen inside one span, so a turn that took three attempts looked identical to one that took one. `Observer.OnModelRetry` closes that, the way `OnLint` closed the lint layer. A unit test on the escalation function alone stays green whether or not the runtime ever calls it; the loop-level test is what caught the shadowed default above.
 
@@ -169,14 +180,6 @@ scenario, so run one before believing a release is fine.
   with another task's finished plan and "carry on from the first unchecked
   step". An unnamed plan is now keyed `default:<task_id>` on every path
   (`taskScopedPlanKey`); the bare list serves only a run with no task at all.
-- **"$0" is not a price.** Only registered models are priced; a gateway alias
-  like `gemini-3.8-flash-high` that nobody registered is unpriced, so
-  cost read 0 for 1.4M tokens and `MaxTotalCostUSD` could never fire. The
-  state is now visible instead of silent: `Event.CostUnpriced`,
-  `ExecutionResult.CostUnpriced`, `SegmentInfo.Unpriced`,
-  `LongRunResult.CostUnpriced`, and a Doctor check `llm.provider.<name>.pricing`
-  that warns with the `RegisterModelPricing` call to make. A host should show
-  "unpriced", not `$0.00`.
 
 Two things it confirmed rather than broke: the prompt cache held at ~80% hit
 rate across 30 rounds on the gateway, and the trace, checkpoint and segment
@@ -266,7 +269,7 @@ Three things this found on its way in:
   false until the loop publishes, so a host shows "starting" rather than
   "round 0 of 0". A bare stage announcement amends the previous reading
   instead of replacing it, or `completed` would blank out the round and the
-  spend on the way out.
+  token totals on the way out.
 
 `RunStatus.Goal` is the user's own prompt. A host serving more than one person
 must decide who may read a snapshot before exposing one.
@@ -283,7 +286,7 @@ before the run starts now (a fresh UUID cannot hit the collision case that makes
 Two things follow from "a background task is a run", and both bite:
 
 - **It is in the run registry too.** It occupies a concurrency slot, counts
-  against `Capacity`, and spends money, so that is the honest accounting — but
+  against `Capacity`, and spends tokens, so that is the honest accounting — but
   a host drawing "runs" and "background tasks" as two lists double-counts it.
   `ActiveRun.BackgroundTaskID` names the task, so the split needs no
   cross-reference. It also means background tasks pass through `admitLocked`:
@@ -412,7 +415,7 @@ a product and an incident.
 `WithTenant(id)` attaches an opaque owner label. The rules that keep it honest:
 
 - **Nothing in the loop may read it.** It exists for exactly three things:
-  admission control, bulk cancellation, and attributing spend. A tenant string
+  admission control, bulk cancellation, and attributing usage. A tenant string
   that changes what an agent does is configuration by string matching — the
   same disease `constraints.go` removed.
 - **It is not an identity.** Identity is still the session UUID (memory scopes
@@ -527,7 +530,7 @@ Three decisions worth not relitigating:
   extension applies to it unchanged. It inherits the caller's tenant, so
   `CancelTenant` reaches it.
 - **The tools are opt-in.** A background task is a whole run with its own round
-  budget and its own spend; an agent that can start them without its author
+  budget and its own tokens; an agent that can start them without its author
   deciding so can spend money in a loop. `max` bounds concurrency and is a
   memory ceiling too — each task holds a full conversation.
 
@@ -583,7 +586,7 @@ Five things that are not guesses:
 
 `SubAgentInfo` grew two additive fields for this: `Kind` (empty for the
 in-process kind, `"cli"` here) and `Provider`. `OnSubAgentEnd` carries a
-`CLIAgentRunResult`, so an observer adding up what a run cost does not fold a
+`CLIAgentRunResult`, so an observer adding up what a run used does not fold a
 separate subscription's tokens into this one's.
 
 ### A host's own workers, over a network
@@ -596,12 +599,10 @@ the hive found three places they were.
 - **`Service.SubAgentBracket(ctx, info)`** announces a sub-agent the host runs
   itself, `Kind: "remote"`, and returns the end function; it fills run, session
   and task from the tool's ctx and ends once. `RemoteAgentRunResult` is the
-  result shape, `CLIAgentRunResult`'s twin: usage, cost and `CostUnpriced`
-  as the remote side reported them. Without it a fan-out was one opaque tool
-  call in every trace, and the run's cost — so `MaxBudgetUSD` and a long run's
-  `MaxTotalCostUSD` — read the workers as free: "$0 is not a price", one
-  level up. A host still sums the remote spend itself; the runtime does not
-  fold another process's bill into this run's.
+  result shape, `CLIAgentRunResult`'s twin: usage as the remote side reported
+  it. Without it a fan-out was one opaque tool call in every trace. A host
+  still sums the remote usage itself; the runtime does not fold another
+  process's tokens into this run's.
 - **`ToolMetadata.OutputLimit`** is a tool's own cap (negative: none). The
   uniform 32 KB cap cuts the *middle* of a result and tells the model to call
   again asking for less; for a fan-out result — 40 workers × 2 KB, one report
@@ -655,11 +656,11 @@ warrants telling the person, what must never happen — and it is **not a
 second engine**: every wake is `svc.Run` with options, a fresh session over
 one task id, exactly as `RunSegments` does. What `Standing` owns is the clock
 (four reasons to wake: `standing_wake_me`, `Every`, a delivered event, an idle
-scan), the agent's own notes between wakes, and the two ceilings — wakes per
-day and cost per day — without which an agent that never finishes spends
-without end. Past a ceiling it pauses itself until tomorrow and the host is
-told (`Notification{Kind: "paused"}`); an unpriced wake counts toward wakes
-and not cost, and `UnpricedToday` says so.
+scan), the agent's own notes between wakes, and the ceilings — wakes per day
+and rounds per wake — without which an agent that never finishes runs without
+end. Past the daily wake ceiling it pauses itself until tomorrow and the host
+is told (`Notification{Kind: "paused"}`). Each `Wake` carries its token
+`Usage`, for a host that keeps its own ledger.
 
 Decisions worth not relitigating:
 

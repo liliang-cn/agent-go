@@ -1,14 +1,13 @@
 // Package main is a cross-check harness for the OpenTelemetry bridge in
 // pkg/otelobserver. It runs a real agent against a real provider, captures
 // every span and every metric the bridge produced, and prints them next to
-// the run's own ExecutionResult.Usage / EstimatedCostUSD.
+// the run's own ExecutionResult.Usage.
 //
 // The point is the comparison. A unit test can assert that the bridge adds up
 // what it was handed; only a live run can say whether what it was handed adds
-// up to what the run actually spent. The questions it answers:
+// up to what the run actually used. The questions it answers:
 //
 //   - do agentgo.tokens.{prompt,completion,cached} sum to the run's Usage,
-//   - does agentgo.cost.usd equal the run's EstimatedCostUSD,
 //   - does the duration histogram count every model turn and tool call,
 //   - does every span event land under the span it belongs to,
 //   - does any metric carry a task / session / run id (it must not).
@@ -47,7 +46,6 @@ import (
 	"github.com/liliang-cn/agent-go/v3/pkg/agent"
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 	"github.com/liliang-cn/agent-go/v3/pkg/otelobserver"
-	"github.com/liliang-cn/agent-go/v3/pkg/pool"
 	"github.com/liliang-cn/agent-go/v3/pkg/providers"
 )
 
@@ -60,7 +58,6 @@ func main() {
 		doSegments   = flag.Bool("segments", true, "run the RunSegments probe")
 		roundsPer    = flag.Int("rounds-per-segment", 2, "RoundsPerSegment for the segmented probe")
 		maxSegments  = flag.Int("max-segments", 2, "MaxSegments for the segmented probe")
-		price        = flag.Bool("price", true, "register a pricing entry for the model, so the priced path is covered")
 		identity     = flag.Bool("model-identity", true, "wrap the provider so Service.Info().Model reports the model name (see namedGenerator)")
 		timeout      = flag.Duration("timeout", 8*time.Minute, "overall deadline")
 	)
@@ -70,18 +67,6 @@ func main() {
 	apiKey := os.Getenv("CPA_PROD_KEY")
 	if baseURL == "" || apiKey == "" {
 		log.Fatal("CPA_PROD_URL / CPA_PROD_KEY must be set; source ~/.config/llm/endpoints.env first")
-	}
-
-	// Pricing is a deliberate knob. With -price=false the model is unknown to
-	// pool, which is the case agentgo.model.unpriced_turns exists for; the
-	// probe then shows the cost counter staying absent rather than reporting
-	// a confident zero.
-	if *price {
-		pool.RegisterModelPricing(*model, pool.ModelPricing{
-			InputPer1K:       0.0003,
-			CachedInputPer1K: 0.000075,
-			OutputPer1K:      0.0025,
-		})
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
@@ -156,7 +141,7 @@ func main() {
 	defer svc.Close()
 	registerProbeTools(svc)
 
-	fmt.Printf("model=%s base=%s priced=%v\n", *model, redactHost(baseURL), *price)
+	fmt.Printf("model=%s base=%s\n", *model, redactHost(baseURL))
 
 	if *doRun {
 		before := snapshot(ctx, reader)
@@ -231,10 +216,9 @@ func main() {
 // It exists because of a measured gap, not for tidiness. Builder.WithLLM asks
 // the generator for GetModelName/GetBaseURL, and providers.OpenAILLMProvider
 // implements neither — so a service built this way reports Info().Model == "",
-// which is the model name the runtime prices every turn with and the one the
-// bridge puts on every metric. Without the wrapper the first probe run
-// produced `agentgo.model=""`, two unpriced turns, and EstimatedCostUSD 0.00
-// on a run that spent real money. Run with -model-identity=false to see it.
+// which is the model name the bridge puts on every metric. Without the wrapper
+// the first probe run produced `agentgo.model=""`. Run with
+// -model-identity=false to see it.
 type namedGenerator struct {
 	domain.Generator
 	model   string
@@ -309,7 +293,6 @@ func reportRun(res *agent.ExecutionResult) {
 	}
 	fmt.Printf("success=%v stop_reason=%s tool_calls=%d tools=%v\n",
 		res.Success, res.StopReason, res.ToolCalls, res.ToolsUsed)
-	fmt.Printf("ExecutionResult.EstimatedCostUSD = %.8f\n", res.EstimatedCostUSD)
 	if res.Usage == nil {
 		fmt.Println("ExecutionResult.Usage            = nil (no round reported provider usage)")
 		return
@@ -330,7 +313,6 @@ func reportLongRun(lr *agent.LongRunResult) {
 		fmt.Printf("  segment %d stop=%s productive=%v rounds=%d err=%q\n",
 			s.Index, s.StopReason, s.Productive, s.Rounds, s.Error)
 	}
-	fmt.Printf("LongRunResult.TotalCostUSD = %.8f\n", lr.TotalCostUSD)
 	if lr.TotalUsage == nil {
 		fmt.Println("LongRunResult.TotalUsage   = nil")
 		return
@@ -412,7 +394,6 @@ func crossCheckRun(res *agent.ExecutionResult, before, after metricSnapshot) {
 	} else {
 		fmt.Println("  SKIP  token comparison: run reported no provider usage")
 	}
-	checkFloat("cost.usd", after.delta(before, "agentgo.cost.usd"), res.EstimatedCostUSD)
 	checkInt("tool.duration count vs model.calls",
 		after.delta(before, "agentgo.tool.duration.count"),
 		after.delta(before, "agentgo.tool.calls"))
@@ -433,7 +414,6 @@ func crossCheckLongRun(lr *agent.LongRunResult, before, after metricSnapshot) {
 	} else {
 		fmt.Println("  SKIP  token comparison: no segment reported provider usage")
 	}
-	checkFloat("cost.usd", after.delta(before, "agentgo.cost.usd"), lr.TotalCostUSD)
 	checkInt("model.duration count vs model.calls",
 		after.delta(before, "agentgo.model.duration.count"),
 		after.delta(before, "agentgo.model.calls"))
@@ -445,20 +425,6 @@ func checkInt(label string, got, want float64) {
 		verdict = "FAIL"
 	}
 	fmt.Printf("  %s  %-38s metric=%.0f result=%.0f\n", verdict, label, got, want)
-}
-
-func checkFloat(label string, got, want float64) {
-	verdict := "OK  "
-	diff := got - want
-	if diff < 0 {
-		diff = -diff
-	}
-	// Both sides are the same float additions in the same order, so anything
-	// beyond rounding noise is a real disagreement.
-	if diff > 1e-9 {
-		verdict = "FAIL"
-	}
-	fmt.Printf("  %s  %-38s metric=%.8f result=%.8f diff=%.10f\n", verdict, label, got, want, got-want)
 }
 
 // printMetricsFull dumps every metric with every attribute set.

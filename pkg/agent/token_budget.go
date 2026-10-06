@@ -22,7 +22,6 @@ import (
 	"strings"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
-	"github.com/liliang-cn/agent-go/v3/pkg/log"
 )
 
 const (
@@ -112,22 +111,4 @@ func (r *Runtime) emitModelRetryObserved(info ModelRetryInfo) {
 	info.AgentName = r.currentAgentName()
 	ctx := context.Background()
 	r.svc.emitObserver(func(o Observer) { o.OnModelRetry(ctx, info) })
-}
-
-// warnUnpricedModel says so, once per run, when nothing could price the model
-// in use.
-//
-// The silence was the bug. An unknown model priced at zero, and every cost
-// readout — the run's total, and LongRunConfig.MaxTotalCostUSD, which is a
-// stop condition — read a confident $0.00 for a run that was spending money.
-// A ceiling that cannot see the spend is not a ceiling, and its operator had
-// no way to learn that from the outside.
-func (r *Runtime) warnUnpricedModel(model string) {
-	if r == nil || r.warnedUnpriced {
-		return
-	}
-	r.warnedUnpriced = true
-	log.Warn("no pricing for model; cost totals and MaxTotalCostUSD are inert for this run",
-		"module", "agent.runtime", "model", model,
-		"fix", "pool.RegisterModelPricing(\""+model+"\", pool.ModelPricing{...})")
 }

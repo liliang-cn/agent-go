@@ -22,11 +22,6 @@ const (
 	// the model could finish. Use a higher MaxTurns or resume the task.
 	StopReasonMaxTurns StopReason = "max_turns"
 
-	// StopReasonMaxBudgetUSD means the cumulative estimated cost
-	// (input + output tokens × model pricing) crossed
-	// RunConfig.MaxBudgetUSD. Raise the budget or resume.
-	StopReasonMaxBudgetUSD StopReason = "max_budget_usd"
-
 	// StopReasonRefusal means the model declined the request — either
 	// the provider surfaced finish_reason="refusal" / "content_filter"
 	// or the final text matches a refusal phrase heuristic. Distinct

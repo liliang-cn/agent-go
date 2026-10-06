@@ -36,7 +36,8 @@ the build.
 **Observer** callbacks are informational. They carry stable span and call ids
 so start/end pairs can be matched. `ModelInfo.Model` names the model and
 `ModelResult` carries the prompt/completion/cached token split, so an observer
-can price a turn with `pool.CalculateCostDetailed` without asking the service.
+can account for a turn — or put the host's own price on it — without asking the
+service.
 
 **OutputLint.Check** returns `(ok, reason)`. A `false` appends the reason as
 feedback and asks the model again. The lint budget is small (two retries);
@@ -248,5 +249,5 @@ that speaks it keeps working until a version 2 says otherwise.
 ## A complete third-party example
 
 `examples/extensions-thirdparty` is a separate module with its own `go.mod`: a
-budget gate that refuses runs once a service has spent its ceiling, a test
+token budget gate that refuses runs once a service has used its ceiling, a test
 through `extensiontest`, and a `main.go` that installs it. Start from there.

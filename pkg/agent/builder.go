@@ -964,9 +964,8 @@ func resolveServiceModelInfo(llmSvc domain.Generator, cfg *config.Config) (strin
 	}
 	// A provider that only knows its model for usage accounting still knows
 	// it. providers.OpenAILLMProvider is one: injected through WithLLM it
-	// used to leave Info().Model empty, every turn unpriced, and the cost
-	// ceilings — MaxBudgetUSD, MaxTotalCostUSD — silently inert, with no name
-	// an operator could even register a price against.
+	// used to leave Info().Model empty, so no context window could be
+	// resolved and every observer saw an unnamed model.
 	if modelName == "" {
 		if usage, ok := llmSvc.(interface{ UsageModel() string }); ok {
 			modelName = strings.TrimSpace(usage.UsageModel())

@@ -3,10 +3,10 @@
 // repository, not library API:
 //
 //	make eval-diff A=eval/results/old.json B=eval/results/new.json
-//	go run ./eval/diff -a old.json -b new.json -max-cost-rise 0.2
+//	go run ./eval/diff -a old.json -b new.json
 //
-// Exit status: 0 no gate tripped, 1 a gate tripped (pass rate dropped, or cost
-// per pass rose beyond -max-cost-rise), 2 bad arguments or unreadable input.
+// Exit status: 0 no gate tripped, 1 the pass rate dropped, 2 bad arguments or
+// unreadable input.
 package main
 
 import (
@@ -25,12 +25,11 @@ func run(args []string) int {
 	fs := flag.NewFlagSet("eval-diff", flag.ContinueOnError)
 	a := fs.String("a", "", "old results JSON (baseline)")
 	b := fs.String("b", "", "new results JSON")
-	maxRise := fs.Float64("max-cost-rise", -1, "fail when cost per pass rises by more than this fraction (0.2 = 20%); negative disables")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if *a == "" || *b == "" {
-		fmt.Fprintln(os.Stderr, "usage: eval-diff -a <old.json> -b <new.json> [-max-cost-rise 0.2]")
+		fmt.Fprintln(os.Stderr, "usage: eval-diff -a <old.json> -b <new.json>")
 		return 2
 	}
 	oldFile, err := runner.LoadResultsFile(*a)
@@ -44,7 +43,7 @@ func run(args []string) int {
 		return 2
 	}
 	fmt.Printf("A: %s (%s)\nB: %s (%s)\n\n", *a, oldFile.Timestamp, *b, newFile.Timestamp)
-	report := runner.Diff(oldFile, newFile, runner.DiffOptions{MaxCostPerPassRise: *maxRise})
+	report := runner.Diff(oldFile, newFile)
 	fmt.Print(runner.FormatDiff(report))
 	if report.Failed() {
 		return 1

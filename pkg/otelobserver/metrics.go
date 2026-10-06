@@ -8,17 +8,16 @@ import (
 	"go.opentelemetry.io/otel/metric"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/agent"
-	"github.com/liliang-cn/agent-go/v3/pkg/pool"
 )
 
 // Metrics are the half of observability a trace cannot give you. A trace
 // answers "what did this run do"; a counter answers "how much are we doing,
-// and what is it costing" across every run in the process. The two share the
+// and how many tokens is it using" across every run in the process. The two share the
 // same callbacks, so wiring a MeterProvider is the only extra step.
 //
 // The attribute rule is the one that decides whether these are usable at all:
-// agent and model, never a task or session id. A metric's cost is the product
-// of its label cardinalities, and a per-run label turns one time series into
+// agent and model, never a task or session id. A metric's storage is the
+// product of its label cardinalities, and a per-run label turns one time series into
 // one per run — which is a trace, badly, at a hundred times the storage.
 
 // Metric attribute keys. Every one of these is drawn from a small, bounded set
@@ -60,9 +59,6 @@ type instruments struct {
 	completionTokens metric.Int64Counter
 	cachedTokens     metric.Int64Counter
 
-	costUSD       metric.Float64Counter
-	unpricedTurns metric.Int64Counter
-
 	// Process gauges. These are observable: the meter pulls them on its own
 	// collection interval rather than waiting for a callback, so a process
 	// that is leaking between runs — the interesting case, since a run's own
@@ -101,20 +97,14 @@ func newInstruments(mp metric.MeterProvider) *instruments {
 		metric.WithDescription("Errors the runtime reported, by kind."))
 
 	i.promptTokens, _ = m.Int64Counter("agentgo.tokens.prompt",
-		metric.WithDescription("Prompt tokens billed, cache hits included."),
+		metric.WithDescription("Prompt tokens, cache hits included."),
 		metric.WithUnit("{token}"))
 	i.completionTokens, _ = m.Int64Counter("agentgo.tokens.completion",
-		metric.WithDescription("Completion tokens billed."),
+		metric.WithDescription("Completion tokens."),
 		metric.WithUnit("{token}"))
 	i.cachedTokens, _ = m.Int64Counter("agentgo.tokens.cached",
 		metric.WithDescription("The cache-hit share of the prompt tokens."),
 		metric.WithUnit("{token}"))
-
-	i.costUSD, _ = m.Float64Counter("agentgo.cost.usd",
-		metric.WithDescription("Estimated spend, priced per turn from the cache split."),
-		metric.WithUnit("{USD}"))
-	i.unpricedTurns, _ = m.Int64Counter("agentgo.model.unpriced_turns",
-		metric.WithDescription("Turns nothing could price, which agentgo.cost.usd therefore omits."))
 
 	i.registerProcessGauges(m)
 
@@ -174,13 +164,7 @@ func (i *instruments) registerProcessGauges(m metric.Meter) {
 	}
 }
 
-// recordModelEnd counts a finished turn, its duration, its tokens and — when
-// the model's rates are known — its cost.
-//
-// A turn whose model nothing can price is counted separately rather than
-// priced at zero. That distinction is the whole reason CalculateCostDetailed
-// reports `known`: a silent 0 is indistinguishable from free, and a cost
-// counter that quietly under-reports is worse than one that admits a gap.
+// recordModelEnd counts a finished turn, its duration and its tokens.
 //
 // elapsed is the bridge's own measurement of the turn, from OnModelStart to
 // OnModelEnd. It is the fallback for the case the runtime reports no result at
@@ -211,13 +195,6 @@ func (o *Observer) recordModelEnd(ctx context.Context, info agent.ModelInfo, res
 	addInt(ctx, m.promptTokens, int64(res.PromptTokens), base...)
 	addInt(ctx, m.completionTokens, int64(res.CompletionTokens), base...)
 	addInt(ctx, m.cachedTokens, int64(res.CachedTokens), base...)
-
-	cost, known := pool.CalculateCostDetailed(info.Model, res.PromptTokens, res.CachedTokens, res.CompletionTokens)
-	if known {
-		addFloat(ctx, m.costUSD, cost, base...)
-		return
-	}
-	addInt(ctx, m.unpricedTurns, 1, base...)
 }
 
 // recordToolEnd counts a finished tool call and how long it took.
@@ -305,13 +282,6 @@ func safeCtx(ctx context.Context) context.Context {
 }
 
 func addInt(ctx context.Context, c metric.Int64Counter, v int64, attrs ...attribute.KeyValue) {
-	if c == nil || v < 0 {
-		return
-	}
-	c.Add(ctx, v, metric.WithAttributes(attrs...))
-}
-
-func addFloat(ctx context.Context, c metric.Float64Counter, v float64, attrs ...attribute.KeyValue) {
 	if c == nil || v < 0 {
 		return
 	}

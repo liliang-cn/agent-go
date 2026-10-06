@@ -88,7 +88,7 @@ func TestTaskStoreRunsNewestFirstWithOpenRun(t *testing.T) {
 	if err != nil || r1 == "" {
 		t.Fatalf("begin run: %v / id=%q", err, r1)
 	}
-	if err := ts.EndRun(ctx, r1, TaskRunOutcomeFailed, "first attempt hit the wall", 0.12); err != nil {
+	if err := ts.EndRun(ctx, r1, TaskRunOutcomeFailed, "first attempt hit the wall"); err != nil {
 		t.Fatal(err)
 	}
 	r2, err := ts.BeginRun(ctx, TaskRun{TaskID: "t1"})
@@ -106,11 +106,11 @@ func TestTaskStoreRunsNewestFirstWithOpenRun(t *testing.T) {
 	if runs[0].ID != r2 || !runs[0].EndedAt.IsZero() {
 		t.Fatalf("newest first should be the open run: %+v", runs[0])
 	}
-	if runs[1].Outcome != TaskRunOutcomeFailed || runs[1].Summary == "" || runs[1].CostUSD != 0.12 {
+	if runs[1].Outcome != TaskRunOutcomeFailed || runs[1].Summary == "" {
 		t.Fatalf("closed run lost its ending: %+v", runs[1])
 	}
 
-	if err := ts.EndRun(ctx, "no-such-run", TaskRunOutcomeSuccess, "", 0); err == nil {
+	if err := ts.EndRun(ctx, "no-such-run", TaskRunOutcomeSuccess, ""); err == nil {
 		t.Fatal("ending an unknown run should be an error")
 	}
 }
@@ -197,7 +197,7 @@ func TestTaskResumeContextRendersOnlyWhenThereIsSomethingToHandOver(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ts.EndRun(ctx, rid, TaskRunOutcomeBlocked, "auth done; blocked on the rate limiter design", 0); err != nil {
+	if err := ts.EndRun(ctx, rid, TaskRunOutcomeBlocked, "auth done; blocked on the rate limiter design"); err != nil {
 		t.Fatal(err)
 	}
 	if err := ts.SaveResumeBrief(ctx, "t1", "auth + routes done; next: rate limiter, then load test"); err != nil {
@@ -217,5 +217,43 @@ func TestTaskResumeContextRendersOnlyWhenThereIsSomethingToHandOver(t *testing.T
 		if !strings.Contains(got, want) {
 			t.Fatalf("resume context missing %q:\n%s", want, got)
 		}
+	}
+}
+
+// A database written before the task store stopped recording money still has
+// a cost column on task_runs. The store must open it and use it as is: the
+// column is NOT NULL with a default, so a run that never names it still ends.
+func TestTaskStoreOpensATableWithTheOldCostColumn(t *testing.T) {
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "old.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE task_runs (
+		id         TEXT PRIMARY KEY,
+		task_id    TEXT NOT NULL,
+		started_at DATETIME NOT NULL,
+		ended_at   DATETIME,
+		outcome    TEXT NOT NULL DEFAULT '',
+		summary    TEXT NOT NULL DEFAULT '',
+		cost_usd   REAL NOT NULL DEFAULT 0
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	ts, err := NewSQLiteTaskStore(db)
+	if err != nil {
+		t.Fatalf("open over an old schema: %v", err)
+	}
+	ctx := context.Background()
+	rid, err := ts.BeginRun(ctx, TaskRun{TaskID: "t1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ts.EndRun(ctx, rid, TaskRunOutcomeSuccess, "done"); err != nil {
+		t.Fatal(err)
+	}
+	runs, err := ts.RecentRuns(ctx, "t1", 5)
+	if err != nil || len(runs) != 1 || runs[0].Summary != "done" {
+		t.Fatalf("runs = %+v, err = %v", runs, err)
 	}
 }

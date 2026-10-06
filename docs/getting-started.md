@@ -41,9 +41,9 @@ fallbacks. Without `WithLLM`, providers come from `agentgo.db` in the home.
 Reasoning models (deepseek-v4-flash, qwen with thinking) spend part of every
 token budget on reasoning you never see. The framework raises a budget that ran
 out before any text was written — for turns and for structured calls — so you
-should not need to size one yourself. Nothing is priced until you say
-what it costs: call `pool.RegisterModelPricing` for the models you run, or cost
-reads as *unpriced* (not `$0`) and `MaxTotalCostUSD` has nothing to stop on.
+should not need to size one yourself. The framework reports tokens
+(`ExecutionResult.Usage`, `LongRunResult.TotalUsage`), never money: if you want
+a cost figure, multiply those by your provider's rates.
 
 ## 3. Web search a provider has built in
 
@@ -124,7 +124,7 @@ resumes a flat checklist.
   model turn, tool call and checkpoint.
 - `svc.StatusSnapshot()`: what every run in flight is doing, without being its
   caller.
-- `agent.Doctor(ctx, ...)`: providers configured, pricing known, store
+- `agent.Doctor(ctx, ...)`: providers configured, context windows known, store
   writable.
 
 Logs you will see and can ignore: "constraint extraction timed out" means the

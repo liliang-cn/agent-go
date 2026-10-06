@@ -146,13 +146,12 @@ type traceLine struct {
 	StructureKept *bool `json:"structure_kept,omitempty"`
 
 	// Checkpoints and segments.
-	CheckpointReason string  `json:"checkpoint_reason,omitempty"`
-	SegmentIndex     *int    `json:"segment_index,omitempty"`
-	SegmentTotal     int     `json:"segment_total,omitempty"`
-	StopReason       string  `json:"stop_reason,omitempty"`
-	Productive       *bool   `json:"productive,omitempty"`
-	CostUSD          float64 `json:"cost_usd,omitempty"`
-	Delta            string  `json:"delta,omitempty"`
+	CheckpointReason string `json:"checkpoint_reason,omitempty"`
+	SegmentIndex     *int   `json:"segment_index,omitempty"`
+	SegmentTotal     int    `json:"segment_total,omitempty"`
+	StopReason       string `json:"stop_reason,omitempty"`
+	Productive       *bool  `json:"productive,omitempty"`
+	Delta            string `json:"delta,omitempty"`
 
 	// Process resources, one line per round. A long task's trace is where
 	// its memory curve lives — nothing else records it, and by the time a
@@ -175,8 +174,8 @@ type traceResources struct {
 }
 
 // traceTokens is the token split for one model turn. Cached is broken out
-// because it is billed at a fraction of the rest, so Total alone overstates
-// what the turn cost — the same reason ActivityLog prints it.
+// because it is the number that says whether the prompt cache is working —
+// the same reason ActivityLog prints it.
 type traceTokens struct {
 	Total      int `json:"total"`
 	Prompt     int `json:"prompt,omitempty"`
@@ -515,7 +514,6 @@ func (t *TraceWriter) OnSegment(_ context.Context, info SegmentInfo) {
 		line.StopReason = string(info.StopReason)
 		line.DurationMs = info.Duration.Milliseconds()
 		line.Productive = &productive
-		line.CostUSD = info.CostUSD
 		line.Error = t.clip(info.Err)
 	}
 	t.write(line, time.Now())

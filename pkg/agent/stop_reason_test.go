@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -57,95 +56,6 @@ func TestLooksLikeRefusalText(t *testing.T) {
 		if looksLikeRefusalText(s) {
 			t.Errorf("did not expect refusal for: %q", s)
 		}
-	}
-}
-
-// budgetCapLLM is a Generator stub that returns generic content and
-// claims a configurable token estimate. The runtime's per-round token
-// counter does its own estimation against the model name so we use a
-// model with a known per-1k price (gpt-4) and make the content long
-// enough to push the cost above the cap quickly.
-type budgetCapLLM struct {
-	calls int32
-}
-
-func (l *budgetCapLLM) Generate(ctx context.Context, _ string, _ *domain.GenerationOptions) (string, error) {
-	return "", nil
-}
-func (l *budgetCapLLM) Stream(ctx context.Context, _ string, _ *domain.GenerationOptions, _ func(string)) error {
-	return nil
-}
-func (l *budgetCapLLM) GenerateWithTools(ctx context.Context, _ []domain.Message, _ []domain.ToolDefinition, _ *domain.GenerationOptions) (*domain.GenerationResult, error) {
-	atomic.AddInt32(&l.calls, 1)
-	return &domain.GenerationResult{
-		Content: strings.Repeat("response content. ", 800),
-	}, nil
-}
-func (l *budgetCapLLM) StreamWithTools(ctx context.Context, _ []domain.Message, _ []domain.ToolDefinition, _ *domain.GenerationOptions, cb domain.ToolCallCallback) error {
-	atomic.AddInt32(&l.calls, 1)
-	return cb(&domain.GenerationResult{
-		Content: strings.Repeat("response content. ", 800),
-	})
-}
-func (l *budgetCapLLM) GenerateStructured(ctx context.Context, _ string, _ interface{}, _ *domain.GenerationOptions) (*domain.StructuredResult, error) {
-	return &domain.StructuredResult{Valid: true, Raw: "{}"}, nil
-}
-func (l *budgetCapLLM) RecognizeIntent(ctx context.Context, _ string) (*domain.IntentResult, error) {
-	return nil, nil
-}
-
-// TestRuntime_MaxBudgetUSD_BlocksRun exercises the cap end-to-end. A
-// $0.0001 budget is below the cost of a single round on gpt-4 pricing,
-// so the runtime should block immediately after round 1 with
-// StopReasonMaxBudgetUSD.
-func TestRuntime_MaxBudgetUSD_BlocksRun(t *testing.T) {
-	svc, err := New("budget-cap-test").
-		WithConfig(testAgentConfig(t.TempDir())).
-		WithLLM(&budgetCapLLM{}).
-		Build()
-	if err != nil {
-		t.Fatalf("build: %v", err)
-	}
-	defer svc.Close()
-	// A priced model, so CalculateCost returns a non-zero number for this
-	// synthetic LLM.
-	svc.modelName = "priced-test-model"
-	priceModel(t, svc.modelName, 0.03, 0.06)
-
-	events, err := svc.RunStreamWithOptions(context.Background(),
-		"Say something verbose.",
-		WithMaxBudgetUSD(0.0001),
-	)
-	if err != nil {
-		t.Fatalf("RunStreamWithOptions: %v", err)
-	}
-
-	var sawBlocked bool
-	var stopReason StopReason
-	var blockedContent string
-	var cost float64
-	for evt := range events {
-		switch evt.Type {
-		case EventTypeBlocked:
-			sawBlocked = true
-			stopReason = evt.StopReason
-			blockedContent = evt.Content
-			cost = evt.EstimatedCostUSD
-		case EventTypeComplete:
-			t.Fatalf("expected blocked run, got complete: %s", evt.Content)
-		}
-	}
-	if !sawBlocked {
-		t.Fatal("expected a workflow_blocked event")
-	}
-	if stopReason != StopReasonMaxBudgetUSD {
-		t.Fatalf("stop_reason = %q, want %q", stopReason, StopReasonMaxBudgetUSD)
-	}
-	if !strings.Contains(blockedContent, "MaxBudgetUSD") {
-		t.Errorf("block content should mention MaxBudgetUSD, got: %s", blockedContent)
-	}
-	if cost <= 0 {
-		t.Errorf("expected non-zero estimated cost on the event, got %f", cost)
 	}
 }
 

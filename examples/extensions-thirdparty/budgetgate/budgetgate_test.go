@@ -12,8 +12,8 @@ import (
 // The whole point of extensiontest: this is a real run through the real
 // loop, with no model behind it, and the gate is exercised at the seam the
 // framework actually calls.
-func TestGateRefusesOnceTheBudgetIsSpent(t *testing.T) {
-	gate := budgetgate.New(1.00)
+func TestGateRefusesOnceTheBudgetIsUsed(t *testing.T) {
+	gate := budgetgate.New(1000)
 	llm := extensiontest.Script(extensiontest.Answer("ok"))
 	svc := extensiontest.NewService(t, llm, gate)
 
@@ -21,9 +21,9 @@ func TestGateRefusesOnceTheBudgetIsSpent(t *testing.T) {
 		t.Fatalf("first run: %+v", out)
 	}
 
-	gate.Add(1.00) // the ledger says we are at the ceiling
+	gate.Add(1000) // the ledger says we are at the ceiling
 	out := extensiontest.Run(t, svc, "second")
-	if out.Final != "" || !strings.Contains(out.Blocked, "budget of $1.00 is spent") {
+	if out.Final != "" || !strings.Contains(out.Blocked, "budget of 1000 tokens is used") {
 		t.Fatalf("second run should be refused: final=%q blocked=%q", out.Final, out.Blocked)
 	}
 	if llm.Calls() != 1 {

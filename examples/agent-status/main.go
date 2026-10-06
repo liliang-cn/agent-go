@@ -38,7 +38,7 @@ func main() {
 	if *background {
 		// Off by default here for the same reason it is off by default in the
 		// framework: a background task is a whole run with its own round
-		// budget and its own spend.
+		// budget and its own tokens.
 		builder = builder.WithBackgroundTasks(4)
 	}
 	svc, err := builder.Build()
@@ -98,7 +98,7 @@ func main() {
 				for _, r := range svc.RunStatuses() {
 					// A background task is a run on this service, so it is
 					// in this list too — it really does occupy a concurrency
-					// slot and really does spend money. BackgroundTaskID is
+					// slot and really does use tokens. BackgroundTaskID is
 					// how a host that draws two lists avoids drawing it
 					// twice.
 					if r.BackgroundTaskID == "" {
@@ -182,7 +182,7 @@ func printRun(prefix string, r agent.RunStatus) {
 	}
 	fmt.Printf("  %s%s  %-22s %-11s tools %-3d %-10s %s\n",
 		prefix, short(r.RunID), r.Stage, rounds(r), r.ToolCalls,
-		money(r.Usage), r.Duration.Round(time.Millisecond))
+		tokens(r.Usage), r.Duration.Round(time.Millisecond))
 }
 
 // rounds is blank before the first round starts. The two stages that come
@@ -198,12 +198,13 @@ func rounds(r agent.RunStatus) string {
 	return fmt.Sprintf("round %d/%d", r.Round, r.MaxRounds)
 }
 
-// money renders spend the one honest way: an unpriced model is not free.
-func money(u agent.RunUsage) string {
-	if u.CostUnpriced {
-		return "$unpriced"
+// tokens renders what the run has used so far. Without provider-reported
+// usage the count is the tokenizer's estimate, and it says so.
+func tokens(u agent.RunUsage) string {
+	if !u.ProviderReported {
+		return fmt.Sprintf("~%d tok", u.EstimatedTokens)
 	}
-	return fmt.Sprintf("$%.4f", u.CostUSD)
+	return fmt.Sprintf("%d/%d tok", u.InputTokens, u.OutputTokens)
 }
 
 func short(runID string) string {

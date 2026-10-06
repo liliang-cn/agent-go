@@ -63,20 +63,19 @@ const (
 // CLIAgentRunResult is what OnSubAgentEnd carries as its `result` for a
 // cli_agent_run call: everything an observer needs to bill the run to the
 // right agent without re-reading the tool's own JSON. It is a plain struct on
-// purpose — an observer that wants to account for delegated spend should be
+// purpose — an observer that wants to account for delegated tokens should be
 // able to type-switch on it, not parse a map.
 type CLIAgentRunResult struct {
-	Agent     string  `json:"agent"`
-	SessionID string  `json:"session_id,omitempty"`
-	Summary   string  `json:"summary,omitempty"`
-	Failed    bool    `json:"failed"`
-	ExitCode  int     `json:"exit_code"`
-	Duration  int64   `json:"duration_ms"`
-	Input     int64   `json:"input_tokens"`
-	Output    int64   `json:"output_tokens"`
-	Cache     int64   `json:"cache_tokens"`
-	CostUSD   float64 `json:"cost_usd"`
-	Model     string  `json:"model,omitempty"`
+	Agent     string `json:"agent"`
+	SessionID string `json:"session_id,omitempty"`
+	Summary   string `json:"summary,omitempty"`
+	Failed    bool   `json:"failed"`
+	ExitCode  int    `json:"exit_code"`
+	Duration  int64  `json:"duration_ms"`
+	Input     int64  `json:"input_tokens"`
+	Output    int64  `json:"output_tokens"`
+	Cache     int64  `json:"cache_tokens"`
+	Model     string `json:"model,omitempty"`
 }
 
 // cliAgentRunner holds everything the two tools resolved once at registration:
@@ -180,7 +179,7 @@ func RegisterCLIAgentTools(svc *Service, cfg CLIAgentConfig) error {
 			"cli_agent_run",
 			"Hand one self-contained task to another agent CLI on this machine and wait for its "+
 				"answer. The other agent runs its own tool loop with permission prompts bypassed: "+
-				"it can read and write files under cwd and run commands, and it costs money on "+
+				"it can read and write files under cwd and run commands, and it runs on "+
 				"whichever account that CLI is logged into. It cannot see this conversation, so "+
 				"state the whole task in the prompt. Check `failed` in the result, not just "+
 				"`ok`: these CLIs report an authentication failure as an ordinary-looking answer "+
@@ -399,7 +398,6 @@ func (r *cliAgentRunner) run(ctx context.Context, args map[string]interface{}) (
 		Input:     result.Usage.InputTokens,
 		Output:    result.Usage.OutputTokens,
 		Cache:     result.Usage.CacheTokens,
-		CostUSD:   result.Usage.EstimatedCostUSD,
 		Model:     result.Usage.Model,
 	}
 
@@ -438,10 +436,9 @@ func (r *cliAgentRunner) run(ctx context.Context, args map[string]interface{}) (
 		"exit_code":   out.ExitCode,
 		"duration_ms": out.Duration,
 		"usage": map[string]interface{}{
-			"input":    out.Input,
-			"output":   out.Output,
-			"cache":    out.Cache,
-			"cost_usd": out.CostUSD,
+			"input":  out.Input,
+			"output": out.Output,
+			"cache":  out.Cache,
 		},
 		"error": failure,
 	}
@@ -534,10 +531,9 @@ func cliAgentFailure(name, msg string) map[string]interface{} {
 		"exit_code":   -1,
 		"duration_ms": int64(0),
 		"usage": map[string]interface{}{
-			"input":    int64(0),
-			"output":   int64(0),
-			"cache":    int64(0),
-			"cost_usd": float64(0),
+			"input":  int64(0),
+			"output": int64(0),
+			"cache":  int64(0),
 		},
 		"error": msg,
 	}

@@ -6,12 +6,12 @@
 //
 //   - ToolMetadata.OutputLimit: a fan-out tool's result is one report per
 //     worker. Under the uniform cap the middle reports are cut and the model
-//     is told to call again asking for less — which for work that cost money
-//     means paying for it twice. The tool declares its own limit instead.
+//     is told to call again asking for less — which for work that took
+//     minutes means doing it twice. The tool declares its own limit instead.
 //   - Service.SubAgentBracket: each worker is announced to every observer as
-//     a sub-agent of kind "remote", with what it cost, so ActivityLog, the
-//     trace and a usage extension see ten workers rather than one opaque tool
-//     call, and the spend is not read as free.
+//     a sub-agent of kind "remote", with the tokens it used, so ActivityLog,
+//     the trace and a usage extension see ten workers rather than one opaque
+//     tool call.
 //   - WithoutMemoryAutoStore: on the worker side, an order from the host runs
 //     without the automatic memory write, so N workers given the same order
 //     do not write N extractions of it into a memory they share.
@@ -41,13 +41,12 @@ import (
 	"github.com/liliang-cn/agent-go/v3/pkg/pool"
 )
 
-// workerReply is what a worker answers: the text, and what it cost, in the
-// shape RemoteAgentRunResult wants. A real worker reports its own
-// ExecutionResult's Usage and EstimatedCostUSD here.
+// workerReply is what a worker answers: the text, and the tokens it used, in
+// the shape RemoteAgentRunResult wants. A real worker reports its own
+// ExecutionResult's Usage here.
 type workerReply struct {
-	Text    string             `json:"text"`
-	Usage   *domain.TokenUsage `json:"usage,omitempty"`
-	CostUSD float64            `json:"cost_usd"`
+	Text  string             `json:"text"`
+	Usage *domain.TokenUsage `json:"usage,omitempty"`
 }
 
 func main() {
@@ -65,15 +64,14 @@ func main() {
 	defer os.RemoveAll(home)
 	os.Setenv("AGENTGO_HOME", home)
 
-	// The workers: one server standing in for three, each answer priced.
+	// The workers: one server standing in for three, each reporting usage.
 	workers := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		name := r.URL.Query().Get("worker")
 		time.Sleep(200 * time.Millisecond)
 		_ = json.NewEncoder(w).Encode(workerReply{
-			Text:    fmt.Sprintf("%s here: I checked %q and found no problems.", name, strings.TrimSpace(string(body))),
-			Usage:   &domain.TokenUsage{PromptTokens: 900, CompletionTokens: 120},
-			CostUSD: 0.0011,
+			Text:  fmt.Sprintf("%s here: I checked %q and found no problems.", name, strings.TrimSpace(string(body))),
+			Usage: &domain.TokenUsage{PromptTokens: 900, CompletionTokens: 120},
 		})
 	}))
 	defer workers.Close()
@@ -114,7 +112,7 @@ func main() {
 					res := agent.RemoteAgentRunResult{
 						Agent: name, Provider: "example-workers", Endpoint: workers.URL,
 						Duration: time.Since(started).Milliseconds(),
-						Summary:  reply.Text, Usage: reply.Usage, CostUSD: reply.CostUSD,
+						Summary:  reply.Text, Usage: reply.Usage,
 						Failed: err != nil,
 					}
 					if err != nil {
@@ -143,8 +141,8 @@ func main() {
 		log.Fatal(err)
 	}
 	fmt.Println("\n" + strings.TrimSpace(result.Text()))
-	fmt.Printf("\nthe queen's own spend: $%.4f (unpriced=%v); the workers' spend reached the observer separately\n",
-		result.EstimatedCostUSD, result.CostUnpriced)
+	fmt.Printf("\nthe queen's own tokens: %d; the workers' usage reached the observer separately\n",
+		result.EstimatedTokens)
 }
 
 func ask(ctx context.Context, base, worker, order string) (workerReply, error) {

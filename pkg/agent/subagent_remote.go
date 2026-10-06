@@ -13,25 +13,22 @@ import (
 // The framework knows two kinds of sub-agent: another Runtime on this Service
 // (WithSubagents) and an agent CLI on this machine (RegisterCLIAgentTools).
 // Both announce themselves to every Observer — OnSubAgentStart, OnSubAgentEnd
-// with what it cost — so ActivityLog, TraceWriter, OTel and a usage extension
-// see the work and the spend. A host that reaches an agent some other way, a
+// with the tokens it used — so ActivityLog, TraceWriter, OTel and a usage
+// extension see the work. A host that reaches an agent some other way, a
 // worker over HTTP say, had no way to say so: its tool was one opaque call
-// that ran for minutes, and ten workers, who failed, what they spent, were
-// invisible to everything that watches a run. Worse, the run's own cost — and
-// so MaxBudgetUSD and a long run's MaxTotalCostUSD — read the workers as free.
+// that ran for minutes, and ten workers, who failed, what they used, were
+// invisible to everything that watches a run.
 //
 // SubAgentBracket is that announcement, for a sub-agent the host runs itself.
 
 // SubAgentKindRemote is SubAgentInfo.Kind for work handed to an agent reached
-// over a network: another process, billed on its own, whose spend an observer
-// must not fold into this run's.
+// over a network: another process, accounted on its own, whose tokens an
+// observer must not fold into this run's.
 const SubAgentKindRemote = "remote"
 
 // RemoteAgentRunResult is what a host reports when a remote sub-agent ends:
 // the shape CLIAgentRunResult has for CLIs, for an agent the host reached
-// itself. Usage and cost are what the remote side said, when it said anything;
-// CostUnpriced is true when it could not price its own model, exactly as an
-// ExecutionResult says it — a zero that means "unknown" must not read as free.
+// itself. Usage is what the remote side said, when it said anything.
 type RemoteAgentRunResult struct {
 	Agent    string `json:"agent"`
 	Provider string `json:"provider,omitempty"`
@@ -44,9 +41,7 @@ type RemoteAgentRunResult struct {
 	Model    string `json:"model,omitempty"`
 	// Usage is nil when the remote side reported none, which is an honest
 	// unknown rather than zero tokens.
-	Usage        *domain.TokenUsage `json:"usage,omitempty"`
-	CostUSD      float64            `json:"cost_usd"`
-	CostUnpriced bool               `json:"cost_unpriced,omitempty"`
+	Usage *domain.TokenUsage `json:"usage,omitempty"`
 }
 
 // SubAgentBracket announces a sub-agent the host is about to run itself, and
@@ -58,7 +53,7 @@ type RemoteAgentRunResult struct {
 //
 //	end := svc.SubAgentBracket(ctx, agent.SubAgentInfo{Name: worker, Goal: prompt, Provider: "superai-hive"})
 //	res := askWorker(ctx, worker, prompt)
-//	end(agent.RemoteAgentRunResult{Agent: worker, Usage: res.Usage, CostUSD: res.Cost, Failed: res.Failed}, err)
+//	end(agent.RemoteAgentRunResult{Agent: worker, Usage: res.Usage, Failed: res.Failed}, err)
 //
 // A nil Service is a no-op, so a tool that is also used without a service
 // need not check.

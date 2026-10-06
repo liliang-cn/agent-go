@@ -2,7 +2,7 @@
 // OpenTelemetry spans that follow the OpenInference semantic conventions, so
 // agent runs render as trace trees in Arize Phoenix (or any OTLP backend), and
 // — when a MeterProvider is supplied — to a small set of metrics that answer
-// the questions a trace cannot: how much, how often, how much did it cost.
+// the questions a trace cannot: how much, how often, how many tokens.
 //
 // All OpenTelemetry imports are confined to this package; the framework core
 // (pkg/agent) stays dependency-lean. Wire an Observer onto a Service with
@@ -43,7 +43,7 @@
 //	          output.value (the final answer)
 //	segment   openinference.span.kind, agentgo.task_id, session.id,
 //	          agentgo.segment.index, .total, .stop_reason, .duration_ms,
-//	          .productive, .cost_usd, .error
+//	          .productive, .error
 //	llm       openinference.span.kind, llm.model_name, session.id,
 //	          agentgo.agent_name, agentgo.round, output.value,
 //	          llm.token_count.total, .prompt, .completion,
@@ -86,7 +86,6 @@
 //	agentgo.model.calls             counter     1         agent, model, status
 //	agentgo.model.duration          histogram   s         agent, model
 //	agentgo.model.retries           counter     1         agent, kind
-//	agentgo.model.unpriced_turns    counter     1         agent, model
 //	agentgo.tool.calls              counter     1         agent, tool, inner, status
 //	agentgo.tool.duration           histogram   s         agent, tool, inner
 //	agentgo.lint.rejections         counter     1         agent, lint, verdict
@@ -95,13 +94,12 @@
 //	agentgo.tokens.prompt           counter     {token}   agent, model
 //	agentgo.tokens.completion       counter     {token}   agent, model
 //	agentgo.tokens.cached           counter     {token}   agent, model
-//	agentgo.cost.usd                counter     {USD}     agent, model
 //
 // Attribute keys are prefixed agentgo.: agentgo.agent, .model, .tool, .status
 // ("ok"|"error"), .lint, .verdict, .kind, .trigger, .inner.
 //
 // No metric carries a task, session, run or span id, and none ever should: a
-// metric's cost is the product of its label cardinalities, and a per-run label
+// metric's storage is the product of its label cardinalities, and a per-run label
 // turns one time series into one per run — which is a trace, badly, at a
 // hundred times the storage.
 //
@@ -113,10 +111,6 @@
 //   - tokens.prompt / .completion / .cached sum, over a run, to
 //     ExecutionResult.Usage.PromptTokens / CompletionTokens / CachedPromptTokens
 //     — and over a RunSegments task to LongRunResult.TotalUsage.
-//   - cost.usd sums to ExecutionResult.EstimatedCostUSD (LongRunResult.TotalCostUSD),
-//     for every turn whose model pool.CalculateCostDetailed can price. A turn
-//     it cannot price is counted in model.unpriced_turns and contributes no
-//     cost, because a silent zero is indistinguishable from free.
 //   - model.duration's count equals model.calls, and tool.duration's equals
 //     tool.calls: a turn that errored with no result is still timed, by the
 //     bridge's own clock.
@@ -124,7 +118,7 @@
 // Three things are outside those sums, by construction:
 //
 //   - Cache WRITE tokens. agent.ModelResult carries no equivalent of
-//     TokenUsage.CacheWriteTokens, so the bridge cannot report the premium paid
+//     TokenUsage.CacheWriteTokens, so the bridge cannot report the tokens written
 //     to establish a cache entry. Read it from ExecutionResult.Usage.
 //   - The terminal control tools. task_complete / task_blocked are intercepted
 //     in the stream and never dispatched, so they produce no tool span and no
@@ -132,7 +126,7 @@
 //     counters by one.
 //   - agentgo.model is only as good as Service.Info().Model. A generator
 //     injected with Builder.WithLLM that implements neither GetModelName nor
-//     GetBaseURL leaves it empty, which also makes every turn unpriced.
+//     GetBaseURL leaves it empty.
 package otelobserver
 
 import (

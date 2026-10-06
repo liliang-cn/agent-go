@@ -112,8 +112,8 @@ func main() {
 				log.Fatal("timed out waiting for a wake")
 			}
 			s, _ := st.Get(r.ID)
-			fmt.Printf("--- wake %s (%s): %d tool calls, $%.4f, next due %s (%s)\n    notes: %s\n",
-				w.Kind, w.Reason, w.ToolCalls, w.CostUSD, s.NextDue.Format(time.Kitchen), s.NextDueKind, s.Responsibility.Notes)
+			fmt.Printf("--- wake %s (%s): %d tool calls, next due %s (%s)\n    notes: %s\n",
+				w.Kind, w.Reason, w.ToolCalls, s.NextDue.Format(time.Kitchen), s.NextDueKind, s.Responsibility.Notes)
 			if w.Kind == kind {
 				return
 			}
@@ -139,6 +139,6 @@ func main() {
 
 	fmt.Println("\nstatus:")
 	for _, s := range st.Status() {
-		fmt.Printf("  %s: wakes today %d, cost today $%.4f, paused=%v\n", s.Responsibility.Name, s.WakesToday, s.CostTodayUSD, s.Responsibility.Paused)
+		fmt.Printf("  %s: wakes today %d, paused=%v\n", s.Responsibility.Name, s.WakesToday, s.Responsibility.Paused)
 	}
 }

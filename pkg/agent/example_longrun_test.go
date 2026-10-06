@@ -17,7 +17,6 @@ func ExampleService_RunSegments() {
 	result, err := svc.RunSegments(context.Background(), "write the quarterly report", agent.LongRunConfig{
 		MaxSegments:      4,
 		RoundsPerSegment: 5,
-		MaxTotalCostUSD:  1.0,
 	})
 	if err != nil {
 		panic(err)

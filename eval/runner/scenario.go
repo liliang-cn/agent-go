@@ -80,7 +80,7 @@ type Scenario struct {
 	// MockUsage makes the mock LLM report token accounting on every tool
 	// turn, the way a provider would. Without it a mock run reports none and
 	// its tokens read "not measured" in the results, not zero. Model names
-	// what the mock claims to be, so a registered price can apply to it.
+	// what the mock claims to be.
 	// Mock mode only.
 	MockUsage *MockUsage `yaml:"mock_usage"`
 
