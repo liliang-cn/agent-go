@@ -251,3 +251,44 @@ that speaks it keeps working until a version 2 says otherwise.
 `examples/extensions-thirdparty` is a separate module with its own `go.mod`: a
 token budget gate that refuses runs once a service has used its ceiling, a test
 through `extensiontest`, and a `main.go` that installs it. Start from there.
+
+## Plugins: extensions and friends in a directory
+
+`pkg/plugin` packages the pieces above into a directory a host can drop in
+without writing Go. Loading one adds nothing to the framework: each part becomes
+an option the Builder already has.
+
+```
+~/.agentgo/plugins/<name>/
+├── plugin.json      {"name": "...", "version": "...", "description": "..."}
+├── skills/          SKILL.md directories           -> skills paths (appended)
+├── mcp.json         MCP server file                -> MCP servers (appended)
+├── agents/*.md      frontmatter + instructions     -> WithSubagents, named <plugin>:<agent>
+├── prompt.md        one system message             -> ContextContributor
+└── extension.json   {"command": [...], "timeout": "10s", "env": {...}}  -> pkg/extensions/exec
+```
+
+```go
+b := agent.New("assistant")
+err := plugin.Install(b, plugin.Dirs("./my-plugins"))   // before Build()
+svc, _ := b.Build()
+svc.Plugins() // what was loaded, and what was skipped and why
+```
+
+- **Discovery.** `$AGENTGO_HOME/plugins` plus any `plugin.Dirs(...)`; a dir is
+  either a plugins root or a single plugin. Results are sorted by name so what
+  plugins add to the prompt is byte-stable across builds.
+- **Strict.** A malformed manifest, a duplicate plugin name, or a bad
+  `agents/*.md` fails `Install`. Nothing is silently dropped.
+- **`extension.json` is off by default.** It is an arbitrary subprocess that can
+  rewrite or refuse tool calls. Enable it with `plugin.AllowExec("name")` or
+  `"allow_exec": ["name"]` in `plugins/state.json`. `"disabled": [...]` in the
+  same file (or `plugin.Disable`) switches a plugin off.
+- **Names.** Sub-agents are `<plugin>:<agent>`, the exec extension is
+  `<plugin>:ext`. Skill and MCP server names are the plugin author's own, so two
+  plugins shipping the same one collide exactly as two config files would.
+- An `agents/*.md` file needs `description` in its frontmatter (`name` defaults
+  to the file name); `tools`, `model`, `provider`, `max_turns` and `parallel`
+  map onto `SubagentSpec`.
+
+See `examples/plugin`.

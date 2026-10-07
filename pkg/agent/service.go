@@ -112,6 +112,8 @@ type Service struct {
 	hooks *HookRegistry
 	// extensions, in the order they run at every seam.
 	extensions []Extension
+	// plugins, as the Builder was told about them. Informational.
+	plugins []PluginInfo
 
 	// Async sub-agent coordinator
 

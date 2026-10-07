@@ -141,7 +141,13 @@ type Builder struct {
 	tools        []*Tool // pre-registered via WithTool/WithTools
 	extraModules []Module
 	extensions   []Extension
-	subagents    []SubagentSpec
+
+	// Contributed by plugins (see plugin_seams.go). Appended to, never replacing
+	// what the caller or the install's defaults already name.
+	pluginSkillsPaths []string
+	pluginMCPPaths    []string
+	plugins           []PluginInfo
+	subagents         []SubagentSpec
 
 	subagentMaxDepth    int
 	subagentMaxParallel int
@@ -622,6 +628,13 @@ func (b *Builder) build() (*Service, error) {
 			}
 			mcpCfg = loadedCfg
 		}
+		if len(b.pluginMCPPaths) > 0 {
+			mcpCfg.Enabled = true
+			mcpCfg.Servers = append(append([]string(nil), mcpCfg.Servers...), b.pluginMCPPaths...)
+			if loadErr := mcpCfg.LoadServersFromJSON(); loadErr != nil {
+				return nil, fmt.Errorf("failed to load plugin MCP config: %w", loadErr)
+			}
+		}
 		mcpSvc, err = mcp.NewService(mcpCfg, llmSvc)
 		if err != nil {
 			log.Printf("[WARN] Failed to create MCP service: %v", err)
@@ -735,6 +748,7 @@ func (b *Builder) build() (*Service, error) {
 	if err := installExtensions(svc, b.extensions); err != nil {
 		return nil, err
 	}
+	svc.plugins = append([]PluginInfo(nil), b.plugins...)
 
 	// Register search_available_tools built-in tool
 	searchToolDef := domain.ToolDefinition{
@@ -1197,7 +1211,7 @@ func (b *Builder) buildSkillsService(agentgoCfg *config.Config) (*skills.Service
 	if len(paths) == 0 {
 		paths = agentgoCfg.SkillsPaths()
 	}
-	skillsCfg.Paths = paths
+	skillsCfg.Paths = append(append([]string(nil), paths...), b.pluginSkillsPaths...)
 	skillsCfg.DBPath = agentgoCfg.AgentDBPath()
 	svc, err := skills.NewService(skillsCfg)
 	if err != nil {
