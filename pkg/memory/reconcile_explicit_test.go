@@ -96,3 +96,23 @@ func TestExplicitSaveFallsBackToAdd(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, domain.MemoryOpAdd, out.Op)
 }
+
+// A memory the agent saves itself gets its graph from the same reconciliation
+// call — also the first one, when nothing similar is stored yet.
+func TestExplicitSaveWritesTheMemoryGraph(t *testing.T) {
+	ctx := context.Background()
+	llm := &promptFuncLLM{reply: func(string) string {
+		return `{"op":"add","target_id":"",
+			"graph_entities":[{"name":"周明远","type":"person"},{"name":"花生","type":"concept"}],
+			"graph_relations":[{"from":"周明远","type":"allergic_to","to":"花生"}]}`
+	}}
+	svc, gs := newGraphService(t, llm)
+
+	out, err := svc.AddReconciled(ctx, explicitMemory("周明远对花生过敏"))
+	require.NoError(t, err)
+	require.Len(t, llm.prompts, 1, "the graph rides on the reconciliation call, even with nothing to reconcile against")
+	assert.Contains(t, llm.prompts[0], "(none")
+	require.Contains(t, gs.writes, out.ID)
+	assert.Equal(t, []domain.MemoryGraphRelation{{From: "周明远", Type: "allergic_to", To: "花生"}}, gs.writes[out.ID].Relations)
+	assert.Subset(t, llm.schemas[0].(map[string]interface{})["required"], []string{"graph_entities", "graph_relations"})
+}

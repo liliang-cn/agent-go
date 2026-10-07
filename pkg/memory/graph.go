@@ -29,10 +29,12 @@ import (
 
 // graphPromptRules tell the extraction call how to fill the graph fields.
 func graphPromptRules() string {
-	return `
+	return "\n\nFor each extracted item also fill \"graph_entities\" and \"graph_relations\" with what the item is about:\n" + graphRuleBody()
+}
 
-For each extracted item also fill "graph_entities" and "graph_relations" with what the item is about:
-- graph_entities: every concrete thing the item names — people, organisations, places, products, holdings, events, projects. "name" is the name it is known by (a person's own name, not "the user" or "my daughter", whenever the name is known from this conversation or the existing memories); keep one spelling for one thing across items. "type" is one word: person, organization, place, product, asset, event, project, concept or other.
+// graphRuleBody is how to fill the two fields, whoever asks for them.
+func graphRuleBody() string {
+	return `- graph_entities: every concrete thing the item names — people, organisations, places, products, holdings, events, projects. "name" is the name it is known by (a person's own name, not "the user" or "my daughter", whenever the name is known from this conversation or the existing memories); keep one spelling for one thing across items. "type" is one word: person, organization, place, product, asset, event, project, concept or other.
 - graph_relations: the relations the item states between those entities, as {"from", "type", "to"} using names from graph_entities. "type" is a short lowercase snake_case English verb phrase read from "from" to "to": spouse_of, daughter_of, father_of, works_at, allergic_to, holds, attends, scheduled_on, located_in, part_of.
 Use empty arrays when the item names nothing concrete. Never invent an entity or relation the item does not state, and never use a memory id as an entity.`
 }

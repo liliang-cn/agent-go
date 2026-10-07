@@ -27,25 +27,30 @@ func (s *Service) AddReconciled(ctx context.Context, mem *domain.Memory) (domain
 	if mem == nil {
 		return domain.MemoryReconcileOutcome{}, fmt.Errorf("memory is nil")
 	}
+	// What the memory is about, when the reconciliation call said; written
+	// to the store's graph once the memory is stored.
+	var graph domain.MemoryGraph
 	add := func() (domain.MemoryReconcileOutcome, error) {
 		if err := s.Add(ctx, mem); err != nil {
 			return domain.MemoryReconcileOutcome{}, err
 		}
+		s.writeMemoryGraph(ctx, mem.ID, graph)
 		return domain.MemoryReconcileOutcome{Op: domain.MemoryOpAdd, ID: mem.ID}, nil
 	}
 	if s == nil || s.llm == nil || strings.TrimSpace(mem.Content) == "" {
 		return add()
 	}
 
+	// Asked even when nothing similar is stored: the same call says what the
+	// memory is about, and a first memory needs its graph as much as any.
 	candidates := s.reconcileCandidates(ctx, explicitStoreRequest(mem))
-	if len(candidates) == 0 {
-		return add()
-	}
 
 	verdict, ok := s.askExplicitReconcile(ctx, mem.Content, candidates)
 	if !ok {
 		return add()
 	}
+	graph = withoutIDNames(domain.MemoryGraph{Entities: verdict.Entities, Relations: verdict.Relations})
+	mem.Keywords = mergeUniqueStrings(mem.Keywords, graph.Names())
 	known := map[string]bool{}
 	for _, c := range candidates {
 		known[c.ID] = true
@@ -60,6 +65,7 @@ func (s *Service) AddReconciled(ctx context.Context, mem *domain.Memory) (domain
 			if err := s.Add(ctx, mem); err != nil {
 				return domain.MemoryReconcileOutcome{}, err
 			}
+			s.writeMemoryGraph(ctx, mem.ID, graph)
 			s.supersedeOrKeep(ctx, verdict.TargetID, mem.ID)
 			return domain.MemoryReconcileOutcome{Op: domain.MemoryOpUpdate, TargetID: verdict.TargetID, ID: mem.ID}, nil
 		}
@@ -93,6 +99,9 @@ func explicitStoreRequest(mem *domain.Memory) *domain.MemoryStoreRequest {
 type explicitVerdict struct {
 	Op       string `json:"op"`
 	TargetID string `json:"target_id"`
+	// What the memory is about, asked in the same call (see graph.go).
+	Entities  []domain.MemoryGraphEntity   `json:"graph_entities"`
+	Relations []domain.MemoryGraphRelation `json:"graph_relations"`
 }
 
 func (s *Service) askExplicitReconcile(ctx context.Context, content string, candidates []*domain.Memory) (explicitVerdict, bool) {
@@ -100,6 +109,9 @@ func (s *Service) askExplicitReconcile(ctx context.Context, content string, cand
 	b.WriteString("A memory is about to be saved:\n")
 	b.WriteString(oneLine(content))
 	b.WriteString("\n\nMemories already stored, each with its id:\n")
+	if len(candidates) == 0 {
+		b.WriteString("(none — the op is \"add\")\n")
+	}
 	for _, c := range candidates {
 		fmt.Fprintf(&b, "- [%s] %s\n", c.ID, oneLine(c.Content))
 	}
@@ -108,7 +120,10 @@ Decide one op:
 - "noop": a stored memory already says the same thing; set target_id to it. Nothing is saved.
 - "update": the new memory replaces a stored one that is now out of date (the same attribute of the same subject with a new value); set target_id to the replaced memory. The new memory is saved and the old one retired, so the new content must stand on its own.
 - "add": neither; the new memory is saved beside the others. Leave target_id empty.
-Judge by meaning, in whatever language the memories are written.`)
+Judge by meaning, in whatever language the memories are written.
+
+Also fill "graph_entities" and "graph_relations" with what the memory about to be saved is about:
+` + graphRuleBody())
 
 	schema := map[string]interface{}{
 		"type": "object",
@@ -116,7 +131,10 @@ Judge by meaning, in whatever language the memories are written.`)
 			"op":        map[string]interface{}{"type": "string", "enum": []string{domain.MemoryOpAdd, domain.MemoryOpUpdate, domain.MemoryOpNoop}},
 			"target_id": map[string]interface{}{"type": "string"},
 		},
-		"required": []string{"op", "target_id"},
+		"required": append([]string{"op", "target_id"}, graphRequiredFields()...),
+	}
+	for name, spec := range graphSchemaFields() {
+		schema["properties"].(map[string]interface{})[name] = spec
 	}
 	result, err := s.llm.GenerateStructured(ctx, b.String(), schema, &domain.GenerationOptions{Temperature: 0})
 	if err != nil || result == nil || !result.Valid || strings.TrimSpace(result.Raw) == "" {
