@@ -767,3 +767,10 @@ func (s *CortexRemoteMemoryStore) callGraphTool(ctx context.Context, c memoryGra
 }
 
 var _ domain.MemoryGraphWriter = (*CortexRemoteMemoryStore)(nil)
+
+// EmbedsServerSide reports that the remote server owns the embedding model:
+// a client-computed vector would be discarded. Implements
+// domain.MemoryServerEmbedding.
+func (s *CortexRemoteMemoryStore) EmbedsServerSide() bool { return true }
+
+var _ domain.MemoryServerEmbedding = (*CortexRemoteMemoryStore)(nil)

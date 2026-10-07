@@ -51,7 +51,8 @@ func NewClient(providerName, baseURL, key, modelName string) (*Client, error) {
 		key:          key,
 		modelName:    modelName,
 		http: &http.Client{
-			Timeout: 600 * time.Second,
+			Timeout:   600 * time.Second,
+			Transport: sharedTransport,
 		},
 		promptManager: prompt.NewManager(),
 		nativeSearch:  newNativeSearchState(providerName, domain.NativeWebSearchUndeclared, nil),

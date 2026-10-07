@@ -14,6 +14,7 @@ import (
 	"github.com/liliang-cn/agent-go/v3/pkg/prompt"
 	"github.com/liliang-cn/agent-go/v3/pkg/store"
 	"github.com/liliang-cn/agent-go/v3/pkg/timeaware"
+	"golang.org/x/sync/errgroup"
 )
 
 // Service implements the MemoryService interface
@@ -23,6 +24,7 @@ type Service struct {
 	entityMemory  *EntityMemory
 	llm           domain.Generator
 	embedder      domain.Embedder
+	embedState    embedBreaker
 	promptManager *prompt.Manager
 	minScore      float64
 	maxMemories   int
@@ -249,38 +251,62 @@ func (s *Service) RetrieveAndInjectWithContextAndLogic(ctx context.Context, quer
 	var allMemories []*domain.MemoryWithScore
 	var memoryLogic string
 
-	// 1. Entity Search (if query is not empty)
-	if s.entityMemory != nil && query != "" {
-		entities, err := s.entityMemory.SearchEntities(ctx, query, 3)
-		if err == nil {
-			for _, ent := range entities {
-				content := fmt.Sprintf("Entity: %s (%s) - %s", ent.Name, ent.Type, ent.Description)
-				allMemories = append(allMemories, &domain.MemoryWithScore{
-					Memory: &domain.Memory{
-						ID:         "ent_" + ent.Name,
-						Type:       domain.MemoryTypeFact,
-						Content:    content,
-						Importance: 1.0,
-					},
-					Score: 1.0,
-				})
-			}
+	// The query is embedded once, here, and the vector handed to every search
+	// that wants it; the searches themselves are independent store queries
+	// and run side by side. They used to run one after another, and the
+	// entity search embedded the same query a second time.
+	scopes := DefaultScopeChain(queryContext.SessionID, queryContext.AgentID, queryContext.TeamID, queryContext.UserID)
+	var (
+		vector   []float64
+		haveVec  bool
+		entities []domain.Entity
+		scoped   []*domain.MemoryWithScore
+		textMems []*domain.MemoryWithScore
+	)
+	if query != "" {
+		vector, haveVec = s.embed(ctx, query)
+	}
+	if haveVec {
+		var g errgroup.Group
+		if s.entityMemory != nil {
+			g.Go(func() error {
+				entities, _ = s.entityMemory.SearchEntitiesByVector(ctx, vector, 3)
+				return nil
+			})
 		}
+		g.Go(func() error {
+			scoped, _ = s.store.SearchByScope(ctx, vector, scopes.ToSlice(), s.maxMemories*2)
+			return nil
+		})
+		if s.enableHybrid {
+			g.Go(func() error {
+				textMems, _ = s.store.SearchByText(ctx, query, s.maxMemories)
+				return nil
+			})
+		}
+		_ = g.Wait()
+	}
+
+	// 1. Entity Search
+	for _, ent := range entities {
+		content := fmt.Sprintf("Entity: %s (%s) - %s", ent.Name, ent.Type, ent.Description)
+		allMemories = append(allMemories, &domain.MemoryWithScore{
+			Memory: &domain.Memory{
+				ID:         "ent_" + ent.Name,
+				Type:       domain.MemoryTypeFact,
+				Content:    content,
+				Importance: 1.0,
+			},
+			Score: 1.0,
+		})
 	}
 
 	// 2. Vector Search (if embedder available)
-	scopes := DefaultScopeChain(queryContext.SessionID, queryContext.AgentID, queryContext.TeamID, queryContext.UserID)
 	var vectorResults []*domain.MemoryWithScore
-	if s.embedder != nil {
-		vector, err := s.embedder.Embed(ctx, query)
-		if err == nil {
-			vectorResults, _ = s.store.SearchByScope(ctx, vector, scopes.ToSlice(), s.maxMemories*2)
-
-			if s.enableHybrid {
-				textMems, _ := s.store.SearchByText(ctx, query, s.maxMemories)
-				textMems = filterMemoriesByScopes(textMems, scopes.ToSlice())
-				vectorResults = s.rrfFusion(vectorResults, textMems)
-			}
+	if haveVec {
+		vectorResults = scoped
+		if s.enableHybrid {
+			vectorResults = s.rrfFusion(vectorResults, filterMemoriesByScopes(textMems, scopes.ToSlice()))
 		}
 	}
 
@@ -649,9 +675,10 @@ func (s *Service) Add(ctx context.Context, memory *domain.Memory) error {
 	applyResolvedTimeToEvent(memory)
 
 	// Always generate embedding if possible
-	if len(memory.Vector) == 0 && s.embedder != nil {
-		vec, _ := s.embedder.Embed(ctx, memory.Content)
-		memory.Vector = vec
+	if len(memory.Vector) == 0 {
+		if vec, ok := s.embed(ctx, memory.Content); ok {
+			memory.Vector = vec
+		}
 	}
 
 	// 1. Write to Primary Store (The Truth)
@@ -743,13 +770,9 @@ func (s *Service) Search(ctx context.Context, query string, topK int) ([]*domain
 		}
 	}
 
-	if s.embedder == nil {
+	vec, ok := s.embed(ctx, query)
+	if !ok {
 		return searchStore.SearchByText(ctx, query, topK)
-	}
-
-	vec, err := s.embedder.Embed(ctx, query)
-	if err != nil {
-		return nil, err
 	}
 
 	results, err := searchStore.Search(ctx, vec, topK, s.minScore)

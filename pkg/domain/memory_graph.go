@@ -72,3 +72,13 @@ type MemoryGraphWriter interface {
 // MemoryGraphSource is the source id a memory's graph is recorded under, so
 // it can be found and removed as one piece.
 func MemoryGraphSource(memoryID string) string { return "memory:" + strings.TrimSpace(memoryID) }
+
+// MemoryServerEmbedding is a store that embeds queries and memories itself —
+// a remote brain that owns its embedding model. A client-side vector is
+// thrown away there, so the memory service does not compute one: every turn
+// used to embed its question once for retrieval and again for write-time
+// reconciliation, against an embedder whose answer was discarded (and, while
+// that embedder was down, waited on a 503 to learn so).
+type MemoryServerEmbedding interface {
+	EmbedsServerSide() bool
+}

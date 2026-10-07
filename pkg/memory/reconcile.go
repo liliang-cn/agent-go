@@ -67,8 +67,8 @@ func (s *Service) reconcileCandidates(ctx context.Context, req *domain.MemorySto
 	}
 
 	var ranked []*domain.MemoryWithScore
-	if s.embedder != nil && query != "" {
-		if vec, err := s.embedder.Embed(ctx, query); err == nil {
+	if query != "" {
+		if vec, ok := s.embed(ctx, query); ok {
 			ranked, _ = s.store.SearchByScope(ctx, vec, scopes, reconcileCandidateLimit*2)
 		}
 	}

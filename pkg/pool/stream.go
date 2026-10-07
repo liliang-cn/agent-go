@@ -80,7 +80,7 @@ func (c *Client) StreamWithTools(ctx context.Context, messages []domain.Message,
 	thought, rethought := 0, false
 	var thinkingSince time.Time
 	body2 := resp.Body
-	defer func() { body2.Close() }()
+	defer func() { drainAndClose(body2) }()
 	sc := bufio.NewScanner(body2)
 	sc.Buffer(make([]byte, 0, 64<<10), 8<<20)
 scan:

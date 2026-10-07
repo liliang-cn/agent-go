@@ -54,7 +54,16 @@ func (em *EntityMemory) SearchEntities(ctx context.Context, query string, topK i
 	if err != nil {
 		return nil, err
 	}
+	return em.SearchEntitiesByVector(ctx, vector, topK)
+}
 
+// SearchEntitiesByVector is SearchEntities for a query already embedded: a
+// retrieval that has the query's vector passes it on rather than paying for
+// the same embedding twice.
+func (em *EntityMemory) SearchEntitiesByVector(ctx context.Context, vector []float64, topK int) ([]domain.Entity, error) {
+	if len(vector) == 0 {
+		return nil, nil
+	}
 	mems, err := em.store.Search(ctx, vector, topK, 0.5)
 	if err != nil {
 		return nil, err
