@@ -32,6 +32,14 @@ type Runtime struct {
 	svc          *Service
 	eventChan    chan *Event
 	currentAgent *Agent
+
+	// constraintsReady is closed when the background constraint check has
+	// answered; pendingConstraints holds the answer until the loop adopts it
+	// into cfg (see startConstraints). Nil once adopted, or when the run never
+	// needed a check.
+	constraintsReady   chan struct{}
+	pendingConstraints RunConstraints
+	constraintsCtx     context.Context
 	session      *Session
 	cfg          *RunConfig
 	sources      []domain.Chunk // Collect RAG sources during execution
@@ -443,19 +451,19 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 	// sub-agent) reaches the loop, so doing it here is what makes the
 	// enforcement uniform instead of dependent on which API the caller used.
 	r.emitTurnState(TurnStageResolvingConstraints, "resolving run constraints", 0, 0)
-	// The constraints are a model call of their own, and the context below is
-	// memory and document retrieval; neither reads the other. Run in a row
-	// they put both waits in front of every answer — measured on a hive
-	// queen, 0.8s and 0.4s before a two-second reply — so they run side by
-	// side. Only this goroutine touches r.cfg until it is done.
-	constraintsSettled := make(chan struct{})
+	// The constraint check is a model call of its own. It no longer stands in
+	// front of the answer: it runs in the background and the first turn goes
+	// out without waiting for it (see startConstraints). Measured on a hive
+	// queen it was 0.5–1.3s before every reply, a three-word greeting
+	// included.
+	r.startConstraints(ctx, goal)
+	// Settle which model answers this run, once, before anything is sent, so
+	// every entry point behaves alike. It writes r.cfg.Model, which every
+	// turn's options then carry; it runs beside the context retrieval below,
+	// which does not read it.
+	routeSettled := make(chan struct{})
 	go func() {
-		defer close(constraintsSettled)
-		r.resolveConstraints(ctx, goal)
-		// Settle which model answers this run, in the same place and for the
-		// same reason: once, before anything is built, so every entry point
-		// behaves alike. It writes r.cfg.Model, which every turn's options
-		// then carry.
+		defer close(routeSettled)
 		r.svc.routeRun(ctx, goal, r.cfg)
 	}()
 
@@ -467,7 +475,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 	defer prepCancel()
 	prepared := r.svc.prepareConversationContext(prepCtx, goal, r.session, prepareConversationOptions{includeIntent: true})
 	r.emitCheckpoint("context_prepared", prepStart, time.Now(), time.Since(prepStart))
-	<-constraintsSettled
+	<-routeSettled
 
 	// 2. Build initial messages. Resume path (cfg.ResumeMessages) bypasses
 	// normal layered assembly and starts from the snapshot directly so the
@@ -551,6 +559,9 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		r.emitLoopState(state)
 
 		// 3. Build model inputs for CURRENT agent
+		// Constraints that have arrived shape this turn; ones still on their
+		// way are not waited for here.
+		r.adoptConstraints(false)
 		tools, genMessages := r.svc.prepareTurnInputsWithConfig(ctx, r.currentAgent, messages, goal, r.cfg)
 		r.noteRequestOverhead(messages, genMessages, tools)
 
@@ -1917,21 +1928,65 @@ const (
 	defaultRunMaxTokens = 8192
 )
 
-// resolveConstraints computes the run's constraints once and caches them on the
-// RunConfig, so every later round (and prepareTurnInputsWithConfig) reads the
-// same answer without paying for a second extraction.
-func (r *Runtime) resolveConstraints(ctx context.Context, goal string) {
+// startConstraints resolves the run's constraints in the background.
+//
+// What they decide is needed at three points, and none of them is the first
+// request: the tool list of a turn (adopted, without waiting, before each
+// turn is assembled), a tool call the model makes (a run that forbids tools
+// refuses it — refuseForbiddenToolUse — so a first turn that went out with
+// tools still cannot use them), and the completion lints. The last two wait
+// for the answer through runConstraints. The model's first word takes longer
+// than the check, so in practice the answer is in before anything needs it.
+//
+// The goroutine writes only pendingConstraints, and closes constraintsReady
+// after; the loop copies the answer into cfg on its own goroutine.
+func (r *Runtime) startConstraints(ctx context.Context, goal string) {
 	if r == nil || r.svc == nil {
 		return
 	}
 	if r.cfg == nil {
 		r.cfg = DefaultRunConfig()
 	}
-	if r.cfg.resolvedConstraints != nil {
+	if r.cfg.resolvedConstraints != nil || r.constraintsReady != nil {
 		return
 	}
-	resolved := r.svc.resolveRunConstraints(ctx, goal, r.cfg)
+	ready := make(chan struct{})
+	r.constraintsReady, r.constraintsCtx = ready, ctx
+	cfg := r.cfg
+	go func() {
+		defer close(ready)
+		r.pendingConstraints = r.svc.resolveRunConstraints(ctx, goal, cfg)
+	}()
+}
+
+// adoptConstraints moves the background answer into cfg. With wait it blocks
+// until the answer is in (or the run is cancelled, which leaves the run with
+// none, as a failed check does); without, it takes the answer only if it has
+// already arrived.
+func (r *Runtime) adoptConstraints(wait bool) {
+	if r == nil {
+		return
+	}
+	ready := r.constraintsReady
+	if ready == nil {
+		return
+	}
+	if wait {
+		select {
+		case <-ready:
+		case <-r.constraintsCtx.Done():
+			return
+		}
+	} else {
+		select {
+		case <-ready:
+		default:
+			return
+		}
+	}
+	resolved := r.pendingConstraints
 	r.cfg.resolvedConstraints = &resolved
+	r.constraintsReady = nil
 }
 
 // runID is the id this run is registered under, or "" for a runtime that
@@ -1943,9 +1998,11 @@ func (r *Runtime) runID() string {
 	return r.cfg.RunID
 }
 
-// runConstraints returns the resolved constraints, or the zero value when the
-// run never resolved any (a directly-constructed Runtime in a test, say).
+// runConstraints returns the resolved constraints, waiting for a background
+// check still under way, or the zero value when the run never resolved any (a
+// directly-constructed Runtime in a test, say).
 func (r *Runtime) runConstraints() RunConstraints {
+	r.adoptConstraints(true)
 	if r == nil || r.cfg == nil || r.cfg.resolvedConstraints == nil {
 		return RunConstraints{}
 	}
