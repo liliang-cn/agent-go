@@ -37,6 +37,7 @@ type fakeCortexServer struct {
 	// searchCalls records the queries the store sent to SearchMemory.
 	searchCalls []*rpcv1.SearchMemoryRequest
 	listCalls   []string
+	graphCalls  []string
 }
 
 func newFakeCortexServer() *fakeCortexServer {
@@ -132,6 +133,11 @@ func (f *fakeCortexServer) ListTools(context.Context, *rpcv1.ListToolsRequest) (
 
 func (f *fakeCortexServer) CallTool(ctx context.Context, req *rpcv1.CallToolRequest) (*rpcv1.CallToolResponse, error) {
 	f.noteAuth(ctx)
+	switch req.GetName() {
+	case "upsert_entities", "upsert_relations", "delete_document_graph":
+		f.graphCalls = append(f.graphCalls, req.GetName()+" "+req.GetArgsJson())
+		return &rpcv1.CallToolResponse{ResultJson: "{}"}, nil
+	}
 	if req.GetName() != "memory_list_all" {
 		return nil, status.Errorf(codes.NotFound, "unknown tool %q", req.GetName())
 	}
@@ -584,5 +590,75 @@ func TestCortexRemoteMetadataFromForeignWriter(t *testing.T) {
 	}
 	if m.ScopeType != domain.MemoryScopeGlobal {
 		t.Errorf("scope type = %q, want global", m.ScopeType)
+	}
+}
+
+// An update the extraction call makes retires the memory it replaces on the
+// server too: the old row stays, but it is marked so the shared brain's own
+// recall and every agent-go reader skip it.
+func TestCortexRemoteMarkStale(t *testing.T) {
+	s, f := newTestRemoteStore(t)
+	ctx := context.Background()
+	old := &domain.Memory{Content: "piano lesson every Wednesday 16:30", Type: domain.MemoryTypeFact, Importance: 0.7}
+	if err := s.Store(ctx, old); err != nil {
+		t.Fatalf("Store: %v", err)
+	}
+	repl := &domain.Memory{Content: "piano lesson every Friday 16:30", Type: domain.MemoryTypeFact, Importance: 0.7}
+	if err := s.Store(ctx, repl); err != nil {
+		t.Fatalf("Store: %v", err)
+	}
+	if err := s.MarkStale(ctx, old.ID, repl.ID); err != nil {
+		t.Fatalf("MarkStale: %v", err)
+	}
+
+	got, err := s.Get(ctx, old.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !domain.MemoryIsSuperseded(got) {
+		t.Fatalf("the replaced memory still reads as current: %+v", got.Metadata)
+	}
+	if got.Content != old.Content {
+		t.Fatalf("marking changed the content: %q", got.Content)
+	}
+	top := f.records[old.ID].GetMetadata().AsMap()
+	if top["superseded_by"] != repl.ID {
+		t.Fatalf("server-side superseded_by = %v, want %s", top["superseded_by"], repl.ID)
+	}
+	if fresh, _ := s.Get(ctx, repl.ID); domain.MemoryIsSuperseded(fresh) {
+		t.Fatal("the replacement was marked too")
+	}
+}
+
+// A memory's graph reaches the shared brain through upsert_entities and
+// upsert_relations, recorded under the memory's own source id, and a
+// replaced memory's graph is removed by that same id.
+func TestCortexRemoteWritesAndDropsMemoryGraph(t *testing.T) {
+	s, f := newTestRemoteStore(t)
+	ctx := context.Background()
+	g := domain.MemoryGraph{
+		Entities:  []domain.MemoryGraphEntity{{Name: "周明远", Type: "person"}, {Name: "可可", Type: "person"}},
+		Relations: []domain.MemoryGraphRelation{{From: "可可", Type: "daughter_of", To: "周明远"}, {From: "可可", Type: "attends", To: "钢琴课"}},
+	}
+	if err := s.WriteMemoryGraph(ctx, "m1", g); err != nil {
+		t.Fatalf("WriteMemoryGraph: %v", err)
+	}
+	if err := s.DropMemoryGraph(ctx, "m1"); err != nil {
+		t.Fatalf("DropMemoryGraph: %v", err)
+	}
+	if len(f.graphCalls) != 3 {
+		t.Fatalf("graph calls = %q, want entities, relations, drop", f.graphCalls)
+	}
+	for i, want := range []string{"upsert_entities ", "upsert_relations ", "delete_document_graph "} {
+		if !strings.HasPrefix(f.graphCalls[i], want) || !strings.Contains(f.graphCalls[i], `"document_id":"memory:m1"`) {
+			t.Fatalf("call %d = %s, want %s under memory:m1", i, f.graphCalls[i], want)
+		}
+	}
+	// 钢琴课 appears only in a relation; it still gets its node.
+	if !strings.Contains(f.graphCalls[0], `"name":"钢琴课"`) || !strings.Contains(f.graphCalls[0], `"type":"person"`) {
+		t.Fatalf("entities call misses a relation endpoint or a type: %s", f.graphCalls[0])
+	}
+	if !strings.Contains(f.graphCalls[1], `"type":"daughter_of"`) || !strings.Contains(f.graphCalls[1], `"provenance":"llm"`) {
+		t.Fatalf("relations call lost the type or provenance: %s", f.graphCalls[1])
 	}
 }

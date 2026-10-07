@@ -405,7 +405,7 @@ func (s *Service) storeIfWorthwhileSync(ctx context.Context, req *domain.MemoryS
 		shown[c.ID] = struct{}{}
 	}
 
-	prompt := s.buildSummaryPrompt(req) + timeaware.PromptRules(writtenAt) + reconcilePromptRules(candidates)
+	prompt := s.buildSummaryPrompt(req) + timeaware.PromptRules(writtenAt) + reconcilePromptRules(candidates) + graphPromptRules()
 	schema := map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
@@ -454,6 +454,15 @@ func (s *Service) storeIfWorthwhileSync(ctx context.Context, req *domain.MemoryS
 		if required, ok := items["required"].([]string); ok {
 			items["required"] = append(required, reconcileRequiredFields()...)
 		}
+		// And what each item is about, as a graph.
+		if props, ok := items["properties"].(map[string]interface{}); ok {
+			for name, spec := range graphSchemaFields() {
+				props[name] = spec
+			}
+		}
+		if required, ok := items["required"].([]string); ok {
+			items["required"] = append(required, graphRequiredFields()...)
+		}
 	}
 
 	result, err := s.llm.GenerateStructured(ctx, prompt, schema, &domain.GenerationOptions{Temperature: 0.1})
@@ -486,6 +495,7 @@ func (s *Service) storeIfWorthwhileSync(ctx context.Context, req *domain.MemoryS
 	// standalone resolver uses. No second request, and nothing here reads
 	// the words.
 	timeRefs := timeReferencesFromSummary(result.Raw, writtenAt)
+	graphs := graphsFromSummary(result.Raw)
 
 	factScopeCounts := make(map[string]int)
 	for itemIndex, item := range summary.Memories {
@@ -508,6 +518,12 @@ func (s *Service) storeIfWorthwhileSync(ctx context.Context, req *domain.MemoryS
 			op = domain.MemoryOpAdd
 		}
 
+		var graph domain.MemoryGraph
+		if itemIndex < len(graphs) {
+			graph = graphs[itemIndex]
+		}
+		entityNames := mergeUniqueStrings(item.Entities.Strings(), graph.Names())
+
 		baseScope, initialScope, finalScope, placementMeta := resolveMemoryPlacement(req, item)
 		_ = baseScope
 		_ = initialScope
@@ -518,14 +534,14 @@ func (s *Service) storeIfWorthwhileSync(ctx context.Context, req *domain.MemoryS
 			ScopeID:    finalScope.ID,
 			Type:       item.Type,
 			Content:    item.Content,
-			Keywords:   mergeUniqueStrings(item.Tags.Strings(), item.Entities.Strings()),
+			Keywords:   mergeUniqueStrings(item.Tags.Strings(), entityNames),
 			Tags:       item.Tags.Strings(),
 			Importance: item.Importance,
 			SourceType: domain.MemorySourceInferred, // stored by agent inference
 			CreatedAt:  writtenAt,
 			Metadata: mergeMetadataMaps(
 				map[string]interface{}{
-					"entities": item.Entities.Strings(),
+					"entities": entityNames,
 					"source":   "store_if_worthwhile",
 				},
 				placementMeta,
@@ -541,6 +557,7 @@ func (s *Service) storeIfWorthwhileSync(ctx context.Context, req *domain.MemoryS
 		if err := s.Add(ctx, mem); err != nil {
 			continue
 		}
+		s.writeMemoryGraph(ctx, mem.ID, graph)
 		if op == domain.MemoryOpUpdate {
 			// After the replacement is stored, never before: a failure
 			// between the two must leave the old fact current, not neither.

@@ -282,6 +282,28 @@ func (s *CortexRemoteMemoryStore) Update(ctx context.Context, memory *domain.Mem
 	return nil
 }
 
+// MarkStale records that id has been replaced by supersededByID. The row is
+// kept, its validity ends now, and it points at its replacement — in the
+// agent-go metadata this store round-trips and in the top-level
+// "superseded_by" the server itself reads, so the shared brain stops
+// returning it to every client, not just to this one. Without it every
+// update the extraction call made ("piano moved from Wednesday to Friday")
+// left both rows current, and recall answered from whichever ranked first.
+// Implements domain.MemoryStaleMarker.
+func (s *CortexRemoteMemoryStore) MarkStale(ctx context.Context, id string, supersededByID string) error {
+	m, err := s.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if m.Metadata == nil {
+		m.Metadata = map[string]interface{}{}
+	}
+	m.Metadata[domain.MemorySupersededByMetadataKey] = supersededByID
+	m.Metadata[domain.MemoryValidToMetadataKey] = time.Now().UTC().Format(time.RFC3339Nano)
+	m.SupersededBy = supersededByID
+	return s.Update(ctx, m)
+}
+
 func (s *CortexRemoteMemoryStore) Delete(ctx context.Context, id string) error {
 	callCtx, cancel := s.call(ctx)
 	defer cancel()
@@ -540,6 +562,11 @@ func (s *CortexRemoteMemoryStore) metadataFor(m *domain.Memory) (*structpb.Struc
 	if len(m.Tags) > 0 {
 		fields["tags"] = strings.Join(m.Tags, ",")
 	}
+	// The server hides a memory whose top-level superseded_by is set; mirror
+	// it there so a replaced memory stops answering for every client.
+	if by := supersededByOf(m); by != "" {
+		fields[domain.MemorySupersededByMetadataKey] = by
+	}
 	meta, err := structpb.NewStruct(fields)
 	if err != nil {
 		return nil, fmt.Errorf("cortex-remote: encode memory metadata: %w", err)
@@ -692,3 +719,51 @@ func firstNonBlank(values ...string) string {
 	}
 	return ""
 }
+
+// supersededByOf is the id that replaced m, wherever it was recorded.
+func supersededByOf(m *domain.Memory) string {
+	if by := strings.TrimSpace(m.SupersededBy); by != "" {
+		return by
+	}
+	if m.Metadata != nil {
+		if by, ok := m.Metadata[domain.MemorySupersededByMetadataKey].(string); ok {
+			return strings.TrimSpace(by)
+		}
+	}
+	return ""
+}
+
+var _ domain.MemoryStaleMarker = (*CortexRemoteMemoryStore)(nil)
+
+// WriteMemoryGraph records what a memory is about in the shared brain's
+// graph, under the memory's own source id. Implements domain.MemoryGraphWriter.
+func (s *CortexRemoteMemoryStore) WriteMemoryGraph(ctx context.Context, memoryID string, g domain.MemoryGraph) error {
+	calls, err := memoryGraphCalls(memoryID, g)
+	if err != nil {
+		return err
+	}
+	return runMemoryGraphCalls(ctx, calls, s.callGraphTool)
+}
+
+// DropMemoryGraph removes what a replaced memory put in the graph.
+func (s *CortexRemoteMemoryStore) DropMemoryGraph(ctx context.Context, memoryID string) error {
+	c, err := dropMemoryGraphCall(memoryID)
+	if err != nil {
+		return err
+	}
+	return s.callGraphTool(ctx, c)
+}
+
+func (s *CortexRemoteMemoryStore) callGraphTool(ctx context.Context, c memoryGraphCall) error {
+	callCtx, cancel := s.call(ctx)
+	defer cancel()
+	if _, err := s.tools.CallTool(callCtx, &rpcv1.CallToolRequest{Name: c.Name, ArgsJson: string(c.Args)}); err != nil {
+		if status.Code(err) == codes.NotFound {
+			return fmt.Errorf("cortex-remote %s: %w", c.Name, domain.ErrMemoryStoreUnsupported)
+		}
+		return fmt.Errorf("cortex-remote %s: %w", c.Name, err)
+	}
+	return nil
+}
+
+var _ domain.MemoryGraphWriter = (*CortexRemoteMemoryStore)(nil)

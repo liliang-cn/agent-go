@@ -1392,3 +1392,32 @@ func max(a, b int) int {
 	}
 	return b
 }
+
+// WriteMemoryGraph records what a memory is about in the embedded CortexDB's
+// graph, under the memory's own source id. Implements domain.MemoryGraphWriter.
+func (s *MemoryStore) WriteMemoryGraph(ctx context.Context, memoryID string, g domain.MemoryGraph) error {
+	calls, err := memoryGraphCalls(memoryID, g)
+	if err != nil {
+		return err
+	}
+	return runMemoryGraphCalls(ctx, calls, s.callGraphTool)
+}
+
+// DropMemoryGraph removes what a replaced memory put in the graph.
+func (s *MemoryStore) DropMemoryGraph(ctx context.Context, memoryID string) error {
+	c, err := dropMemoryGraphCall(memoryID)
+	if err != nil {
+		return err
+	}
+	return s.callGraphTool(ctx, c)
+}
+
+func (s *MemoryStore) callGraphTool(ctx context.Context, c memoryGraphCall) error {
+	if s == nil || s.db == nil {
+		return domain.ErrMemoryStoreUnsupported
+	}
+	_, err := s.db.GraphRAGTools().Call(ctx, c.Name, c.Args)
+	return err
+}
+
+var _ domain.MemoryGraphWriter = (*MemoryStore)(nil)

@@ -630,6 +630,12 @@ func (c *Client) GenerateWithTools(ctx context.Context, messages []domain.Messag
 			response.Content = "" // clear the binary garbage from content
 		}
 	}
+	// DeepSeek writing its own call markup as text (see dsml.go).
+	if len(response.ToolCalls) == 0 {
+		if calls, rest := extractDSMLToolCalls(response.Content); len(calls) > 0 {
+			response.ToolCalls, response.Content = calls, rest
+		}
+	}
 
 	return response, nil
 }

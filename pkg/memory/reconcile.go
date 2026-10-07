@@ -123,7 +123,7 @@ func reconcilePromptRules(candidates []*domain.Memory) string {
 	sb.WriteString(`
 For each extracted item set "op":
 - "add": information none of the existing memories covers.
-- "update": the item replaces an existing memory that is no longer true (it changed, or was corrected). Set "target_id" to that memory's id. The old memory stops being shown, so write the item's content so it stands on its own.
+- "update": the item replaces an existing memory that is no longer true (it changed, or was corrected). Set "target_id" to that memory's id. The old memory stops being shown, so write the item's content so it stands on its own — and when the old memory also says other things that are still true, restate them in the item: whatever the replacement leaves out is forgotten.
 - "noop": an existing memory already says this. Set "target_id" to it; nothing is stored.
 Only use ids from the list above.
 
@@ -179,6 +179,8 @@ func (s *Service) Supersede(ctx context.Context, oldID, newID string) error {
 	if err := marker.MarkStale(ctx, oldID, newID); err != nil {
 		return err
 	}
+	// The old memory's edges were true of the old fact; they go with it.
+	s.dropMemoryGraph(ctx, oldID)
 	if s.shadowIndex != nil && s.shadowIndex != s.store {
 		if shadow, ok := s.shadowIndex.(domain.MemoryStaleMarker); ok {
 			_ = shadow.MarkStale(ctx, oldID, newID)

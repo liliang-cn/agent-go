@@ -263,6 +263,7 @@ type poolStreamState struct {
 	calls   map[int]*poolStreamCall
 	content strings.Builder // everything said as text, for the Bedrock check
 	think   thinkSplitter
+	dsml    dsmlHold
 }
 
 // absorb takes one chunk and returns what of it is for the reader now — the
@@ -306,6 +307,7 @@ func (s *poolStreamState) absorb(ch poolStreamChunk) (*domain.GenerationResult, 
 
 	s.content.WriteString(c.Delta.Content)
 	text, reasoning := s.think.feed(c.Delta.Content)
+	text = s.dsml.feed(text)
 	reasoning = c.Delta.ReasoningContent + c.Delta.Reasoning + reasoning
 	parts := outputPartsFromMessage(c.Delta.Images)
 	if text == "" && reasoning == "" && len(parts) == 0 {
@@ -318,6 +320,7 @@ func (s *poolStreamState) absorb(ch poolStreamChunk) (*domain.GenerationResult, 
 // the usage.
 func (s *poolStreamState) finish() *domain.GenerationResult {
 	text, reasoning := s.think.flush()
+	text = s.dsml.feed(text) + s.dsml.release()
 	out := &domain.GenerationResult{
 		ID:               s.id,
 		Content:          text,
@@ -346,6 +349,13 @@ func (s *poolStreamState) finish() *domain.GenerationResult {
 	}
 	if len(out.ToolCalls) == 0 && isBedrockEventStream(s.content.String()) {
 		out.ToolCalls = extractBedrockToolCalls(s.content.String())
+	}
+	// Held DSML markup: tool calls written as text. What was not markup is
+	// still said.
+	if len(out.ToolCalls) == 0 {
+		if calls, rest := extractDSMLToolCalls(out.Content); len(calls) > 0 {
+			out.ToolCalls, out.Content = calls, rest
+		}
 	}
 	return out
 }
@@ -455,6 +465,11 @@ func parsePoolToolResponse(raw []byte, model string) (*domain.GenerationResult, 
 			}
 		}
 		out.ToolCalls = append(out.ToolCalls, t)
+	}
+	if len(out.ToolCalls) == 0 {
+		if calls, rest := extractDSMLToolCalls(out.Content); len(calls) > 0 {
+			out.ToolCalls, out.Content = calls, rest
+		}
 	}
 	return out, nil
 }
