@@ -443,12 +443,21 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 	// sub-agent) reaches the loop, so doing it here is what makes the
 	// enforcement uniform instead of dependent on which API the caller used.
 	r.emitTurnState(TurnStageResolvingConstraints, "resolving run constraints", 0, 0)
-	r.resolveConstraints(ctx, goal)
-
-	// Settle which model answers this run, in the same place and for the same
-	// reason: once, before anything is built, so every entry point behaves
-	// alike. It writes r.cfg.Model, which every turn's options then carry.
-	r.svc.routeRun(ctx, goal, r.cfg)
+	// The constraints are a model call of their own, and the context below is
+	// memory and document retrieval; neither reads the other. Run in a row
+	// they put both waits in front of every answer — measured on a hive
+	// queen, 0.8s and 0.4s before a two-second reply — so they run side by
+	// side. Only this goroutine touches r.cfg until it is done.
+	constraintsSettled := make(chan struct{})
+	go func() {
+		defer close(constraintsSettled)
+		r.resolveConstraints(ctx, goal)
+		// Settle which model answers this run, in the same place and for the
+		// same reason: once, before anything is built, so every entry point
+		// behaves alike. It writes r.cfg.Model, which every turn's options
+		// then carry.
+		r.svc.routeRun(ctx, goal, r.cfg)
+	}()
 
 	// 1. Prepare context (Memory & RAG) — with a timeout so a slow embedding
 	// model or unreachable LLM doesn't block the entire run forever.
@@ -458,6 +467,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 	defer prepCancel()
 	prepared := r.svc.prepareConversationContext(prepCtx, goal, r.session, prepareConversationOptions{includeIntent: true})
 	r.emitCheckpoint("context_prepared", prepStart, time.Now(), time.Since(prepStart))
+	<-constraintsSettled
 
 	// 2. Build initial messages. Resume path (cfg.ResumeMessages) bypasses
 	// normal layered assembly and starts from the snapshot directly so the
