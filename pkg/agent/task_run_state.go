@@ -82,6 +82,14 @@ func (s *Service) persistRunTaskEvent(session *Session, taskID string, evt *Even
 	if s == nil || s.store == nil || strings.TrimSpace(taskID) == "" || evt == nil {
 		return
 	}
+	// A streamed fragment — one token of an answer or of its reasoning — is
+	// not a record of anything: the answer itself lands with the terminal
+	// event. Writing each one rewrote the whole task row, so a turn cost the
+	// square of its length: on a live hive with a long-lived task row, a
+	// three-word greeting took 85s to stream, about two tokens a second.
+	if isStreamFragment(evt.Type) {
+		return
+	}
 	if strings.TrimSpace(evt.ID) == "" {
 		evt.ID = uuid.NewString()
 	}
@@ -170,6 +178,12 @@ func (s *Service) persistRunTaskEvent(session *Session, taskID string, evt *Even
 		}
 		return task
 	})
+}
+
+// isStreamFragment reports whether an event is a piece of a stream rather
+// than a step of the run.
+func isStreamFragment(t EventType) bool {
+	return t == EventTypePartial || t == EventTypeThinking || t == EventTypeTombstone
 }
 
 func (s *Service) persistRunTaskStats(session *Session, taskID string, metrics *executionMetrics) {
