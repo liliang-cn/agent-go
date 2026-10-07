@@ -84,6 +84,11 @@ type Pool struct {
 	roundRobinIdx uint32
 
 	mu sync.RWMutex
+
+	// freed is closed, and replaced, every time a client is released: a call
+	// waiting for a slot holds the current one and wakes when it closes.
+	freedMu sync.Mutex
+	freed   chan struct{}
 }
 
 // NewPool creates a pool. An empty provider list is allowed; providers can be added later with AddProvider.
@@ -244,7 +249,7 @@ func (p *Pool) Get() (*Client, error) {
 	// Collect the healthy clients.
 	healthy := p.healthyClients()
 	if len(healthy) == 0 {
-		return nil, fmt.Errorf("no healthy clients available")
+		return nil, p.unavailable()
 	}
 
 	var selected *clientWrapper
@@ -328,7 +333,7 @@ func (p *Pool) GetByModel(modelName string) (*Client, error) {
 
 	healthy := p.healthyClients()
 	if len(healthy) == 0 {
-		return nil, fmt.Errorf("no healthy clients available")
+		return nil, p.unavailable()
 	}
 
 	var preferred []*clientWrapper
@@ -357,7 +362,7 @@ func (p *Pool) GetByCapability(minCapability int) (*Client, error) {
 
 	healthy := p.healthyClients()
 	if len(healthy) == 0 {
-		return nil, fmt.Errorf("no healthy clients available")
+		return nil, p.unavailable()
 	}
 
 	selected := p.selectByCapability(healthy, minCapability)
@@ -375,7 +380,7 @@ func (p *Pool) GetWithHint(hint SelectionHint) (*Client, error) {
 
 	healthy := p.healthyClients()
 	if len(healthy) == 0 {
-		return nil, fmt.Errorf("no healthy clients available")
+		return nil, p.unavailable()
 	}
 
 	selected := p.selectWithHint(healthy, hint)
@@ -402,6 +407,7 @@ func (p *Pool) Release(client *Client) {
 	wrapper, ok := p.clients[client.GetProviderName()]
 	if ok {
 		atomic.AddInt32(&wrapper.activeRequests, -1)
+		p.signalFreed()
 	}
 }
 
@@ -586,7 +592,7 @@ func (p *Pool) Close() error {
 
 // Generate is the pool-level Generate (acquires and releases a client automatically).
 func (p *Pool) Generate(ctx context.Context, prompt string, opts *domain.GenerationOptions) (string, error) {
-	client, err := p.clientFor(opts)
+	client, err := p.acquire(ctx, func() (*Client, error) { return p.clientFor(opts) })
 	if err != nil {
 		return "", err
 	}
@@ -625,7 +631,7 @@ func stamp(res *domain.GenerationResult, c *Client) *domain.GenerationResult {
 
 // GenerateWithTools is the pool-level GenerateWithTools.
 func (p *Pool) GenerateWithTools(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions) (*domain.GenerationResult, error) {
-	client, err := p.clientFor(opts)
+	client, err := p.acquire(ctx, func() (*Client, error) { return p.clientFor(opts) })
 	if err != nil {
 		return nil, err
 	}
@@ -637,7 +643,7 @@ func (p *Pool) GenerateWithTools(ctx context.Context, messages []domain.Message,
 
 // GenerateStructured is the pool-level GenerateStructured.
 func (p *Pool) GenerateStructured(ctx context.Context, prompt string, schema interface{}, opts *domain.GenerationOptions) (*domain.StructuredResult, error) {
-	client, err := p.clientFor(opts)
+	client, err := p.acquire(ctx, func() (*Client, error) { return p.clientFor(opts) })
 	if err != nil {
 		return nil, err
 	}
@@ -648,7 +654,7 @@ func (p *Pool) GenerateStructured(ctx context.Context, prompt string, schema int
 
 // RecognizeIntent is the pool-level RecognizeIntent.
 func (p *Pool) RecognizeIntent(ctx context.Context, request string) (*domain.IntentResult, error) {
-	client, err := p.Get()
+	client, err := p.acquire(ctx, p.Get)
 	if err != nil {
 		return nil, err
 	}
@@ -659,7 +665,7 @@ func (p *Pool) RecognizeIntent(ctx context.Context, request string) (*domain.Int
 
 // Stream is the pool-level Stream.
 func (p *Pool) Stream(ctx context.Context, prompt string, opts *domain.GenerationOptions, callback func(string)) error {
-	client, err := p.Get()
+	client, err := p.acquire(ctx, p.Get)
 	if err != nil {
 		return err
 	}
@@ -670,7 +676,7 @@ func (p *Pool) Stream(ctx context.Context, prompt string, opts *domain.Generatio
 
 // StreamWithTools is the pool-level StreamWithTools.
 func (p *Pool) StreamWithTools(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions, callback domain.ToolCallCallback) error {
-	client, err := p.Get()
+	client, err := p.acquire(ctx, p.Get)
 	if err != nil {
 		return err
 	}
@@ -681,7 +687,7 @@ func (p *Pool) StreamWithTools(ctx context.Context, messages []domain.Message, t
 
 // Embed is the pool-level Embed (satisfies domain.Embedder; returns the vector of the first text).
 func (p *Pool) Embed(ctx context.Context, text string) ([]float64, error) {
-	client, err := p.Get()
+	client, err := p.acquire(ctx, p.Get)
 	if err != nil {
 		return nil, err
 	}
@@ -697,7 +703,7 @@ func (p *Pool) EmbedBatch(ctx context.Context, texts []string) ([][]float64, err
 
 // EmbedMultiple is the pool-level EmbedMultiple (vectorizes several texts).
 func (p *Pool) EmbedMultiple(ctx context.Context, texts []string) ([][]float64, error) {
-	client, err := p.Get()
+	client, err := p.acquire(ctx, p.Get)
 	if err != nil {
 		return nil, err
 	}
@@ -805,7 +811,7 @@ func (p *Pool) ListProviders() []Provider {
 }
 
 func (p *Pool) extractMetadataWithClient(ctx context.Context, hint SelectionHint, content string, model string) (*domain.ExtractedMetadata, error) {
-	client, err := p.GetWithHint(hint)
+	client, err := p.acquire(ctx, func() (*Client, error) { return p.GetWithHint(hint) })
 	if err != nil {
 		return nil, err
 	}
@@ -836,4 +842,64 @@ func (p *Pool) extractMetadataWithClient(ctx context.Context, hint SelectionHint
 	}
 
 	return &metadata, nil
+}
+
+// errAllBusy says every healthy client is at its concurrency limit — a wait,
+// not a failure.
+var errAllBusy = errors.New("every healthy client is at its concurrency limit")
+
+// unavailable explains an empty healthyClients: busy when some client is
+// healthy but full, unavailable when none is healthy at all.
+func (p *Pool) unavailable() error {
+	for _, w := range p.clients {
+		if w.healthy {
+			return fmt.Errorf("no healthy clients available: %w", errAllBusy)
+		}
+	}
+	return fmt.Errorf("no healthy clients available")
+}
+
+// freedSignal is the channel that closes at the next release.
+func (p *Pool) freedSignal() <-chan struct{} {
+	p.freedMu.Lock()
+	defer p.freedMu.Unlock()
+	if p.freed == nil {
+		p.freed = make(chan struct{})
+	}
+	return p.freed
+}
+
+// signalFreed wakes every call waiting for a slot.
+func (p *Pool) signalFreed() {
+	p.freedMu.Lock()
+	defer p.freedMu.Unlock()
+	if p.freed != nil {
+		close(p.freed)
+	}
+	p.freed = make(chan struct{})
+}
+
+// acquire gets a client through get, waiting while every healthy client is at
+// its concurrency limit — until one is released or ctx ends.
+//
+// A full pool used to answer "no healthy clients available" at once. A run
+// that checks its constraints beside its first answer puts two requests in
+// flight, so three people asking at the same moment of a provider limited to
+// five failed one of them outright. Waiting is what a limit is for.
+//
+// The signal is taken before each attempt, so a release between a failed
+// attempt and the wait still wakes it.
+func (p *Pool) acquire(ctx context.Context, get func() (*Client, error)) (*Client, error) {
+	for {
+		freed := p.freedSignal()
+		c, err := get()
+		if !errors.Is(err, errAllBusy) {
+			return c, err
+		}
+		select {
+		case <-freed:
+		case <-ctx.Done():
+			return nil, fmt.Errorf("waiting for a free client: %w", ctx.Err())
+		}
+	}
 }

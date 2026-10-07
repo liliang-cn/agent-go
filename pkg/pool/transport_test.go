@@ -2,6 +2,7 @@ package pool
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -89,5 +90,47 @@ func TestWarmOpensTheConnectionTheFirstRequestUses(t *testing.T) {
 	}
 	if n := atomic.LoadInt64(&dials); n != 1 {
 		t.Fatalf("the first request opened its own connection (%d total); the warm one should have been reused", n)
+	}
+}
+
+// A pool at its concurrency limit makes the next call wait for a slot rather
+// than fail, and a wait that outlives its context ends with the context.
+func TestFullPoolWaitsForASlot(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(60 * time.Millisecond)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}]}`))
+	}))
+	defer srv.Close()
+	p, err := NewPool(PoolConfig{Enabled: true, Strategy: StrategyRoundRobin,
+		Providers: []Provider{{Name: "t", BaseURL: srv.URL, Key: "k", ModelName: "m", MaxConcurrency: 1}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	var failed int32
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := p.Generate(context.Background(), "hi", nil); err != nil {
+				atomic.AddInt32(&failed, 1)
+				t.Log(err)
+			}
+		}()
+	}
+	wg.Wait()
+	if failed != 0 {
+		t.Fatalf("%d of 4 calls failed on a full pool instead of waiting", failed)
+	}
+
+	hold, err := p.Get() // take the only slot
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Release(hold)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := p.Generate(ctx, "hi", nil); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("a wait past its deadline returned %v, want the deadline", err)
 	}
 }
