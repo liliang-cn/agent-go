@@ -96,6 +96,14 @@ type Embedder interface {
 	EmbedBatch(ctx context.Context, texts []string) ([][]float64, error)
 }
 
+// EmbedderConfigured is an Embedder that can say it has no model behind it —
+// a pool with no embedding provider yet. Callers skip it instead of calling
+// it to find out, and do not report the absence as a failure. Providers can
+// be added later, so it is asked each time, not once.
+type EmbedderConfigured interface {
+	EmbeddingConfigured() bool
+}
+
 // IntentType represents different types of user intents
 type IntentType string
 
@@ -180,6 +188,12 @@ type GenerationOptions struct {
 	// on prompts where the model just needs to emit JSON). Nil = leave it to
 	// the provider default. Sent verbatim as-is to the upstream API.
 	Thinking *ThinkingOptions
+	// NoReasoning asks for the answer without reasoning first, for a call
+	// something is waiting on and whose shape a schema already fixes — the
+	// memory pick in front of a turn. Unlike Thinking it is a wish, not a
+	// field: the pool sends the off switch only to an upstream that has shown
+	// it reasons, and stops once that upstream refuses it.
+	NoReasoning bool
 
 	// PromptCache asks the provider to cache the prompt prefix explicitly,
 	// for providers that require a marker rather than caching a stable

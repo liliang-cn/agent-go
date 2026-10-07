@@ -18,60 +18,68 @@ import (
 // the automatic writer then extracted the same fact, and "I live in Chengdu"
 // stayed current beside two Beijing rows, because the explicit path added
 // blindly. It now asks one closed question over the same candidates the
-// automatic writer sees. That is one model call per explicit save; a save the
-// model asked for is rare next to the automatic writer, which runs every turn.
+// automatic writer sees.
 //
-// No model, no candidates, or an answer that does not parse: it adds, exactly
-// as Add would. A reconciliation that cannot run must not lose the memory.
+// The memory is stored at once and the question is asked after, in the
+// background. Asked first, it stood between the tool call and the turn: on
+// deepseek-flash memory_save took 19.4s of a 24.9s turn, every turn that
+// saved anything, while the person waited for an answer that did not depend
+// on it. What the verdict changes is applied when it comes: "update" retires
+// the memory it replaces, "noop" removes the copy just stored, and the graph
+// is written. Close waits for verdicts still out.
+//
+// No model, no candidates, or an answer that does not parse: the memory
+// stays as stored. A reconciliation that cannot run must not lose it.
 func (s *Service) AddReconciled(ctx context.Context, mem *domain.Memory) (domain.MemoryReconcileOutcome, error) {
 	if mem == nil {
 		return domain.MemoryReconcileOutcome{}, fmt.Errorf("memory is nil")
 	}
-	// What the memory is about, when the reconciliation call said; written
-	// to the store's graph once the memory is stored.
-	var graph domain.MemoryGraph
-	add := func() (domain.MemoryReconcileOutcome, error) {
-		if err := s.Add(ctx, mem); err != nil {
-			return domain.MemoryReconcileOutcome{}, err
-		}
-		s.writeMemoryGraph(ctx, mem.ID, graph)
-		return domain.MemoryReconcileOutcome{Op: domain.MemoryOpAdd, ID: mem.ID}, nil
+	if err := s.Add(ctx, mem); err != nil {
+		return domain.MemoryReconcileOutcome{}, err
 	}
-	if s == nil || s.llm == nil || strings.TrimSpace(mem.Content) == "" {
-		return add()
+	out := domain.MemoryReconcileOutcome{Op: domain.MemoryOpAdd, ID: mem.ID}
+	if s.llm == nil || strings.TrimSpace(mem.Content) == "" {
+		return out, nil
 	}
+	s.inBackground(ctx, func(ctx context.Context) { s.reconcileSaved(ctx, mem) })
+	return out, nil
+}
 
+// reconcileSaved asks about a memory already stored and applies the answer.
+func (s *Service) reconcileSaved(ctx context.Context, mem *domain.Memory) {
 	// Asked even when nothing similar is stored: the same call says what the
 	// memory is about, and a first memory needs its graph as much as any.
-	candidates := s.reconcileCandidates(ctx, explicitStoreRequest(mem))
-
+	var candidates []*domain.Memory
+	for _, c := range s.reconcileCandidates(ctx, explicitStoreRequest(mem)) {
+		if c.ID != mem.ID {
+			candidates = append(candidates, c)
+		}
+	}
 	verdict, ok := s.askExplicitReconcile(ctx, mem.Content, candidates)
 	if !ok {
-		return add()
+		return
 	}
-	graph = withoutIDNames(domain.MemoryGraph{Entities: verdict.Entities, Relations: verdict.Relations})
-	mem.Keywords = mergeUniqueStrings(mem.Keywords, graph.Names())
 	known := map[string]bool{}
 	for _, c := range candidates {
 		known[c.ID] = true
 	}
-	switch verdict.Op {
-	case domain.MemoryOpNoop:
-		if known[verdict.TargetID] {
-			return domain.MemoryReconcileOutcome{Op: domain.MemoryOpNoop, TargetID: verdict.TargetID}, nil
+	if verdict.Op == domain.MemoryOpNoop && known[verdict.TargetID] {
+		if err := s.Delete(ctx, mem.ID); err != nil {
+			agentgolog.WithModule("memory.autostore").Warn("an explicit save repeats a stored memory; the copy stays",
+				"memory_id", mem.ID, "matches", verdict.TargetID, "error", err)
 		}
-	case domain.MemoryOpUpdate:
-		if known[verdict.TargetID] {
-			if err := s.Add(ctx, mem); err != nil {
-				return domain.MemoryReconcileOutcome{}, err
-			}
-			s.writeMemoryGraph(ctx, mem.ID, graph)
-			s.supersedeOrKeep(ctx, verdict.TargetID, mem.ID)
-			return domain.MemoryReconcileOutcome{Op: domain.MemoryOpUpdate, TargetID: verdict.TargetID, ID: mem.ID}, nil
-		}
+		return
 	}
-	// add, or a verdict pointing at a memory the model was not shown.
-	return add()
+	graph := withoutIDNames(domain.MemoryGraph{Entities: verdict.Entities, Relations: verdict.Relations})
+	if names := graph.Names(); len(names) > 0 {
+		mem.Keywords = mergeUniqueStrings(mem.Keywords, names)
+		_ = s.store.Update(ctx, mem)
+	}
+	s.writeMemoryGraph(ctx, mem.ID, graph)
+	// An "update" naming a memory the model was not shown is an add.
+	if verdict.Op == domain.MemoryOpUpdate && known[verdict.TargetID] {
+		s.supersedeOrKeep(ctx, verdict.TargetID, mem.ID)
+	}
 }
 
 // explicitStoreRequest turns the memory's own scope into the request shape

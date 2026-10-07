@@ -1018,6 +1018,11 @@ func (w *embeddingServiceWrapper) EmbedBatch(ctx context.Context, texts []string
 	return w.pool.EmbedMultiple(ctx, texts)
 }
 
+// EmbeddingConfigured reports whether the pool has an embedding provider.
+func (w *embeddingServiceWrapper) EmbeddingConfigured() bool {
+	return w.pool != nil && len(w.pool.ListProviders()) > 0
+}
+
 // GetGlobalLLM returns the global LLM service (legacy).
 func GetGlobalLLM() (domain.Generator, error) {
 	service := Global()

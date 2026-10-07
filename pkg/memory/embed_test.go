@@ -86,3 +86,28 @@ func TestFailingEmbedderIsSkippedWhileItBacksOff(t *testing.T) {
 	assert.Len(t, vec, 3)
 	assert.Zero(t, svc.embedState.delay, "a success resets the backoff")
 }
+
+// unconfiguredEmbedder is a pool with no embedding provider in it yet.
+type unconfiguredEmbedder struct {
+	countingEmbedder
+	configured atomic.Bool
+}
+
+func (e *unconfiguredEmbedder) EmbeddingConfigured() bool { return e.configured.Load() }
+
+// No embedding model is not a failing one: it is not called, does not trip
+// the backoff, and is used as soon as a provider is added.
+func TestUnconfiguredEmbedderIsNotAFailure(t *testing.T) {
+	ctx := context.Background()
+	emb := &unconfiguredEmbedder{}
+	svc := &Service{embedder: emb}
+
+	_, ok := svc.embed(ctx, "q")
+	assert.False(t, ok)
+	assert.Zero(t, atomic.LoadInt64(&emb.calls))
+	assert.Zero(t, svc.embedState.delay, "an absent embedder must not start a backoff")
+
+	emb.configured.Store(true)
+	_, ok = svc.embed(ctx, "q")
+	assert.True(t, ok)
+}

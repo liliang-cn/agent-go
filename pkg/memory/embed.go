@@ -66,6 +66,11 @@ func (s *Service) embed(ctx context.Context, text string) ([]float64, bool) {
 	if se, ok := s.store.(domain.MemoryServerEmbedding); ok && se.EmbedsServerSide() {
 		return nil, false
 	}
+	// No model configured is not a failing model: a standalone install with
+	// none used to log "embedder failing" at its first question.
+	if ec, ok := s.embedder.(domain.EmbedderConfigured); ok && !ec.EmbeddingConfigured() {
+		return nil, false
+	}
 	if s.embedState.open(time.Now()) {
 		return nil, false
 	}

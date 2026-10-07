@@ -108,6 +108,7 @@ scan:
 		if delta != nil {
 			if delta.ReasoningContent != "" && thinkingSince.IsZero() {
 				thinkingSince = time.Now()
+				c.reasons.Store(true)
 			}
 			thought += len(delta.ReasoningContent)
 			if !rethought && c.overThinking(thought, thinkingSince) && st.content.Len() == 0 && len(st.calls) == 0 {

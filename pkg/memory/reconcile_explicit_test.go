@@ -46,9 +46,8 @@ func TestExplicitSaveRetiresTheMemoryItRevises(t *testing.T) {
 
 	out, err := svc.AddReconciled(ctx, explicitMemory("User moved to Beijing"))
 	require.NoError(t, err)
-	assert.Equal(t, domain.MemoryOpUpdate, out.Op)
-	assert.Equal(t, seed.ID, out.TargetID)
 	assert.NotEmpty(t, out.ID)
+	svc.waitBackground()
 
 	old, err := fs.Get(ctx, seed.ID)
 	require.NoError(t, err)
@@ -67,10 +66,9 @@ func TestExplicitSaveOfAKnownFactStoresNothing(t *testing.T) {
 	svc, fs := newFileService(t, llm)
 	seed = seedResidence(t, svc)
 
-	out, err := svc.AddReconciled(ctx, explicitMemory("The user lives in Chengdu"))
+	_, err := svc.AddReconciled(ctx, explicitMemory("The user lives in Chengdu"))
 	require.NoError(t, err)
-	assert.Equal(t, domain.MemoryOpNoop, out.Op)
-	assert.Empty(t, out.ID)
+	svc.waitBackground()
 	all, _, err := fs.List(ctx, 100, 0)
 	require.NoError(t, err)
 	assert.Len(t, all, 1)
@@ -87,6 +85,9 @@ func TestExplicitSaveFallsBackToAdd(t *testing.T) {
 	out, err := svc.AddReconciled(ctx, explicitMemory("User likes tea"))
 	require.NoError(t, err)
 	assert.Equal(t, domain.MemoryOpAdd, out.Op)
+	svc.waitBackground()
+	_, err = fs.Get(ctx, out.ID)
+	require.NoError(t, err, "the memory stays as stored")
 	old, err := fs.Get(ctx, seed.ID)
 	require.NoError(t, err)
 	assert.False(t, domain.MemoryIsSuperseded(old))
@@ -110,9 +111,38 @@ func TestExplicitSaveWritesTheMemoryGraph(t *testing.T) {
 
 	out, err := svc.AddReconciled(ctx, explicitMemory("周明远对花生过敏"))
 	require.NoError(t, err)
+	svc.waitBackground()
 	require.Len(t, llm.prompts, 1, "the graph rides on the reconciliation call, even with nothing to reconcile against")
 	assert.Contains(t, llm.prompts[0], "(none")
 	require.Contains(t, gs.writes, out.ID)
 	assert.Equal(t, []domain.MemoryGraphRelation{{From: "周明远", Type: "allergic_to", To: "花生"}}, gs.writes[out.ID].Relations)
 	assert.Subset(t, llm.schemas[0].(map[string]interface{})["required"], []string{"graph_entities", "graph_relations"})
+}
+
+// The save does not wait for the reconciliation: the memory is stored and
+// the tool answers while the model is still being asked.
+func TestExplicitSaveReturnsBeforeTheVerdict(t *testing.T) {
+	ctx := context.Background()
+	release := make(chan struct{})
+	llm := &promptFuncLLM{reply: func(string) string {
+		<-release
+		return `{"op":"add","target_id":"","graph_entities":[],"graph_relations":[]}`
+	}}
+	svc, fs := newFileService(t, llm)
+
+	done := make(chan domain.MemoryReconcileOutcome, 1)
+	go func() {
+		out, err := svc.AddReconciled(ctx, explicitMemory("User likes tea"))
+		assert.NoError(t, err)
+		done <- out
+	}()
+	select {
+	case out := <-done:
+		_, err := fs.Get(ctx, out.ID)
+		require.NoError(t, err, "stored before the verdict")
+	case <-time.After(5 * time.Second):
+		t.Fatal("AddReconciled waited for the model")
+	}
+	close(release)
+	svc.waitBackground()
 }

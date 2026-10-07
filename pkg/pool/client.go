@@ -30,6 +30,12 @@ type Client struct {
 	// structuredSchemaRejected is set once the upstream refuses
 	// response_format json_schema; structured calls then use the prompt form.
 	structuredSchemaRejected atomic.Bool
+	// reasons is set once a reply from this upstream has carried reasoning,
+	// and thinkingOffRejected once it has refused the field that turns
+	// reasoning off. Between them they decide whether a structured call that
+	// wants no reasoning asks for it; see structuredCompletion.
+	reasons             atomic.Bool
+	thinkingOffRejected atomic.Bool
 	// reasoningBytes and reasoningTime are the streamed-reasoning budget;
 	// see SetReasoningBudget.
 	reasoningBytes int
@@ -582,6 +588,9 @@ func (c *Client) GenerateWithTools(ctx context.Context, messages []domain.Messag
 
 	choice := result.Choices[0]
 	cleanContent, reasoning := parseThinkContent(choice.Message.Content, choice.Message.ReasoningContent)
+	if reasoning != "" {
+		c.reasons.Store(true)
+	}
 	response := &domain.GenerationResult{
 		Content:          cleanContent,
 		ReasoningContent: reasoning,
@@ -677,8 +686,9 @@ func (c *Client) GenerateStructured(ctx context.Context, prompt string, schema i
 	if opts.Temperature > 0 {
 		reqBody["temperature"] = opts.Temperature
 	}
+	setThinking(reqBody, opts)
 
-	content, err := c.structuredCompletion(ctx, reqBody, opts.MaxTokens)
+	content, err := c.structuredCompletion(ctx, reqBody, opts.MaxTokens, opts.NoReasoning)
 	if err != nil {
 		if isResponseFormatRejection(err) {
 			c.structuredSchemaRejected.Store(true)
@@ -714,15 +724,17 @@ func (c *Client) generateStructuredFallback(ctx context.Context, prompt string, 
 			{"role": "user", "content": augmented},
 		},
 	}
-	maxTokens := 0
+	maxTokens, noReasoning := 0, false
 	if opts != nil {
+		noReasoning = opts.NoReasoning
 		if opts.Temperature > 0 {
 			reqBody["temperature"] = opts.Temperature
 		}
 		maxTokens = opts.MaxTokens
+		setThinking(reqBody, opts)
 	}
 
-	content, err := c.structuredCompletion(ctx, reqBody, maxTokens)
+	content, err := c.structuredCompletion(ctx, reqBody, maxTokens, noReasoning)
 	if err != nil {
 		return nil, fmt.Errorf("structured fallback request failed: %w", err)
 	}
@@ -748,12 +760,34 @@ const structuredEscalations = 2
 // was sized for the answer, and on a reasoning model the reasoning comes out
 // of the same budget first. A truncated reply that did write something is
 // returned as is — the budget reached the answer, and the caller judges it.
-func (c *Client) structuredCompletion(ctx context.Context, reqBody map[string]interface{}, maxTokens int) (string, error) {
+//
+// noReasoning is a caller waiting on the answer (GenerationOptions
+// .NoReasoning). The memory navigator's pick of five ids from a nine-line
+// index, in front of every turn, took 5–8s on deepseek-flash, 1–2k tokens of
+// it reasoning, and 1.6s with reasoning off, choosing the same ids. Once this
+// upstream has shown it reasons, such a call asks it not to; an upstream that
+// refuses the field is asked again without it and not sent it again. No
+// model is named: what turns this on is a reply that reasoned. It is not the
+// default because it is not free: memory extraction run without reasoning
+// filed the assistant's own offer as the person's wish and got a date wrong,
+// and extraction runs after the reply, where nobody waits on it.
+func (c *Client) structuredCompletion(ctx context.Context, reqBody map[string]interface{}, maxTokens int, noReasoning bool) (string, error) {
+	_, explicit := reqBody["thinking"]
+	thinkingOff := noReasoning && !explicit && c.reasons.Load() && !c.thinkingOffRejected.Load()
+	if thinkingOff {
+		reqBody["thinking"] = map[string]interface{}{"type": "disabled"}
+	}
 	for step := 0; ; step++ {
 		if maxTokens > 0 {
 			reqBody["max_tokens"] = maxTokens
 		}
 		resp, err := c.doRequest(ctx, "/chat/completions", reqBody)
+		if err != nil && thinkingOff && isThinkingRejection(err) {
+			c.thinkingOffRejected.Store(true)
+			thinkingOff = false
+			delete(reqBody, "thinking")
+			resp, err = c.doRequest(ctx, "/chat/completions", reqBody)
+		}
 		if err != nil {
 			return "", err
 		}
@@ -761,7 +795,8 @@ func (c *Client) structuredCompletion(ctx context.Context, reqBody map[string]in
 			Choices []struct {
 				FinishReason string `json:"finish_reason"`
 				Message      struct {
-					Content string `json:"content"`
+					Content          string `json:"content"`
+					ReasoningContent string `json:"reasoning_content"`
 				} `json:"message"`
 			} `json:"choices"`
 		}
@@ -772,6 +807,9 @@ func (c *Client) structuredCompletion(ctx context.Context, reqBody map[string]in
 			return "", fmt.Errorf("no choices in response")
 		}
 		choice := result.Choices[0]
+		if choice.Message.ReasoningContent != "" || strings.Contains(choice.Message.Content, "<think>") {
+			c.reasons.Store(true)
+		}
 		truncatedEmpty := choice.FinishReason == "length" && strings.TrimSpace(choice.Message.Content) == ""
 		if !truncatedEmpty || maxTokens <= 0 || step >= structuredEscalations {
 			return choice.Message.Content, nil
@@ -782,6 +820,23 @@ func (c *Client) structuredCompletion(ctx context.Context, reqBody map[string]in
 
 // isResponseFormatRejection reports whether a provider refused the
 // response_format field itself, as opposed to failing for another reason.
+// setThinking carries a caller's explicit reasoning choice into a structured
+// request; without one, structuredCompletion decides.
+func setThinking(reqBody map[string]interface{}, opts *domain.GenerationOptions) {
+	if opts != nil && opts.Thinking != nil && opts.Thinking.Type != "" {
+		reqBody["thinking"] = map[string]interface{}{"type": opts.Thinking.Type}
+	}
+}
+
+// isThinkingRejection reports an upstream refusing the thinking field.
+func isThinkingRejection(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "status 400") && strings.Contains(msg, "thinking")
+}
+
 func isResponseFormatRejection(err error) bool {
 	if err == nil {
 		return false

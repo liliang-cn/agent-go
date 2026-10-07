@@ -40,9 +40,9 @@ type Runtime struct {
 	constraintsReady   chan struct{}
 	pendingConstraints RunConstraints
 	constraintsCtx     context.Context
-	session      *Session
-	cfg          *RunConfig
-	sources      []domain.Chunk // Collect RAG sources during execution
+	session            *Session
+	cfg                *RunConfig
+	sources            []domain.Chunk // Collect RAG sources during execution
 
 	// Checkpoint profiling
 	checkpointTimes map[string]time.Time

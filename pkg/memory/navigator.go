@@ -120,7 +120,8 @@ Output valid JSON only:
 			"required": []string{"ids"},
 		}
 
-		result, err := n.llm.GenerateStructured(ctx, promptText, schema, &domain.GenerationOptions{Temperature: 0.1})
+		// The turn waits on this pick, and the schema fixes its shape.
+		result, err := n.llm.GenerateStructured(ctx, promptText, schema, &domain.GenerationOptions{Temperature: 0.1, NoReasoning: true})
 		if err != nil {
 			return nil, fmt.Errorf("navigator LLM call failed: %w", err)
 		}

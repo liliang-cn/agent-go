@@ -60,7 +60,9 @@ type Service struct {
 
 	backgroundOnce sync.Once
 	closeOnce      sync.Once
-	durableQueue   chan *domain.MemoryStoreRequest
+	// background counts work started by inBackground, so Close can wait.
+	background   sync.WaitGroup
+	durableQueue chan *domain.MemoryStoreRequest
 	// durableDone is closed when the worker has drained the queue, so Close can
 	// wait for pending writes instead of dropping them.
 	durableDone chan struct{}
@@ -811,8 +813,34 @@ func (s *Service) List(ctx context.Context, limit, offset int) ([]*domain.Memory
 	return s.store.List(ctx, limit, offset)
 }
 
+// backgroundTimeout bounds work a caller has stopped waiting for.
+const backgroundTimeout = 2 * time.Minute
+
+// inBackground runs fn after the call that started it has returned, under
+// that call's values but not its cancellation: a tool call's context ends
+// with the tool call.
+func (s *Service) inBackground(ctx context.Context, fn func(context.Context)) {
+	s.background.Add(1)
+	go func() {
+		defer s.background.Done()
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), backgroundTimeout)
+		defer cancel()
+		fn(ctx)
+	}()
+}
+
+// waitBackground waits for work started by inBackground.
+func (s *Service) waitBackground() { s.background.Wait() }
+
 func (s *Service) Delete(ctx context.Context, id string) error {
-	return s.store.Delete(ctx, id)
+	if err := s.store.Delete(ctx, id); err != nil {
+		return err
+	}
+	// A cached pick naming the deleted memory would point at nothing.
+	if s.navigator != nil {
+		s.navigator.InvalidateCache()
+	}
+	return nil
 }
 
 func (s *Service) Clear(ctx context.Context) error {
@@ -1545,6 +1573,7 @@ func (s *Service) Close() error {
 		return nil
 	}
 	s.closeOnce.Do(func() {
+		s.background.Wait()
 		if s.durableQueue != nil {
 			// Closing ends the range loop once the queued writes are done, so
 			// pending memories are still written rather than dropped.
