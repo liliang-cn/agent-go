@@ -703,6 +703,7 @@ func (b *Builder) build() (*Service, error) {
 		return nil, fmt.Errorf("failed to create service: %w", err)
 	}
 	svc.cfg = agentgoCfg
+	svc.location = b.timeLocation
 	// What this install keeps behind the tool index (Tooling.DeferTools).
 	//
 	// It goes to the registry rather than being consulted per turn, because

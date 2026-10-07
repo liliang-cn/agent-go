@@ -170,7 +170,7 @@ func RegisterDateTimeTool(svc *Service) {
 		dateTimeToolDescription,
 		dateTimeToolSchema(),
 		func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-			res, err := resolveDateTimeFromMap(time.Now(), args)
+			res, err := resolveDateTimeFromMap(svc.now(), args)
 			if err != nil {
 				return map[string]interface{}{"ok": false, "error": err.Error()}, nil
 			}
@@ -201,4 +201,14 @@ func toolArgInt(args map[string]interface{}, k string) int {
 		return n
 	}
 	return 0
+}
+
+// now is the current time in the person's zone. resolve_datetime used the
+// machine's: a hive pod in UTC turned "下周三上午十点" into 10:00Z, 18:00 in
+// Hangzhou, although the builder had been told the zone.
+func (s *Service) now() time.Time {
+	if s != nil && s.location != nil {
+		return time.Now().In(s.location)
+	}
+	return time.Now()
 }

@@ -36,6 +36,10 @@ type ProgressCallback func(ProgressEvent)
 // Service is the main agent service that handles planning and execution
 // This matches the interface expected by the CLI in cmd/agentgo-cli/agent/agent.go
 type Service struct {
+	// location is the person's timezone (Builder.WithTimezone); nil is the
+	// machine's. See Service.now.
+	location *time.Location
+
 	// bgWork tracks goroutines a run leaves behind (memory extraction), so Close
 	// can wait for them instead of letting them write after the caller has moved
 	// on. See service_background.go.

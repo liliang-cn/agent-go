@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -110,5 +111,25 @@ func TestResolveDateTimeReportsTheRealWeekdayInEnglish(t *testing.T) {
 		if parsed.Weekday().String() != got.Weekday {
 			t.Errorf("%s resolves to %s but reports weekday %q", tc.in, parsed.Weekday(), got.Weekday)
 		}
+	}
+}
+
+// The zone the builder was given is the one resolve_datetime answers in, not
+// the machine's: a hive pod in UTC stored "next Wednesday 10:00" as 10:00Z.
+func TestResolveDateTimeUsesTheConfiguredZone(t *testing.T) {
+	sh, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		t.Skip("no tzdata")
+	}
+	svc := &Service{location: sh}
+	res, err := resolveDateTimeFromMap(svc.now(), map[string]interface{}{"day_offset": float64(1), "time": "10:00"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(res.RFC3339, "+08:00") || !strings.Contains(res.RFC3339, "T10:00:00") {
+		t.Fatalf("rfc3339 = %q, want 10:00 at +08:00", res.RFC3339)
+	}
+	if (&Service{}).now().Location() != time.Local {
+		t.Fatal("with no zone set, the machine's is used")
 	}
 }
