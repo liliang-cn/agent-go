@@ -97,6 +97,7 @@ func main() {
 | 选项 | 作用 |
 | --- | --- |
 | `WithMaxTurns(n)` / `WithMaxTokens(n)` / `WithTemperature(t)` / `WithThinking(bool)` | 预算与采样 |
+| `WithMaxBudgetTokens(n)` | 可选的单次运行 token 预算（输入 + 输出）；整个任务用 `LongRunConfig.MaxTotalTokens`。0 = 不限 |
 | `WithLLMRetries(n)` | provider 临时错误时重试 |
 | `WithToolsDisabled()` / `WithToolAllowlist(names)` / `WithToolDenylist(names)` | 工具面 |
 | `WithStructuredOutput(spec)` / `WithStructuredOutputType[T]()` | 强制 JSON 结构 |

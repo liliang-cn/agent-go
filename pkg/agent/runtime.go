@@ -720,6 +720,20 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			r.lastFinishReason = result.FinishReason
 		}
 
+		// Token budget: stop before the next round once the run has used
+		// what it was given. Only when there is a next round — an answer that
+		// arrived as the budget ran out is still the answer. Optional; zero =
+		// no cap.
+		if r.cfg != nil && r.cfg.MaxBudgetTokens > 0 && taskTerminalName == "" && result != nil && len(result.ToolCalls) > 0 {
+			if used := state.Budget.InputTokens + state.Budget.OutputTokens; used >= r.cfg.MaxBudgetTokens {
+				r.blockRunWithStop(goal,
+					fmt.Sprintf("token budget reached: used %d of %d tokens after %d round(s)",
+						used, r.cfg.MaxBudgetTokens, state.Budget.CompletedRounds+1),
+					messages, true, StopReasonMaxBudgetTokens)
+				return
+			}
+		}
+
 		// Terminal task signal detected in stream — terminate immediately.
 		if taskTerminalName != "" {
 			final := taskTerminalResult

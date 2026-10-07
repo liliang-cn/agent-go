@@ -22,6 +22,11 @@ const (
 	// the model could finish. Use a higher MaxTurns or resume the task.
 	StopReasonMaxTurns StopReason = "max_turns"
 
+	// StopReasonMaxBudgetTokens means the run's tokens, prompt plus
+	// completion, crossed RunConfig.MaxBudgetTokens. Raise the budget or
+	// resume.
+	StopReasonMaxBudgetTokens StopReason = "max_budget_tokens"
+
 	// StopReasonRefusal means the model declined the request — either
 	// the provider surfaced finish_reason="refusal" / "content_filter"
 	// or the final text matches a refusal phrase heuristic. Distinct

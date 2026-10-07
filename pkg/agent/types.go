@@ -403,6 +403,13 @@ type RunConfig struct {
 	// DisableMemoryAutoStore skips the post-run memory extraction for this
 	// run only. Retrieval still happens. Set with WithoutMemoryAutoStore.
 	DisableMemoryAutoStore bool
+
+	// MaxBudgetTokens caps the tokens the run may use, prompt plus
+	// completion, summed over its rounds as the provider reports them (the
+	// tokenizer's estimate where it reports nothing). Crossing it stops the
+	// run before its next round with StopReasonMaxBudgetTokens. Optional:
+	// zero = no cap. Set with WithMaxBudgetTokens.
+	MaxBudgetTokens int
 }
 
 // ErrorHandlerFunc handles errors during agent execution
@@ -452,6 +459,19 @@ func DefaultRunConfig() *RunConfig {
 
 // RunOption modifies RunConfig
 type RunOption func(*RunConfig)
+
+// WithMaxBudgetTokens caps the tokens this run may use, prompt plus
+// completion over all its rounds. The run stops before the next round once
+// the total crosses n, with StopReasonMaxBudgetTokens. n <= 0 leaves the run
+// uncapped, which is the default.
+func WithMaxBudgetTokens(n int) RunOption {
+	return func(c *RunConfig) {
+		if n < 0 {
+			n = 0
+		}
+		c.MaxBudgetTokens = n
+	}
+}
 
 // WithMaxTurns sets this run's tool-round budget, overriding both the
 // service's WithAutonomy setting and DefaultMaxRounds. A long-horizon run

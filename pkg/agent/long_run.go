@@ -72,6 +72,15 @@ type LongRunConfig struct {
 	// Zero = no limit; the context's own deadline still applies and does cut.
 	MaxDuration time.Duration
 
+	// MaxTotalTokens caps the tokens the whole task may use, prompt plus
+	// completion, summed over every segment. Optional: zero = no limit.
+	//
+	// It is held twice, the way a per-run cap alone could not: no new segment
+	// starts once the total is reached, and each segment is given what is
+	// left as its own MaxBudgetTokens, so it stops mid-flight instead of
+	// overrunning by however much one segment happens to use.
+	MaxTotalTokens int
+
 	// MaxUnproductiveSegments ends the task after this many segments in a row
 	// change nothing.
 	//
@@ -159,6 +168,8 @@ const (
 	LongRunStopBlocked LongRunStop = "blocked"
 	// LongRunStopTimeLimit means MaxDuration ran out with work left.
 	LongRunStopTimeLimit LongRunStop = "time_limit"
+	// LongRunStopTokenLimit means MaxTotalTokens ran out with work left.
+	LongRunStopTokenLimit LongRunStop = "token_limit"
 	// LongRunStopUnproductive means several segments in a row changed nothing,
 	// which usually means each one is too small to get past rediscovery.
 	LongRunStopUnproductive LongRunStop = "unproductive_segments"
@@ -297,6 +308,10 @@ func (s *Service) runSegments(ctx context.Context, goal string, cfg LongRunConfi
 			out.Stop = LongRunStopTimeLimit
 			break
 		}
+		if _, ok := segmentTokenBudget(cfg, out.TotalUsage); cfg.MaxTotalTokens > 0 && !ok {
+			out.Stop = LongRunStopTokenLimit
+			break
+		}
 
 		// Sit out a provider outage rather than spending the failure budget
 		// on it in seconds.
@@ -335,6 +350,11 @@ func (s *Service) runSegments(ctx context.Context, goal string, cfg LongRunConfi
 			// The tools write where the supervisor reads.
 			WithPlanKey(cfg.PlanKey),
 		)
+		// Hand the segment what is left of the task's tokens, so the ceiling
+		// holds inside a segment and not merely between them.
+		if left, ok := segmentTokenBudget(cfg, out.TotalUsage); ok {
+			segmentOpts = append(segmentOpts, WithMaxBudgetTokens(left))
+		}
 
 		segStart := time.Now()
 		s.emitSegmentObserved(ctx, SegmentInfo{
@@ -385,6 +405,11 @@ func (s *Service) runSegments(ctx context.Context, goal string, cfg LongRunConfi
 			if consecutiveFailures >= cfg.MaxConsecutiveFailures {
 				out.Stop = LongRunStopFailing
 			}
+		case result.StopReason == StopReasonMaxBudgetTokens:
+			// The segment stopped because the task ran out of tokens, which is
+			// the task's outcome and not the segment's verdict: without this a
+			// task that used its budget would report "blocked".
+			out.Stop = LongRunStopTokenLimit
 		case result.Blocked && result.StopReason != StopReasonMaxTurns && !s.segmentRejectedOnOpenPlan(result, cfg):
 			// A considered "I cannot proceed" is an answer. Starting another
 			// segment would spend the budget arriving at it again.
@@ -483,6 +508,24 @@ func (s *Service) planHasUnfinishedSteps(key string) bool {
 // addUsage sums a segment's token accounting into the task's running total.
 // Nil in means nothing to add; nil out stays nil, so a task whose providers
 // never reported usage reports none rather than a fabricated zero.
+// segmentTokenBudget is what one segment may use: whatever the task has left.
+//
+// Reported as (amount, ok) so "no budget configured" and "nothing left" stay
+// apart — the first must not cap a segment, the second stops the task.
+func segmentTokenBudget(cfg LongRunConfig, used *domain.TokenUsage) (int, bool) {
+	if cfg.MaxTotalTokens <= 0 {
+		return 0, false
+	}
+	left := cfg.MaxTotalTokens
+	if used != nil {
+		left -= used.PromptTokens + used.CompletionTokens
+	}
+	if left <= 0 {
+		return 0, false
+	}
+	return left, true
+}
+
 func addUsage(total, seg *domain.TokenUsage) *domain.TokenUsage {
 	if seg == nil {
 		return total

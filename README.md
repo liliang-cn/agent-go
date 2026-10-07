@@ -97,6 +97,7 @@ Wiring memory, a knowledge graph, web search and plans into a host: [docs/gettin
 | option | effect |
 | --- | --- |
 | `WithMaxTurns(n)` / `WithMaxTokens(n)` / `WithTemperature(t)` / `WithThinking(bool)` | budget and sampling |
+| `WithMaxBudgetTokens(n)` | optional token budget for the run (prompt + completion); `LongRunConfig.MaxTotalTokens` does the same for a whole task. 0 = no cap |
 | `WithLLMRetries(n)` | retries on transient provider errors |
 | `WithToolsDisabled()` / `WithToolAllowlist(names)` / `WithToolDenylist(names)` | the tool surface |
 | `WithStructuredOutput(spec)` / `WithStructuredOutputType[T]()` | enforce a JSON shape |
