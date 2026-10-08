@@ -40,6 +40,10 @@ type Client struct {
 	// see SetReasoningBudget.
 	reasoningBytes int
 	reasoningTime  time.Duration
+	// reasoningEffort is sent on every chat completion; see
+	// SetReasoningEffort. effortRejected is set once the upstream refuses it.
+	reasoningEffort string
+	effortRejected  atomic.Bool
 }
 
 // NewClient creates a new client.
@@ -187,6 +191,9 @@ func (c *Client) Stream(ctx context.Context, prompt string, opts *domain.Generat
 	}
 	if opts.MaxTokens > 0 {
 		reqBody["max_tokens"] = opts.MaxTokens
+	}
+	if c.reasoningEffort != "" && !c.effortRejected.Load() {
+		reqBody["reasoning_effort"] = c.reasoningEffort
 	}
 
 	data, err := json.Marshal(reqBody)
@@ -1065,6 +1072,15 @@ func (c *Client) Close() error {
 
 // doRequest performs the HTTP request.
 func (c *Client) doRequest(ctx context.Context, path string, body interface{}) ([]byte, error) {
+	sent, added := c.withEffort(path, body)
+	out, err := c.post(ctx, path, sent)
+	if added && c.refusedEffort(err) {
+		return c.post(ctx, path, body)
+	}
+	return out, err
+}
+
+func (c *Client) post(ctx context.Context, path string, body interface{}) ([]byte, error) {
 	data, err := json.Marshal(body)
 	if err != nil {
 		return nil, err

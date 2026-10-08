@@ -184,6 +184,15 @@ func (c *Client) overThinking(bytes int, since time.Time) bool {
 // accepted it. A refusal comes back as an error carrying the body, the same
 // shape doRequest gives, so the retry fallbacks read it the same way.
 func (c *Client) openStream(ctx context.Context, path string, body interface{}) (*http.Response, error) {
+	sent, added := c.withEffort(path, body)
+	resp, err := c.open(ctx, path, sent)
+	if added && c.refusedEffort(err) {
+		return c.open(ctx, path, body)
+	}
+	return resp, err
+}
+
+func (c *Client) open(ctx context.Context, path string, body interface{}) (*http.Response, error) {
 	data, err := json.Marshal(body)
 	if err != nil {
 		return nil, err

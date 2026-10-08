@@ -49,6 +49,10 @@ type Provider struct {
 	// {"forced_search": true, "search_strategy": "max"} for DashScope's
 	// search_options. Requires NativeWebSearch.
 	NativeWebSearchOptions map[string]interface{} `mapstructure:"native_web_search_options" json:"native_web_search_options,omitempty"`
+	// ReasoningEffort is sent as reasoning_effort on every chat completion
+	// ("low", "medium", "high"…); empty sends nothing. See
+	// Client.SetReasoningEffort.
+	ReasoningEffort string `mapstructure:"reasoning_effort" json:"reasoning_effort,omitempty"`
 }
 
 type SelectionHint struct {
@@ -212,6 +216,7 @@ func newClientForProvider(prov Provider, model string, promptMgr *prompt.Manager
 	if err := client.SetNativeWebSearch(domain.NativeWebSearchFormat(prov.NativeWebSearch), prov.NativeWebSearchOptions); err != nil {
 		return nil, fmt.Errorf("provider %q: %w", prov.Name, err)
 	}
+	client.SetReasoningEffort(prov.ReasoningEffort)
 	if promptMgr != nil {
 		client.SetPromptManager(promptMgr)
 	}
