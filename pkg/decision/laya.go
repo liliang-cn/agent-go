@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -136,7 +137,10 @@ type layaRequest struct {
 	Questions map[string]layaQuestion `json:"questions"`
 }
 
-type layaAnswer struct {
+// wireAnswer is one answer as laya-serve and Ollama's System One both send
+// it: the two agree on every field except that Ollama leaves out a noul's
+// confidence.
+type wireAnswer struct {
 	Type          string             `json:"type"`
 	Confidence    float64            `json:"confidence"`
 	Choice        string             `json:"choice"`
@@ -148,7 +152,7 @@ type layaAnswer struct {
 
 type layaResponse struct {
 	Model   string                `json:"model"`
-	Answers map[string]layaAnswer `json:"answers"`
+	Answers map[string]wireAnswer `json:"answers"`
 }
 
 // Decide sends every question in one request, which is the whole point of the
@@ -164,8 +168,9 @@ func (l *Laya) Decide(ctx context.Context, text string, questions map[string]Que
 	payload := layaRequest{Model: l.model, Text: text, Questions: make(map[string]layaQuestion, len(questions))}
 	for name, q := range questions {
 		payload.Questions[name] = layaQuestion{
-			Type:         string(q.Type),
-			Instructions: q.Instructions,
+			Type: string(q.Type),
+			// laya takes labels only; the descriptions still reach it this way.
+			Instructions: q.describedInstructions(),
 			Criteria:     q.Criteria,
 		}
 	}
@@ -220,7 +225,7 @@ func (l *Laya) applyHeader(req *http.Request) {
 // the distribution. The two are not the same number — a choice whose winning
 // option sits at 0.58 can carry a confidence of 0.36 — and the engine's is the
 // one that accounts for how close the runner-up was.
-func (a layaAnswer) toAnswer() Answer {
+func (a wireAnswer) toAnswer() Answer {
 	out := Answer{
 		Type:          Type(a.Type),
 		Confidence:    a.Confidence,
@@ -230,6 +235,12 @@ func (a layaAnswer) toAnswer() Answer {
 	case TypeNoul:
 		if a.Noul != nil {
 			out.Yes = *a.Noul >= 0.5
+			// laya reports a noul's confidence; Ollama's System One does not.
+			// Without one it is how far the probability sits from a coin toss,
+			// which is what laya's own number works out to for a noul.
+			if out.Confidence == 0 {
+				out.Confidence = math.Max(*a.Noul, 1-*a.Noul)
+			}
 		}
 		out.Label = "no"
 		if out.Yes {
@@ -250,7 +261,7 @@ func (a layaAnswer) toAnswer() Answer {
 // scoreLabel resolves the winning level to its name. The wire keys a score's
 // probabilities by index and carries the names in a legend, so an unlabelled
 // index is reported as the index itself rather than as an empty string.
-func (a layaAnswer) scoreLabel() string {
+func (a wireAnswer) scoreLabel() string {
 	best, bestP, found := "", 0.0, false
 	for idx, p := range a.Probabilities {
 		if !found || p > bestP {

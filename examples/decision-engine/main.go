@@ -4,9 +4,11 @@
 //	go run ./examples/decision-engine                 # both halves
 //	go run ./examples/decision-engine -ask-only       # no provider needed
 //
-// Needs a decision engine. The default is a laya-serve on this machine:
+// Needs a decision engine: Ollama 0.35+ with a decision model, or laya-serve.
 //
-//	cd laya-serve && ./run.sh
+//	ollama pull tev1:4b
+//	go run ./examples/decision-engine -ask-only
+//	go run ./examples/decision-engine -backend laya -engine http://127.0.0.1:43711
 package main
 
 import (
@@ -23,18 +25,33 @@ import (
 )
 
 func main() {
-	url := flag.String("engine", decision.LayaDefaultURL, "decision engine address")
+	backend := flag.String("backend", "systemone", "systemone (Ollama /v1/systemone) or laya")
+	url := flag.String("engine", "", "decision engine address (default: the backend's local default)")
+	model := flag.String("model", "", "decision model (default: the backend's default)")
+	key := flag.String("key", os.Getenv("AGENTGO_DECISION_KEY"), "bearer token, for a relay in front of Ollama")
 	askOnly := flag.Bool("ask-only", false, "just ask the engine; do not run an agent")
 	showRoutes := flag.Bool("routes", false, "show what the model router decides, without running anything")
 	flag.Parse()
 
-	engine := decision.NewLaya(decision.WithLayaURL(*url))
+	var engine interface {
+		decision.Engine
+		Ready(context.Context) error
+	}
+	switch *backend {
+	case "systemone":
+		engine = decision.NewSystemOne(decision.WithSystemOneURL(*url),
+			decision.WithSystemOneModel(*model), decision.WithSystemOneAPIKey(*key))
+	case "laya":
+		engine = decision.NewLaya(decision.WithLayaURL(*url), decision.WithLayaModel(*model))
+	default:
+		log.Fatalf("unknown -backend %q: want systemone or laya", *backend)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
 	if err := engine.Ready(ctx); err != nil {
-		fmt.Printf("no decision engine at %s: %v\n", *url, err)
+		fmt.Printf("no decision engine (%s): %v\n", engine.Name(), err)
 		fmt.Println("start one, or point -engine elsewhere. Nothing below works without it.")
 		os.Exit(1)
 	}

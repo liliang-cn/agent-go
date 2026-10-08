@@ -316,6 +316,19 @@ Entirely optional: with no engine attached every gate returns "ask as usual"
 on a nil check, and a service behaves exactly as it did before the package
 existed. Zero new module dependencies — the laya client is `net/http`.
 
+Two engines: `decision.NewLaya()` (laya-serve) and `decision.NewSystemOne()`
+(Ollama 0.35+'s `/v1/systemone` — tev1, nimble, clef, clef-flash — or a relay
+that forwards it, with `WithSystemOneAPIKey`). `Question.Describe` attaches a
+line per option (or per yes/no); System One takes them natively, laya gets
+them folded into the instructions. System One sends no confidence for a noul,
+so one is derived as max(p, 1-p), which is what laya's own number is.
+
+The gates are calibrated for laya, not System One. Measured 2026-10-08 with
+tev1:4b at the 0.80 floor: the constraint gate skipped 0/20 and the router
+routed 0/8, so attaching it today costs ~1.2s a run and saves nothing. Making
+it pay means rewriting `constraintGateQuestions` with descriptions and
+re-running the live calibration with `AGENTGO_DECISION_ENGINE=systemone`.
+
 The first gate is constraint extraction. It skips the call only on a confident
 "this request asks for nothing", which is both the common case and the one an
 engine is surest about. It never supplies constraints: two of the three fields

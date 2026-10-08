@@ -18,6 +18,7 @@ package decision
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -42,6 +43,19 @@ type Question struct {
 	// Criteria are the options for choice, or the ordered levels for score.
 	// Unused by noul.
 	Criteria []string
+	// Descriptions say what each choice option means, keyed by option, or
+	// what "yes" and "no" mean for a noul. Optional, and often the difference
+	// between a usable answer and a coin toss: a routing question whose two
+	// outcomes were each described in one line moved its worst negative from
+	// 0.54 to 0.20. Score takes none — its levels are descriptions already.
+	// An engine that only takes labels folds them into the instructions.
+	Descriptions map[string]string
+}
+
+// Describe returns q with descriptions attached. See Question.Descriptions.
+func (q Question) Describe(descriptions map[string]string) Question {
+	q.Descriptions = descriptions
+	return q
 }
 
 // Choice asks which of options fits.
@@ -66,15 +80,50 @@ func (q Question) Validate() error {
 	}
 	switch q.Type {
 	case TypeNoul:
+		for key := range q.Descriptions {
+			if key != "yes" && key != "no" {
+				return fmt.Errorf("decision: a noul describes only yes and no, not %q", key)
+			}
+		}
 		return nil
 	case TypeChoice, TypeScore:
 		if len(q.Criteria) < 2 {
 			return fmt.Errorf("decision: %s needs at least two criteria", q.Type)
 		}
+		if q.Type == TypeScore && len(q.Descriptions) > 0 {
+			return fmt.Errorf("decision: score levels are their own descriptions")
+		}
+		for key := range q.Descriptions {
+			if !slices.Contains(q.Criteria, key) {
+				return fmt.Errorf("decision: description for %q, which is not an option", key)
+			}
+		}
 		return nil
 	default:
 		return fmt.Errorf("decision: unknown question type %q", q.Type)
 	}
+}
+
+// describedInstructions is the instructions with the descriptions appended,
+// in criteria order, for an engine that cannot take them separately.
+func (q Question) describedInstructions() string {
+	if len(q.Descriptions) == 0 {
+		return q.Instructions
+	}
+	keys := q.Criteria
+	if q.Type == TypeNoul {
+		keys = []string{"yes", "no"}
+	}
+	var parts []string
+	for _, k := range keys {
+		if d := strings.TrimSpace(q.Descriptions[k]); d != "" {
+			parts = append(parts, k+": "+d)
+		}
+	}
+	if len(parts) == 0 {
+		return q.Instructions
+	}
+	return q.Instructions + " (" + strings.Join(parts, "; ") + ")"
 }
 
 // Answer is one decision.

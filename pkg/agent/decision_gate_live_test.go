@@ -11,6 +11,26 @@ import (
 	"github.com/liliang-cn/agent-go/v3/pkg/decision"
 )
 
+// liveEngine is the engine the live calibrations run against.
+//
+//	AGENTGO_DECISION_ENGINE=systemone   Ollama's /v1/systemone (default model tev1:4b)
+//	AGENTGO_DECISION_ENGINE=laya        laya-serve (the default, as calibrated)
+//	AGENTGO_DECISION_URL, AGENTGO_DECISION_MODEL, AGENTGO_DECISION_KEY override the rest.
+func liveEngine() interface {
+	decision.Engine
+	Ready(context.Context) error
+} {
+	url, model := os.Getenv("AGENTGO_DECISION_URL"), os.Getenv("AGENTGO_DECISION_MODEL")
+	if os.Getenv("AGENTGO_DECISION_ENGINE") == "systemone" {
+		return decision.NewSystemOne(
+			decision.WithSystemOneURL(url),
+			decision.WithSystemOneModel(model),
+			decision.WithSystemOneAPIKey(os.Getenv("AGENTGO_DECISION_KEY")),
+		)
+	}
+	return decision.NewLaya(decision.WithLayaURL(url), decision.WithLayaModel(model))
+}
+
 // gateCase is one goal and what the constraint extraction should say about it.
 type gateCase struct {
 	text        string
@@ -55,7 +75,8 @@ func (g *gateRecorder) OnDecision(_ context.Context, info DecisionInfo) { g.last
 //
 //	AGENTGO_DECISION_LIVE=1 go test ./pkg/agent -run TestDecisionGateAgainstLive -v
 //
-// It is skipped by default because it needs a laya-serve. Run it after
+// It is skipped by default because it needs a decision engine; liveEngine
+// says how to pick one. Run it after
 // changing constraintGateQuestions or DefaultDecisionConfidence: both were
 // chosen from what this prints, and neither can be reasoned about from the
 // code. Point it elsewhere with AGENTGO_DECISION_URL.
@@ -64,11 +85,7 @@ func TestDecisionGateAgainstLiveEngine(t *testing.T) {
 		t.Skip("set AGENTGO_DECISION_LIVE=1 and run a decision engine")
 	}
 
-	var opts []decision.LayaOption
-	if url := os.Getenv("AGENTGO_DECISION_URL"); url != "" {
-		opts = append(opts, decision.WithLayaURL(url))
-	}
-	engine := decision.NewLaya(opts...)
+	engine := liveEngine()
 
 	ctx := context.Background()
 	if err := engine.Ready(ctx); err != nil {
@@ -134,11 +151,7 @@ func TestDecisionRouterAgainstLiveEngine(t *testing.T) {
 		t.Skip("set AGENTGO_DECISION_LIVE=1 and run a decision engine")
 	}
 
-	var opts []decision.LayaOption
-	if url := os.Getenv("AGENTGO_DECISION_URL"); url != "" {
-		opts = append(opts, decision.WithLayaURL(url))
-	}
-	engine := decision.NewLaya(opts...)
+	engine := liveEngine()
 	ctx := context.Background()
 	if err := engine.Ready(ctx); err != nil {
 		t.Skipf("no decision engine reachable: %v", err)
