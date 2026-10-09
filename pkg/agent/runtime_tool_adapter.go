@@ -3,7 +3,9 @@ package agent
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 )
@@ -92,6 +94,21 @@ func (r *Runtime) buildStreamingTurnCallbacks(ctx context.Context, spanID string
 	// because a tool nobody described as safe to skip is not, and a repeated
 	// write may be a read-modify-write loop rather than a mistake.
 	seen := map[string]int{}
+	// What of a task_complete answer has gone out as partials. Each new
+	// snapshot of the answer extends the last one, and only the extension is
+	// sent.
+	answerSent := ""
+	streamAnswer := func(sofar string) {
+		// Only whole characters go out; the rest of one follows next time.
+		for k := 0; k < utf8.UTFMax && sofar != "" && !utf8.ValidString(sofar); k++ {
+			sofar = sofar[:len(sofar)-1]
+		}
+		if len(sofar) <= len(answerSent) || !strings.HasPrefix(sofar, answerSent) {
+			return
+		}
+		r.emit(EventTypePartial, sofar[len(answerSent):])
+		answerSent = sofar
+	}
 
 	return StreamTurnCallbacks{
 		OnToolCall: func(tc domain.ToolCall) error {
@@ -107,7 +124,17 @@ func (r *Runtime) buildStreamingTurnCallbacks(ctx context.Context, spanID string
 				if res == "" {
 					// args not fully accumulated yet — keep streaming; the
 					// post-turn handler recovers if they never complete.
+					// The answer itself is readable before the call is whole,
+					// so the person sees it being written rather than all at
+					// once when the model is done.
+					if tc.Function.Name == "task_complete" {
+						streamAnswer(partialJSONStringField(tc.Function.RawArguments, "result"))
+					}
 					return nil
+				}
+				if tc.Function.Name == "task_complete" && answerSent != "" {
+					// The rest of an answer already being shown.
+					streamAnswer(res)
 				}
 				r.emitToolCall(tc.Function.Name, tc.Function.Arguments, "")
 				*taskTerminalName = tc.Function.Name

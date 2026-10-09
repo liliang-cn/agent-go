@@ -187,6 +187,10 @@ func (r *Runtime) lintGate(goal, content string, messages *[]domain.Message, sta
 	r.emitLintObserved(violation, r.lintRetryBudget > 0)
 	if r.lintRetryBudget > 0 {
 		r.lintRetryBudget--
+		// The draft may already be on screen — an answer streams as the model
+		// writes it — and the retry writes a new one: clear the draft first
+		// so the two are not shown run together.
+		r.emitTombstoneMarked(TombstoneRetry)
 		// Recoverable: the draft answer was rejected and the model is being
 		// re-prompted. Emit a MARKED event (DebugType "lint_retry") rather than
 		// a bare error so live consumers can show it as a soft nudge, not a
@@ -648,7 +652,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 				// Whatever the failed attempt streamed is not part of any answer:
 				// clear it from the transcript, and start the next attempt from a
 				// clean collector and no half-seen terminal signal.
-				r.emitTombstone()
+				r.emitTombstoneMarked(TombstoneRetry)
 				taskTerminalName, taskTerminalResult = "", ""
 				collector = newRuntimeAsyncToolCollector()
 				if !waitBeforeLLMRetry(ctx, delay) {
@@ -666,7 +670,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			turnMaxTokens = next
 			// The severed turn contributed nothing; drop it so the retry is
 			// not appended to a fragment of itself.
-			r.emitTombstone()
+			r.emitTombstoneMarked(TombstoneRetry)
 			taskTerminalName, taskTerminalResult = "", ""
 			collector = newRuntimeAsyncToolCollector()
 		}
@@ -1688,11 +1692,23 @@ func (r *Runtime) emitCheckpoint(name string, start, end time.Time, dur time.Dur
 
 // emitTombstone signals the UI to clear any partial/unfinalized assistant output
 func (r *Runtime) emitTombstone() {
+	r.emitTombstoneMarked("")
+}
+
+// TombstoneRetry marks a tombstone whose run carries on: what was streamed was
+// a draft — one the output lint turned down, or an attempt that failed and is
+// being made again — and a new answer is about to be written in its place. An
+// unmarked tombstone ends a run (cancelled or failed), where a UI may rather
+// keep what it already shows.
+const TombstoneRetry = "retry"
+
+func (r *Runtime) emitTombstoneMarked(marker string) {
 	r.eventChan <- &Event{
 		ID:        uuid.New().String(),
 		Type:      EventTypeTombstone,
 		AgentName: r.currentAgent.Name(),
 		AgentID:   r.currentAgent.ID(),
+		DebugType: marker,
 		Timestamp: time.Now(),
 	}
 }

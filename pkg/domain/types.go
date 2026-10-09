@@ -318,6 +318,12 @@ type ToolCall struct {
 type FunctionCall struct {
 	Name      string                 `json:"name"`
 	Arguments map[string]interface{} `json:"arguments"`
+	// RawArguments is the arguments text as received so far, on the
+	// snapshots a streaming provider hands out while a call is still
+	// arriving. Arguments stays nil until that text parses; this is what
+	// lets a consumer read the call before it is whole — the answer in a
+	// task_complete, as the model writes it. Not serialized.
+	RawArguments string `json:"-"`
 }
 
 // GenerationResult represents the result of LLM generation with potential tool calls

@@ -874,8 +874,9 @@ func (p *OpenAILLMProvider) streamWithToolsOnce(ctx context.Context, messages []
 					ID:   a.ID,
 					Type: "function",
 					Function: domain.FunctionCall{
-						Name:      a.Name,
-						Arguments: args,
+						Name:         a.Name,
+						Arguments:    args,
+						RawArguments: a.ArgsRaw.String(),
 					},
 				})
 			}
