@@ -1,12 +1,16 @@
 package agent
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/store"
 	taskpkg "github.com/liliang-cn/agent-go/v3/pkg/task"
 )
 
@@ -101,24 +105,8 @@ func (s *Service) persistRunTaskEvent(session *Session, taskID string, evt *Even
 			}
 		}
 	}
-	// Make sure a row exists before taking the lock, so the mutate below is a
-	// pure amend and never has to reach back into the store.
-	if task, err := s.store.GetTask(taskID); err != nil || task == nil {
-		s.persistRunTaskState(session, taskID, taskRunStateOptions{
-			status:    taskpkg.StatusRunning,
-			createdAt: evt.Timestamp,
-		})
-	}
-
-	// Atomic read-modify-write: the runtime goroutine writes Frames onto the
-	// same row, and appending Events with a separate GetTask/SaveTask pair
-	// silently dropped whichever side read first.
-	_ = s.store.updateTask(taskID, func(task *UnifiedTask) *UnifiedTask {
-		if task == nil {
-			return nil
-		}
-
-		status := task.Status
+	appendEvent := func(te *store.TaskEvents) {
+		status := te.Status
 		switch evt.Type {
 		case EventTypeComplete:
 			status = taskpkg.StatusCompleted
@@ -131,7 +119,7 @@ func (s *Service) persistRunTaskEvent(session *Session, taskID string, evt *Even
 		runtime := &taskpkg.EventRuntime{
 			ToolName:   evt.ToolName,
 			ToolArgs:   evt.ToolArgs,
-			ToolResult: evt.ToolResult,
+			ToolResult: storedToolResult(evt.ToolResult),
 			DurationMs: evt.DurationMs,
 			Round:      evt.Round,
 			TokensUsed: evt.TokensUsed,
@@ -141,9 +129,9 @@ func (s *Service) persistRunTaskEvent(session *Session, taskID string, evt *Even
 		// Detect duplicate tool calls (same tool + same args seen before).
 		if evt.Type == EventTypeToolCall && evt.ToolName != "" {
 			key := fmt.Sprintf("%s:%v", evt.ToolName, evt.ToolArgs)
-			for i := range task.Events {
-				existing := &task.Events[i]
-				if existing.Type != string(EventTypeToolCall) || existing.Runtime == nil {
+			for i := range te.Events {
+				existing := &te.Events[i]
+				if existing.Type != string(EventTypeToolCall) || existing.Runtime == nil || existing.Runtime.ToolName != evt.ToolName {
 					continue
 				}
 				if fmt.Sprintf("%s:%v", existing.Runtime.ToolName, existing.Runtime.ToolArgs) == key {
@@ -153,7 +141,7 @@ func (s *Service) persistRunTaskEvent(session *Session, taskID string, evt *Even
 			}
 		}
 
-		task.Events = append(task.Events, taskpkg.Event{
+		te.Events = append(te.Events, taskpkg.Event{
 			ID:         evt.ID,
 			TaskID:     strings.TrimSpace(taskID),
 			SessionID:  sessionIDOrEmpty(session),
@@ -161,23 +149,76 @@ func (s *Service) persistRunTaskEvent(session *Session, taskID string, evt *Even
 			Status:     status,
 			Type:       string(evt.Type),
 			AgentName:  strings.TrimSpace(evt.AgentName),
-			Message:    strings.TrimSpace(evt.Content),
+			Message:    clipStored(strings.TrimSpace(evt.Content)),
 			DurationMs: evt.DurationMs,
 			Runtime:    runtime,
 			Timestamp:  firstNonZeroTime(evt.Timestamp, time.Now()),
 		})
-		task.Status = status
+		// A session's turns share one task, so its log grew for as long as the
+		// conversation lasted and every event rewrote all of it. Keep the
+		// recent end, as the in-memory task log does (appendTaskEvent).
+		if n := len(te.Events); n > maxStoredTaskEvents {
+			te.Events = append([]taskpkg.Event(nil), te.Events[n-maxStoredTaskEvents:]...)
+		}
+		te.Status = status
 		if evt.Type == EventTypeComplete || evt.Type == EventTypeBlocked {
-			task.Output = strings.TrimSpace(evt.Content)
+			te.Output = strings.TrimSpace(evt.Content)
 		}
 		if evt.Type == EventTypeError {
-			task.Error = strings.TrimSpace(evt.Content)
+			te.Error = strings.TrimSpace(evt.Content)
 		}
-		if task.ParentTaskID == "" && parentTaskID != "" {
-			task.ParentTaskID = parentTaskID
+		if te.ParentTaskID == "" && parentTaskID != "" {
+			te.ParentTaskID = parentTaskID
 		}
-		return task
-	})
+	}
+
+	// Atomic read-modify-write of the event columns only: the runtime
+	// goroutine writes Frames onto the same row, and appending Events with a
+	// separate GetTask/SaveTask pair silently dropped whichever side read
+	// first. The first event of a task finds no row and creates it.
+	if err := s.store.updateTaskEvents(taskID, appendEvent); errors.Is(err, errNoTaskRow) {
+		s.persistRunTaskState(session, taskID, taskRunStateOptions{
+			status:    taskpkg.StatusRunning,
+			createdAt: evt.Timestamp,
+		})
+		_ = s.store.updateTaskEvents(taskID, appendEvent)
+	}
+}
+
+// A task's stored event log keeps its most recent events, and what each one
+// carries is clipped: the log says what happened, the session holds the full
+// text.
+const (
+	maxStoredTaskEvents = 200
+	maxStoredEventText  = 4000
+)
+
+func clipStored(s string) string {
+	if len(s) <= maxStoredEventText {
+		return s
+	}
+	cut := maxStoredEventText
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
+}
+
+// storedToolResult keeps a short result as it is and clips a long one to its
+// text, so one big command output cannot make every later write of the log
+// carry it again.
+func storedToolResult(v interface{}) interface{} {
+	switch r := v.(type) {
+	case nil:
+		return nil
+	case string:
+		return clipStored(r)
+	}
+	raw, err := json.Marshal(v)
+	if err != nil || len(raw) <= maxStoredEventText {
+		return v
+	}
+	return clipStored(string(raw))
 }
 
 // isStreamFragment reports whether an event is a piece of a stream rather

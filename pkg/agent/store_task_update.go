@@ -1,9 +1,12 @@
 package agent
 
 import (
+	"database/sql"
+	"errors"
 	"strings"
 	"sync"
 
+	"github.com/liliang-cn/agent-go/v3/pkg/store"
 	taskpkg "github.com/liliang-cn/agent-go/v3/pkg/task"
 )
 
@@ -62,6 +65,39 @@ func (s *Store) updateTask(taskID string, mutate func(existing *UnifiedTask) *Un
 		return nil
 	}
 	return s.agentGoDB.SaveTask(updated)
+}
+
+// errNoTaskRow is what updateTaskEvents reports when the task has no row yet.
+var errNoTaskRow = errors.New("task row does not exist")
+
+// updateTaskEvents is updateTask for what changes on every run event — the
+// event log, and the status and outcome it implies — under the same per-task
+// lock, so it cannot interleave with a whole-row write. It never reads or
+// writes Frames: that column carries the whole conversation, and it was being
+// decoded and re-encoded once per event. With no row it returns errNoTaskRow
+// and writes nothing.
+func (s *Store) updateTaskEvents(taskID string, mutate func(te *store.TaskEvents)) error {
+	if s == nil || s.agentGoDB == nil {
+		return nil
+	}
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return nil
+	}
+
+	unlock := lockTaskSave(taskID)
+	defer unlock()
+
+	te, err := s.agentGoDB.GetTaskEvents(taskID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errNoTaskRow
+	}
+	if err != nil {
+		return err
+	}
+	before := *te
+	mutate(te)
+	return s.agentGoDB.SaveTaskEvents(taskID, before, te)
 }
 
 // UpdateTask is the exported form, for callers outside this package that need

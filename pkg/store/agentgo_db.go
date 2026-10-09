@@ -294,6 +294,12 @@ func (s *AgentGoDB) initSchema() error {
 	if err != nil {
 		return fmt.Errorf("failed to create tasks table: %w", err)
 	}
+	// A task's event log lives beside its row rather than in it: a run
+	// appends to the log on every event, and SQLite rewrites a whole record
+	// on any update — frames included, which can be the entire conversation.
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS task_event_logs (task_id TEXT PRIMARY KEY, events TEXT NOT NULL)`); err != nil {
+		return fmt.Errorf("failed to create task_event_logs table: %w", err)
+	}
 	if err := s.ensureColumnExistsLocked("tasks", "stats", "TEXT"); err != nil {
 		return fmt.Errorf("failed to add stats column to tasks: %w", err)
 	}
@@ -1125,7 +1131,16 @@ func (s *AgentGoDB) SaveTask(task *taskpkg.Task) error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, err := s.db.Exec(`
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`INSERT INTO task_event_logs (task_id, events) VALUES (?, ?)
+		ON CONFLICT(task_id) DO UPDATE SET events = excluded.events`, task.ID, string(eventsJSON)); err != nil {
+		return err
+	}
+	_, err = tx.Exec(`
 		INSERT INTO tasks (
 			id, kind, status, session_id, runtime_session_id, parent_task_id,
 			continuation_id, queue_class, awaiting, team_id, team_name, agent_name, agent_names, input, output, error,
@@ -1158,8 +1173,86 @@ func (s *AgentGoDB) SaveTask(task *taskpkg.Task) error {
 			finished_at = excluded.finished_at
 	`, task.ID, task.Kind, task.Status, task.SessionID, task.RuntimeSessionID, task.ParentTaskID, task.ContinuationID, task.QueueClass, string(awaitingJSON),
 		task.TeamID, task.TeamName, task.AgentName, string(agentNamesJSON), task.Input, task.Output, task.Error,
-		string(framesJSON), string(eventsJSON), string(statsJSON), task.Source, task.SourceID, task.CreatedAt, task.StartedAt, task.FinishedAt)
-	return err
+		string(framesJSON), nil, string(statsJSON), task.Source, task.SourceID, task.CreatedAt, task.StartedAt, task.FinishedAt)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// TaskEvents is what a run amends on every event: a task's status, its event
+// log and how it ended. It is read and written on its own because the rest of
+// the row is not small — Frames holds the whole conversation, tool results and
+// all — and decoding and re-encoding that once per event kept an idle hive at
+// a full core.
+type TaskEvents struct {
+	Status       taskpkg.Status
+	Events       []taskpkg.Event
+	Output       string
+	Error        string
+	ParentTaskID string
+
+	// inRow marks a log read from the row itself, as tasks written before the
+	// log had its own table keep it. Saving moves it out.
+	inRow bool
+}
+
+// GetTaskEvents reads a task's status and event log, or sql.ErrNoRows when
+// there is no such task.
+func (s *AgentGoDB) GetTaskEvents(id string) (*TaskEvents, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var te TaskEvents
+	var output, errorText, parentTaskID sql.NullString
+	// These columns come before frames in the record, so reading them does
+	// not walk the frames off disk.
+	if err := s.db.QueryRow(`SELECT status, output, error, parent_task_id FROM tasks WHERE id = ?`, id).
+		Scan(&te.Status, &output, &errorText, &parentTaskID); err != nil {
+		return nil, err
+	}
+	te.Output, te.Error, te.ParentTaskID = output.String, errorText.String, parentTaskID.String
+	var eventsJSON []byte
+	err := s.db.QueryRow(`SELECT events FROM task_event_logs WHERE task_id = ?`, id).Scan(&eventsJSON)
+	if errors.Is(err, sql.ErrNoRows) {
+		te.inRow = true
+		err = s.db.QueryRow(`SELECT events FROM tasks WHERE id = ?`, id).Scan(&eventsJSON)
+	}
+	if err != nil {
+		return nil, err
+	}
+	_ = json.Unmarshal(eventsJSON, &te.Events)
+	return &te, nil
+}
+
+// SaveTaskEvents writes back what GetTaskEvents read and the caller amended.
+// The log goes to its own table; the task row is written only when its status,
+// output, error or parent actually changed — at the start and end of a run,
+// not on every step of it.
+func (s *AgentGoDB) SaveTaskEvents(id string, before TaskEvents, after *TaskEvents) error {
+	if after == nil {
+		return fmt.Errorf("task events are required")
+	}
+	eventsJSON, _ := json.Marshal(after.Events)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`INSERT INTO task_event_logs (task_id, events) VALUES (?, ?)
+		ON CONFLICT(task_id) DO UPDATE SET events = excluded.events`, id, string(eventsJSON)); err != nil {
+		return err
+	}
+	changed := before.Status != after.Status || before.Output != after.Output ||
+		before.Error != after.Error || before.ParentTaskID != after.ParentTaskID
+	if changed || before.inRow {
+		if _, err := tx.Exec(`UPDATE tasks SET status = ?, output = ?, error = ?, parent_task_id = ?, events = NULL WHERE id = ?`,
+			after.Status, after.Output, after.Error, after.ParentTaskID, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *AgentGoDB) GetTask(id string) (*taskpkg.Task, error) {
@@ -1168,7 +1261,8 @@ func (s *AgentGoDB) GetTask(id string) (*taskpkg.Task, error) {
 	row := s.db.QueryRow(`
 		SELECT id, kind, status, session_id, runtime_session_id, parent_task_id,
 		       continuation_id, queue_class, awaiting, team_id, team_name, agent_name, agent_names, input, output, error,
-		       frames, events, stats, source, source_id, created_at, started_at, finished_at
+		       frames, COALESCE((SELECT events FROM task_event_logs WHERE task_id = tasks.id), events),
+		       stats, source, source_id, created_at, started_at, finished_at
 		FROM tasks WHERE id = ?
 	`, id)
 	return scanTask(row)
