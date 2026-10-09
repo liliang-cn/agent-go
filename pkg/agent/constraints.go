@@ -58,6 +58,13 @@ type RequestedAction struct {
 	// by the extraction from the run's own tool catalog. Empty means this run
 	// has no tool for it, and the action is not enforced.
 	SatisfiedBy string `json:"satisfied_by,omitempty"`
+	// AlsoSatisfiedBy names other available tools that carry the action out
+	// just as well — appending to an existing note instead of creating one.
+	// Calling any of them meets the contract. A single name made the contract
+	// reject the right call: asked to record something, the model appended to
+	// the note that already held it, was told it never called save_note, and
+	// on the retry created the duplicate the append had avoided.
+	AlsoSatisfiedBy []string `json:"also_satisfied_by,omitempty"`
 	// Unconditional is true when the user asked for the action outright, and
 	// false when they attached a condition to it ("if the average is below 85,
 	// remind me to study harder").
@@ -91,7 +98,34 @@ type DeliverableRequirement struct {
 	// this package: a table only ever covers the tool names somebody thought to
 	// list, and every embedder names their tools differently.
 	SatisfiedBy string `json:"satisfied_by,omitempty"`
+	// AlsoSatisfiedBy names other available tools that perform the same
+	// delivery; see RequestedAction.AlsoSatisfiedBy.
+	AlsoSatisfiedBy []string `json:"also_satisfied_by,omitempty"`
 }
+
+// contractTools is every tool that carries out one deliverable or action:
+// the chosen one first, then the alternatives, empty names dropped.
+func contractTools(primary string, also []string) []string {
+	out := make([]string, 0, 1+len(also))
+	seen := make(map[string]bool, 1+len(also))
+	for _, name := range append([]string{primary}, also...) {
+		name = strings.TrimSpace(name)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	return out
+}
+
+// Tools is every tool that performs this delivery.
+func (d DeliverableRequirement) Tools() []string {
+	return contractTools(d.SatisfiedBy, d.AlsoSatisfiedBy)
+}
+
+// Tools is every tool that carries out this action.
+func (a RequestedAction) Tools() []string { return contractTools(a.SatisfiedBy, a.AlsoSatisfiedBy) }
 
 // Empty reports whether the constraints ask for nothing.
 func (c RunConstraints) Empty() bool {
@@ -129,9 +163,10 @@ func newConstraintExtractionSchema() map[string]interface{} {
 							"type": "string",
 							"enum": []string{"email", "file", "message", "other"},
 						},
-						"description":  map[string]interface{}{"type": "string"},
-						"path":         map[string]interface{}{"type": "string"},
-						"satisfied_by": satisfiedBySchema(),
+						"description":       map[string]interface{}{"type": "string"},
+						"path":              map[string]interface{}{"type": "string"},
+						"satisfied_by":      satisfiedBySchema(),
+						"also_satisfied_by": alsoSatisfiedBySchema(),
 					},
 					"required": []string{"kind", "description", "satisfied_by"},
 				},
@@ -148,8 +183,9 @@ func newConstraintExtractionSchema() map[string]interface{} {
 							"type": "string",
 							"enum": []string{"reminder", "calendar", "note", "other"},
 						},
-						"description":  map[string]interface{}{"type": "string"},
-						"satisfied_by": satisfiedBySchema(),
+						"description":       map[string]interface{}{"type": "string"},
+						"satisfied_by":      satisfiedBySchema(),
+						"also_satisfied_by": alsoSatisfiedBySchema(),
 						"unconditional": map[string]interface{}{
 							"type": "boolean",
 							"description": "true if the user asked for this outright; " +
@@ -173,6 +209,17 @@ func satisfiedBySchema() map[string]interface{} {
 		"type": "string",
 		"description": "The exact name of the one available tool that performs this, " +
 			"copied from the AVAILABLE TOOLS list. Empty string when no listed tool can do it.",
+	}
+}
+
+// alsoSatisfiedBySchema describes the alternatives beside satisfied_by.
+func alsoSatisfiedBySchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type":  "array",
+		"items": map[string]interface{}{"type": "string"},
+		"description": "Other tools from the AVAILABLE TOOLS list that would carry this out " +
+			"just as well (for example updating an existing record instead of creating one). " +
+			"Empty when only one tool fits.",
 	}
 }
 
@@ -269,6 +316,7 @@ Rules:
   - Never invent an action because it would be helpful. When unsure, report nothing.
   - unconditional: true when the user asked for the action outright. false when they attached ANY condition to it — "if …, remind me", "should it rain, add …", "otherwise book …". Read carefully: a request can ask for a calculation or a lookup outright and then make the action depend on how it turns out. That action is conditional.
 - satisfied_by (on every deliverable and every requested action): pick the ONE tool from the AVAILABLE TOOLS list below that would carry it out, and copy its name exactly. Use "" when no listed tool can carry it out. Never invent a name that is not on the list.
+- also_satisfied_by: when other listed tools would carry it out just as well — appending to or updating an existing record instead of creating a new one — list their exact names here. Leave it empty when only one tool fits.
 - Work in whatever language the request is written in.
 `
 
@@ -296,7 +344,7 @@ func (s *Service) resolveRunConstraints(ctx context.Context, goal string, cfg *R
 	if !declared.Empty() {
 		return declared
 	}
-	if cfg != nil && cfg.DisableConstraintExtraction {
+	if s.constraintExtractionOff(cfg) {
 		return declared
 	}
 	if strings.TrimSpace(goal) == "" || s == nil || s.llmService == nil {
@@ -313,6 +361,12 @@ func (s *Service) resolveRunConstraints(ctx context.Context, goal string, cfg *R
 		return declared
 	}
 	return s.extractRunConstraints(ctx, goal)
+}
+
+// constraintExtractionOff reports whether this run skips the extraction,
+// switched off either for the run or for the whole service.
+func (s *Service) constraintExtractionOff(cfg *RunConfig) bool {
+	return (cfg != nil && cfg.DisableConstraintExtraction) || (s != nil && s.noConstraintExtraction)
 }
 
 // extractRunConstraints makes the structured call, leniently parses whatever
@@ -412,10 +466,11 @@ func parseRunConstraints(raw string) (RunConstraints, error) {
 			kind = "other"
 		}
 		out.Deliverables = append(out.Deliverables, DeliverableRequirement{
-			Kind:        kind,
-			Description: strings.TrimSpace(d.Description),
-			Path:        strings.TrimSpace(d.Path),
-			SatisfiedBy: strings.TrimSpace(d.SatisfiedBy),
+			Kind:            kind,
+			Description:     strings.TrimSpace(d.Description),
+			Path:            strings.TrimSpace(d.Path),
+			SatisfiedBy:     strings.TrimSpace(d.SatisfiedBy),
+			AlsoSatisfiedBy: trimNames(d.AlsoSatisfiedBy),
 		})
 	}
 	for _, a := range payload.RequestedActions {
@@ -428,10 +483,11 @@ func parseRunConstraints(raw string) (RunConstraints, error) {
 			kind = "other"
 		}
 		out.RequestedActions = append(out.RequestedActions, RequestedAction{
-			Kind:          kind,
-			Description:   strings.TrimSpace(a.Description),
-			SatisfiedBy:   strings.TrimSpace(a.SatisfiedBy),
-			Unconditional: a.Unconditional,
+			Kind:            kind,
+			Description:     strings.TrimSpace(a.Description),
+			SatisfiedBy:     strings.TrimSpace(a.SatisfiedBy),
+			AlsoSatisfiedBy: trimNames(a.AlsoSatisfiedBy),
+			Unconditional:   a.Unconditional,
 		})
 	}
 	return out, nil
@@ -447,14 +503,40 @@ func pruneUnknownTools(in RunConstraints, catalog []toolCatalogEntry) RunConstra
 		known[e.Name] = true
 	}
 	for i := range in.Deliverables {
-		if !known[in.Deliverables[i].SatisfiedBy] {
-			in.Deliverables[i].SatisfiedBy = ""
-		}
+		d := &in.Deliverables[i]
+		d.SatisfiedBy, d.AlsoSatisfiedBy = keepKnownTools(d.SatisfiedBy, d.AlsoSatisfiedBy, known)
 	}
 	for i := range in.RequestedActions {
-		if !known[in.RequestedActions[i].SatisfiedBy] {
-			in.RequestedActions[i].SatisfiedBy = ""
-		}
+		a := &in.RequestedActions[i]
+		a.SatisfiedBy, a.AlsoSatisfiedBy = keepKnownTools(a.SatisfiedBy, a.AlsoSatisfiedBy, known)
 	}
 	return in
+}
+
+// keepKnownTools drops invented names from one choice and its alternatives.
+// When the chosen tool was invented but an alternative is real, the
+// alternative takes its place: the capability exists, and clearing the choice
+// alone would read as "no tool can do this".
+func keepKnownTools(primary string, also []string, known map[string]bool) (string, []string) {
+	var kept []string
+	for _, name := range contractTools(primary, also) {
+		if known[name] {
+			kept = append(kept, name)
+		}
+	}
+	if len(kept) == 0 {
+		return "", nil
+	}
+	return kept[0], kept[1:]
+}
+
+// trimNames trims each name and drops the empty ones.
+func trimNames(names []string) []string {
+	var out []string
+	for _, n := range names {
+		if n = strings.TrimSpace(n); n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
 }

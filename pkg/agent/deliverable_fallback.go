@@ -33,7 +33,7 @@ import (
 func undeliverableRequirements(constraints RunConstraints, availableTools []string) []DeliverableRequirement {
 	var out []DeliverableRequirement
 	for _, want := range constraints.Deliverables {
-		if want.SatisfiedBy != "" && toolIsAvailable(availableTools, want.SatisfiedBy) {
+		if anyToolAvailable(availableTools, want.Tools()) {
 			continue
 		}
 		// A file deliverable with a named path is verified against the artifact

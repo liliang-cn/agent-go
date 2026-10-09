@@ -109,6 +109,7 @@ type Builder struct {
 	observers          []Observer
 	maxConcurrentRuns  int
 	maxRunsPerTenant   int
+	noConstraints      bool
 	timeLocation       *time.Location
 	backgroundTasks    bool
 	maxBackgroundTasks int
@@ -487,6 +488,21 @@ func (b *Builder) WithMaxRunsPerTenant(n int) *Builder {
 	return b
 }
 
+// WithConstraintExtraction turns the per-run constraint extraction on or off
+// for every run of the service — Run, RunStream, Ask, Chat, scheduled prompts
+// and sub-agents alike. It is on by default.
+//
+// The extraction is one extra model call per run that reads the request for
+// what it owes (a file, a sent message, a recorded note) so the contract lints
+// can hold the run to it. A service whose tools are few and whose prompt
+// already says when to use them gains little from it and pays the call every
+// time. Off here, a run cannot turn it back on; WithConstraintExtraction as a
+// RunOption switches it off for a single run.
+func (b *Builder) WithConstraintExtraction(enabled bool) *Builder {
+	b.noConstraints = !enabled
+	return b
+}
+
 func (b *Builder) WithObserver(obs ...Observer) *Builder {
 	for _, o := range obs {
 		if o != nil {
@@ -813,6 +829,7 @@ func (b *Builder) build() (*Service, error) {
 	}
 	svc.maxConcurrentRuns = b.maxConcurrentRuns
 	svc.maxRunsPerTenant = b.maxRunsPerTenant
+	svc.noConstraintExtraction = b.noConstraints
 	svc.maxBackgroundTasks = b.maxBackgroundTasks
 	if b.backgroundTasks {
 		RegisterBackgroundTaskTools(svc)

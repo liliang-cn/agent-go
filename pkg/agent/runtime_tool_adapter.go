@@ -210,6 +210,7 @@ func (r *Runtime) buildStreamingToolExecutionCallbacks() ToolExecutionCallbacks 
 			r.emitToolCall(name, args, interruptBehavior)
 		},
 		OnToolResult: func(name string, res interface{}, err error, interruptBehavior string) {
+			r.noteToolOutcome(name, err)
 			r.emitToolResult(name, res, err, interruptBehavior)
 		},
 		OnToolState: func(name string, state string, interruptBehavior string) {

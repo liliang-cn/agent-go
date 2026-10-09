@@ -41,6 +41,11 @@ type LintContext struct {
 	Goal string
 	// ToolCalls is the set of tool names invoked during the run.
 	ToolCalls []string
+	// StateChanges is the set of tools this run called that may change state
+	// (anything not declared ReadOnly) and that returned without an error.
+	// A contract lint must not send a run that already wrote something back
+	// to do the work again: the retry repeats the side effect.
+	StateChanges []string
 	// AvailableTools is the set of tool names the run could have called.
 	// Lints that enforce "you had the capability and did not use it" must
 	// consult this — an agent with no matching tool cannot be at fault.

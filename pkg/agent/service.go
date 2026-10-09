@@ -81,6 +81,10 @@ type Service struct {
 	maxConcurrentRuns int
 	maxRunsPerTenant  int
 
+	// noConstraintExtraction switches the per-run constraint extraction off
+	// for every run; see Builder.WithConstraintExtraction.
+	noConstraintExtraction bool
+
 	// Detached work the agent or the host started; see background.go.
 	backgroundOnce     sync.Once
 	backgroundReg      *backgroundRegistry

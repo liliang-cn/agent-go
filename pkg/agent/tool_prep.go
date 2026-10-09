@@ -106,10 +106,10 @@ func (s *Service) ensureRequiredToolsVisible(tools []domain.ToolDefinition, cfg 
 func requiredToolNames(constraints RunConstraints) []string {
 	out := make([]string, 0, len(constraints.Deliverables)+len(constraints.RequestedActions))
 	for _, d := range constraints.Deliverables {
-		out = append(out, strings.TrimSpace(d.SatisfiedBy))
+		out = append(out, d.Tools()...)
 	}
 	for _, a := range constraints.RequestedActions {
-		out = append(out, strings.TrimSpace(a.SatisfiedBy))
+		out = append(out, a.Tools()...)
 	}
 	return out
 }

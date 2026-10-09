@@ -248,7 +248,7 @@ func (s *Service) previewConstraints(goal string, cfg *RunConfig) (RunConstraint
 	if !declared.Empty() {
 		return declared, false
 	}
-	if cfg.DisableConstraintExtraction {
+	if s.constraintExtractionOff(cfg) {
 		return declared, false
 	}
 	if strings.TrimSpace(goal) == "" || s.llmService == nil {

@@ -84,6 +84,16 @@ func toolIsAvailable(availableTools []string, name string) bool {
 	return toolWasCalled(availableTools, name)
 }
 
+// anyToolAvailable reports whether at least one of names could be called.
+func anyToolAvailable(availableTools []string, names []string) bool {
+	for _, name := range names {
+		if toolIsAvailable(availableTools, name) {
+			return true
+		}
+	}
+	return false
+}
+
 // TaskDeliveryContract enforces the v3 delivery contract: when the run owes a
 // side effect, it cannot be declared complete until the trace shows the tool
 // that performs that side effect was actually called.
@@ -110,7 +120,7 @@ func TaskDeliveryContract() OutputLint {
 						"been truncated). Actually write the file, verify it exists, then finish; " +
 						"or call task_blocked with the concrete blocker."
 				}
-				if reason := unmetToolContract(ctx, want.SatisfiedBy, want.Description,
+				if reason := unmetToolContract(ctx, want.Tools(), want.Description,
 					"perform the delivery"); reason != "" {
 					return false, reason
 				}
@@ -147,7 +157,7 @@ func RequestedActionContract() OutputLint {
 					// contract cannot tell restraint from neglect.
 					continue
 				}
-				if reason := unmetToolContract(ctx, want.SatisfiedBy, want.Description,
+				if reason := unmetToolContract(ctx, want.Tools(), want.Description,
 					"carry out that action"); reason != "" {
 					return false, reason
 				}
@@ -157,32 +167,54 @@ func RequestedActionContract() OutputLint {
 	}
 }
 
-// unmetToolContract returns the rejection reason when the run had the named
-// tool and never called it, or "" when the contract is satisfied (or not
-// enforceable). Shared by both contracts so their semantics cannot drift.
-func unmetToolContract(ctx LintContext, tool, description, verb string) string {
-	if tool == "" {
+// unmetToolContract returns the rejection reason when the run had a tool that
+// does what was asked and called none of them, or "" when the contract is
+// satisfied (or not enforceable). Shared by both contracts so their semantics
+// cannot drift.
+//
+// A run that already changed something is never rejected. The contract cannot
+// tell a substitute from neglect — appending to the note that already held the
+// fact, instead of the save_note the extraction picked — and rejecting after a
+// write sends the model back to do the work again: measured, it created the
+// duplicate note the append had avoided. A side effect done twice is worse
+// than one the lint could not confirm, and a run that wrote nothing at all,
+// the case this contract exists for, is still caught.
+func unmetToolContract(ctx LintContext, tools []string, description, verb string) string {
+	if len(tools) == 0 {
 		// No available tool can do this. Rejecting here would burn the retry
 		// budget on something the agent cannot do; that case belongs to
 		// task_blocked, or to the partial-answer redirect.
 		return ""
 	}
-	if toolWasCalled(ctx.ToolCalls, tool) {
+	var available []string
+	for _, tool := range tools {
+		if toolWasCalled(ctx.ToolCalls, tool) {
+			return ""
+		}
+		if toolIsAvailable(ctx.AvailableTools, tool) {
+			available = append(available, tool)
+		}
+	}
+	if len(available) == 0 {
+		// The tools the extraction named are not registered for this run after
+		// all; treat it as a missing capability rather than a failure.
 		return ""
 	}
-	if !toolIsAvailable(ctx.AvailableTools, tool) {
-		// The tool the extraction named is not registered for this run after
-		// all; treat it as a missing capability rather than a failure.
+	if len(ctx.StateChanges) > 0 {
 		return ""
 	}
 	detail := ""
 	if strings.TrimSpace(description) != "" {
 		detail = " (" + strings.TrimSpace(description) + ")"
 	}
+	named := "the tool " + available[0]
+	if len(available) > 1 {
+		named = "the tools " + strings.Join(available, " / ")
+	}
 	return "the user explicitly asked you to " + verb + detail +
-		", and the tool " + tool + " that does it was available to you, but you never called it. " +
-		"Do not tell the user it is done when it is not. Call " + tool + " now and report what it " +
-		"returned, or call task_blocked stating plainly that you did not do it and why."
+		", and " + named + " that does it was available to you, but you never called it. " +
+		"Do not tell the user it is done when it is not. Call " + strings.Join(available, " or ") +
+		" now and report what it returned, or call task_blocked stating plainly that you did not do it and why."
 }
 
 // fileArtifactExistsIn reports whether the artifact exists, looking inside the

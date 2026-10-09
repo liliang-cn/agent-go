@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -52,6 +53,7 @@ type Runtime struct {
 	pendingTools   map[string]domain.ToolCall // tool_call_id -> call
 	completedTools map[string]bool            // tool_call_id -> true
 	toolNamesUsed  map[string]bool            // tool name -> true (for goal-aware lints)
+	stateChanges   map[string]bool            // state-changing tools that returned without error
 
 	// goal is the task input for this run, kept so completion-time lints can
 	// check whether the agent actually satisfied what was asked.
@@ -146,6 +148,7 @@ func (r *Runtime) runFinalLints(content string, turn int) *LintViolation {
 		TurnIndex:        turn,
 		Goal:             r.goal,
 		ToolCalls:        r.toolNamesUsedForTask(),
+		StateChanges:     r.stateChangesSnapshot(),
 		AvailableTools:   r.availableToolNamesSnapshot(),
 		Deliverables:     r.runConstraints().Deliverables,
 		RequestedActions: r.runConstraints().RequestedActions,
@@ -1742,6 +1745,33 @@ func (r *Runtime) trackToolName(name string) {
 	r.toolNamesUsed[name] = true
 }
 
+// noteToolOutcome records a call that may have changed state and returned
+// without an error. The contract lints read it: a run that already wrote
+// something is not sent back to do the work again.
+func (r *Runtime) noteToolOutcome(name string, err error) {
+	name = strings.TrimSpace(name)
+	if err != nil || name == "" || r.svc == nil || !r.svc.toolCallChangesState(name) {
+		return
+	}
+	r.pendingToolsMu.Lock()
+	defer r.pendingToolsMu.Unlock()
+	if r.stateChanges == nil {
+		r.stateChanges = make(map[string]bool)
+	}
+	r.stateChanges[name] = true
+}
+
+func (r *Runtime) stateChangesSnapshot() []string {
+	r.pendingToolsMu.Lock()
+	defer r.pendingToolsMu.Unlock()
+	out := make([]string, 0, len(r.stateChanges))
+	for name := range r.stateChanges {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // availableToolNamesSnapshot returns the names of every tool this run could
 // call. Lints use it to distinguish "the agent skipped a capability it had"
 // from "the agent never had that capability at all".
@@ -1869,6 +1899,7 @@ func (r *Runtime) executeAsyncTool(ctx context.Context, tc domain.ToolCall, wg *
 	res, err, _ := r.executeToolOrHandoff(ctx, tc)
 
 	// 3. Emit result
+	r.noteToolOutcome(tc.Function.Name, err)
 	r.svc.emitObserver(func(o Observer) { o.OnToolEnd(ctx, toolInfo, res, err) })
 	r.emitToolResult(tc.Function.Name, res, err, behavior)
 	r.trackToolResult(tc.ID)
