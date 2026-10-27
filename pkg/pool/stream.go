@@ -197,6 +197,21 @@ func (c *Client) openStream(ctx context.Context, path string, body interface{}) 
 }
 
 func (c *Client) open(ctx context.Context, path string, body interface{}) (*http.Response, error) {
+	if c.temperatureRejected.Load() {
+		body, _ = withoutTemperature(body)
+	}
+	resp, err := c.openOnce(ctx, path, body)
+	if isTemperatureRejection(err) {
+		if bare, had := withoutTemperature(body); had {
+			c.temperatureRejected.Store(true)
+			trace.WireOf(ctx).Retry("upstream refused temperature, sending without it", 0)
+			return c.openOnce(ctx, path, bare)
+		}
+	}
+	return resp, err
+}
+
+func (c *Client) openOnce(ctx context.Context, path string, body interface{}) (*http.Response, error) {
 	data, err := json.Marshal(body)
 	if err != nil {
 		return nil, err

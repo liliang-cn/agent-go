@@ -13,6 +13,7 @@ import (
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 	"github.com/liliang-cn/agent-go/v3/pkg/prompt"
+	"github.com/liliang-cn/agent-go/v3/pkg/trace"
 )
 
 // Client is an OpenAI-compatible LLM/embedding client.
@@ -44,6 +45,9 @@ type Client struct {
 	// SetReasoningEffort. effortRejected is set once the upstream refuses it.
 	reasoningEffort string
 	effortRejected  atomic.Bool
+	// temperatureRejected is set once the upstream refused the temperature
+	// parameter (temperature.go); requests leave it out from then on.
+	temperatureRejected atomic.Bool
 	// thinking is sent on every chat completion; see SetThinking.
 	// thinkingRejected is set once the upstream refuses it.
 	thinking         string
@@ -1099,6 +1103,21 @@ func (c *Client) postWithEffort(ctx context.Context, path string, body interface
 }
 
 func (c *Client) post(ctx context.Context, path string, body interface{}) ([]byte, error) {
+	if c.temperatureRejected.Load() {
+		body, _ = withoutTemperature(body)
+	}
+	out, err := c.postOnce(ctx, path, body)
+	if isTemperatureRejection(err) {
+		if bare, had := withoutTemperature(body); had {
+			c.temperatureRejected.Store(true)
+			trace.WireOf(ctx).Retry("upstream refused temperature, sending without it", 0)
+			return c.postOnce(ctx, path, bare)
+		}
+	}
+	return out, err
+}
+
+func (c *Client) postOnce(ctx context.Context, path string, body interface{}) ([]byte, error) {
 	data, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
