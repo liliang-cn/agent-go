@@ -6,7 +6,9 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/trace"
@@ -22,7 +24,7 @@ import (
 // abroad is a few hundred milliseconds before the first byte. One tuned pool,
 // shared by every client in the process, keeps them warm.
 var sharedTransport = &http.Transport{
-	Proxy: http.ProxyFromEnvironment,
+	Proxy: proxyFor,
 	DialContext: (&net.Dialer{
 		Timeout:   30 * time.Second,
 		KeepAlive: 30 * time.Second,
@@ -33,6 +35,34 @@ var sharedTransport = &http.Transport{
 	IdleConnTimeout:       90 * time.Second,
 	TLSHandshakeTimeout:   10 * time.Second,
 	ExpectContinueTimeout: time.Second,
+}
+
+// proxy picks the proxy for each request the shared transport makes; nil
+// is the environment's (HTTPS_PROXY and friends), as before SetProxy.
+var proxy atomic.Pointer[func(*http.Request) (*url.URL, error)]
+
+func proxyFor(req *http.Request) (*url.URL, error) {
+	if f := proxy.Load(); f != nil {
+		return (*f)(req)
+	}
+	return http.ProxyFromEnvironment(req)
+}
+
+// SetProxy makes every LLM client in the process ask f which proxy a
+// request goes through, from its next request on: a host program with a
+// proxy setting of its own (off, the system's, a manual URL) installs it
+// here and changes it without a restart. f returns nil for a direct
+// connection. SetProxy(nil) goes back to the environment.
+//
+// http.ProxyFromEnvironment reads the environment once per process, so
+// setting HTTPS_PROXY after the first request changes nothing; this is the
+// way to change it while running.
+func SetProxy(f func(*http.Request) (*url.URL, error)) {
+	if f == nil {
+		proxy.Store(nil)
+		return
+	}
+	proxy.Store(&f)
 }
 
 // wireTransport reports each request a model call makes to the call's Wire
