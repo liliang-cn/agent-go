@@ -146,7 +146,7 @@ Also fill "graph_entities" and "graph_relations" with what the memory about to b
 		schema["properties"].(map[string]interface{})[name] = spec
 	}
 	call := trace.Model(ctx, "memory-reconcile")
-	result, err := s.llm.GenerateStructured(ctx, b.String(), schema, &domain.GenerationOptions{Temperature: 0})
+	result, err := s.llm.GenerateStructured(call.Context(ctx), b.String(), schema, &domain.GenerationOptions{Temperature: 0})
 	call.End(nil, err)
 	if err != nil || result == nil || !result.Valid || strings.TrimSpace(result.Raw) == "" {
 		agentgolog.WithModule("memory.reconcile").Warn("explicit-save reconciliation unavailable; adding", "error", err)

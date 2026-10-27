@@ -37,6 +37,9 @@ type Runtime struct {
 	svc          *Service
 	eventChan    chan *Event
 	currentAgent *Agent
+	// eventsClosed is set just before eventChan closes, so a send from
+	// outside the loop (a model call's heartbeat, runtime_wire.go) stops.
+	eventsClosed atomic.Bool
 
 	// constraintsReady is closed when the background constraint check has
 	// answered; pendingConstraints holds the answer until the loop adopts it
@@ -314,7 +317,7 @@ func (r *Runtime) forceFinalSynthesis(ctx context.Context, state *queryLoopState
 
 	// tools=nil + no tool_choice → the provider must return plain text.
 	call := trace.Model(ctx, "final-synthesis")
-	res, err := r.svc.llmService.GenerateWithTools(ctx, sanitizeToolPairing(synth), nil, r.generationOptions(r.temperature(), r.maxTokens(), ""))
+	res, err := r.svc.llmService.GenerateWithTools(call.Context(ctx), sanitizeToolPairing(synth), nil, r.generationOptions(r.temperature(), r.maxTokens(), ""))
 	if res != nil {
 		call.End(res.Usage, err)
 	} else {
@@ -378,6 +381,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 				r.emit(EventTypeTrace, string(b))
 			}
 		}
+		r.eventsClosed.Store(true)
 		close(r.eventChan)
 	}()
 	ctx = withCurrentSession(ctx, r.session)

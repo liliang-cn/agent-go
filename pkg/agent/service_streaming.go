@@ -42,6 +42,7 @@ func (s *Service) streamToolTurnWithRecovery(ctx context.Context, messages []dom
 	llmCtx, cancel := withLLMTurnTimeout(ctx, s.cfg)
 	defer cancel()
 	call := trace.Model(ctx, "turn", fmt.Sprintf("tools=%d msgs=%d", len(tools), len(messages)))
+	llmCtx = call.Context(llmCtx)
 	call.Request(messages)
 	err := s.llmService.StreamWithTools(llmCtx, sanitizeToolPairing(messages), tools, opts, func(delta *domain.GenerationResult) error {
 		if delta.Content != "" || delta.ReasoningContent != "" || len(delta.ToolCalls) > 0 {

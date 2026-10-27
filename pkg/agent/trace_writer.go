@@ -134,14 +134,18 @@ type traceLine struct {
 	Goal       string `json:"goal,omitempty"`
 
 	// Lints, retries, compaction, errors.
-	Lint            string `json:"lint,omitempty"`
-	Verdict         string `json:"verdict,omitempty"`
-	Reason          string `json:"reason,omitempty"`
-	Kind            string `json:"kind,omitempty"`
-	Attempt         int    `json:"attempt,omitempty"`
-	MaxTokensFrom   int    `json:"max_tokens_from,omitempty"`
-	MaxTokensTo     int    `json:"max_tokens_to,omitempty"`
-	DelayMs         int64  `json:"delay_ms,omitempty"`
+	Lint          string `json:"lint,omitempty"`
+	Verdict       string `json:"verdict,omitempty"`
+	Reason        string `json:"reason,omitempty"`
+	Kind          string `json:"kind,omitempty"`
+	Attempt       int    `json:"attempt,omitempty"`
+	MaxTokensFrom int    `json:"max_tokens_from,omitempty"`
+	MaxTokensTo   int    `json:"max_tokens_to,omitempty"`
+	DelayMs       int64  `json:"delay_ms,omitempty"`
+	// Status and Bytes are a model_wire step's HTTP status and how much of
+	// the answer had come.
+	Status          int    `json:"status,omitempty"`
+	Bytes           int64  `json:"bytes,omitempty"`
 	Trigger         string `json:"trigger,omitempty"`
 	MessagesBefore  int    `json:"messages_before,omitempty"`
 	MessagesAfter   int    `json:"messages_after,omitempty"`
@@ -570,6 +574,30 @@ func (t *TraceWriter) OnModelRetry(_ context.Context, info ModelRetryInfo) {
 		MaxTokensFrom: info.MaxTokensFrom,
 		MaxTokensTo:   info.MaxTokensTo,
 		DelayMs:       info.Delay.Milliseconds(),
+	}, time.Now())
+}
+
+// OnModelWire writes a model call's progress on the wire: model_wire lines
+// with the step (queued, request, response, retry, first_byte, waiting …),
+// its attempt and HTTP status, and the line a person reads.
+func (t *TraceWriter) OnModelWire(_ context.Context, info ModelWireInfo) {
+	e := info.Event
+	t.write(traceLine{
+		Event:      "model_wire",
+		TaskID:     info.TaskID,
+		RunID:      info.RunID,
+		SessionID:  info.SessionID,
+		Agent:      info.AgentName,
+		Round:      info.Round,
+		SpanID:     info.SpanID,
+		Purpose:    info.Purpose,
+		Kind:       e.Kind,
+		Attempt:    e.Attempt,
+		Status:     e.Status,
+		DurationMs: e.ElapsedMs,
+		DelayMs:    e.WaitMs,
+		Bytes:      e.Bytes,
+		Reason:     t.clip(e.Text),
 	}, time.Now())
 }
 

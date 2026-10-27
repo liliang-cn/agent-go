@@ -14,6 +14,7 @@ import (
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 	"github.com/liliang-cn/agent-go/v3/pkg/prompt"
+	"github.com/liliang-cn/agent-go/v3/pkg/trace"
 )
 
 // SelectionStrategy decides which client a Get returns.
@@ -971,11 +972,19 @@ func (p *Pool) signalFreed() {
 // The signal is taken before each attempt, so a release between a failed
 // attempt and the wait still wakes it.
 func (p *Pool) acquire(ctx context.Context, get func() (*Client, error)) (*Client, error) {
+	queued := false
 	for {
 		freed := p.freedSignal()
 		c, err := get()
 		if !errors.Is(err, errAllBusy) {
+			if queued {
+				trace.WireOf(ctx).Slot()
+			}
 			return c, err
+		}
+		if !queued {
+			queued = true
+			trace.WireOf(ctx).Queued(p.busyDetail())
 		}
 		select {
 		case <-freed:
@@ -983,4 +992,20 @@ func (p *Pool) acquire(ctx context.Context, get func() (*Client, error)) (*Clien
 			return nil, fmt.Errorf("waiting for a free client: %w", ctx.Err())
 		}
 	}
+}
+
+// busyDetail says why a call waits: every provider's requests in flight
+// against its limit.
+func (p *Pool) busyDetail() string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	parts := make([]string, 0, len(p.order))
+	for _, name := range p.order {
+		w := p.clients[name]
+		if w == nil {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s %d/%d", name, atomic.LoadInt32(&w.activeRequests), w.provider.MaxConcurrency))
+	}
+	return "every provider is at its limit (" + strings.Join(parts, ", ") + ")"
 }

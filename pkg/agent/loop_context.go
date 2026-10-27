@@ -143,7 +143,7 @@ func (s *Service) CompactMessages(ctx context.Context, messages []domain.Message
 
 	// Generate summary using LLM
 	call := trace.Model(ctx, "summary")
-	summary, err := s.llmService.Generate(ctx, fullPrompt, nil)
+	summary, err := s.llmService.Generate(call.Context(ctx), fullPrompt, nil)
 	call.End(nil, err)
 	if err != nil {
 		return nil, fmt.Errorf("compaction failed: %w", err)

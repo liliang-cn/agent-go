@@ -509,7 +509,7 @@ func (s *Service) storeIfWorthwhileSync(ctx context.Context, req *domain.MemoryS
 	}
 
 	call := trace.Model(ctx, "memory-extract")
-	result, err := s.llm.GenerateStructured(ctx, prompt, schema, &domain.GenerationOptions{Temperature: 0.1})
+	result, err := s.llm.GenerateStructured(call.Context(ctx), prompt, schema, &domain.GenerationOptions{Temperature: 0.1})
 	call.End(nil, err)
 	var summary *domain.MemorySummaryResult
 	if err == nil && result.Raw != "" && result.Valid {
@@ -731,7 +731,7 @@ func (s *Service) Update(ctx context.Context, id string, newInfo string) error {
 
 	prompt := fmt.Sprintf("Existing Memory:\n%s\n\nNew Info: %s\n\nMerge and provide updated content.", oldMem.Content, newInfo)
 	call := trace.Model(ctx, "memory-update")
-	updated, err := s.llm.Generate(ctx, prompt, nil)
+	updated, err := s.llm.Generate(call.Context(ctx), prompt, nil)
 	call.End(nil, err)
 	if err != nil {
 		return err

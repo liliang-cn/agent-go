@@ -330,7 +330,7 @@ func (s *Service) summarizeForCompaction(ctx context.Context, middle []domain.Me
 	for attempt := 0; attempt <= compactionSummaryEscalations; attempt++ {
 		call := trace.Model(ctx, "compaction")
 		defer func() { call.End(nil, nil) }()
-		summary, err := s.llmService.Generate(ctx, prompt, &domain.GenerationOptions{
+		summary, err := s.llmService.Generate(call.Context(ctx), prompt, &domain.GenerationOptions{
 			Temperature: 0.2,
 			MaxTokens:   budget,
 		})

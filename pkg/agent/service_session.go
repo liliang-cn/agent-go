@@ -203,7 +203,7 @@ func (s *Service) CompactSession(ctx context.Context, sessionID string) (string,
 
 	// Generate summary using LLM
 	call := trace.Model(ctx, "session-summary")
-	summary, err := s.llmService.Generate(ctx, fullPrompt, nil)
+	summary, err := s.llmService.Generate(call.Context(ctx), fullPrompt, nil)
 	call.End(nil, err)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate summary: %w", err)

@@ -150,6 +150,22 @@ type Sink interface {
 	Step(ctx context.Context, r Record)
 }
 
+// WireSink is a Sink that also hears what happens to each model call on the
+// wire (Wire): a queue, an HTTP attempt and its status, a retry, the first
+// byte, and a heartbeat while it waits. The agent runtime's sink forwards
+// these to its observers and its event stream.
+type WireSink interface {
+	Sink
+	Wire(ctx context.Context, id, purpose string, e WireEvent)
+}
+
+// Heartbeat pacing for a call's Wire: every WireTick it is asked whether it
+// has gone WireQuiet without progress, and says what it waits on if so.
+var (
+	WireTick  = 5 * time.Second
+	WireQuiet = 15 * time.Second
+)
+
 // BodySink is a Sink that also wants each model call's request and reply
 // in the Records it receives, whether or not AGENTGO_TRACE_BODIES is set. The
 // agent runtime's sink implements it when the service was built with
@@ -236,7 +252,9 @@ func emit(ctx context.Context, r Record) {
 			r.AtMs = 0
 		}
 		s.mu.Lock()
-		if len(s.records) < maxRecords {
+		// The wire's own lines are for the log and the file; the timeline a
+		// person is shown keeps to the steps.
+		if r.Kind != "wire" && len(s.records) < maxRecords {
 			keep := r
 			keep.Request, keep.Reply = nil, nil // the timeline is for showing, not for bodies
 			s.records = append(s.records, keep)
@@ -272,6 +290,8 @@ func (r Record) line() string {
 		fmt.Fprintf(&b, "model purpose=%s", r.Name)
 	case "run":
 		fmt.Fprintf(&b, "run %s total=%s", r.Name, ms(r.DurMs))
+	case "wire":
+		return fmt.Sprintf("wire purpose=%s at=%s %s", r.Name, ms(r.DurMs), r.Detail)
 	default:
 		fmt.Fprintf(&b, "%s %s", r.Kind, r.Name)
 	}
@@ -320,6 +340,9 @@ type Call struct {
 	first   atomic.Int64 // ns after start of the first output; 0 = none yet
 	request any
 	reply   any
+	wire    *Wire
+	stop    chan struct{}
+	stopped sync.Once
 }
 
 // Model starts timing a model call. purpose overrides the context's; detail
@@ -340,6 +363,11 @@ func Model(ctx context.Context, purpose string, detail ...string) *Call {
 	if sink != nil {
 		sink.ModelStart(ctx, c.id, purpose)
 	}
+	if _, ok := sink.(WireSink); ok || Enabled() {
+		c.wire = NewWire(c.onWire)
+		c.stop = make(chan struct{})
+		go c.wire.Heartbeat(ctx, WireTick, WireQuiet, c.stop)
+	}
 	if s := statsOf(ctx); s != nil {
 		s.mu.Lock()
 		if s.modelCalls == 0 && s.firstModelAt == 0 {
@@ -348,6 +376,38 @@ func Model(ctx context.Context, purpose string, detail ...string) *Call {
 		s.mu.Unlock()
 	}
 	return c
+}
+
+// Context is ctx carrying this call's Wire, for the client the call goes
+// through to report to. Pass it to the model call instead of ctx.
+func (c *Call) Context(ctx context.Context) context.Context {
+	if c == nil {
+		return ctx
+	}
+	return WithWire(ctx, c.wire)
+}
+
+// Wire is this call's Wire, or nil.
+func (c *Call) Wire() *Wire {
+	if c == nil {
+		return nil
+	}
+	return c.wire
+}
+
+func (c *Call) onWire(e WireEvent) {
+	if ws, ok := c.sink.(WireSink); ok {
+		ws.Wire(c.ctx, c.id, c.purpose, e)
+	}
+	emit(c.ctx, Record{Time: time.Now(), Kind: "wire", Name: c.purpose, AtMs: 0, DurMs: e.ElapsedMs,
+		Detail: e.Kind + ": " + e.Text})
+}
+
+func (c *Call) stopWire() {
+	if c == nil || c.stop == nil {
+		return
+	}
+	c.stopped.Do(func() { close(c.stop) })
 }
 
 // Output marks that output arrived. Only the first call counts.
@@ -387,6 +447,7 @@ func (c *Call) End(usage *domain.TokenUsage, err error) {
 	if c == nil {
 		return
 	}
+	c.stopWire()
 	dur := time.Since(c.start)
 	ttft := time.Duration(c.first.Load())
 	r := Record{Time: c.start, Kind: "model", Name: c.purpose, Detail: c.detail,

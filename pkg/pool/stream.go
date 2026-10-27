@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/trace"
 )
 
 // StreamWithTools streams a tool-calling generation: text and reasoning reach
@@ -46,6 +47,7 @@ func (c *Client) StreamWithTools(ctx context.Context, messages []domain.Message,
 		if retryOpts == nil {
 			break
 		}
+		trace.WireOf(ctx).Retry("upstream refused a parameter, sending without it: "+err.Error(), 0)
 		curOpts = retryOpts
 		resp, err = c.openStream(ctx, "/chat/completions", body(curOpts))
 	}
@@ -113,6 +115,7 @@ scan:
 			thought += len(delta.ReasoningContent)
 			if !rethought && c.overThinking(thought, thinkingSince) && st.content.Len() == 0 && len(st.calls) == 0 {
 				rethought = true
+				trace.WireOf(ctx).Restart(fmt.Sprintf("still thinking after %s with no answer, asking again with thinking off", time.Since(thinkingSince).Round(time.Second)))
 				b := body(curOpts)
 				b["enable_thinking"] = false
 				next, err := c.openStream(ctx, "/chat/completions", b)
@@ -187,6 +190,7 @@ func (c *Client) openStream(ctx context.Context, path string, body interface{}) 
 	sent, added := c.withEffort(path, body)
 	resp, err := c.open(ctx, path, sent)
 	if added && c.refusedEffort(err) {
+		trace.WireOf(ctx).Retry("upstream refused the reasoning effort, sending without it", 0)
 		return c.open(ctx, path, body)
 	}
 	return resp, err

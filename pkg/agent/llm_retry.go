@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"math/rand"
 	"net"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/trace"
 )
 
 // Surviving a provider that blinks.
@@ -195,6 +197,11 @@ func (r *Runtime) emitLLMRetry(spanID string, round, attempt, maxAttempts int, d
 		"delay_ms":     delay.Milliseconds(),
 		"error":        err.Error(),
 	})
+	// On the wire too: the call failed outright and the whole turn is asked
+	// again, which a person waiting sees as nothing happening for delay.
+	r.emitWire("turn", trace.WireEvent{Kind: "retry", Attempt: attempt + 1, WaitMs: delay.Milliseconds(),
+		Detail: err.Error(), Text: fmt.Sprintf("model call failed, asking again in %s (attempt %d of %d): %s",
+			delay.Round(100*time.Millisecond), attempt+1, maxAttempts+1, oneLine(err.Error(), 200))})
 	r.emitModelRetryObserved(ModelRetryInfo{
 		Round:   round,
 		SpanID:  spanID,

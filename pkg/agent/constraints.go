@@ -418,7 +418,7 @@ func (s *Service) callConstraintExtraction(ctx context.Context, prompt string) (
 	call := trace.Model(ctx, "constraints")
 	call.Request(prompt)
 	res, err := s.llmService.GenerateStructured(
-		ctx,
+		call.Context(ctx),
 		prompt,
 		newConstraintExtractionSchema(),
 		&domain.GenerationOptions{Temperature: 0, MaxTokens: 400},

@@ -124,7 +124,7 @@ Output valid JSON only:
 		// The turn waits on this pick, and the schema fixes its shape.
 		call := trace.Model(ctx, "memory-pick")
 		call.Request(promptText)
-		result, err := n.llm.GenerateStructured(ctx, promptText, schema, &domain.GenerationOptions{Temperature: 0.1, NoReasoning: true})
+		result, err := n.llm.GenerateStructured(call.Context(ctx), promptText, schema, &domain.GenerationOptions{Temperature: 0.1, NoReasoning: true})
 		if result != nil {
 			call.Reply(result.Raw)
 		}

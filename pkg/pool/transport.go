@@ -2,11 +2,14 @@ package pool
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/liliang-cn/agent-go/v3/pkg/trace"
 )
 
 // sharedTransport is the one connection pool every LLM client draws from.
@@ -30,6 +33,40 @@ var sharedTransport = &http.Transport{
 	IdleConnTimeout:       90 * time.Second,
 	TLSHandshakeTimeout:   10 * time.Second,
 	ExpectContinueTimeout: time.Second,
+}
+
+// wireTransport reports each request a model call makes to the call's Wire
+// (trace.WireOf): that it went out, the status it came back with or the error
+// it failed with, and the bytes of the answer as they are read. A request
+// without a Wire on its context goes through untouched.
+type wireTransport struct{ base http.RoundTripper }
+
+func (t wireTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	w := trace.WireOf(req.Context())
+	if w == nil {
+		return t.base.RoundTrip(req)
+	}
+	what := req.Method + " " + req.URL.Path
+	if req.ContentLength > 0 {
+		what += fmt.Sprintf(", %.1f KB", float64(req.ContentLength)/1024)
+	}
+	w.Request(what)
+	resp, err := t.base.RoundTrip(req)
+	if err != nil {
+		w.Failed(err)
+		return nil, err
+	}
+	detail := ""
+	if resp.StatusCode >= 400 {
+		if ra := resp.Header.Get("Retry-After"); ra != "" {
+			detail = "Retry-After " + ra
+		}
+	}
+	w.Response(resp.StatusCode, detail)
+	if resp.StatusCode < 400 {
+		resp.Body = w.Body(resp.Body)
+	}
+	return resp, nil
 }
 
 // drainAndClose finishes reading a response body before closing it: a body

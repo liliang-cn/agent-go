@@ -223,6 +223,27 @@ func (l *ActivityLog) OnModelRetry(_ context.Context, info ModelRetryInfo) {
 	}
 }
 
+// OnModelWire records what a model call is doing on the wire when it is
+// worth a line: a queue, a retry, a failed attempt, an HTTP error, an answer
+// asked again, or a call that has gone quiet. The steps of a call that went
+// through cleanly are left to the model line that ends it.
+func (l *ActivityLog) OnModelWire(_ context.Context, info ModelWireInfo) {
+	e := info.Event
+	switch e.Kind {
+	case "request", "first_byte":
+		return
+	case "response":
+		if e.Status < 400 {
+			return
+		}
+	case "slot":
+		if e.WaitMs < 1000 {
+			return
+		}
+	}
+	l.line("r%-3d wire     %s %s", info.Round, info.Purpose, oneLine(e.Text, 200))
+}
+
 // OnCompaction records history being folded away. Read this line as "the
 // model just forgot everything older than the last few messages": the
 // re-reads that follow it are not the agent being redundant.
