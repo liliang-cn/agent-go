@@ -116,8 +116,9 @@ func TestLargeCatalogueWithNothingHiddenHasNoSearchTool(t *testing.T) {
 	if !hasToolNamed(tools, "probe_tool_39") {
 		t.Error("every registry tool must stay in the schema")
 	}
-	prompt := svc.buildSystemPromptForTurn(context.Background(), svc.agent, nil, !offersToolSearch(tools))
-	for _, leak := range []string{"search_available_tools", "Search-mode tool catalog", "search for an exact callable name"} {
+	prompt := svc.buildSystemPromptForTurn(context.Background(), svc.agent, nil, !offersToolSearch(tools)) +
+		svc.toolIndex(context.Background(), svc.agent, svc.buildToolPreparationPolicy(context.Background()), tools)
+	for _, leak := range []string{"search_available_tools", "Search-mode tool catalog", "search for an exact callable name", "cannot call yet"} {
 		if strings.Contains(prompt, leak) {
 			t.Errorf("prompt describes a tool search the turn does not offer (%q):\n%s", leak, prompt)
 		}

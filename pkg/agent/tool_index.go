@@ -69,6 +69,12 @@ func (s *Service) toolIndex(ctx context.Context, currentAgent *Agent, policy too
 	if !s.shouldIndexDeferredTools() {
 		return ""
 	}
+	// The index tells the model to search; with no search in the schema
+	// nothing it lists could ever be made callable, so it would only be a
+	// list of things the model is told it has and cannot use.
+	if !offersToolSearch(sent) {
+		return ""
+	}
 	// The flat collect plus the registry's own deferred set. Neither alone is
 	// the whole answer: MCP tools and skills never enter the registry, and a
 	// registry tool held back by SetDeferredPatterns never enters the collect.
@@ -104,6 +110,12 @@ func renderToolIndex(s *Service, all, sent []domain.ToolDefinition) string {
 	for _, t := range all {
 		name := strings.TrimSpace(t.Function.Name)
 		if name == "" || present[name] || seen[name] {
+			continue
+		}
+		// The search tools are how hidden tools are reached, not tools to
+		// reach: listed here, a turn without them read "search_available_tools
+		// exists but cannot be called yet — search first".
+		if name == "search_available_tools" || domain.IsToolSearchTool(name) {
 			continue
 		}
 		seen[name] = true
