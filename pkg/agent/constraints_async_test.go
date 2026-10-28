@@ -195,3 +195,45 @@ func TestARoundOfCallsThatAlreadyRanDoesNotWaitForTheConstraintCheck(t *testing.
 		t.Fatalf("the second turn waited for the constraint check (%v after it)", llm.secondTurn.Sub(llm.checkDone))
 	}
 }
+
+// batchedFinishLLM emits a real tool call and task_complete in the same turn.
+type batchedFinishLLM struct{ streamedCallLLM }
+
+func (l *batchedFinishLLM) StreamWithTools(_ context.Context, _ []domain.Message, _ []domain.ToolDefinition, _ *domain.GenerationOptions, cb domain.ToolCallCallback) error {
+	return cb(&domain.GenerationResult{ToolCalls: []domain.ToolCall{
+		{ID: "w1", Type: "function", Function: domain.FunctionCall{Name: "slow_write", Arguments: map[string]interface{}{"v": "x"}}},
+		{ID: "d1", Type: "function", Function: domain.FunctionCall{Name: "task_complete", Arguments: map[string]interface{}{"result": "Saved."}}},
+	}})
+}
+
+// A write batched with task_complete is still running when the terminal
+// signal arrives. The run used to end under it, and the write's result was
+// sent on the closed event channel: the process panicked.
+func TestTaskCompleteWaitsForTheCallsItWasBatchedWith(t *testing.T) {
+	llm := &batchedFinishLLM{}
+	svc, err := New("batched-finish").WithConfig(testAgentConfig(t.TempDir())).WithLLM(llm).Build()
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	defer svc.Close()
+	var finished int32
+	svc.AddTool("slow_write", "Writes slowly.",
+		map[string]interface{}{"type": "object", "properties": map[string]interface{}{"v": map[string]interface{}{"type": "string"}}},
+		func(context.Context, map[string]interface{}) (interface{}, error) {
+			time.Sleep(300 * time.Millisecond)
+			atomic.AddInt32(&finished, 1)
+			return map[string]interface{}{"ok": true}, nil
+		})
+
+	res, err := svc.Run(context.Background(), "save it")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if atomic.LoadInt32(&finished) != 1 {
+		t.Fatal("the run ended before the write batched with task_complete finished")
+	}
+	if !strings.Contains(res.Text(), "Saved.") {
+		t.Fatalf("answer = %q", res.Text())
+	}
+	time.Sleep(100 * time.Millisecond)
+}

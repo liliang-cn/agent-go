@@ -880,6 +880,12 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 
 		// Terminal task signal detected in stream — terminate immediately.
 		if taskTerminalName != "" {
+			// But not before the calls the same turn already started: a model
+			// that batches a last write with task_complete has that write
+			// running in a goroutine, and ending the run under it closed the
+			// event channel it reports to — a send on a closed channel, and
+			// the process died (2 runs of 3 on a five-turn benchmark task).
+			collector.wg.Wait()
 			final := taskTerminalResult
 			if final == "" && result != nil {
 				final = result.Content
