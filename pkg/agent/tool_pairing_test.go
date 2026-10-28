@@ -80,3 +80,47 @@ func TestSanitizeToolPairing(t *testing.T) {
 		t.Fatalf("plain changed")
 	}
 }
+
+// A result that is paired somewhere but not right after its call is still an
+// orphan: the 2026-10-28 400 "'tool_call_id' of X not found in 'tool_calls' of
+// previous message" came from a result persisted twice, the second copy after
+// a message steered into the run.
+func TestSanitizeToolPairingByPosition(t *testing.T) {
+	dup := []domain.Message{
+		{Role: "user", Content: "check"},
+		asst("looking", "c1", "c2"),
+		toolMsg("c1", "tasks"),
+		toolMsg("c2", "events"),
+		{Role: "assistant", Content: "found it"},
+		{Role: "user", Content: "steered in"},
+		toolMsg("c2", "events"), // the second copy
+		{Role: "assistant", Content: "fixed"},
+	}
+	got := sanitizeToolPairing(dup)
+	if len(got) != len(dup)-1 {
+		t.Fatalf("got %d messages, want %d", len(got), len(dup)-1)
+	}
+	for i, m := range got {
+		if m.Role == "tool" && got[i-1].Role != "tool" && len(got[i-1].ToolCalls) == 0 {
+			t.Fatalf("tool result at %d does not follow a call: %+v", i, got)
+		}
+	}
+
+	// A user message between a call and its result separates them: both go.
+	split := []domain.Message{
+		{Role: "user", Content: "a"},
+		asst("", "c1"),
+		{Role: "user", Content: "b"},
+		toolMsg("c1", "late"),
+		{Role: "assistant", Content: "c"},
+	}
+	got = sanitizeToolPairing(split)
+	for _, m := range got {
+		if m.Role == "tool" || len(m.ToolCalls) > 0 {
+			t.Fatalf("split call/result survived: %+v", got)
+		}
+	}
+	if len(got) != 3 {
+		t.Fatalf("got %d messages, want 3", len(got))
+	}
+}

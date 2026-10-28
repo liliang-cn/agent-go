@@ -7,67 +7,74 @@ import (
 )
 
 // sanitizeToolPairing returns a message slice in which every tool-result message
-// has a matching assistant tool_call and vice-versa. Strict provider backends
-// (OpenAI Responses / Codex, Anthropic, …) reject a request that contains a
-// "function_call_output" with no matching "function_call" (e.g. "No tool call
-// found for function call output with call_id X"). Such orphans appear when
-// replayed session history or context compaction drops an assistant tool_call
-// message while keeping its tool result (or drops a result while keeping the
-// call).
+// answers a tool_call of the assistant message just before its run of results,
+// and every assistant tool_call has its result there. Strict provider backends
+// (OpenAI Responses / Codex, Anthropic, chat-completions proxies, …) reject
+// anything else: "No tool call found for function call output with call_id X",
+// or "'tool_call_id' of X not found in 'tool_calls' of previous message".
 //
-// It is a no-op (returns the input unchanged) when everything is already paired,
-// so the common live-turn path pays only two cheap scans.
+// Orphans come from replayed session history: compaction drops a tool_call
+// message and keeps its result, or a result is persisted twice and the second
+// copy lands after a message steered into the run. Being paired somewhere in
+// the history is not enough — the result has to sit right after its call —
+// so pairing is decided by position:
 //
-//   - a tool message survives only if its ToolCallID is also present as some
-//     assistant ToolCall.ID;
-//   - an assistant ToolCall survives only if a tool result with that ID exists;
+//   - a tool message survives only inside the run of tool messages directly
+//     after an assistant message, answering one of that message's calls, and
+//     only the first time that call is answered there;
+//   - an assistant ToolCall survives only if it is answered that way;
 //   - an assistant message that ends up with no tool calls and no content is
 //     dropped (it was a pure, now-empty tool-call message).
+//
+// It is a no-op (returns the input unchanged) when everything is already in
+// place, so the common live-turn path pays one scan.
 func sanitizeToolPairing(messages []domain.Message) []domain.Message {
-	resultIDs := make(map[string]bool)
-	for i := range messages {
-		if messages[i].Role == "tool" && messages[i].ToolCallID != "" {
-			resultIDs[messages[i].ToolCallID] = true
+	// For each assistant message with calls: which of them are answered in
+	// the run of tool messages right after it. keep marks the tool messages
+	// that do the answering.
+	answered := make(map[int]map[string]bool)
+	keep := make(map[int]bool)
+	clean := true
+	for i := 0; i < len(messages); i++ {
+		m := messages[i]
+		if m.Role == "tool" {
+			if !keep[i] {
+				clean = false // not in the run after any call
+			}
+			continue
 		}
-	}
-	callIDs := make(map[string]bool)
-	for i := range messages {
-		if messages[i].Role == "assistant" {
-			for _, tc := range messages[i].ToolCalls {
-				callIDs[tc.ID] = true
+		if m.Role != "assistant" || len(m.ToolCalls) == 0 {
+			continue
+		}
+		calls := make(map[string]bool, len(m.ToolCalls))
+		for _, tc := range m.ToolCalls {
+			calls[tc.ID] = true
+		}
+		got := make(map[string]bool, len(calls))
+		for j := i + 1; j < len(messages) && messages[j].Role == "tool"; j++ {
+			id := messages[j].ToolCallID
+			if calls[id] && !got[id] {
+				got[id] = true
+				keep[j] = true
 			}
 		}
-	}
-	if len(resultIDs) == 0 && len(callIDs) == 0 {
-		return messages
-	}
-
-	paired := make(map[string]bool, len(resultIDs))
-	allPaired := true
-	for id := range resultIDs {
-		if callIDs[id] {
-			paired[id] = true
-		} else {
-			allPaired = false
+		if len(got) != len(calls) {
+			clean = false
 		}
+		answered[i] = got
 	}
-	for id := range callIDs {
-		if !resultIDs[id] {
-			allPaired = false
-		}
-	}
-	if allPaired {
+	if clean {
 		return messages // fast path: nothing to fix
 	}
 
 	out := make([]domain.Message, 0, len(messages))
-	for _, m := range messages {
+	for i, m := range messages {
 		switch m.Role {
 		case "assistant":
 			if len(m.ToolCalls) > 0 {
 				kept := make([]domain.ToolCall, 0, len(m.ToolCalls))
 				for _, tc := range m.ToolCalls {
-					if paired[tc.ID] {
+					if answered[i][tc.ID] {
 						kept = append(kept, tc)
 					}
 				}
@@ -78,7 +85,7 @@ func sanitizeToolPairing(messages []domain.Message) []domain.Message {
 			}
 			out = append(out, m)
 		case "tool":
-			if paired[m.ToolCallID] {
+			if keep[i] {
 				out = append(out, m)
 			}
 		default:
