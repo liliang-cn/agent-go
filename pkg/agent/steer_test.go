@@ -2,6 +2,7 @@ package agent_test
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -197,3 +198,113 @@ func TestSteerWithNoRunReturnsFalse(t *testing.T) {
 		t.Fatal("an empty message was queued")
 	}
 }
+
+// What the history keeps of a run that was steered: every tool call, its
+// result right after it and only once, and the steer after the round it
+// arrived in. A history that broke this is what a strict backend refused on
+// the next turn ("'tool_call_id' of X not found in 'tool_calls' of previous
+// message"): calls with no content shared one dedup key so only the first
+// was stored, and results were appended again after the steer.
+func TestSteeredRunStoresEachCallBeforeItsResult(t *testing.T) {
+	started, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	slow := extensiontest.ToolModule("slow", "takes a while", func(ctx context.Context, _ map[string]interface{}) (interface{}, error) {
+		once.Do(func() { close(started) })
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		return "slow tool finished", nil
+	})
+	fast := extensiontest.ToolModule("fast", "quick", func(context.Context, map[string]interface{}) (interface{}, error) {
+		return "fast tool finished", nil
+	})
+	llm := extensiontest.Script(
+		extensiontest.CallTool("slow", map[string]interface{}{}),
+		extensiontest.CallTool("fast", map[string]interface{}{}),
+		extensiontest.Answer("first done"),
+		// A call id is unique per call on every real backend; the scripted
+		// one is per tool name, so the second turn's call gets its own.
+		func() *domain.GenerationResult {
+			r := extensiontest.CallTool("fast", map[string]interface{}{"again": true})
+			r.ToolCalls[0].ID = "call-fast-2"
+			return r
+		}(),
+		extensiontest.Answer("second done"),
+	)
+	svc := extensiontest.NewService(t, llm, slow, fast)
+	const session = "steer-history"
+	go func() {
+		<-started
+		svc.Steer(session, domain.Message{Content: "steered in mid-run"})
+		close(release)
+	}()
+	if out := extensiontest.Run(t, svc, "first", agent.WithSessionID(session)); out.Final != "first done" {
+		t.Fatalf("first run ended %q (blocked %q, errors %v)", out.Final, out.Blocked, out.Errors)
+	}
+	if out := extensiontest.Run(t, svc, "second", agent.WithSessionID(session)); out.Final != "second done" {
+		t.Fatalf("second run ended %q (blocked %q, errors %v)", out.Final, out.Blocked, out.Errors)
+	}
+
+	sess, err := svc.GetSession(session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgs := sess.GetMessages()
+	calls, results := 0, map[string]int{}
+	steerAt, firstResultAt := -1, -1
+	for i, m := range msgs {
+		calls += len(m.ToolCalls)
+		if m.Role == "user" && strings.Contains(m.Content, "steered in mid-run") {
+			steerAt = i
+		}
+		if m.Role != "tool" {
+			continue
+		}
+		results[m.ToolCallID]++
+		if firstResultAt < 0 {
+			firstResultAt = i
+		}
+		j := i - 1
+		for j >= 0 && msgs[j].Role == "tool" {
+			j--
+		}
+		found := false
+		for _, tc := range msgs[max(j, 0)].ToolCalls {
+			found = found || tc.ID == m.ToolCallID
+		}
+		if j < 0 || !found {
+			t.Fatalf("result %d (%s) does not follow its call:\n%s", i, m.ToolCallID, dumpRoles(msgs))
+		}
+	}
+	if calls != 3 || len(results) != 3 {
+		t.Fatalf("stored %d calls and %d results, want 3 and 3:\n%s", calls, len(results), dumpRoles(msgs))
+	}
+	for id, n := range results {
+		if n != 1 {
+			t.Fatalf("result %s stored %d times:\n%s", id, n, dumpRoles(msgs))
+		}
+	}
+	if steerAt < firstResultAt {
+		t.Fatalf("steer at %d is before the round it arrived in (first result %d):\n%s", steerAt, firstResultAt, dumpRoles(msgs))
+	}
+}
+
+func dumpRoles(msgs []domain.Message) string {
+	var b strings.Builder
+	for i, m := range msgs {
+		ids := make([]string, 0, len(m.ToolCalls))
+		for _, tc := range m.ToolCalls {
+			ids = append(ids, tc.ID)
+		}
+		c := m.Content
+		if len(c) > 30 {
+			c = c[:30]
+		}
+		b.WriteString(strings.Join([]string{"", itoa(i), m.Role, m.ToolCallID, strings.Join(ids, ","), c}, " | ") + "\n")
+	}
+	return b.String()
+}
+
+func itoa(i int) string { return strconv.Itoa(i) }

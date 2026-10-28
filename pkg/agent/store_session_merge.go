@@ -63,8 +63,24 @@ func (s *Session) appendedSince() []domain.Message {
 // sessionMessageKey identifies a turn for deduplication. Role and content alone
 // would collapse two distinct tool results that happen to return the same text,
 // so the tool_call_id is part of it.
+//
+// A tool result is its call: one id, one result. Keyed by content as well, a
+// result clipped in the stored history and the same result unclipped in the
+// run's transcript read as two turns, and the run's copy was appended again at
+// the end — after whatever had been said since, where it answers no call.
+//
+// An assistant turn that only calls tools has no content, so without the call
+// ids every such turn had the same key and only the first was ever kept: the
+// history filled with results whose calls were never stored.
 func sessionMessageKey(m domain.Message) string {
-	return m.Role + "\x00" + m.Content + "\x00" + m.ToolCallID
+	if m.Role == "tool" && m.ToolCallID != "" {
+		return "tool\x00\x00" + m.ToolCallID
+	}
+	k := m.Role + "\x00" + m.Content + "\x00" + m.ToolCallID
+	for _, tc := range m.ToolCalls {
+		k += "\x00" + tc.ID
+	}
+	return k
 }
 
 // mergeMessagesForSave computes what should be persisted: the stored history,

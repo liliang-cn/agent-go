@@ -118,6 +118,10 @@ func (r *Runtime) applySteers(messages *[]domain.Message, state *queryLoopState)
 	if len(pending) == 0 {
 		return false
 	}
+	// The turn so far goes into the history first. It is otherwise stored
+	// only when the run ends, by which time the steer is already there, and
+	// the calls and results that came before it would land after it.
+	r.persistMessages(*messages)
 	taskID := currentTaskID(r.session)
 	for _, msg := range pending {
 		msg = withTaskID(msg, taskID)
