@@ -186,7 +186,7 @@ func (r *Runtime) emitResourceSample(ctx context.Context, round int, final bool)
 	if r == nil || r.svc == nil {
 		return
 	}
-	r.svc.emitResourceSample(ctx, ResourceSample{
+	r.svc.emitResourceSample(r.spanCtx(ctx), ResourceSample{
 		TaskID:    currentTaskID(r.session),
 		RunID:     r.runID(),
 		SessionID: r.session.GetID(),

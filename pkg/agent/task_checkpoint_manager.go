@@ -10,12 +10,19 @@ import (
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 	"github.com/liliang-cn/agent-go/v3/pkg/sandbox"
 	taskpkg "github.com/liliang-cn/agent-go/v3/pkg/task"
+	"github.com/liliang-cn/agent-go/v3/pkg/trace"
 )
 
 // WriteCheckpoint persists a snapshot of the given task and prunes older
 // entries beyond the per-task cap. Errors are returned but never block
 // the runtime; callers typically log and continue.
 func (m *Manager) WriteCheckpoint(taskID string, reason CheckpointReason, round int, sessionID, agentName, finalText, afterTool string, messages []domain.Message, workspace []byte) error {
+	return m.WriteTracedCheckpoint("", taskID, reason, round, sessionID, agentName, finalText, afterTool, messages, workspace)
+}
+
+// WriteTracedCheckpoint is WriteCheckpoint that keeps the run's flow, so
+// ResumeFromCheckpoint joins the same trace (TracedCheckpointSink).
+func (m *Manager) WriteTracedCheckpoint(traceparent, taskID string, reason CheckpointReason, round int, sessionID, agentName, finalText, afterTool string, messages []domain.Message, workspace []byte) error {
 	if m == nil || m.checkpointWr == nil {
 		return nil
 	}
@@ -32,6 +39,8 @@ func (m *Manager) WriteCheckpoint(taskID string, reason CheckpointReason, round 
 		FinalText: finalText,
 		Workspace: workspace,
 		CreatedAt: time.Now(),
+
+		Traceparent: traceparent,
 	}
 	return m.checkpointWr.Write(cp)
 }
@@ -222,9 +231,14 @@ func (s *TaskService) ResumeFromCheckpoint(ctx context.Context, taskID string, o
 		})
 	}
 
+	// The resumed run joins the flow the checkpointed one was in, as a child
+	// of the run that wrote the checkpoint — unless the caller is already in
+	// a flow of its own, which then wins.
+	ctx = joinCheckpointFlow(ctx, cp.Traceparent)
+
 	// Write a fresh "resume" checkpoint so the new run's lineage is
 	// preserved even if it crashes again.
-	_ = m.WriteCheckpoint(taskID, CheckpointReasonRoundEnd, cp.Round, sessionID, agentName, "", "resume", resumeMessages, nil)
+	_ = m.WriteTracedCheckpoint(cp.Traceparent, taskID, CheckpointReasonRoundEnd, cp.Round, sessionID, agentName, "", "resume", resumeMessages, nil)
 
 	// Run the resumed task. We reuse the legacy async-task path so the
 	// existing subscriber/event-forwarding plumbing keeps working.
@@ -257,4 +271,13 @@ func cloneMessagesForCheckpoint(in []domain.Message) []domain.Message {
 	out := make([]domain.Message, len(in))
 	copy(out, in)
 	return out
+}
+
+// joinCheckpointFlow continues the flow a checkpoint was written in, when ctx
+// is in none.
+func joinCheckpointFlow(ctx context.Context, traceparent string) context.Context {
+	if _, ok := trace.SpanFromContext(ctx); ok || traceparent == "" {
+		return ctx
+	}
+	return trace.WithTraceparent(ctx, traceparent)
 }

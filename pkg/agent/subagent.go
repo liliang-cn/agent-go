@@ -326,7 +326,7 @@ func (sa *SubAgent) Run(parentCtx context.Context) (interface{}, error) {
 		// Observer seam: pair with OnSubAgentStart (goal-driven sub-agents only).
 		if sa.config.ToolCall == nil && sa.config.Service != nil {
 			sa.config.Service.emitObserver(func(o Observer) {
-				o.OnSubAgentEnd(context.Background(), subInfo, finalResult, finalErr)
+				o.OnSubAgentEnd(context.WithoutCancel(parentCtx), subInfo, finalResult, finalErr)
 			})
 		}
 

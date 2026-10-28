@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 )
 
 // Watching a run that is still going.
@@ -103,9 +105,81 @@ func (l *ActivityLog) OnModelEnd(_ context.Context, info ModelInfo, res *ModelRe
 		if res.CachedTokens > 0 {
 			cached = fmt.Sprintf(" cached=%d", res.CachedTokens)
 		}
+		if res.CacheWriteTokens > 0 {
+			cached += fmt.Sprintf(" cache_write=%d", res.CacheWriteTokens)
+		}
 		l.line("r%-3d model<   %s calls=%d text=%d tokens=%d%s", info.Round,
 			shortDuration(took), res.ToolCalls, len(res.Content), res.TokensUsed, cached)
+		if line := serverToolsLine(res.ServerTools); line != "" {
+			l.line("r%-3d server   %s", info.Round, line)
+		}
 	}
+}
+
+// serverToolsLine is a model call's server-side work in one short line:
+// `web_search×3 ("spacex news" 5, "starship" err=max_uses_exceeded) resumes=1 cites=4`.
+func serverToolsLine(r *domain.ServerToolReport) string {
+	if r == nil {
+		return ""
+	}
+	var b strings.Builder
+	counts, order := map[string]int{}, []string{}
+	for _, u := range r.Uses {
+		if counts[u.Name] == 0 {
+			order = append(order, u.Name)
+		}
+		counts[u.Name]++
+	}
+	for i, name := range order {
+		if i > 0 {
+			b.WriteString(" ")
+		}
+		fmt.Fprintf(&b, "%s×%d", name, counts[name])
+	}
+	var parts []string
+	for _, u := range r.Uses {
+		q := ""
+		for _, k := range []string{"query", "url", "q"} {
+			if v, ok := u.Input[k].(string); ok {
+				q = fmt.Sprintf("%q", oneLine(v, 40))
+				break
+			}
+		}
+		if u.ErrorCode != "" {
+			parts = append(parts, strings.TrimSpace(q+" err="+u.ErrorCode))
+		} else {
+			parts = append(parts, strings.TrimSpace(fmt.Sprintf("%s %d", q, u.Results)))
+		}
+	}
+	if len(parts) > 0 {
+		fmt.Fprintf(&b, " (%s)", strings.Join(parts, ", "))
+	}
+	if r.Resumes > 0 {
+		fmt.Fprintf(&b, " resumes=%d", r.Resumes)
+	}
+	if r.Citations > 0 {
+		fmt.Fprintf(&b, " cites=%d", r.Citations)
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// OnRunFinish prints the run's last line: how it ended and how long it took
+// (RunObserver). TraceWriter's run_end has the totals.
+func (l *ActivityLog) OnRunFinish(_ context.Context, info RunEndInfo) {
+	reason := ""
+	if info.StopReason != "" {
+		reason = " " + string(info.StopReason)
+	}
+	l.line("     end     %s%s %s rounds=%d", info.Outcome, reason, shortDuration(info.Duration), info.Rounds)
+}
+
+// OnRunBegin is the other half of RunObserver; the first model line already
+// says a run began.
+func (l *ActivityLog) OnRunBegin(context.Context, RunStartInfo) {}
+
+// OnRuntimeDecision prints a decision that changed what the model is offered.
+func (l *ActivityLog) OnRuntimeDecision(_ context.Context, info RuntimeDecisionInfo) {
+	l.line("r%-3d decide  %s: %s", info.Round, info.What, oneLine(info.Reason, 140))
 }
 
 func (l *ActivityLog) OnToolStart(_ context.Context, info ToolInfo) {

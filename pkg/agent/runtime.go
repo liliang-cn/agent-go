@@ -77,6 +77,9 @@ type Runtime struct {
 	goal string
 	// startedAt is when loop() began, for the run's reported duration.
 	startedAt time.Time
+	// span is the run's place in its flow (a W3C span), set when loop()
+	// begins; nil before.
+	span *runSpan
 	// logger is the service logger with this run's ids attached, so every
 	// line the loop writes can be matched to the run that wrote it.
 	logger *slog.Logger
@@ -255,7 +258,7 @@ func (r *Runtime) emitLintObserved(v *LintViolation, retrying bool) {
 		Reason:    v.Reason,
 		Retrying:  retrying,
 	}
-	r.svc.emitObserver(func(o Observer) { o.OnLint(context.Background(), info) })
+	r.svc.emitObserver(func(o Observer) { o.OnLint(r.spanCtx(context.Background()), info) })
 }
 
 // lintExhaustedUserText is what the user sees when a run is blocked because a
@@ -316,7 +319,7 @@ func (r *Runtime) forceFinalSynthesis(ctx context.Context, state *queryLoopState
 		SessionID: r.sessionID(),
 		AgentName: r.currentAgentName(),
 		Round:     int(r.currentRound.Load()),
-		SpanID:    uuid.NewString(),
+		SpanID:    trace.NewSpanID(),
 		Messages:  len(synth),
 		Model:     r.svc.Info().Model,
 		Purpose:   "final-synthesis",
@@ -326,7 +329,7 @@ func (r *Runtime) forceFinalSynthesis(ctx context.Context, state *queryLoopState
 	synthStart := time.Now()
 
 	// tools=nil + no tool_choice → the provider must return plain text.
-	call := trace.Model(ctx, "final-synthesis")
+	call := trace.Model(trace.WithCallID(ctx, modelInfo.SpanID), "final-synthesis")
 	res, err := r.svc.llmService.GenerateWithTools(call.Context(ctx), sanitizeToolPairing(synth), nil, r.generationOptions(r.temperature(), r.maxTokens(), ""))
 	if res != nil {
 		call.End(res.Usage, err)
@@ -373,16 +376,29 @@ func (r *Runtime) RunStream(ctx context.Context, goal string) <-chan *Event {
 // loop is the core event loop
 func (r *Runtime) loop(ctx context.Context, goal string) {
 	r.startedAt = time.Now()
+	// The run is a span of the flow its context belongs to — a child of the
+	// tool call that started a sub-agent, of the remote span a host's
+	// traceparent named, or the root of a new flow.
+	var sc trace.SpanContext
+	ctx, sc = trace.StartSpan(ctx)
+	r.span = &runSpan{sc: sc}
 	ctx = trace.WithRun(ctx, r.runID())
 	ctx = trace.WithSink(ctx, runtimeSink{r})
 	r.logger = r.log().With(
 		slog.String("run_id", r.runID()),
 		slog.String("session_id", r.sessionID()),
 		slog.String("task_id", currentTaskID(r.session)),
+		slog.String("agent", r.currentAgentName()),
+		slog.String("trace_id", sc.TraceID),
+		slog.String("span_id", sc.SpanID),
+		slog.String("parent_span_id", sc.ParentSpanID),
 	)
-	r.logger.Debug("run started", slog.String("agent", r.currentAgentName()))
+	r.logger.Debug("run started")
+	r.goal = goal
+	r.emitRunBegin(ctx)
 	defer func() {
 		r.dropSteers()
+		r.emitRunFinish(ctx)
 		// The timeline goes out last, but before the channel closes: after
 		// that there is no one to hand it to.
 		trace.End(ctx, "end")
@@ -659,7 +675,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		// Observer seam: bracket the model turn with a stable per-turn SpanID so
 		// listeners can pair OnModelStart / OnModelEnd (and streamed deltas)
 		// without threading context back into the kernel.
-		modelSpanID := uuid.NewString()
+		modelSpanID := trace.NewSpanID()
 		modelInfo := ModelInfo{
 			TaskID:    taskID,
 			RunID:     r.runID(),
@@ -696,7 +712,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		for escalation := 0; ; escalation++ {
 			for attempt := 0; ; attempt++ {
 				result, lastResponseID, recovery, err = r.svc.streamToolTurn(
-					ctx,
+					trace.WithCallID(ctx, modelSpanID),
 					genMessages,
 					tools,
 					r.generationOptions(r.temperature(), turnMaxTokens, ""),
@@ -742,7 +758,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		// because a host reading the totals needs them apart.
 		llmDur := time.Since(llmStart)
 		turnTokens := 0
-		cachedTokens := 0
+		cachedTokens, cacheWriteTokens := 0, 0
 		promptTokens, completionTokens := 0, 0
 		{
 			model := r.svc.Info().Model
@@ -751,6 +767,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 				inputTokens = result.Usage.PromptTokens
 				outputTokens = result.Usage.CompletionTokens
 				cachedTokens = result.Usage.CachedPromptTokens
+				cacheWriteTokens = result.Usage.CacheWriteTokens
 				state.noteCacheUsage(cachedTokens, result.Usage.CacheWriteTokens)
 				// messages is exactly what this turn was built from; the
 				// provider's count of it anchors the next compaction check.
@@ -785,8 +802,11 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 					ToolCalls:        len(result.ToolCalls),
 					DurationMs:       llmDur.Milliseconds(),
 					TTFTMs:           result.FirstOutputMs,
+					Streamed:         result.Streamed,
+					ServerTools:      result.ServerTools,
 					TokensUsed:       turnTokens,
 					CachedTokens:     cachedTokens,
+					CacheWriteTokens: cacheWriteTokens,
 					PromptTokens:     promptTokens,
 					CompletionTokens: completionTokens,
 					Model:            result.Model,
@@ -1164,7 +1184,7 @@ func (r *Runtime) persistTerminalCheckpoint(taskID string, reason CheckpointReas
 	// Observer seam: fire before the sink check so checkpoints are observable
 	// even on services that don't persist (no CheckpointSink wired).
 	r.svc.emitObserver(func(o Observer) {
-		o.OnCheckpoint(context.Background(), CheckpointInfo{
+		o.OnCheckpoint(r.spanCtx(context.Background()), CheckpointInfo{
 			TaskID:    taskID,
 			RunID:     r.runID(),
 			SessionID: sessionID,
@@ -1184,7 +1204,7 @@ func (r *Runtime) persistTerminalCheckpoint(taskID string, reason CheckpointReas
 	// can recover the files this task produced. Only at terminal checkpoints,
 	// and only when a sandbox is configured. Best-effort: nil on any failure.
 	workspace := snapshotWorkspaceBytes(context.Background(), r.svc.Sandbox())
-	if err := sink.WriteCheckpoint(taskID, reason, int(r.currentRound.Load()), sessionID, agentName, finalText, string(reason), messages, workspace); err != nil {
+	if err := r.writeCheckpoint(sink, taskID, reason, int(r.currentRound.Load()), sessionID, agentName, finalText, string(reason), messages, workspace); err != nil {
 		r.log().Debug("failed to write terminal task checkpoint", slog.String("task_id", taskID), slog.String("error", err.Error()))
 	}
 }
@@ -1397,6 +1417,7 @@ func (r *Runtime) completeRunWithStop(goal, content string, messages []domain.Me
 	// nothing and the long-term memory only ever learned about the runs that
 	// happened to go through Run.
 	r.svc.captureRunMemory(goal, content)
+	r.noteEnd("completed", reason, "")
 	r.emitRunEnd(goal, reason, content, false, false)
 }
 
@@ -1440,6 +1461,7 @@ func (r *Runtime) blockRunWithStop(goal, blocker string, messages []domain.Messa
 		r.persistMessages(messages)
 	}
 	r.clearCollectedSources()
+	r.noteEnd("blocked", reason, strings.TrimSpace(blocker))
 	r.emitRunEnd(goal, reason, strings.TrimSpace(blocker), true, false)
 }
 
@@ -1480,6 +1502,7 @@ func (r *Runtime) cancelRun(messages []domain.Message) {
 		Timestamp:   time.Now(),
 	}
 	r.clearCollectedSources()
+	r.noteEnd("cancelled", StopReasonCancelled, "")
 	r.emitRunEnd(r.goal, StopReasonCancelled, cancelledRunText, false, true)
 }
 
@@ -1500,6 +1523,7 @@ func (r *Runtime) failRun(cause error, messages []domain.Message) {
 	r.emitTombstone()
 	r.ensureToolResultConsistency()
 
+	r.noteEnd("failed", StopReasonErrorDuringExecution, cause.Error())
 	r.persistTerminalCheckpoint(currentTaskID(r.session), CheckpointReasonRunFailed, "", messages)
 	r.persistMessages(messages)
 
@@ -1641,7 +1665,7 @@ func (r *Runtime) observeError(t EventType, marker, content string) {
 		Marker:    marker,
 		Message:   content,
 	}
-	ctx := context.Background()
+	ctx := r.spanCtx(context.Background())
 	r.svc.emitObserver(func(o Observer) { o.OnError(ctx, info) })
 }
 
@@ -1974,13 +1998,15 @@ func (r *Runtime) executeAsyncTool(ctx context.Context, tc domain.ToolCall, wg *
 	r.emitToolCall(tc.Function.Name, tc.Function.Arguments, behavior)
 	r.trackToolCall(tc)
 
-	// 2. Execute
-	toolDone := trace.Step(ctx, "tool", tc.Function.Name)
-	res, err, _ := r.executeToolOrHandoff(ctx, tc)
+	// 2. Execute, under the call's own span.
+	toolCtx, remote := toolSpanContext(ctx, toolInfo)
+	toolDone := trace.Step(toolCtx, "tool", tc.Function.Name)
+	res, err, _ := r.executeToolOrHandoff(toolCtx, tc)
 	toolDone(err)
 
 	// 3. Emit result
 	r.noteToolOutcome(tc.Function.Name, err)
+	toolInfo.Remote = remote()
 	r.svc.emitObserver(func(o Observer) { o.OnToolEnd(ctx, toolInfo, res, err) })
 	r.emitToolResult(tc.Function.Name, res, err, behavior)
 	r.trackToolResult(tc.ID)

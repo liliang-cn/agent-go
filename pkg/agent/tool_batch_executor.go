@@ -219,7 +219,9 @@ func (s *Service) executeSingleToolCall(ctx context.Context, currentAgent *Agent
 		slog.String("tool", toolName),
 		slog.Any("arguments", toolCall.Function.Arguments))
 
+	toolCtx, remote := toolSpanContext(toolCtx, toolInfo)
 	execResult, err, _ := s.executeToolViaSubAgentWithEvents(toolCtx, currentAgent, session, toolCall, callbacks.EventSink, callbacks.Debug)
+	toolInfo.Remote = remote()
 	s.emitObserver(func(o Observer) { o.OnToolEnd(ctx, toolInfo, execResult, err) })
 	if callbacks.OnToolResult != nil {
 		callbacks.OnToolResult(toolCall.Function.Name, execResult, err, behavior)

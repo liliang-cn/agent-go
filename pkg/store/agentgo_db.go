@@ -242,6 +242,9 @@ func (s *AgentGoDB) initSchema() error {
 	}
 	// Migration for DBs created before the workspace-snapshot column existed.
 	_, _ = s.db.Exec(`ALTER TABLE task_checkpoints ADD COLUMN workspace BLOB`)
+	// The flow the checkpointed run belonged to (a W3C traceparent naming
+	// its span), so a resume joins the same trace.
+	_, _ = s.db.Exec(`ALTER TABLE task_checkpoints ADD COLUMN traceparent TEXT`)
 	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_task_checkpoints_task_seq ON task_checkpoints(task_id, seq)`); err != nil {
 		return fmt.Errorf("failed to create task_checkpoints index: %w", err)
 	}

@@ -37,6 +37,13 @@ func (s *Service) streamToolTurnWithRecovery(ctx context.Context, messages []dom
 		// happened to a drawn image: the provider parsed it, this dropped
 		// it, and the loop saw an empty answer.
 		outputParts []domain.MessagePart
+		// A turn streamed when its client says it read an event stream, or
+		// when its output came in more than one piece. A client that fetched
+		// the whole answer and handed it over at once did not, and its first
+		// output is its last: reporting that as time to first token made a
+		// 34-second wait look like a 34-second start.
+		outputs, streamed = 0, false
+		serverTools       *domain.ServerToolReport
 	)
 
 	llmCtx, cancel := withLLMTurnTimeout(ctx, s.cfg)
@@ -47,6 +54,13 @@ func (s *Service) streamToolTurnWithRecovery(ctx context.Context, messages []dom
 	err := s.llmService.StreamWithTools(llmCtx, sanitizeToolPairing(messages), tools, opts, func(delta *domain.GenerationResult) error {
 		if delta.Content != "" || delta.ReasoningContent != "" || len(delta.ToolCalls) > 0 {
 			call.Output()
+			outputs++
+		}
+		if delta.Streamed || outputs > 1 {
+			streamed = true
+		}
+		if delta.ServerTools != nil {
+			serverTools = delta.ServerTools
 		}
 		if delta.ID != "" {
 			lastResponseID = delta.ID
@@ -89,6 +103,9 @@ func (s *Service) streamToolTurnWithRecovery(ctx context.Context, messages []dom
 		return nil
 	})
 	call.Reply(map[string]any{"content": fullContent.String(), "tool_calls": toolCalls})
+	if streamed {
+		call.Streamed()
+	}
 	if errors.Is(err, errTaskTerminal) {
 		call.End(lastUsage, nil)
 	} else {
@@ -128,7 +145,17 @@ func (s *Service) streamToolTurnWithRecovery(ctx context.Context, messages []dom
 		Usage:        lastUsage,
 		FinishReason: lastFinishReason,
 		// The runtime builds the turn's ModelResult from this, not from the
-		// trace record, so the wait for the first output travels with it.
-		FirstOutputMs: call.FirstOutput().Milliseconds(),
+		// trace record, so the wait for the first output travels with it —
+		// for a streamed turn only.
+		FirstOutputMs: firstOutputIf(streamed, call),
+		Streamed:      streamed,
+		ServerTools:   serverTools,
 	}, lastResponseID, recoveryMeta{}, err
+}
+
+func firstOutputIf(streamed bool, call *trace.Call) int64 {
+	if !streamed {
+		return 0
+	}
+	return call.FirstOutput().Milliseconds()
 }

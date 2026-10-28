@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/trace"
 )
 
 // Observer is a unified aspect/observability hook that brackets the four
@@ -98,6 +99,16 @@ type Observer interface {
 // ModelInfo identifies a single model turn. SpanID is a stable per-turn id;
 // the SAME SpanID is passed to the matching OnModelEnd so listeners can pair
 // start/end without threading context.
+//
+// SpanID is a W3C span id (16 hex digits) in the run's flow: the ctx handed
+// to OnModelStart carries the run's span (trace.SpanFromContext), which is
+// this call's parent.
+//
+// Round is the round in progress when the call STARTED, on both callbacks —
+// 0 for a call made before the first round (constraint extraction, a memory
+// pick). A call on the run's behalf can outlive the round it began in; its
+// end used to report the round it finished in, so its start and end lines
+// disagreed.
 type ModelInfo struct {
 	TaskID string
 	// RunID is the id the run is registered under, the one CancelRun takes.
@@ -160,13 +171,25 @@ type ModelResult struct {
 	// CachedTokens is the prompt-cache hit portion of TokensUsed, when the
 	// provider reported one (0 otherwise).
 	CachedTokens int
+	// CacheWriteTokens is the prompt tokens written to the provider's cache
+	// on this call (Anthropic's cache_creation_input_tokens), 0 otherwise.
+	// A cache that is written every round and never read is the expensive
+	// failure, and it shows only with both numbers.
+	CacheWriteTokens int
 	// PromptTokens and CompletionTokens are the two halves of TokensUsed;
 	// a host that bills by token needs them apart.
 	PromptTokens     int
 	CompletionTokens int
 	// TTFTMs is how long before the first output arrived, for a streamed
-	// call; 0 when unknown.
+	// call; 0 when unknown or when the call did not stream.
 	TTFTMs int64
+	// Streamed is true when the answer arrived as a stream. A call that did
+	// not stream has no time to first output worth the name.
+	Streamed bool
+	// ServerTools is what the provider did on its side of the call — web
+	// searches its server tool ran, resumes of a paused turn, per-request
+	// durations, citations — when it reported any; nil otherwise.
+	ServerTools *domain.ServerToolReport
 	// Model and Provider are what actually answered, when the provider said
 	// (a routed run or a pool fallback can differ from ModelInfo.Model, which
 	// is what was asked for). Empty when unknown.
@@ -219,6 +242,14 @@ type ToolInfo struct {
 	// Inner is true when the tool executes inside a sub-agent rather than at
 	// the top-level runtime loop.
 	Inner bool
+	// SpanID is the call's W3C span id, a child of the span on the ctx the
+	// callback receives. The tool runs under it, so a sub-agent it starts,
+	// an MCP request it makes, or a model call inside it is its child.
+	SpanID string
+	// Remote is set on OnToolEnd: the traceparents other processes answered
+	// with — an MCP server's or an HTTP service's own span for the work —
+	// so the flow's tree continues into them.
+	Remote []string
 }
 
 // SubAgentInfo identifies a goal-driven sub-agent run.
@@ -381,6 +412,75 @@ type CheckpointInfo struct {
 	FinalText string
 }
 
+// RunStartInfo identifies one run — one pass of the loop, a top-level Run or a
+// sub-agent's — and its place in the flow.
+type RunStartInfo struct {
+	TaskID    string
+	RunID     string
+	SessionID string
+	AgentName string
+	Model     string
+	// TraceID, SpanID and ParentSpanID are the run's W3C span: TraceID is
+	// the flow, shared by every run it fanned out into; ParentSpanID is the
+	// span that started this run (a tool call for a sub-agent, a remote
+	// caller's span for a flow that arrived over a traceparent), empty for
+	// the root.
+	TraceID      string
+	SpanID       string
+	ParentSpanID string
+	// Goal is what the run was asked; observers clip it.
+	Goal string
+}
+
+// RunEndInfo is how a run ended.
+type RunEndInfo struct {
+	RunStartInfo
+	// Outcome is "completed", "blocked", "cancelled" or "failed".
+	Outcome    string
+	StopReason StopReason
+	Duration   time.Duration
+	Rounds     int
+	Err        string
+}
+
+// RunObserver is an optional extension: an Observer that implements it hears
+// each run begin and end, on every terminal path. It is optional rather than
+// two more Observer methods for the reason ResourceObserver is: hosts
+// implement Observer in full, and a new method would break each one that
+// does not embed BaseObserver.
+//
+// The methods are not named OnRunStart/OnRunEnd because RunLifecycle, which
+// an extension implements, already has those with other signatures.
+type RunObserver interface {
+	OnRunBegin(ctx context.Context, info RunStartInfo)
+	OnRunFinish(ctx context.Context, info RunEndInfo)
+}
+
+// RuntimeDecisionInfo is a choice the runtime made that changes what the model sees
+// or what is sent for it — MCP search tools hidden because native search has
+// proved itself, a server tool dropped for a function tool of its name, a
+// round sent again without native search, tools deferred behind the search
+// or kept eager. Each is reported once per run for as long as it holds, and
+// again when it changes.
+//
+// It is not DecisionInfo, which is a decision gate's consultation.
+type RuntimeDecisionInfo struct {
+	TaskID    string
+	RunID     string
+	SessionID string
+	AgentName string
+	Round     int
+	What      string
+	Reason    string
+	Detail    map[string]any
+}
+
+// RuntimeDecisionObserver is an optional extension: an Observer that
+// implements it hears runtime decisions.
+type RuntimeDecisionObserver interface {
+	OnRuntimeDecision(ctx context.Context, info RuntimeDecisionInfo)
+}
+
 // BaseObserver implements Observer with no-op methods. Embed it so you only
 // override the callbacks you actually need:
 //
@@ -444,6 +544,12 @@ func (s *Service) emitObserver(fn func(Observer)) {
 	if s == nil || fn == nil {
 		return
 	}
+	// The run narration into the service's logger hears everything first.
+	// It is not in the registered list (Observers() is the host's), and it
+	// asks its logger before doing any work.
+	if s.runLog != nil {
+		s.invokeObserver(s.runLog, fn)
+	}
 	s.observersMu.RLock()
 	if len(s.observers) == 0 {
 		s.observersMu.RUnlock()
@@ -469,7 +575,7 @@ func (s *Service) toolObserverInfo(ctx context.Context, currentAgent *Agent, ses
 	if session != nil {
 		sessionID = session.GetID()
 	}
-	return ToolInfo{
+	info := ToolInfo{
 		TaskID:    currentTaskID(session),
 		RunID:     currentRunID(ctx),
 		SessionID: sessionID,
@@ -478,6 +584,24 @@ func (s *Service) toolObserverInfo(ctx context.Context, currentAgent *Agent, ses
 		CallID:    tc.ID,
 		Args:      tc.Function.Arguments,
 	}
+	if parent, ok := trace.SpanFromContext(ctx); ok {
+		info.SpanID = trace.ChildSpanID(parent, tc.ID)
+	}
+	return info
+}
+
+// toolSpanContext is the context a tool call runs under: its own span, a
+// child of the one on ctx, and a collector for the spans other processes
+// answer with. done returns those spans once the call is over.
+func toolSpanContext(ctx context.Context, info ToolInfo) (context.Context, func() []string) {
+	parent, ok := trace.SpanFromContext(ctx)
+	if !ok || info.SpanID == "" {
+		return ctx, func() []string { return nil }
+	}
+	ctx = trace.ContextWithSpan(ctx, trace.SpanContext{TraceID: parent.TraceID, SpanID: info.SpanID,
+		ParentSpanID: parent.SpanID, TraceState: parent.TraceState})
+	ctx, links := trace.WithLinks(ctx)
+	return ctx, links.List
 }
 
 func (s *Service) invokeObserver(o Observer, fn func(Observer)) {

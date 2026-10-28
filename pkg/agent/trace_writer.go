@@ -4,8 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"os"
 	"sync"
 	"time"
+
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	agentgolog "github.com/liliang-cn/agent-go/v3/pkg/log"
+	"github.com/liliang-cn/agent-go/v3/pkg/trace"
 )
 
 // A run's trace, for something other than a person.
@@ -25,6 +30,19 @@ import (
 // run_id, session_id, agent, round, span_id, call_id. run_id is the one that
 // separates two runs sharing a session, which is what makes a trace file
 // collected from a busy service separable at all.
+//
+// And every line carries the flow: trace_id, the W3C trace every run started
+// from one request shares — sub-agents, segments, resumes, workers in other
+// processes — with span_id the span the line is about and parent_span_id the
+// one that started it. run_start / run_end are a run's span; model_* a model
+// call's, a child of its run; tool_* a tool call's, also the run's child and
+// the parent of whatever the tool started. The other events (lint,
+// checkpoint, compaction, error, decision, resource) are about their run and
+// carry its span. cmd/agentgo-trace rebuilds the tree from these three ids
+// alone, across as many files as the flow wrote.
+//
+// The whole schema, every event and field, is docs/trace-schema.md; a test
+// keeps the two in step.
 
 // TraceWriter writes a JSONL trace of a run to w. Safe for concurrent use: a
 // run executes tools in parallel and a service can have several runs in
@@ -37,6 +55,19 @@ type TraceWriter struct {
 	started time.Time
 	modelAt map[string]time.Time
 	toolAt  map[string]time.Time
+	// runs is each open run's tally, by its span id; spanRun maps a tool
+	// call's span to the run it belongs to, so a call made inside a tool is
+	// added to the right run.
+	runs    map[string]*trace.Tally
+	spanRun map[string]string
+	host    string
+	pid     int
+
+	// Payloads writes whole what is otherwise clipped: tool arguments and
+	// results, and each server tool use's result URLs. Requests and responses
+	// on model_end come with WithObserverPayloads either way, bounded by
+	// MaxPayloadLen. Secrets are redacted in both modes.
+	Payloads bool
 
 	// IncludeDeltas turns on one line per streamed fragment. Off by default:
 	// a reasoning model emits thousands of them per turn, and a trace that is
@@ -67,8 +98,17 @@ func NewTraceWriter(w io.Writer) *TraceWriter {
 		started:    time.Now(),
 		modelAt:    map[string]time.Time{},
 		toolAt:     map[string]time.Time{},
+		runs:       map[string]*trace.Tally{},
+		spanRun:    map[string]string{},
+		host:       hostname(),
+		pid:        os.Getpid(),
 		MaxTextLen: 512,
 	}
+}
+
+func hostname() string {
+	h, _ := os.Hostname()
+	return h
 }
 
 // traceLine is one JSONL record. Every field is omitempty except the two that
@@ -77,6 +117,10 @@ func NewTraceWriter(w io.Writer) *TraceWriter {
 type traceLine struct {
 	TS    string `json:"ts"`
 	Event string `json:"event"`
+
+	// The flow: W3C trace id, this line's span, the span that started it.
+	TraceID      string `json:"trace_id,omitempty"`
+	ParentSpanID string `json:"parent_span_id,omitempty"`
 
 	// Correlation.
 	TaskID       string `json:"task_id,omitempty"`
@@ -96,7 +140,10 @@ type traceLine struct {
 	// Purpose is what a model call was for: "turn", or one the run made on
 	// its own behalf ("constraints", "memory-pick", …). TTFTMs is the wait
 	// for its first output, when streamed.
-	Purpose    string       `json:"purpose,omitempty"`
+	Purpose string `json:"purpose,omitempty"`
+	// Streamed says whether the answer arrived as a stream; ttft_ms is only
+	// written when it did.
+	Streamed   *bool        `json:"streamed,omitempty"`
 	TTFTMs     int64        `json:"ttft_ms,omitempty"`
 	Messages   int          `json:"messages,omitempty"`
 	Tools      int          `json:"tools,omitempty"`
@@ -113,12 +160,19 @@ type traceLine struct {
 	// WithObserverPayloads: its text, its reasoning, the tool calls it asked
 	// for and why it stopped. text_len and tool_calls stay the sizes.
 	Response *traceResponse `json:"response,omitempty"`
+	// ServerTools is the provider's own work inside the call: each server
+	// tool use (name, input, result count or error code), pause_turn
+	// resumes, each HTTP request's duration, citations.
+	ServerTools *traceServerTools `json:"server_tools,omitempty"`
 
 	// Tool calls.
 	Tool   string         `json:"tool,omitempty"`
 	Args   map[string]any `json:"args,omitempty"`
 	Inner  bool           `json:"inner,omitempty"`
 	Result string         `json:"result,omitempty"`
+	// Remote is the traceparents another process answered a tool call with:
+	// its own span for the work, where the flow continues.
+	Remote []string `json:"remote,omitempty"`
 
 	// Permission decisions, one line per tool call that reached the gate.
 	Decision    string         `json:"decision,omitempty"`
@@ -127,6 +181,17 @@ type traceLine struct {
 	Required    bool           `json:"required,omitempty"`
 	Destructive bool           `json:"destructive,omitempty"`
 	Metadata    map[string]any `json:"metadata,omitempty"`
+
+	// Runs: where it ran, how it ended, and the run's totals.
+	Host    string         `json:"host,omitempty"`
+	PID     int            `json:"pid,omitempty"`
+	Outcome string         `json:"outcome,omitempty"`
+	Rounds  int            `json:"rounds,omitempty"`
+	Summary *trace.Summary `json:"summary,omitempty"`
+
+	// Runtime decisions: what was chosen, why, and about what.
+	What   string         `json:"what,omitempty"`
+	Detail map[string]any `json:"detail,omitempty"`
 
 	// Sub-agents.
 	SubAgent   string `json:"subagent,omitempty"`
@@ -201,11 +266,81 @@ type traceResources struct {
 // traceTokens is the token split for one model turn. Cached is broken out
 // because it is the number that says whether the prompt cache is working —
 // the same reason ActivityLog prints it.
+//
+// CacheWrite is the prompt tokens written to the cache on this call. Cached
+// (reads) without writes means the cache works; writes every round without
+// reads means it is paid for and never used.
 type traceTokens struct {
 	Total      int `json:"total"`
 	Prompt     int `json:"prompt,omitempty"`
 	Completion int `json:"completion,omitempty"`
 	Cached     int `json:"cached,omitempty"`
+	CacheWrite int `json:"cache_write,omitempty"`
+}
+
+// traceServerTools is ModelResult.ServerTools as written to the trace.
+type traceServerTools struct {
+	Uses      []traceServerToolUse `json:"uses,omitempty"`
+	Resumes   int                  `json:"resumes,omitempty"`
+	RequestMs []int64              `json:"request_ms,omitempty"`
+	Citations int                  `json:"citations,omitempty"`
+}
+
+type traceServerToolUse struct {
+	Name      string         `json:"name"`
+	Input     map[string]any `json:"input,omitempty"`
+	Results   int            `json:"results"`
+	ErrorCode string         `json:"error_code,omitempty"`
+	URLs      []string       `json:"urls,omitempty"`
+}
+
+func (t *TraceWriter) serverToolsLine(r *domain.ServerToolReport) *traceServerTools {
+	if r == nil {
+		return nil
+	}
+	out := &traceServerTools{Resumes: r.Resumes, RequestMs: r.RequestMs, Citations: r.Citations}
+	for _, u := range r.Uses {
+		use := traceServerToolUse{Name: u.Name, Input: agentgolog.RedactMap(u.Input), Results: u.Results, ErrorCode: u.ErrorCode}
+		if t.Payloads {
+			use.URLs = u.URLs
+		}
+		out.Uses = append(out.Uses, use)
+	}
+	return out
+}
+
+// spans fills a line's flow ids: span is the span the line is about, or
+// empty to use the context's own; the parent is then the context's span.
+func (t *TraceWriter) spans(line *traceLine, ctx context.Context, span string) {
+	cur, ok := trace.SpanFromContext(ctx)
+	if !ok {
+		line.SpanID = span
+		return
+	}
+	line.TraceID = cur.TraceID
+	if span == "" || span == cur.SpanID {
+		line.SpanID, line.ParentSpanID = cur.SpanID, cur.ParentSpanID
+		return
+	}
+	line.SpanID, line.ParentSpanID = span, cur.SpanID
+}
+
+// tallyFor is the tally of the run a callback on ctx belongs to: the run
+// whose span is on ctx, or the run of the tool call whose span is.
+func (t *TraceWriter) tallyFor(ctx context.Context) *trace.Tally {
+	cur, ok := trace.SpanFromContext(ctx)
+	if !ok {
+		return nil
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if tl := t.runs[cur.SpanID]; tl != nil {
+		return tl
+	}
+	if run, ok := t.spanRun[cur.SpanID]; ok {
+		return t.runs[run]
+	}
+	return nil
 }
 
 // write emits one line. Marshalling first and writing once is what makes a
@@ -217,6 +352,8 @@ func (t *TraceWriter) write(line traceLine, now time.Time) {
 	}
 	line.TS = now.Format(time.RFC3339Nano)
 	line.ElapsedMs = now.Sub(t.started).Milliseconds()
+	line.Args = agentgolog.RedactMap(line.Args)
+	line.Metadata = agentgolog.RedactMap(line.Metadata)
 	encoded, err := json.Marshal(line)
 	if err != nil {
 		return
@@ -227,10 +364,17 @@ func (t *TraceWriter) write(line traceLine, now time.Time) {
 	_, _ = t.w.Write(encoded)
 }
 
+// emit fills the line's flow ids from ctx (see spans) and writes it.
+func (t *TraceWriter) emit(ctx context.Context, span string, line traceLine) {
+	t.spans(&line, ctx, span)
+	t.write(line, time.Now())
+}
+
 // clip bounds a free-text field. Unlike ActivityLog's oneLine it leaves
 // newlines alone: JSON escapes them itself, and a consumer that wants the text
 // wants it as it was.
 func (t *TraceWriter) clip(s string) string {
+	s = agentgolog.Redact(s)
 	max := t.MaxTextLen
 	if max <= 0 {
 		return s
@@ -241,11 +385,11 @@ func (t *TraceWriter) clip(s string) string {
 	return s[:max] + "…"
 }
 
-func (t *TraceWriter) OnModelStart(_ context.Context, info ModelInfo) {
+func (t *TraceWriter) OnModelStart(ctx context.Context, info ModelInfo) {
 	t.mu.Lock()
 	t.modelAt[info.SpanID] = time.Now()
 	t.mu.Unlock()
-	t.write(traceLine{
+	line := traceLine{
 		Event:     "model_start",
 		TaskID:    info.TaskID,
 		RunID:     info.RunID,
@@ -257,7 +401,9 @@ func (t *TraceWriter) OnModelStart(_ context.Context, info ModelInfo) {
 		Purpose:   info.Purpose,
 		Messages:  info.Messages,
 		Tools:     info.Tools,
-	}, time.Now())
+	}
+	t.spans(&line, ctx, info.SpanID)
+	t.write(line, time.Now())
 }
 
 func (t *TraceWriter) OnModelDelta(_ context.Context, delta ModelDelta) {
@@ -324,7 +470,9 @@ func (t *TraceWriter) responseLine(info ModelInfo, res *ModelResult) *traceRespo
 }
 
 // clipPayload bounds a payload's text by MaxPayloadLen; 0 keeps it whole.
+// Secrets are redacted either way.
 func (t *TraceWriter) clipPayload(s string) string {
+	s = agentgolog.Redact(s)
 	if t.MaxPayloadLen > 0 && len(s) > t.MaxPayloadLen {
 		return s[:t.MaxPayloadLen] + "…"
 	}
@@ -350,7 +498,7 @@ func (t *TraceWriter) requestLine(req *ModelRequest) *traceRequest {
 	return out
 }
 
-func (t *TraceWriter) OnModelEnd(_ context.Context, info ModelInfo, res *ModelResult, err error) {
+func (t *TraceWriter) OnModelEnd(ctx context.Context, info ModelInfo, res *ModelResult, err error) {
 	now := time.Now()
 	t.mu.Lock()
 	started, ok := t.modelAt[info.SpanID]
@@ -369,8 +517,11 @@ func (t *TraceWriter) OnModelEnd(_ context.Context, info ModelInfo, res *ModelRe
 		Purpose:   info.Purpose,
 		Request:   t.requestLine(info.Request),
 	}
+	t.spans(&line, ctx, info.SpanID)
 	if ok {
 		line.DurationMs = now.Sub(started).Milliseconds()
+	} else if res != nil {
+		line.DurationMs = res.DurationMs
 	}
 	switch {
 	case err != nil:
@@ -379,35 +530,67 @@ func (t *TraceWriter) OnModelEnd(_ context.Context, info ModelInfo, res *ModelRe
 		line.ToolCalls = res.ToolCalls
 		line.TextLen = len(res.Content)
 		line.Response = t.responseLine(info, res)
-		line.TTFTMs = res.TTFTMs
+		streamed := res.Streamed
+		line.Streamed = &streamed
+		if streamed {
+			line.TTFTMs = res.TTFTMs
+		}
 		line.Tokens = &traceTokens{
 			Total:      res.TokensUsed,
 			Prompt:     res.PromptTokens,
 			Completion: res.CompletionTokens,
 			Cached:     res.CachedTokens,
+			CacheWrite: res.CacheWriteTokens,
 		}
+		line.ServerTools = t.serverToolsLine(res.ServerTools)
+	}
+	if tl := t.tallyFor(ctx); tl != nil {
+		var tok trace.Tokens
+		if res != nil {
+			tok = trace.Tokens{Prompt: res.PromptTokens, Completion: res.CompletionTokens, Cached: res.CachedTokens, CacheWrite: res.CacheWriteTokens}
+		}
+		var ttft time.Duration
+		if line.TTFTMs > 0 {
+			ttft = time.Duration(line.TTFTMs) * time.Millisecond
+		}
+		dur := time.Duration(line.DurationMs) * time.Millisecond
+		tl.Model(info.Purpose, now.Add(-dur), dur, ttft, tok)
 	}
 	t.write(line, now)
 }
 
 // OnStep writes a memory lookup or another timed step (StepObserver).
-func (t *TraceWriter) OnStep(_ context.Context, info StepInfo) {
-	t.write(traceLine{
+func (t *TraceWriter) OnStep(ctx context.Context, info StepInfo) {
+	if info.Kind == "memory" {
+		if tl := t.tallyFor(ctx); tl != nil {
+			tl.Memory(time.Duration(info.DurationMs) * time.Millisecond)
+		}
+	}
+	line := traceLine{
 		Event:      "step",
 		TaskID:     info.TaskID,
 		RunID:      info.RunID,
 		SessionID:  info.SessionID,
 		Kind:       info.Kind + "." + info.Name,
 		DurationMs: info.DurationMs,
-		Error:      info.Err,
-	}, time.Now())
+		Error:      t.clip(info.Err),
+	}
+	t.spans(&line, ctx, "")
+	t.write(line, time.Now())
 }
 
-func (t *TraceWriter) OnToolStart(_ context.Context, info ToolInfo) {
+func (t *TraceWriter) OnToolStart(ctx context.Context, info ToolInfo) {
 	t.mu.Lock()
 	t.toolAt[info.CallID] = time.Now()
+	if cur, ok := trace.SpanFromContext(ctx); ok && info.SpanID != "" {
+		run := cur.SpanID
+		if r, ok := t.spanRun[run]; ok {
+			run = r
+		}
+		t.spanRun[info.SpanID] = run
+	}
 	t.mu.Unlock()
-	t.write(traceLine{
+	line := traceLine{
 		Event:     "tool_start",
 		TaskID:    info.TaskID,
 		RunID:     info.RunID,
@@ -415,17 +598,38 @@ func (t *TraceWriter) OnToolStart(_ context.Context, info ToolInfo) {
 		Agent:     info.AgentName,
 		CallID:    info.CallID,
 		Tool:      info.Tool,
-		Args:      info.Args,
+		Args:      t.clipArgs(info.Args),
 		Inner:     info.Inner,
-	}, time.Now())
+	}
+	t.spans(&line, ctx, info.SpanID)
+	t.write(line, time.Now())
 }
 
-func (t *TraceWriter) OnToolEnd(_ context.Context, info ToolInfo, result any, err error) {
+// clipArgs bounds each string argument by MaxTextLen, unless Payloads.
+func (t *TraceWriter) clipArgs(args map[string]any) map[string]any {
+	if t.Payloads || t.MaxTextLen <= 0 || args == nil {
+		return args
+	}
+	out := make(map[string]any, len(args))
+	for k, v := range args {
+		if s, ok := v.(string); ok && len(s) > t.MaxTextLen {
+			v = s[:t.MaxTextLen] + "…"
+		}
+		out[k] = v
+	}
+	return out
+}
+
+func (t *TraceWriter) OnToolEnd(ctx context.Context, info ToolInfo, result any, err error) {
 	now := time.Now()
 	t.mu.Lock()
 	started, ok := t.toolAt[info.CallID]
 	delete(t.toolAt, info.CallID)
 	t.mu.Unlock()
+	text := t.clip
+	if t.Payloads {
+		text = agentgolog.Redact
+	}
 
 	line := traceLine{
 		Event:     "tool_end",
@@ -436,24 +640,111 @@ func (t *TraceWriter) OnToolEnd(_ context.Context, info ToolInfo, result any, er
 		CallID:    info.CallID,
 		Tool:      info.Tool,
 		Inner:     info.Inner,
+		Remote:    info.Remote,
 	}
+	t.spans(&line, ctx, info.SpanID)
 	if ok {
 		line.DurationMs = now.Sub(started).Milliseconds()
 	}
 	if err != nil {
-		line.Error = t.clip(err.Error())
+		line.Error = text(err.Error())
 	} else {
-		line.Result = t.clip(traceValueText(result))
+		line.Result = text(traceValueText(result))
+	}
+	if tl := t.tallyFor(ctx); tl != nil {
+		tl.Tool(info.Tool, time.Duration(line.DurationMs)*time.Millisecond, err != nil)
+	}
+	t.mu.Lock()
+	delete(t.spanRun, info.SpanID)
+	t.mu.Unlock()
+	t.write(line, now)
+}
+
+// OnRunBegin writes run_start: the run's span, where it ran, and what it was
+// asked (RunObserver).
+func (t *TraceWriter) OnRunBegin(_ context.Context, info RunStartInfo) {
+	now := time.Now()
+	if info.SpanID != "" {
+		t.mu.Lock()
+		t.runs[info.SpanID] = trace.NewTally(now)
+		t.mu.Unlock()
+	}
+	t.write(traceLine{
+		Event:        "run_start",
+		TraceID:      info.TraceID,
+		SpanID:       info.SpanID,
+		ParentSpanID: info.ParentSpanID,
+		TaskID:       info.TaskID,
+		RunID:        info.RunID,
+		SessionID:    info.SessionID,
+		Agent:        info.AgentName,
+		Model:        info.Model,
+		Goal:         t.clip(info.Goal),
+		Host:         t.host,
+		PID:          t.pid,
+	}, now)
+}
+
+// OnRunFinish writes run_end: how the run ended and its totals — wall, model
+// and tool time, calls and tokens by purpose, tools by name with failures,
+// lint retries and compactions — added up by the same trace.Tally the run
+// timeline uses (RunObserver).
+func (t *TraceWriter) OnRunFinish(_ context.Context, info RunEndInfo) {
+	now := time.Now()
+	t.mu.Lock()
+	tl := t.runs[info.SpanID]
+	delete(t.runs, info.SpanID)
+	t.mu.Unlock()
+	line := traceLine{
+		Event:        "run_end",
+		TraceID:      info.TraceID,
+		SpanID:       info.SpanID,
+		ParentSpanID: info.ParentSpanID,
+		TaskID:       info.TaskID,
+		RunID:        info.RunID,
+		SessionID:    info.SessionID,
+		Agent:        info.AgentName,
+		Outcome:      info.Outcome,
+		StopReason:   string(info.StopReason),
+		DurationMs:   info.Duration.Milliseconds(),
+		Rounds:       info.Rounds,
+		Error:        t.clip(info.Err),
+		Host:         t.host,
+		PID:          t.pid,
+	}
+	if tl != nil {
+		sum := tl.SummaryAt(now)
+		if info.Duration > 0 {
+			sum.TotalMs = info.Duration.Milliseconds()
+		}
+		line.Summary = &sum
 	}
 	t.write(line, now)
+}
+
+// OnRuntimeDecision writes a decision line (RuntimeDecisionObserver).
+func (t *TraceWriter) OnRuntimeDecision(ctx context.Context, info RuntimeDecisionInfo) {
+	line := traceLine{
+		Event:     "decision",
+		TaskID:    info.TaskID,
+		RunID:     info.RunID,
+		SessionID: info.SessionID,
+		Agent:     info.AgentName,
+		Round:     info.Round,
+		What:      info.What,
+		Reason:    t.clip(info.Reason),
+		Detail:    agentgolog.RedactMap(info.Detail),
+	}
+	t.spans(&line, ctx, "")
+	t.write(line, time.Now())
 }
 
 // OnPermissionDecision records one permission decision. Every call that
 // reaches the gate gets a line, the ungated ones included, so "every
 // destructive call has a record" is checkable by counting — a missing line
 // is a defect, never a way of saying "no approval was needed".
-func (t *TraceWriter) OnPermissionDecision(_ context.Context, d PermissionDecisionInfo) {
-	t.write(traceLine{
+func (t *TraceWriter) OnPermissionDecision(ctx context.Context, d PermissionDecisionInfo) {
+	line := traceLine{
 		Event:       "permission",
 		TaskID:      d.TaskID,
 		RunID:       d.RunID,
@@ -471,11 +762,13 @@ func (t *TraceWriter) OnPermissionDecision(_ context.Context, d PermissionDecisi
 		Error:       t.clip(d.Error),
 		Metadata:    d.Metadata,
 		DurationMs:  d.Duration.Milliseconds(),
-	}, time.Now())
+	}
+	t.spans(&line, ctx, "")
+	t.write(line, time.Now())
 }
 
-func (t *TraceWriter) OnSubAgentStart(_ context.Context, info SubAgentInfo) {
-	t.write(traceLine{
+func (t *TraceWriter) OnSubAgentStart(ctx context.Context, info SubAgentInfo) {
+	line := traceLine{
 		Event:        "subagent_start",
 		ParentTaskID: info.ParentTaskID,
 		RunID:        info.RunID,
@@ -483,10 +776,12 @@ func (t *TraceWriter) OnSubAgentStart(_ context.Context, info SubAgentInfo) {
 		SubAgent:     info.Name,
 		SubAgentID:   info.SubAgentID,
 		Goal:         t.clip(info.Goal),
-	}, time.Now())
+	}
+	t.spans(&line, ctx, "")
+	t.write(line, time.Now())
 }
 
-func (t *TraceWriter) OnSubAgentEnd(_ context.Context, info SubAgentInfo, result any, err error) {
+func (t *TraceWriter) OnSubAgentEnd(ctx context.Context, info SubAgentInfo, result any, err error) {
 	line := traceLine{
 		Event:        "subagent_end",
 		ParentTaskID: info.ParentTaskID,
@@ -495,6 +790,7 @@ func (t *TraceWriter) OnSubAgentEnd(_ context.Context, info SubAgentInfo, result
 		SubAgent:     info.Name,
 		SubAgentID:   info.SubAgentID,
 	}
+	t.spans(&line, ctx, "")
 	if err != nil {
 		line.Error = t.clip(err.Error())
 	} else {
@@ -503,8 +799,8 @@ func (t *TraceWriter) OnSubAgentEnd(_ context.Context, info SubAgentInfo, result
 	t.write(line, time.Now())
 }
 
-func (t *TraceWriter) OnCheckpoint(_ context.Context, info CheckpointInfo) {
-	t.write(traceLine{
+func (t *TraceWriter) OnCheckpoint(ctx context.Context, info CheckpointInfo) {
+	t.emit(ctx, "", traceLine{
 		Event:            "checkpoint",
 		TaskID:           info.TaskID,
 		RunID:            info.RunID,
@@ -514,12 +810,12 @@ func (t *TraceWriter) OnCheckpoint(_ context.Context, info CheckpointInfo) {
 		CheckpointReason: info.Reason,
 		Messages:         info.Messages,
 		TextLen:          len(info.FinalText),
-	}, time.Now())
+	})
 }
 
 // OnResourceSample records one process reading per round.
-func (t *TraceWriter) OnResourceSample(_ context.Context, s ResourceSample) {
-	t.write(traceLine{
+func (t *TraceWriter) OnResourceSample(ctx context.Context, s ResourceSample) {
+	t.emit(ctx, "", traceLine{
 		Event:     "resource",
 		TaskID:    s.TaskID,
 		RunID:     s.RunID,
@@ -538,15 +834,18 @@ func (t *TraceWriter) OnResourceSample(_ context.Context, s ResourceSample) {
 			NumGC:        s.Stats.NumGC,
 			UptimeMs:     s.Stats.Uptime.Milliseconds(),
 		},
-	}, time.Now())
+	})
 }
 
-func (t *TraceWriter) OnLint(_ context.Context, info LintInfo) {
+func (t *TraceWriter) OnLint(ctx context.Context, info LintInfo) {
 	verdict := "blocked"
 	if info.Retrying {
 		verdict = "retry"
 	}
-	t.write(traceLine{
+	if tl := t.tallyFor(ctx); tl != nil {
+		tl.Lint(info.Retrying)
+	}
+	t.emit(ctx, "", traceLine{
 		Event:     "lint",
 		TaskID:    info.TaskID,
 		RunID:     info.RunID,
@@ -556,11 +855,11 @@ func (t *TraceWriter) OnLint(_ context.Context, info LintInfo) {
 		Lint:      info.Lint,
 		Verdict:   verdict,
 		Reason:    t.clip(info.Reason),
-	}, time.Now())
+	})
 }
 
-func (t *TraceWriter) OnModelRetry(_ context.Context, info ModelRetryInfo) {
-	t.write(traceLine{
+func (t *TraceWriter) OnModelRetry(ctx context.Context, info ModelRetryInfo) {
+	t.emit(ctx, info.SpanID, traceLine{
 		Event:         "model_retry",
 		TaskID:        info.TaskID,
 		RunID:         info.RunID,
@@ -574,15 +873,15 @@ func (t *TraceWriter) OnModelRetry(_ context.Context, info ModelRetryInfo) {
 		MaxTokensFrom: info.MaxTokensFrom,
 		MaxTokensTo:   info.MaxTokensTo,
 		DelayMs:       info.Delay.Milliseconds(),
-	}, time.Now())
+	})
 }
 
 // OnModelWire writes a model call's progress on the wire: model_wire lines
 // with the step (queued, request, response, retry, first_byte, waiting …),
 // its attempt and HTTP status, and the line a person reads.
-func (t *TraceWriter) OnModelWire(_ context.Context, info ModelWireInfo) {
+func (t *TraceWriter) OnModelWire(ctx context.Context, info ModelWireInfo) {
 	e := info.Event
-	t.write(traceLine{
+	t.emit(ctx, info.SpanID, traceLine{
 		Event:      "model_wire",
 		TaskID:     info.TaskID,
 		RunID:      info.RunID,
@@ -598,11 +897,14 @@ func (t *TraceWriter) OnModelWire(_ context.Context, info ModelWireInfo) {
 		DelayMs:    e.WaitMs,
 		Bytes:      e.Bytes,
 		Reason:     t.clip(e.Text),
-	}, time.Now())
+	})
 }
 
-func (t *TraceWriter) OnCompaction(_ context.Context, info CompactionInfo) {
-	t.write(traceLine{
+func (t *TraceWriter) OnCompaction(ctx context.Context, info CompactionInfo) {
+	if tl := t.tallyFor(ctx); tl != nil {
+		tl.Compaction()
+	}
+	t.emit(ctx, "", traceLine{
 		Event:           "compaction",
 		TaskID:          info.TaskID,
 		RunID:           info.RunID,
@@ -624,15 +926,15 @@ func (t *TraceWriter) OnCompaction(_ context.Context, info CompactionInfo) {
 		SummaryCalls:    info.SummaryCalls,
 		Degraded:        info.Degraded,
 		Error:           info.SummaryError,
-	}, time.Now())
+	})
 }
 
-func (t *TraceWriter) OnError(_ context.Context, info ErrorInfo) {
+func (t *TraceWriter) OnError(ctx context.Context, info ErrorInfo) {
 	marker := info.Marker
 	if marker == "" {
 		marker = "error"
 	}
-	t.write(traceLine{
+	t.emit(ctx, "", traceLine{
 		Event:     "error",
 		TaskID:    info.TaskID,
 		RunID:     info.RunID,
@@ -641,10 +943,10 @@ func (t *TraceWriter) OnError(_ context.Context, info ErrorInfo) {
 		Round:     info.Round,
 		Marker:    marker,
 		Message:   t.clip(info.Message),
-	}, time.Now())
+	})
 }
 
-func (t *TraceWriter) OnSegment(_ context.Context, info SegmentInfo) {
+func (t *TraceWriter) OnSegment(ctx context.Context, info SegmentInfo) {
 	index := info.Index
 	line := traceLine{
 		Event:        "segment_start",
@@ -661,7 +963,7 @@ func (t *TraceWriter) OnSegment(_ context.Context, info SegmentInfo) {
 		line.Productive = &productive
 		line.Error = t.clip(info.Err)
 	}
-	t.write(line, time.Now())
+	t.emit(ctx, "", line)
 }
 
 // traceValueText renders a tool or sub-agent result for the trace. A string
@@ -685,9 +987,9 @@ func traceValueText(v any) string {
 // OnToolOutputTruncated records a tool result the output cap cut before the
 // model saw it. Without this line a run that re-reads the same file page by
 // page looks redundant; with it, the reason is on the record.
-func (t *TraceWriter) OnToolOutputTruncated(_ context.Context, info ToolOutputTruncation) {
+func (t *TraceWriter) OnToolOutputTruncated(ctx context.Context, info ToolOutputTruncation) {
 	kept := info.StructureKept
-	t.write(traceLine{
+	t.emit(ctx, "", traceLine{
 		Event:         "tool_output_truncated",
 		TaskID:        info.TaskID,
 		RunID:         info.RunID,
@@ -700,5 +1002,5 @@ func (t *TraceWriter) OnToolOutputTruncated(_ context.Context, info ToolOutputTr
 		KeptBytes:     info.KeptBytes,
 		Limit:         info.Limit,
 		StructureKept: &kept,
-	}, time.Now())
+	})
 }

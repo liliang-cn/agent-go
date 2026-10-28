@@ -109,6 +109,6 @@ func (r *Runtime) emitModelRetryObserved(info ModelRetryInfo) {
 	info.RunID = r.runID()
 	info.SessionID = r.sessionID()
 	info.AgentName = r.currentAgentName()
-	ctx := context.Background()
+	ctx := r.spanCtx(context.Background())
 	r.svc.emitObserver(func(o Observer) { o.OnModelRetry(ctx, info) })
 }

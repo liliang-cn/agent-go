@@ -37,6 +37,10 @@ type TaskCheckpoint struct {
 	// files the agent produced. nil when no sandbox / not a terminal snapshot.
 	Workspace []byte    `json:"-"`
 	CreatedAt time.Time `json:"created_at"`
+	// Traceparent names the span of the run that wrote the checkpoint, in
+	// W3C form; a run resumed from it is that span's child, in the same
+	// trace. Empty for checkpoints written before flows were traced.
+	Traceparent string `json:"traceparent,omitempty"`
 }
 
 // CheckpointReason describes why a snapshot was written; used by the
@@ -88,9 +92,9 @@ func (s *Store) SaveTaskCheckpoint(cp *TaskCheckpoint) error {
 	db := s.agentGoDB.GetDB()
 	_, err = db.Exec(`
 		INSERT INTO task_checkpoints
-		(id, task_id, seq, round, after_tool, session_id, agent_name, messages, final_text, workspace, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, cp.ID, cp.TaskID, cp.Seq, cp.Round, cp.AfterTool, cp.SessionID, cp.AgentName, string(bytes), cp.FinalText, cp.Workspace, cp.CreatedAt)
+		(id, task_id, seq, round, after_tool, session_id, agent_name, messages, final_text, workspace, created_at, traceparent)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, cp.ID, cp.TaskID, cp.Seq, cp.Round, cp.AfterTool, cp.SessionID, cp.AgentName, string(bytes), cp.FinalText, cp.Workspace, cp.CreatedAt, cp.Traceparent)
 	return err
 }
 
@@ -119,12 +123,12 @@ func (s *Store) GetTaskCheckpoint(id string) (*TaskCheckpoint, error) {
 	}
 	db := s.agentGoDB.GetDB()
 	row := db.QueryRow(`
-		SELECT id, task_id, seq, round, after_tool, session_id, agent_name, messages, final_text, workspace, created_at
+		SELECT id, task_id, seq, round, after_tool, session_id, agent_name, messages, final_text, workspace, created_at, COALESCE(traceparent, '')
 		FROM task_checkpoints WHERE id = ?
 	`, id)
 	cp := &TaskCheckpoint{}
 	var messagesJSON string
-	if err := row.Scan(&cp.ID, &cp.TaskID, &cp.Seq, &cp.Round, &cp.AfterTool, &cp.SessionID, &cp.AgentName, &messagesJSON, &cp.FinalText, &cp.Workspace, &cp.CreatedAt); err != nil {
+	if err := row.Scan(&cp.ID, &cp.TaskID, &cp.Seq, &cp.Round, &cp.AfterTool, &cp.SessionID, &cp.AgentName, &messagesJSON, &cp.FinalText, &cp.Workspace, &cp.CreatedAt, &cp.Traceparent); err != nil {
 		return nil, errCheckpointMissing
 	}
 	if err := json.Unmarshal([]byte(messagesJSON), &cp.Messages); err != nil {
@@ -140,7 +144,7 @@ func (s *Store) ListTaskCheckpoints(taskID string, limit int) ([]*TaskCheckpoint
 		return nil, nil
 	}
 	db := s.agentGoDB.GetDB()
-	q := `SELECT id, task_id, seq, round, after_tool, session_id, agent_name, messages, final_text, created_at
+	q := `SELECT id, task_id, seq, round, after_tool, session_id, agent_name, messages, final_text, created_at, COALESCE(traceparent, '')
 		  FROM task_checkpoints WHERE task_id = ? ORDER BY seq DESC`
 	args := []any{taskID}
 	if limit > 0 {
@@ -156,7 +160,7 @@ func (s *Store) ListTaskCheckpoints(taskID string, limit int) ([]*TaskCheckpoint
 	for rows.Next() {
 		cp := &TaskCheckpoint{}
 		var messagesJSON string
-		if err := rows.Scan(&cp.ID, &cp.TaskID, &cp.Seq, &cp.Round, &cp.AfterTool, &cp.SessionID, &cp.AgentName, &messagesJSON, &cp.FinalText, &cp.CreatedAt); err != nil {
+		if err := rows.Scan(&cp.ID, &cp.TaskID, &cp.Seq, &cp.Round, &cp.AfterTool, &cp.SessionID, &cp.AgentName, &messagesJSON, &cp.FinalText, &cp.CreatedAt, &cp.Traceparent); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(messagesJSON), &cp.Messages); err != nil {
@@ -289,6 +293,23 @@ func (w *checkpointWriter) SeedFromStore(taskID string) {
 // a sink simply skip persistence.
 type CheckpointSink interface {
 	WriteCheckpoint(taskID string, reason CheckpointReason, round int, sessionID, agentName, finalText, afterTool string, messages []domain.Message, workspace []byte) error
+}
+
+// TracedCheckpointSink is an optional extension of CheckpointSink that also
+// stores the flow the run belongs to (a W3C traceparent naming the run's
+// span), so a resume can join the same trace. It is separate so that sinks
+// written against CheckpointSink keep compiling.
+type TracedCheckpointSink interface {
+	WriteTracedCheckpoint(traceparent, taskID string, reason CheckpointReason, round int, sessionID, agentName, finalText, afterTool string, messages []domain.Message, workspace []byte) error
+}
+
+// writeCheckpoint writes through sink, with the run's traceparent when the
+// sink can keep it.
+func (r *Runtime) writeCheckpoint(sink CheckpointSink, taskID string, reason CheckpointReason, round int, sessionID, agentName, finalText, afterTool string, messages []domain.Message, workspace []byte) error {
+	if ts, ok := sink.(TracedCheckpointSink); ok && r.span != nil {
+		return ts.WriteTracedCheckpoint(r.span.sc.Traceparent(), taskID, reason, round, sessionID, agentName, finalText, afterTool, messages, workspace)
+	}
+	return sink.WriteCheckpoint(taskID, reason, round, sessionID, agentName, finalText, afterTool, messages, workspace)
 }
 
 // SetCheckpointSink wires a sink into the service. Manager calls

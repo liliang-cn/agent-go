@@ -79,6 +79,11 @@ func (s runtimeSink) ModelStart(ctx context.Context, id, purpose string) {
 		return
 	}
 	info := s.info(id, purpose)
+	// The end repeats what the start said: a constraint extraction begun
+	// before round 1 and finished during it is a round-0 call on both lines.
+	if s.r.span != nil {
+		s.r.span.aux.Store(id, info)
+	}
 	s.r.svc.emitObserver(func(o Observer) { o.OnModelStart(ctx, info) })
 }
 
@@ -87,12 +92,18 @@ func (s runtimeSink) ModelEnd(ctx context.Context, id string, rec trace.Record) 
 		return
 	}
 	info := s.info(id, rec.Name)
+	if s.r.span != nil {
+		if started, ok := s.r.span.aux.LoadAndDelete(id); ok {
+			info = started.(ModelInfo)
+		}
+	}
 	if s.r.svc.observerPayloads {
 		info.Request = requestFromRecord(rec.Request)
 	}
 	res := &ModelResult{
-		DurationMs: rec.DurMs, TTFTMs: rec.TTFTMs,
+		DurationMs: rec.DurMs, TTFTMs: rec.TTFTMs, Streamed: rec.Streamed,
 		PromptTokens: rec.In, CompletionTokens: rec.Out, TokensUsed: rec.In + rec.Out, CachedTokens: rec.Cached,
+		CacheWriteTokens: rec.CacheWrite,
 	}
 	if reply, ok := rec.Reply.(string); ok {
 		res.Content = reply

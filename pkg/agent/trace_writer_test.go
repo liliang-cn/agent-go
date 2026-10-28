@@ -138,7 +138,7 @@ func TestTraceWriterEmitsParsableJSONLForAScriptedRun(t *testing.T) {
 	// The permission line sits inside the tool bracket because the gate runs
 	// inside dispatch; with no handler configured it says so (decider=none)
 	// rather than saying nothing.
-	want := []string{"model_start", "tool_start", "permission", "tool_end", "model_end", "checkpoint", "model_start", "model_end", "checkpoint"}
+	want := []string{"run_start", "model_start", "tool_start", "permission", "tool_end", "model_end", "checkpoint", "model_start", "model_end", "checkpoint", "run_end"}
 	if len(events2) != len(want) {
 		t.Fatalf("event sequence = %v, want %v", events2, want)
 	}
@@ -189,6 +189,47 @@ func TestTraceWriterEmitsParsableJSONLForAScriptedRun(t *testing.T) {
 	}
 	if len(checkpointReasons) != 2 || checkpointReasons[0] == checkpointReasons[1] {
 		t.Errorf("checkpoint reasons = %v, want a round-end then a terminal one", checkpointReasons)
+	}
+
+	// The flow: one trace id on every line; the run is the root span; model
+	// and tool calls are its children; everything else is about the run.
+	run := byEvent["run_start"]
+	traceID, _ := run["trace_id"].(string)
+	runSpan, _ := run["span_id"].(string)
+	if len(traceID) != 32 || len(runSpan) != 16 || run["parent_span_id"] != nil {
+		t.Fatalf("run_start = %v", run)
+	}
+	if run["host"] == nil || run["pid"] == nil {
+		t.Errorf("run_start does not say where it ran: %v", run)
+	}
+	for _, l := range lines {
+		e := l["event"].(string)
+		if l["trace_id"] != traceID {
+			t.Errorf("%s line trace_id = %v, want %s", e, l["trace_id"], traceID)
+		}
+		switch e {
+		case "model_start", "model_end", "tool_start", "tool_end":
+			if l["parent_span_id"] != runSpan || l["span_id"] == runSpan || len(l["span_id"].(string)) != 16 {
+				t.Errorf("%s line spans = %v/%v, want a child of %s", e, l["span_id"], l["parent_span_id"], runSpan)
+			}
+		case "run_start", "run_end", "checkpoint", "resource":
+			if l["span_id"] != runSpan {
+				t.Errorf("%s line span_id = %v, want the run's %s", e, l["span_id"], runSpan)
+			}
+		}
+	}
+	if byEvent["tool_start"]["span_id"] != byEvent["tool_end"]["span_id"] {
+		t.Errorf("tool start and end have different spans")
+	}
+	end := byEvent["run_end"]
+	sum, _ := end["summary"].(map[string]any)
+	if end["outcome"] != "completed" || end["stop_reason"] == nil || sum == nil {
+		t.Fatalf("run_end = %v", end)
+	}
+	byPurpose, _ := sum["by_purpose"].(map[string]any)
+	tools, _ := sum["tools"].(map[string]any)
+	if sum["model_calls"].(float64) < 3 || byPurpose["turn"] == nil || byPurpose["constraints"] == nil || tools["ping"] == nil {
+		t.Errorf("run_end summary = %v", sum)
 	}
 }
 

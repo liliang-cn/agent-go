@@ -68,6 +68,10 @@ type Service struct {
 	agent         *Agent
 	registry      *Registry
 	logger        *slog.Logger
+	// runLogger is the logger run narration goes to (WithLogger), and runLog
+	// the observer that writes it; see log_observer.go.
+	runLogger *slog.Logger
+	runLog    *logObserver
 	// cancelMu guards the in-flight run registry below. See run_cancel.go —
 	// a service can be driving several runs at once (a chat turn, a scheduled
 	// prompt, a sub-agent), so cancellation is a lookup in `runs`, not a
@@ -352,7 +356,34 @@ func NewService(
 	// Register built-in tools in registry
 	s.registerBuiltInTools()
 
+	// Every run narrates itself into the logger (quiet at the default level),
+	// and AGENTGO_TRACE_EVENTS writes every run's JSONL trace.
+	s.runLog = &logObserver{svc: s}
+	if tw := envTraceWriter(); tw != nil {
+		s.RegisterObserver(tw)
+		if tw.Payloads {
+			s.observerPayloads = true
+		}
+	}
+
 	return s, nil
+}
+
+// SetLogger sends the service's own lines, and its run narration, to l
+// (redacted, and joined to the trace on trace_id). nil restores the
+// framework logger.
+func (s *Service) SetLogger(l *slog.Logger) {
+	if s == nil {
+		return
+	}
+	if l == nil {
+		s.logger = agentgolog.WithModule("agent.service")
+		s.runLogger = nil
+		return
+	}
+	l = slog.New(agentgolog.NewHandler(l.Handler()))
+	s.logger = l.With(slog.String("module", "agent.service"))
+	s.runLogger = l.With(slog.String("module", "agent.run"))
 }
 
 // registerBuiltInTools registers the core tools. Registration is what makes a

@@ -8,12 +8,14 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"sort"
 	"strings"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 	"github.com/liliang-cn/agent-go/v3/pkg/skills"
+	"github.com/liliang-cn/agent-go/v3/pkg/trace"
 )
 
 // Tool preparation for the loop — concept 3 of the seven.
@@ -274,6 +276,7 @@ const ToolDiscoveryThreshold = 32
 func (s *Service) collectAllAvailableToolsWithPolicy(ctx context.Context, currentAgent *Agent, policy toolPreparationPolicy) []domain.ToolDefinition {
 	threshold := s.toolDiscoveryThreshold()
 
+	s.decideWebSearchSurface(ctx, policy)
 	flat := s.collectTools(ctx, currentAgent, policy, false)
 	if len(flat) <= threshold || !policy.ExposeSearchTools {
 		// Nothing is hidden, so the search tool has nothing to find. Offering it
@@ -282,7 +285,58 @@ func (s *Service) collectAllAvailableToolsWithPolicy(ctx context.Context, curren
 		// does not go into the schema.
 		return withoutToolSearchTools(flat)
 	}
-	return s.collectTools(ctx, currentAgent, policy, true)
+	layered := s.collectTools(ctx, currentAgent, policy, true)
+	s.decideToolLayering(ctx, len(flat), threshold, layered)
+	return layered
+}
+
+// decideWebSearchSurface records which search route the model is offered
+// this turn when that hides a tool: what it sees changed, and why belongs on
+// the trace (trace.Decide; reported once per run while it holds).
+func (s *Service) decideWebSearchSurface(ctx context.Context, policy toolPreparationPolicy) {
+	if policy.HideNativeWebSearch && s.mcpService != nil {
+		var hidden []string
+		for _, tool := range s.mcpService.ListTools() {
+			if isMCPWebSearchToolName(tool.Function.Name) {
+				hidden = append(hidden, tool.Function.Name)
+			}
+		}
+		if len(hidden) > 0 {
+			mode := s.webSearchMode()
+			reason := "web_search mode is " + string(mode)
+			if mode == domain.WebSearchModeAuto {
+				reason = "the provider's native web search proved itself (url_citation or grounding in a response), so the MCP search tools are redundant"
+			}
+			trace.Decide(ctx, "hide_mcp_search", reason, map[string]any{"tools": hidden, "mode": string(s.webSearchSurfaceMode())})
+		}
+	}
+	if policy.HideRegistryWebSearch {
+		trace.Decide(ctx, "hide_registry_web_search",
+			"web search goes through the MCP server, so the built-in web_search would be a second route to the same thing",
+			map[string]any{"tool": registryWebSearchToolName})
+	}
+}
+
+// decideToolLayering records that the catalogue went behind the tool search,
+// and which tools SetEagerTools kept in front of it.
+func (s *Service) decideToolLayering(ctx context.Context, catalogue, threshold int, offered []domain.ToolDefinition) {
+	trace.Decide(ctx, "defer_tools",
+		fmt.Sprintf("%d tools is over the discovery threshold of %d; MCP tools and skills wait behind the tool search", catalogue, threshold),
+		map[string]any{"catalogue": catalogue, "threshold": threshold, "offered": len(offered)})
+	eager := s.eagerToolPatterns()
+	if len(eager) == 0 {
+		return
+	}
+	var kept []string
+	for _, t := range offered {
+		if matchesAnyToolPattern(eager, t.Function.Name) {
+			kept = append(kept, t.Function.Name)
+		}
+	}
+	if len(kept) > 0 {
+		trace.Decide(ctx, "eager_tools", "SetEagerTools named them, so they are offered on every request instead of only after a search finds them",
+			map[string]any{"tools": kept, "patterns": eager})
+	}
 }
 
 // toolDiscoveryThreshold reports the configured catalogue size above which

@@ -62,7 +62,7 @@ func (r *Runtime) persistRoundCheckpoint(round int, messages []domain.Message) {
 	sessionID := r.sessionID()
 	agentName := r.currentAgentName()
 	r.svc.emitObserver(func(o Observer) {
-		o.OnCheckpoint(context.Background(), CheckpointInfo{
+		o.OnCheckpoint(r.spanCtx(context.Background()), CheckpointInfo{
 			TaskID:    taskID,
 			RunID:     r.runID(),
 			SessionID: sessionID,
@@ -72,7 +72,7 @@ func (r *Runtime) persistRoundCheckpoint(round int, messages []domain.Message) {
 			Messages:  len(messages),
 		})
 	})
-	if err := sink.WriteCheckpoint(taskID, CheckpointReasonRoundEnd, round,
+	if err := r.writeCheckpoint(sink, taskID, CheckpointReasonRoundEnd, round,
 		sessionID, agentName, "", string(CheckpointReasonRoundEnd), messages, nil); err != nil {
 		r.log().Debug("failed to write round checkpoint",
 			slog.String("task_id", taskID), slog.String("error", err.Error()))

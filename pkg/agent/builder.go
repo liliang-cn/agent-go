@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"time"
@@ -114,6 +115,7 @@ type Builder struct {
 	maxRunsPerTenant   int
 	noConstraints      bool
 	observerPayloads   bool
+	logger             *slog.Logger
 	timeLocation       *time.Location
 	backgroundTasks    bool
 	maxBackgroundTasks int
@@ -509,6 +511,18 @@ func (b *Builder) WithConstraintExtraction(enabled bool) *Builder {
 	return b
 }
 
+// WithLogger sends everything the service logs, and the narration of every
+// run, to l. Lines pass through pkg/log's redaction and, when logged inside a
+// run, carry its trace_id, span_id and parent_span_id. At info l gets one
+// line per run start and end, model call and tool call; at debug the
+// decisions, retries, wire steps and lint verdicts; at log.LevelPayload whole
+// requests and results. Without it the framework logger is used (pkg/log:
+// stderr at warn unless AGENTGO_LOG_LEVEL says otherwise).
+func (b *Builder) WithLogger(l *slog.Logger) *Builder {
+	b.logger = l
+	return b
+}
+
 // WithObserverPayloads makes every ModelInfo an observer receives carry the
 // request the model was sent — ModelInfo.Request: the messages and tools of a
 // turn, or the prompt of a structured call. Off by default: the request is
@@ -850,7 +864,10 @@ func (b *Builder) build() (*Service, error) {
 	svc.maxConcurrentRuns = b.maxConcurrentRuns
 	svc.maxRunsPerTenant = b.maxRunsPerTenant
 	svc.noConstraintExtraction = b.noConstraints
-	svc.observerPayloads = b.observerPayloads
+	svc.observerPayloads = svc.observerPayloads || b.observerPayloads
+	if b.logger != nil {
+		svc.SetLogger(b.logger)
+	}
 	svc.maxBackgroundTasks = b.maxBackgroundTasks
 	if b.backgroundTasks {
 		RegisterBackgroundTaskTools(svc)

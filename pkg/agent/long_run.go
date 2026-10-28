@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/trace"
 )
 
 // Running one task across many segments.
@@ -282,6 +283,13 @@ func (s *Service) runSegments(ctx context.Context, goal string, cfg LongRunConfi
 	if !callerNamedPlanKey {
 		cfg.PlanKey = taskScopedPlanKey(taskID)
 	}
+
+	// The task is one flow, every segment a run in it. A caller already in a
+	// flow keeps it; a task picked back up by a new process joins the flow
+	// its last checkpoint was written in; otherwise the task's first segment
+	// starts one. The segments are children of one span, the task's, whose
+	// lines are segment_start / segment_end.
+	ctx = s.longRunFlow(ctx, taskID)
 
 	// Task memory brackets the whole thing: mark the task running now (keeping
 	// any brief an earlier process left), record each segment as one run, and
@@ -572,4 +580,15 @@ func (s *Service) emitSegmentObserved(ctx context.Context, info SegmentInfo) {
 		return
 	}
 	s.emitObserver(func(o Observer) { o.OnSegment(ctx, info) })
+}
+
+// longRunFlow is ctx carrying the span a long task's segments run under.
+func (s *Service) longRunFlow(ctx context.Context, taskID string) context.Context {
+	if _, ok := trace.SpanFromContext(ctx); !ok && s.store != nil {
+		if cp, err := s.store.LatestTaskCheckpoint(taskID); err == nil && cp != nil {
+			ctx = joinCheckpointFlow(ctx, cp.Traceparent)
+		}
+	}
+	ctx, _ = trace.StartSpan(ctx)
+	return ctx
 }

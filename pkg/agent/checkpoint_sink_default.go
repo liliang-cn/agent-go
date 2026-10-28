@@ -43,7 +43,13 @@ func newServiceCheckpointSink(store *Store) *serviceCheckpointSink {
 	}
 }
 
-func (s *serviceCheckpointSink) WriteCheckpoint(taskID string, _ CheckpointReason, round int, sessionID, agentName, finalText, afterTool string, messages []domain.Message, workspace []byte) error {
+func (s *serviceCheckpointSink) WriteCheckpoint(taskID string, reason CheckpointReason, round int, sessionID, agentName, finalText, afterTool string, messages []domain.Message, workspace []byte) error {
+	return s.WriteTracedCheckpoint("", taskID, reason, round, sessionID, agentName, finalText, afterTool, messages, workspace)
+}
+
+// WriteTracedCheckpoint is WriteCheckpoint that keeps the run's flow
+// (TracedCheckpointSink).
+func (s *serviceCheckpointSink) WriteTracedCheckpoint(traceparent, taskID string, _ CheckpointReason, round int, sessionID, agentName, finalText, afterTool string, messages []domain.Message, workspace []byte) error {
 	if s == nil || s.writer == nil || taskID == "" {
 		return nil
 	}
@@ -64,5 +70,7 @@ func (s *serviceCheckpointSink) WriteCheckpoint(taskID string, _ CheckpointReaso
 		Messages:  cloneMessagesForCheckpoint(messages),
 		FinalText: finalText,
 		Workspace: workspace,
+
+		Traceparent: traceparent,
 	})
 }
