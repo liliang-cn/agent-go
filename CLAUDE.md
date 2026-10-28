@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this project is
 
-AgentGo is a **Go framework for building agents** — a library, not an app. There are no binaries: no CLI, no UI, no servers. Consumers embed `pkg/agent` in their own programs (the reference consumer is superai).
+AgentGo is a **Go framework for building agents** — a library, not an app. There are no binaries: no CLI, no UI, no servers — the one exception is `cmd/agentgo-trace`, a stdlib-only reader for the trace files a run writes. Consumers embed `pkg/agent` in their own programs (the reference consumer is superai).
 
 Module path is `github.com/liliang-cn/agent-go/v3`.
 
@@ -1195,3 +1195,4 @@ code. Each was a trap a correct-looking integration fell into.
 - MCP: `pkg/mcp` client logs go through `pkg/log` (slog to stderr unless the host calls `log.SetLogger`)
 - Tasks / checkpoints: `Manager.Tasks()` API — `List`, `ListCheckpoints`, `ResumeFromCheckpoint`
 - Tracing: wire an observer (`pkg/otelobserver`) into the service to see per-round loop state
+- What a run did and why: `AGENTGO_TRACE_EVENTS=/path/run.jsonl` (or `agent.NewTraceWriter`) writes every run as JSONL — `run_start`/`run_end` with totals, model calls with server tool uses, cache writes and honest ttft, tool calls, `decision` lines — and `go run ./cmd/agentgo-trace run.jsonl` prints the waterfall; `--trace <id>` rebuilds a whole flow (sub-agents, resumes, other processes) from W3C trace/span ids across files. `AGENTGO_LOG_LEVEL=info|debug|payload` turns the run narration up in the logs, joined to the trace on `trace_id`. Schema and switches: `docs/trace-schema.md` (a test keeps it in step with `traceLine`). Secrets are redacted at every level.

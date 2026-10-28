@@ -23,6 +23,14 @@
 //
 // Setting either variable, or calling SetEnabled(true), turns recording on.
 // Off, each step costs one atomic load.
+//
+// The package also carries a run's place in its flow (span.go): a W3C trace
+// id shared by everything one request fans out into, and span ids for each
+// run, model call and tool call, propagated as traceparent over HTTP, MCP and
+// a host's own links. agent.TraceWriter's event trace — the schema
+// cmd/agentgo-trace reads, documented in docs/trace-schema.md — is written by
+// an observer and switched on with AGENTGO_TRACE_EVENTS; the records here are
+// the lighter timeline. Both add a run up with the same Tally.
 package trace
 
 import (
