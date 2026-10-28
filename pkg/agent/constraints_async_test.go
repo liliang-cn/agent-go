@@ -101,3 +101,97 @@ func TestConstraintCheckRunsBesideTheFirstTurn(t *testing.T) {
 		t.Fatal("the tool call was not refused with the forbidden-tools feedback")
 	}
 }
+
+// streamedCallLLM answers with a tool call whose arguments are whole, so the
+// streaming executor runs it at once, then with text; its constraint check is
+// slow and asks for nothing.
+type streamedCallLLM struct {
+	mu            sync.Mutex
+	checkDone     time.Time
+	secondTurn    time.Time
+	answers       int
+	constraintLag time.Duration
+}
+
+func (l *streamedCallLLM) Generate(context.Context, string, *domain.GenerationOptions) (string, error) {
+	return "", nil
+}
+func (l *streamedCallLLM) Stream(context.Context, string, *domain.GenerationOptions, func(string)) error {
+	return nil
+}
+func (l *streamedCallLLM) GenerateStructured(_ context.Context, prompt string, _ interface{}, _ *domain.GenerationOptions) (*domain.StructuredResult, error) {
+	if !strings.Contains(prompt, "report ONLY the constraints") {
+		return structuredJSON(map[string]interface{}{}), nil
+	}
+	time.Sleep(l.constraintLag)
+	l.mu.Lock()
+	l.checkDone = time.Now()
+	l.mu.Unlock()
+	return &domain.StructuredResult{Raw: `{"forbid_tools":false,"deliverables":[],"requested_actions":[]}`, Valid: true}, nil
+}
+func (l *streamedCallLLM) RecognizeIntent(context.Context, string) (*domain.IntentResult, error) {
+	return nil, nil
+}
+func (l *streamedCallLLM) answer() *domain.GenerationResult {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.answers++
+	if l.answers == 1 {
+		return &domain.GenerationResult{ToolCalls: []domain.ToolCall{{ID: "c1", Type: "function",
+			Function: domain.FunctionCall{Name: "lookup", Arguments: map[string]interface{}{"q": "x"}}}}}
+	}
+	if l.secondTurn.IsZero() {
+		l.secondTurn = time.Now()
+	}
+	return &domain.GenerationResult{Content: "Found it: 42."}
+}
+func (l *streamedCallLLM) GenerateWithTools(context.Context, []domain.Message, []domain.ToolDefinition, *domain.GenerationOptions) (*domain.GenerationResult, error) {
+	return l.answer(), nil
+}
+func (l *streamedCallLLM) StreamWithTools(_ context.Context, _ []domain.Message, _ []domain.ToolDefinition, _ *domain.GenerationOptions, cb domain.ToolCallCallback) error {
+	return cb(l.answer())
+}
+
+// A tool call that streamed in has already run, so the constraint verdict can
+// no longer stop it. The next round used to wait for the check anyway: a
+// median 1.4s and up to 6.4s on a 100-tool assistant, every round one.
+func TestARoundOfCallsThatAlreadyRanDoesNotWaitForTheConstraintCheck(t *testing.T) {
+	llm := &streamedCallLLM{constraintLag: 1500 * time.Millisecond}
+	svc, err := New("streamed-call").WithConfig(testAgentConfig(t.TempDir())).WithLLM(llm).Build()
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	defer svc.Close()
+	var ran int32
+	svc.AddTool("lookup", "Looks something up.",
+		map[string]interface{}{"type": "object", "properties": map[string]interface{}{"q": map[string]interface{}{"type": "string"}}},
+		func(context.Context, map[string]interface{}) (interface{}, error) {
+			atomic.AddInt32(&ran, 1)
+			return map[string]interface{}{"answer": 42}, nil
+		})
+
+	if _, err := svc.Ask(context.Background(), "look it up"); err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+	// The check outlives the run (the lints give up on it after a second);
+	// let it finish so the two moments can be compared.
+	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		llm.mu.Lock()
+		done := !llm.checkDone.IsZero()
+		llm.mu.Unlock()
+		if done {
+			break
+		}
+	}
+	llm.mu.Lock()
+	defer llm.mu.Unlock()
+	if atomic.LoadInt32(&ran) != 1 {
+		t.Fatalf("lookup ran %d times, want 1", ran)
+	}
+	if llm.secondTurn.IsZero() || llm.checkDone.IsZero() {
+		t.Fatalf("second turn at %v, check at %v", llm.secondTurn, llm.checkDone)
+	}
+	if !llm.secondTurn.Before(llm.checkDone) {
+		t.Fatalf("the second turn waited for the constraint check (%v after it)", llm.secondTurn.Sub(llm.checkDone))
+	}
+}

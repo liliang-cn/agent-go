@@ -997,7 +997,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			// anyway is refused outright with structured feedback. Forbidding a
 			// capability means not offering it — not offering it and then
 			// arguing about it.
-			if r.runConstraints().ForbidTools {
+			if r.forbidsToolsFor(result.ToolCalls) {
 				r.refuseForbiddenToolUse(&messages, state)
 				continue
 			}
@@ -2223,6 +2223,47 @@ func (r *Runtime) runConstraintsWithin(d time.Duration) RunConstraints {
 		return RunConstraints{}
 	}
 	return *r.cfg.resolvedConstraints
+}
+
+// forbidsToolsFor reports whether the run's constraints forbid the tool calls
+// of this turn, waiting for the check only while waiting can still change
+// something.
+//
+// A call that streamed in has already run — the streaming executor starts it
+// as soon as its arguments are whole — so for a turn made only of those the
+// verdict can no longer stop anything, and waiting for it held the next round
+// back for nothing. Measured on a 100-tool assistant: the check takes 2.6–6.6s
+// and the first turn about 2.5s, so the second turn waited a median 1.4s and
+// up to 6.4s. Such a turn takes the verdict if it has arrived and goes on;
+// the next turn's tool list adopts it the moment it does. A call that has not
+// run yet still waits for the full answer, so it is never run against a
+// refusal.
+func (r *Runtime) forbidsToolsFor(calls []domain.ToolCall) bool {
+	if r.allToolCallsRan(calls) {
+		return r.runConstraintsWithin(0).ForbidTools
+	}
+	return r.runConstraints().ForbidTools
+}
+
+// allToolCallsRan reports whether every non-terminal call already executed.
+func (r *Runtime) allToolCallsRan(calls []domain.ToolCall) bool {
+	if r == nil || len(calls) == 0 {
+		return false
+	}
+	// The same normalisation the streaming executor applied before it
+	// recorded the call under its id.
+	calls = normalizeToolCalls(calls)
+	r.pendingToolsMu.Lock()
+	defer r.pendingToolsMu.Unlock()
+	for _, c := range calls {
+		if isTaskTerminalToolName(c.Function.Name) {
+			continue
+		}
+		if c.ID == "" || !r.completedTools[c.ID] {
+			return false
+		}
+	}
+	return true
 }
 
 // runConstraints returns the resolved constraints, waiting for a background

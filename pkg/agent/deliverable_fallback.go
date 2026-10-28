@@ -78,7 +78,10 @@ func (r *Runtime) redirectBlockedToPartialAnswer(messages *[]domain.Message, sta
 	if r == nil || r.deliverableFallbackUsed {
 		return false
 	}
-	missing := undeliverableRequirements(r.runConstraints(), r.availableToolNamesSnapshot())
+	// Bounded like the lints: the redirect is a steer, and a block whose
+	// check is still out is let through with the model's own reply rather
+	// than held for the whole check (measured: up to 6s).
+	missing := undeliverableRequirements(r.runConstraintsWithin(constraintLintWait), r.availableToolNamesSnapshot())
 	if len(missing) == 0 {
 		return false
 	}
