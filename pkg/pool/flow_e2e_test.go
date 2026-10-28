@@ -207,4 +207,3 @@ func runStarship(t *testing.T, level slog.Level) (string, string) {
 	}
 	return traceOut.String(), logOut.String()
 }
-
