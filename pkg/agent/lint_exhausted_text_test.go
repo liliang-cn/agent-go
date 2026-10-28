@@ -33,8 +33,15 @@ func TestLintExhaustionNeverLeaksMachineTextToTheUser(t *testing.T) {
 			t.Errorf("final text leaked machine wording %q: %q", leak, got)
 		}
 	}
-	if !strings.Contains(got, "could not confirm") {
-		t.Errorf("the user was not told the result is unverified: %q", got)
+	// The fallback (the model could not be asked to rewrite it) is the draft
+	// alone: a fixed English sentence appended to an answer in another
+	// language is worse than none, and the run's StopReason already says it
+	// was not confirmed.
+	if got != draft {
+		t.Errorf("fallback changed the draft: %q", got)
+	}
+	if zh := "已把本周购物清单存到 /Documents/购物.txt。"; lintExhaustedUserText(zh) != zh {
+		t.Errorf("an English caveat was appended to a Chinese answer: %q", lintExhaustedUserText(zh))
 	}
 }
 

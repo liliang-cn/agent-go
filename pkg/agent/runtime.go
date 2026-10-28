@@ -204,7 +204,7 @@ func (r *Runtime) runFinalLints(content string, turn int) *LintViolation {
 // or done=false when the answer was rejected and the model re-prompted within
 // budget (caller must `continue` the loop). messages is updated in place when a
 // retry appends structured lint feedback.
-func (r *Runtime) lintGate(goal, content string, messages *[]domain.Message, state *queryLoopState, round int) (done bool) {
+func (r *Runtime) lintGate(ctx context.Context, goal, content string, messages *[]domain.Message, state *queryLoopState, round int) (done bool) {
 	violation := r.runFinalLints(content, round)
 	if violation == nil {
 		r.completeRun(goal, content, *messages, true)
@@ -236,8 +236,34 @@ func (r *Runtime) lintGate(goal, content string, messages *[]domain.Message, sta
 	// Budget exhausted: this final attempt is itself a violation. Emit it as a
 	// (hard) error so observers/eval count every violation, then block.
 	r.emitMarked(EventTypeError, "lint_exhausted", fmt.Sprintf("output lint %s rejected response: %s", violation.LintName, violation.Reason))
-	r.blockRunWithStop(goal, lintExhaustedUserText(content), *messages, true, StopReasonLintExhausted)
+	reply := r.unconfirmedReply(ctx, state, *messages, content, violation)
+	if reply == "" {
+		reply = lintExhaustedUserText(content)
+	}
+	r.blockRunWithStop(goal, reply, *messages, true, StopReasonLintExhausted)
 	return true
+}
+
+// unconfirmedReply asks the model, with tools off, for the final reply of a
+// run whose answer the lints could not confirm: the draft, rewritten to say
+// plainly what could not be confirmed, in the user's language.
+//
+// It used to append one fixed English sentence to the draft ("Note: I could
+// not confirm that everything you asked for was actually carried out…"), and
+// a Chinese answer ended in English. The model knows what it wrote, what the
+// check said, and which language the person writes in; the runtime knows
+// none of that well enough to say it. "" when the call fails, which leaves
+// the caller the draft.
+func (r *Runtime) unconfirmedReply(ctx context.Context, state *queryLoopState, messages []domain.Message, draft string, v *LintViolation) string {
+	if v == nil {
+		return ""
+	}
+	instruction := "[system] Your answer could not be confirmed, for this reason: " + v.Reason + "\n\n" +
+		"Your answer was:\n" + strings.TrimSpace(draft) + "\n\n" +
+		"Stop calling tools. Write your final reply to the user now, in the language they wrote in. " +
+		"Keep what is true in your answer. Where it says something was done that the work above does not show, " +
+		"say plainly that you could not confirm it — in the user's terms, without mentioning checks, tools or instructions."
+	return r.synthesizeReply(ctx, state, messages, instruction, "unconfirmed-reply")
 }
 
 // emitLintObserved tells observers a lint rejected a draft. The lint layer is
@@ -272,15 +298,21 @@ func (r *Runtime) emitLintObserved(v *LintViolation, retrying bool) {
 // machinery arguing with itself instead of a reply.
 //
 // What they get instead is the model's own last draft — which is usually the
-// substantive work, and the reason the run got as far as it did — plus one
-// plain sentence saying it could not be confirmed. Which lint fired, and why,
+// substantive work, and the reason the run got as far as it did — rewritten
+// by the model to say what could not be confirmed (unconfirmedReply). Which lint fired, and why,
 // stays where it belongs: the error event and the StopReason.
+//
+// This is the fallback, for when the model could not be asked to write the
+// reply itself (unconfirmedReply): the draft alone, never a fixed English
+// sentence after an answer in another language. The run still ends blocked
+// with StopReasonLintExhausted, which is how a host tells it apart. Only an
+// empty draft gets the sentence, because saying nothing is worse.
 func lintExhaustedUserText(draft string) string {
 	draft = strings.TrimSpace(draft)
 	if draft == "" {
 		return lintExhaustedCaveat
 	}
-	return draft + "\n\n" + lintExhaustedCaveat
+	return draft
 }
 
 // lintExhaustedCaveat contradicts the draft rather than merely hedging it: the
@@ -295,17 +327,22 @@ const lintExhaustedCaveat = "Note: I could not confirm that everything you asked
 // answer at all (the stream just ends). Mirrors harness's force_final_synthesis.
 // Returns "" if the model is unavailable or errors.
 func (r *Runtime) forceFinalSynthesis(ctx context.Context, state *queryLoopState, messages []domain.Message) string {
+	return r.synthesizeReply(ctx, state, messages,
+		"[system: iteration budget exhausted] Stop calling tools. Based on the work "+
+			"above, give your best final answer to the original task now. If the goal was not "+
+			"fully achieved, state clearly what was completed and what still remains.",
+		"final-synthesis")
+}
+
+// synthesizeReply is one model call with tools off, after the conversation
+// plus one instruction, for a run that has to end with text now.
+func (r *Runtime) synthesizeReply(ctx context.Context, state *queryLoopState, messages []domain.Message, instruction, purpose string) string {
 	if r == nil || r.svc == nil || r.svc.llmService == nil {
 		return ""
 	}
 	synth := make([]domain.Message, 0, len(messages)+1)
 	synth = append(synth, messages...)
-	synth = append(synth, domain.Message{
-		Role: "user",
-		Content: "[system: iteration budget exhausted] Stop calling tools. Based on the work " +
-			"above, give your best final answer to the original task now. If the goal was not " +
-			"fully achieved, state clearly what was completed and what still remains.",
-	})
+	synth = append(synth, domain.Message{Role: "user", Content: instruction})
 	// Observer seam: the synthesis pass is a model turn like every other one,
 	// and it was the only one that emitted nothing. Its tokens go into the
 	// run's budget — and therefore into ExecutionResult.Usage — so an
@@ -322,14 +359,14 @@ func (r *Runtime) forceFinalSynthesis(ctx context.Context, state *queryLoopState
 		SpanID:    trace.NewSpanID(),
 		Messages:  len(synth),
 		Model:     r.svc.Info().Model,
-		Purpose:   "final-synthesis",
+		Purpose:   purpose,
 		Request:   r.svc.modelRequest(synth, nil),
 	}
 	r.svc.emitObserver(func(o Observer) { o.OnModelStart(ctx, modelInfo) })
 	synthStart := time.Now()
 
 	// tools=nil + no tool_choice → the provider must return plain text.
-	call := trace.Model(trace.WithCallID(ctx, modelInfo.SpanID), "final-synthesis")
+	call := trace.Model(trace.WithCallID(ctx, modelInfo.SpanID), purpose)
 	res, err := r.svc.llmService.GenerateWithTools(call.Context(ctx), sanitizeToolPairing(synth), nil, r.generationOptions(r.temperature(), r.maxTokens(), ""))
 	if res != nil {
 		call.End(res.Usage, err)
@@ -874,7 +911,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			// Even an explicit task_complete is goal-checked: a model that
 			// signals "done" with a planning result, or finishes a file task
 			// without ever writing the file, is rejected + re-prompted.
-			if r.lintGate(goal, final, &messages, state, round) {
+			if r.lintGate(ctx, goal, final, &messages, state, round) {
 				return
 			}
 			continue
@@ -1035,7 +1072,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 				if r.steerBeforeFinal(final, &messages, state) {
 					continue
 				}
-				if r.lintGate(goal, final, &messages, state, round) {
+				if r.lintGate(ctx, goal, final, &messages, state, round) {
 					return
 				}
 				continue
@@ -1087,7 +1124,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 			// budget and re-prompts the model with structured feedback;
 			// exhausting the budget blocks the task. Shared with the other
 			// free-form completion paths via lintGate.
-			if r.lintGate(goal, result.Content, &messages, state, round) {
+			if r.lintGate(ctx, goal, result.Content, &messages, state, round) {
 				return
 			}
 			continue

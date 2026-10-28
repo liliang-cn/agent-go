@@ -8,8 +8,10 @@ description: >
   read "output lint no_planning_only_finish repeatedly rejected the response:
   …" as the final answer. Lint reasons are addressed to the model; which lint
   fired belongs in the error event and the StopReason, not in the reply. So this
-  now asserts the opposite of what it once did: the user gets the model's last
-  draft plus a plain caveat, and the machinery stays out of sight.
+  now asserts the opposite of what it once did: the user gets a reply the
+  model writes with tools off, saying what it could not confirm in the user's
+  language (one more call), and the machinery stays out of sight. It used to be
+  the draft plus a fixed English caveat, which ended Chinese answers in English.
 agent: Assistant
 register_lints:
   - no_planning_only_finish
@@ -18,12 +20,12 @@ llm_replies:
   - "Next steps: I will call the tool and report back."
   - "Next steps: I will call the tool and report back."
   - "Next steps: I will call the tool and report back."
-  - "Next steps: I will call the tool and report back."
+  - "I could not confirm that the tool was called."
 expect:
   status: blocked
   final_text_match: "could not confirm"
   final_text_must_not_match: "output lint"
-  llm_calls: 3
+  llm_calls: 4
   lint_violations:
     - lint: no_planning_only_finish
       count: 3

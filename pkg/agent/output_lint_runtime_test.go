@@ -150,13 +150,14 @@ func TestRuntimeBlocksWhenLintBudgetIsExhausted(t *testing.T) {
 	t.Parallel()
 
 	llm := &scriptedLintLLM{
-		// Always returns a violating answer, even on retries. Provide enough
-		// replies for budget+1 attempts.
+		// Always returns a violating answer, even on retries: budget+1
+		// attempts, then the unconfirmed reply.
 		replies: []string{
 			"Routing it to Operator.",
 			"Routing it to Operator again.",
 			"Routing it to Operator once more.",
-			"Routing it to Operator forever.",
+			// The reply the model writes, tools off, once the budget is out.
+			"我没能确认已经转给 Operator。",
 		},
 	}
 	svc, err := New("lint-runtime-block").
@@ -196,8 +197,10 @@ func TestRuntimeBlocksWhenLintBudgetIsExhausted(t *testing.T) {
 	if strings.Contains(blocked, "no_route_phrase") || strings.Contains(blocked, "output lint") {
 		t.Fatalf("blocker leaked lint machinery to the user, got %q", blocked)
 	}
-	if !strings.Contains(blocked, "could not confirm") {
-		t.Fatalf("expected the blocker to tell the user the result is unverified, got %q", blocked)
+	// What the user reads is the model's own reply about what it could not
+	// confirm, in their language — not a fixed English sentence after it.
+	if blocked != "我没能确认已经转给 Operator。" {
+		t.Fatalf("expected the model's unconfirmed reply as the blocker, got %q", blocked)
 	}
 	if got := atomic.LoadInt32(&lint.calls); got != int32(defaultLintRetryBudget+1) {
 		t.Fatalf("expected lint to be invoked budget+1 times (=%d), got %d", defaultLintRetryBudget+1, got)
