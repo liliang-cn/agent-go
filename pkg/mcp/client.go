@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/liliang-cn/agent-go/v3/pkg/trace"
 )
 
 // Command availability cache
@@ -381,14 +383,14 @@ func (c *Client) createHTTPTransport() (mcp.Transport, error) {
 	// This uses Server-Sent Events (SSE) for bidirectional communication
 
 	// Create HTTP client with custom headers if needed
-	httpClient := &http.Client{}
+	httpClient := &http.Client{Transport: trace.HTTPTransport(nil)}
 
 	// If headers are specified, we'll need to wrap the HTTP client
 	// to add them to each request (this would need custom RoundTripper)
 	if len(c.config.Headers) > 0 {
 		httpClient.Transport = &headerTransport{
 			headers: c.config.Headers,
-			base:    http.DefaultTransport,
+			base:    trace.HTTPTransport(nil),
 		}
 	}
 
@@ -403,11 +405,11 @@ func (c *Client) createHTTPTransport() (mcp.Transport, error) {
 
 // createSSETransport creates an SSE transport for legacy SSE-based MCP servers.
 func (c *Client) createSSETransport() (mcp.Transport, error) {
-	httpClient := &http.Client{}
+	httpClient := &http.Client{Transport: trace.HTTPTransport(nil)}
 	if len(c.config.Headers) > 0 {
 		httpClient.Transport = &headerTransport{
 			headers: c.config.Headers,
-			base:    http.DefaultTransport,
+			base:    trace.HTTPTransport(nil),
 		}
 	}
 
@@ -812,11 +814,26 @@ func (c *Client) CallTool(ctx context.Context, toolName string, arguments map[st
 		return nil, fmt.Errorf("tool '%s' not found on server '%s'", toolName, c.config.Name)
 	}
 
-	// Call the tool
-	response, err := session.CallTool(ctx, &mcp.CallToolParams{
+	// Call the tool. The flow goes with it: the traceparent (and tracestate)
+	// of the calling span in params._meta, which a stdio server can read as
+	// well as an HTTP one, and — on HTTP — in the request header too.
+	params := &mcp.CallToolParams{
 		Name:      tool.Name,
 		Arguments: arguments,
+	}
+	trace.Inject(ctx, func(k, v string) {
+		if params.Meta == nil {
+			params.Meta = mcp.Meta{}
+		}
+		params.Meta[k] = v
 	})
+	response, err := session.CallTool(ctx, params)
+	if err == nil && response != nil {
+		// A server that answers with its own span says where the work went.
+		if tp, ok := response.GetMeta()[trace.TraceparentHeader].(string); ok {
+			trace.NoteChild(ctx, tp)
+		}
+	}
 	if err != nil {
 		return &ToolResult{
 			Success: false,
