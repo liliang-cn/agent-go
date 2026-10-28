@@ -117,6 +117,7 @@ type Builder struct {
 	observerPayloads   bool
 	logger             *slog.Logger
 	timeLocation       *time.Location
+	clock              func() time.Time
 	backgroundTasks    bool
 	maxBackgroundTasks int
 	// Custom LLM service (optional - if not set, uses global pool)
@@ -454,6 +455,25 @@ func (b *Builder) WithTimezone(loc *time.Location) *Builder {
 	return b
 }
 
+// WithClock sets what "now" is for everything the runtime states about the
+// time: the system prompt's context line, the per-turn "Now:" line,
+// resolve_datetime, and the memory writer and recall path.
+//
+// Unset, it is the machine's clock. That is right for an assistant running on
+// the person's own device and wrong for anything that answers on behalf of
+// someone whose "now" the host knows better: a replayed conversation, a
+// scheduled run judged against the time it was meant for, a test or a
+// benchmark pinned to one moment. Without it the prompt carried two times at
+// once — the host's, from the runtime, and the app's, from the embedder — and
+// a model asked at 00:59 host time about "明早9点" chose the runtime's and set
+// the reminder for eight hours later instead of tomorrow.
+//
+// The clock is read in the zone WithTimezone set, when one is set.
+func (b *Builder) WithClock(now func() time.Time) *Builder {
+	b.clock = now
+	return b
+}
+
 // WithBackgroundTasks gives the agent background_start, background_check and
 // background_cancel, so it can start work that outlives the turn and pick the
 // result up later.
@@ -754,6 +774,7 @@ func (b *Builder) build() (*Service, error) {
 	}
 	svc.cfg = agentgoCfg
 	svc.location = b.timeLocation
+	svc.clock = b.clock
 	// What this install keeps behind the tool index (Tooling.DeferTools).
 	//
 	// It goes to the registry rather than being consulted per turn, because
@@ -1199,6 +1220,7 @@ func (b *Builder) assembleMemoryService(memStore domain.MemoryStore, llmSvc doma
 	// server is. Unset, this is the machine's zone — right for a desktop app,
 	// a guess for anything serving someone else.
 	memCfg.Location = b.timeLocation
+	memCfg.Now = b.clock
 
 	memSvc := memory.NewService(memStore, llmSvc, embedSvc, memCfg)
 

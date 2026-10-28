@@ -42,6 +42,14 @@ func (s *Service) timeLocation() *time.Location {
 	return time.Local
 }
 
+// currentTime is now by the embedder's clock, or the machine's.
+func (s *Service) currentTime() time.Time {
+	if s != nil && s.clock != nil {
+		return s.clock()
+	}
+	return time.Now()
+}
+
 // resolveItemTimes resolves a batch of texts with a standalone call.
 //
 // Unused by the auto-store path, which gets its answer from the extraction

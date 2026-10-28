@@ -54,6 +54,8 @@ type Service struct {
 	// memory still carries the moment it was written, which is enough to
 	// reckon from.
 	timeResolver *timeaware.Resolver
+	// clock is Config.Now; nil is the machine's.
+	clock func() time.Time
 
 	// PageIndex-style navigator for file-based stores (no embedder)
 	navigator        *IndexNavigator
@@ -77,6 +79,11 @@ type Config struct {
 	// hour a person is likely to be talking about their evening. Nil falls
 	// back to the machine's zone, which is a guess, not a setting.
 	Location *time.Location
+
+	// Now is the embedder's clock (agent.Builder.WithClock); nil is the
+	// machine's. A memory's written-at and the day recall reckons from both
+	// come from it, so a host that pins "now" gets the same days back.
+	Now func() time.Time
 
 	MinScore    float64 // Minimum relevance score for memory retrieval (default 0.7)
 	MaxMemories int     // Maximum memories to inject (default 5)
@@ -145,6 +152,7 @@ func NewService(
 		reflectThreshold: config.ReflectThreshold,
 		disableRetrieval: config.DisableRetrieval,
 		disableAutoStore: config.DisableAutoStore,
+		clock:            config.Now,
 	}
 	if llm != nil {
 		opts := []timeaware.Option{}
@@ -434,7 +442,7 @@ func (s *Service) storeIfWorthwhileSync(ctx context.Context, req *domain.MemoryS
 	// the extraction says about a day is resolved against it, and it is
 	// stored on the memory so a reader on another day can re-anchor without
 	// asking anything.
-	writtenAt := time.Now()
+	writtenAt := s.currentTime()
 	if loc := s.timeLocation(); loc != nil {
 		writtenAt = writtenAt.In(loc)
 	}
@@ -686,7 +694,7 @@ func (s *Service) Add(ctx context.Context, memory *domain.Memory) error {
 		memory.ID = uuid.New().String()
 	}
 	if memory.CreatedAt.IsZero() {
-		memory.CreatedAt = time.Now()
+		memory.CreatedAt = s.currentTime()
 	}
 	enrichStructuredMemory(memory)
 	// After the event blob exists, not before: the resolved date has nowhere
@@ -1009,7 +1017,7 @@ func (s *Service) formatMemoriesForQuery(ctx context.Context, query string, quer
 	// saying "明天" is read as tomorrow-from-today however old it is, which
 	// is wrong every day but the one it was written on. Pure arithmetic: the
 	// read path never calls a model.
-	now := time.Now()
+	now := s.currentTime()
 	if loc := s.timeLocation(); loc != nil {
 		now = now.In(loc)
 	}

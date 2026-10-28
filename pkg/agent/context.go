@@ -7,7 +7,6 @@ import (
 	"runtime"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/skills"
 )
@@ -37,7 +36,7 @@ type UserContext struct {
 // buildSystemContext collects the ambient system information.
 func (s *Service) buildSystemContext() *SystemContext {
 	bgCtx := context.Background()
-	now := time.Now()
+	now := s.now()
 	hostname, _ := os.Hostname()
 	user := os.Getenv("USER")
 	if user == "" {

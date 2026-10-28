@@ -203,12 +203,19 @@ func toolArgInt(args map[string]interface{}, k string) int {
 	return 0
 }
 
-// now is the current time in the person's zone. resolve_datetime used the
-// machine's: a hive pod in UTC turned "下周三上午十点" into 10:00Z, 18:00 in
-// Hangzhou, although the builder had been told the zone.
+// now is the current time in the person's zone, read from the embedder's
+// clock when it set one (WithClock). resolve_datetime used the machine's: a
+// hive pod in UTC turned "下周三上午十点" into 10:00Z, 18:00 in Hangzhou,
+// although the builder had been told the zone. Everything the runtime says to
+// the model about the time goes through here, so the prompt never carries two
+// different nows.
 func (s *Service) now() time.Time {
-	if s != nil && s.location != nil {
-		return time.Now().In(s.location)
+	t := time.Now()
+	if s != nil && s.clock != nil {
+		t = s.clock()
 	}
-	return time.Now()
+	if s != nil && s.location != nil {
+		return t.In(s.location)
+	}
+	return t
 }

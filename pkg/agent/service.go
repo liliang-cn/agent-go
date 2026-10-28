@@ -39,6 +39,9 @@ type Service struct {
 	// location is the person's timezone (Builder.WithTimezone); nil is the
 	// machine's. See Service.now.
 	location *time.Location
+	// clock is the embedder's idea of now (Builder.WithClock); nil is the
+	// machine's. See Service.now.
+	clock func() time.Time
 
 	// bgWork tracks goroutines a run leaves behind (memory extraction), so Close
 	// can wait for them instead of letting them write after the caller has moved
