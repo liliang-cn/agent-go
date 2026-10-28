@@ -43,6 +43,7 @@ type Wire struct {
 	firstAt  time.Duration
 	usage    domain.TokenUsage
 	hasUsage bool
+	stream   bool
 }
 
 // WireEvent is one thing that happened to a model call on the wire.
@@ -307,6 +308,26 @@ func (w *Wire) reported() (*domain.TokenUsage, time.Duration) {
 }
 
 // Body wraps an answer's body so each read is noted.
+// Streamed says the answer is arriving as an event stream, so the time to
+// its first output is a real measure and not the length of the whole wait.
+func (w *Wire) Streamed() {
+	if w == nil {
+		return
+	}
+	w.mu.Lock()
+	w.stream = true
+	w.mu.Unlock()
+}
+
+func (w *Wire) streamed() bool {
+	if w == nil {
+		return false
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.stream
+}
+
 func (w *Wire) Body(rc io.ReadCloser) io.ReadCloser {
 	if w == nil || rc == nil {
 		return rc

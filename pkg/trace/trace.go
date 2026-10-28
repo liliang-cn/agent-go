@@ -112,23 +112,28 @@ func setFile(w io.Writer) {
 type Record struct {
 	Time time.Time `json:"ts"`
 	Run  string    `json:"run,omitempty"`
-	// Kind is "model", "memory", "tool" or "run" (the summary).
+	// Kind is "model", "memory", "tool", "decision" or "run" (the summary).
 	Kind string `json:"kind"`
 	// Name is a model call's purpose, a tool's name, a memory step's name, or
 	// a run's outcome.
 	Name string `json:"name"`
 	// At is when the step started, after the run started.
-	AtMs    int64  `json:"at_ms"`
-	DurMs   int64  `json:"dur_ms"`
-	TTFTMs  int64  `json:"ttft_ms,omitempty"`
-	In      int    `json:"in,omitempty"`
-	Out     int    `json:"out,omitempty"`
-	Cached  int    `json:"cached,omitempty"`
-	Think   int    `json:"thinking,omitempty"`
-	Detail  string `json:"detail,omitempty"`
-	Err     string `json:"err,omitempty"`
-	Request any    `json:"request,omitempty"`
-	Reply   any    `json:"reply,omitempty"`
+	AtMs   int64 `json:"at_ms"`
+	DurMs  int64 `json:"dur_ms"`
+	TTFTMs int64 `json:"ttft_ms,omitempty"`
+	In     int   `json:"in,omitempty"`
+	Out    int   `json:"out,omitempty"`
+	Cached int   `json:"cached,omitempty"`
+	// CacheWrite is the prompt tokens written to the provider's cache.
+	CacheWrite int `json:"cache_write,omitempty"`
+	Think      int `json:"thinking,omitempty"`
+	// Streamed is true when a model call's answer arrived as a stream; only
+	// then is TTFTMs a time to first output rather than the whole wait.
+	Streamed bool   `json:"streamed,omitempty"`
+	Detail   string `json:"detail,omitempty"`
+	Err      string `json:"err,omitempty"`
+	Request  any    `json:"request,omitempty"`
+	Reply    any    `json:"reply,omitempty"`
 }
 
 type ctxKey int
@@ -191,15 +196,14 @@ func sinkOf(ctx context.Context) Sink {
 	return s
 }
 
-var callSeq atomic.Int64
-
 // WithRun names the run a context belongs to and starts its timeline.
 func WithRun(ctx context.Context, id string) context.Context {
 	if !Enabled() {
 		return ctx
 	}
 	ctx = context.WithValue(ctx, runKey, id)
-	return context.WithValue(ctx, statsKey, &runStats{start: time.Now()})
+	now := time.Now()
+	return context.WithValue(ctx, statsKey, &runStats{start: now, tally: NewTally(now)})
 }
 
 // WithPurpose says what the model calls made with this context are for.
@@ -231,10 +235,7 @@ type runStats struct {
 	start   time.Time
 	mu      sync.Mutex
 	records []Record
-
-	model, memory, tool        time.Duration
-	modelCalls, toolCalls      int
-	firstModelAt, firstTokenAt time.Duration
+	tally   *Tally
 }
 
 // maxRecords bounds one run's timeline; a run that loops past it keeps its
@@ -298,7 +299,7 @@ func (r Record) line() string {
 	if r.Detail != "" {
 		b.WriteString(" " + r.Detail)
 	}
-	if r.Kind == "run" {
+	if r.Kind == "run" || r.Kind == "decision" {
 		return b.String()
 	}
 	fmt.Fprintf(&b, " dur=%s", ms(r.DurMs))
@@ -313,6 +314,9 @@ func (r Record) line() string {
 		}
 		if r.Cached > 0 {
 			fmt.Fprintf(&b, " cached=%d", r.Cached)
+		}
+		if r.CacheWrite > 0 {
+			fmt.Fprintf(&b, " cache_write=%d", r.CacheWrite)
 		}
 		if r.Think > 0 {
 			fmt.Fprintf(&b, " thinking=%d", r.Think)
@@ -358,7 +362,11 @@ func Model(ctx context.Context, purpose string, detail ...string) *Call {
 	if purpose == "" {
 		purpose = "other"
 	}
-	c := &Call{id: fmt.Sprintf("trace-%d", callSeq.Add(1)), sink: sink, ctx: ctx, purpose: purpose,
+	id := callIDOf(ctx)
+	if id == "" {
+		id = NewSpanID()
+	}
+	c := &Call{id: id, sink: sink, ctx: ctx, purpose: purpose,
 		detail: strings.Join(detail, " "), start: time.Now()}
 	if sink != nil {
 		sink.ModelStart(ctx, c.id, purpose)
@@ -369,20 +377,49 @@ func Model(ctx context.Context, purpose string, detail ...string) *Call {
 		go c.wire.Heartbeat(ctx, WireTick, WireQuiet, c.stop)
 	}
 	if s := statsOf(ctx); s != nil {
-		s.mu.Lock()
-		if s.modelCalls == 0 && s.firstModelAt == 0 {
-			s.firstModelAt = time.Since(s.start)
-		}
-		s.mu.Unlock()
+		s.tally.ModelStarted(c.start)
 	}
 	return c
 }
 
+type callIDKey struct{}
+
+// WithCallID names the span id the next model call made with ctx takes, so a
+// caller that already announced the call under an id (the runtime's
+// answering turn) and the call's own record agree on one.
+func WithCallID(ctx context.Context, id string) context.Context {
+	if ctx == nil || id == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, callIDKey{}, id)
+}
+
+func callIDOf(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	id, _ := ctx.Value(callIDKey{}).(string)
+	return id
+}
+
+// ID is the call's span id.
+func (c *Call) ID() string {
+	if c == nil {
+		return ""
+	}
+	return c.id
+}
+
 // Context is ctx carrying this call's Wire, for the client the call goes
-// through to report to. Pass it to the model call instead of ctx.
+// through to report to, and the call as the current span, so a traceparent
+// sent with the HTTP request names this call. Pass it to the model call
+// instead of ctx.
 func (c *Call) Context(ctx context.Context) context.Context {
 	if c == nil {
 		return ctx
+	}
+	if parent, ok := SpanFromContext(ctx); ok {
+		ctx = ContextWithSpan(ctx, SpanContext{TraceID: parent.TraceID, SpanID: c.id, ParentSpanID: parent.SpanID})
 	}
 	return WithWire(ctx, c.wire)
 }
@@ -466,18 +503,25 @@ func (c *Call) End(usage *domain.TokenUsage, err error) {
 	ttft := time.Duration(c.first.Load())
 	// A caller that could not say — Generate returns a string, not its cost —
 	// gets what the provider told the wire.
-	if wireUsage, wireFirst := c.wire.reported(); usage == nil || ttft == 0 {
-		if usage == nil {
-			usage = wireUsage
-		}
-		if ttft == 0 {
-			ttft = wireFirst
-		}
+	wireUsage, wireFirst := c.wire.reported()
+	if usage == nil {
+		usage = wireUsage
+	}
+	if ttft == 0 {
+		ttft = wireFirst
+	}
+	// Time to first output means something only for an answer that streamed.
+	// A whole JSON answer's first byte is its last: reporting it as ttft said
+	// a 34-second turn took 34.35 seconds to start.
+	streamed := c.wire.streamed()
+	if !streamed {
+		ttft = 0
 	}
 	r := Record{Time: c.start, Kind: "model", Name: c.purpose, Detail: c.detail,
-		DurMs: dur.Milliseconds(), TTFTMs: ttft.Milliseconds()}
+		DurMs: dur.Milliseconds(), TTFTMs: ttft.Milliseconds(), Streamed: streamed}
 	if usage != nil {
 		r.In, r.Out, r.Cached, r.Think = usage.PromptTokens, usage.CompletionTokens, usage.CachedPromptTokens, usage.ReasoningTokens
+		r.CacheWrite = usage.CacheWriteTokens
 	}
 	if err != nil {
 		r.Err = trim(err.Error())
@@ -498,13 +542,16 @@ func (c *Call) End(usage *domain.TokenUsage, err error) {
 	}
 	emit(c.ctx, r)
 	if s := statsOf(c.ctx); s != nil {
-		s.mu.Lock()
-		s.model += dur
-		s.modelCalls++
-		if ttft > 0 && s.firstTokenAt == 0 && c.purpose == "turn" {
-			s.firstTokenAt = c.start.Sub(s.start) + ttft
-		}
-		s.mu.Unlock()
+		s.tally.Model(c.purpose, c.start, dur, ttft, Tokens{Prompt: r.In, Completion: r.Out, Cached: r.Cached, CacheWrite: r.CacheWrite})
+	}
+}
+
+// Streamed marks this call's answer as having arrived as a stream. A client
+// that reads an event stream says so on the call's Wire (Wire.Streamed); this
+// is for a caller that streams without one.
+func (c *Call) Streamed() {
+	if c != nil {
+		c.wire.Streamed()
 	}
 }
 
@@ -527,20 +574,17 @@ func Step(ctx context.Context, kind, name string) func(err error) {
 		}
 		emit(ctx, r)
 		if s := statsOf(ctx); s != nil {
-			s.mu.Lock()
 			switch kind {
 			case "memory":
-				s.memory += dur
+				s.tally.Memory(dur)
 			case "tool":
-				s.tool += dur
-				s.toolCalls++
+				s.tally.Tool(name, dur, err != nil)
 			}
-			s.mu.Unlock()
 		}
 	}
 }
 
-// Summary is a run's totals.
+// Summary is a run's totals, as a Tally adds them up.
 type Summary struct {
 	TotalMs            int64 `json:"total_ms"`
 	FirstModelCallMs   int64 `json:"first_model_call_ms"`
@@ -550,6 +594,16 @@ type Summary struct {
 	MemoryMs           int64 `json:"memory_ms"`
 	ToolMs             int64 `json:"tool_ms"`
 	ToolCalls          int   `json:"tool_calls"`
+	ToolFailures       int   `json:"tool_failures,omitempty"`
+	// Tokens is every model call's tokens added up; ByPurpose splits the
+	// calls, their time and their tokens by what each was for.
+	Tokens    *Tokens                   `json:"tokens,omitempty"`
+	ByPurpose map[string]PurposeSummary `json:"by_purpose,omitempty"`
+	// Tools is the tool calls by tool name.
+	Tools       map[string]ToolSummary `json:"tools,omitempty"`
+	LintRetries int                    `json:"lint_retries,omitempty"`
+	LintBlocks  int                    `json:"lint_blocks,omitempty"`
+	Compactions int                    `json:"compactions,omitempty"`
 }
 
 // Timeline is a run's records so far and its totals; ok is false when the
@@ -562,11 +616,7 @@ func Timeline(ctx context.Context) (records []Record, sum Summary, ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	records = append([]Record(nil), s.records...)
-	return records, Summary{
-		TotalMs: time.Since(s.start).Milliseconds(), FirstModelCallMs: s.firstModelAt.Milliseconds(),
-		FirstAnswerTokenMs: s.firstTokenAt.Milliseconds(), ModelMs: s.model.Milliseconds(), ModelCalls: s.modelCalls,
-		MemoryMs: s.memory.Milliseconds(), ToolMs: s.tool.Milliseconds(), ToolCalls: s.toolCalls,
-	}, true
+	return records, s.tally.Summary(), true
 }
 
 // End records the run's summary. Model and tool time can overlap, so the

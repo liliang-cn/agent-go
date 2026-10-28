@@ -39,6 +39,7 @@ func TestARunsTimelineLinesAndFile(t *testing.T) {
 
 	turn := Model(ctx, "turn", "tools=3")
 	turn.Request([]string{"hello"})
+	turn.Streamed()
 	time.Sleep(5 * time.Millisecond)
 	turn.Output()
 	turn.Reply("hi")
