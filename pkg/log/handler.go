@@ -32,7 +32,7 @@ func (h *redactHandler) Handle(ctx context.Context, r slog.Record) error {
 		out.AddAttrs(redactAttr(a))
 		return true
 	})
-	if !h.hasTrace {
+	if !h.hasTrace && ctx != nil && ctx.Value(traceAddedKey{}) == nil {
 		if sc, ok := trace.SpanFromContext(ctx); ok {
 			out.AddAttrs(slog.String("trace_id", sc.TraceID), slog.String("span_id", sc.SpanID))
 			if sc.ParentSpanID != "" {
@@ -40,8 +40,15 @@ func (h *redactHandler) Handle(ctx context.Context, r slog.Record) error {
 			}
 		}
 	}
-	return h.inner.Handle(ctx, out)
+	// A redacting handler further in (a host logger wrapped twice) must not
+	// add the ids a second time.
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return h.inner.Handle(context.WithValue(ctx, traceAddedKey{}, true), out)
 }
+
+type traceAddedKey struct{}
 
 func (h *redactHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	red := make([]slog.Attr, len(attrs))
