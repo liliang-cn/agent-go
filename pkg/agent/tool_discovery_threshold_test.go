@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
@@ -76,10 +77,50 @@ func TestLargeCatalogueLayersBehindSearch(t *testing.T) {
 	defer svc.Close()
 
 	registerNTools(t, svc, 40)
+	svc.toolRegistry.SetDeferredPatterns([]string{"probe_tool_3*"})
 
 	tools := svc.collectAllAvailableTools(context.Background(), svc.agent)
+	if hasToolNamed(tools, "probe_tool_31") {
+		t.Error("a deferred tool went into the schema")
+	}
 	if !hasToolNamed(tools, "search_available_tools") {
-		t.Error("a catalogue over the threshold must offer the search tool")
+		t.Error("a catalogue that hides tools must offer the search tool")
+	}
+}
+
+// Over the threshold with nothing hidden — every tool a registry tool, which
+// layering never defers — there is nothing to search for. Offering the search
+// anyway sent a 100-tool assistant searching for capabilities it could see it
+// lacked, and its answer told the person it had "searched the tool catalog".
+func TestLargeCatalogueWithNothingHiddenHasNoSearchTool(t *testing.T) {
+	t.Parallel()
+
+	cfg := testAgentConfig(t.TempDir())
+	cfg.Tooling.DiscoveryThreshold = 8
+
+	svc, err := New("wide-catalogue").
+		WithConfig(cfg).
+		WithLLM(&constraintLLM{replies: []string{"done"}}).
+		Build()
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	defer svc.Close()
+
+	registerNTools(t, svc, 40)
+
+	tools := svc.collectAllAvailableTools(context.Background(), svc.agent)
+	if hasToolNamed(tools, "search_available_tools") {
+		t.Error("nothing is hidden, so the search tool must not be offered")
+	}
+	if !hasToolNamed(tools, "probe_tool_39") {
+		t.Error("every registry tool must stay in the schema")
+	}
+	prompt := svc.buildSystemPromptForTurn(context.Background(), svc.agent, nil, !offersToolSearch(tools))
+	for _, leak := range []string{"search_available_tools", "Search-mode tool catalog", "search for an exact callable name"} {
+		if strings.Contains(prompt, leak) {
+			t.Errorf("prompt describes a tool search the turn does not offer (%q):\n%s", leak, prompt)
+		}
 	}
 }
 

@@ -200,7 +200,7 @@ func (s *Service) prepareTurnInputsWithPolicy(ctx context.Context, currentAgent 
 		tools = compactToolSchemas(tools)
 	}
 
-	systemMsg := s.buildSystemPromptForRun(ctx, currentAgent, cfg)
+	systemMsg := s.buildSystemPromptForTurn(ctx, currentAgent, cfg, !offersToolSearch(tools))
 	if cfg != nil && strings.TrimSpace(cfg.SystemPromptOverride) != "" {
 		systemMsg = cfg.SystemPromptOverride
 	}
@@ -286,8 +286,52 @@ func (s *Service) collectAllAvailableToolsWithPolicy(ctx context.Context, curren
 		return withoutToolSearchTools(flat)
 	}
 	layered := s.collectTools(ctx, currentAgent, policy, true)
+	if !s.layeringHidesTools(flat, layered) {
+		// Over the threshold, but every tool is still in the schema: the
+		// catalogue is all registry tools (AddTool), which layering never
+		// defers. The search tools then have nothing to find, and offering
+		// them is the invitation the threshold exists to withdraw. Measured
+		// on a 100-tool assistant: a request with no fitting tool spent a
+		// round searching, came back empty, and the answer told the person
+		// it had "searched the tool catalog".
+		return withoutToolSearchTools(flat)
+	}
 	s.decideToolLayering(ctx, len(flat), threshold, layered)
 	return layered
+}
+
+// layeringHidesTools reports whether the layered list leaves anything out
+// that exists: a tool of the flat list it does not carry, or a registry tool
+// held back by SetDeferredPatterns.
+func (s *Service) layeringHidesTools(flat, layered []domain.ToolDefinition) bool {
+	offered := make(map[string]bool, len(layered))
+	for _, t := range layered {
+		offered[t.Function.Name] = true
+	}
+	for _, t := range flat {
+		if !offered[t.Function.Name] {
+			return true
+		}
+	}
+	if s != nil && s.toolRegistry != nil {
+		for _, t := range s.toolRegistry.ListDeferredTools() {
+			if !offered[t.Function.Name] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// offersToolSearch reports whether a turn's tool list carries a tool search,
+// which is the only case in which the prompt may tell the model to search.
+func offersToolSearch(tools []domain.ToolDefinition) bool {
+	for _, t := range tools {
+		if t.Function.Name == "search_available_tools" || domain.IsToolSearchTool(t.Function.Name) {
+			return true
+		}
+	}
+	return false
 }
 
 // decideWebSearchSurface records which search route the model is offered

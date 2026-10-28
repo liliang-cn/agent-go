@@ -20,6 +20,9 @@ type systemPromptOptions struct {
 	// forbidTools drops every rule that teaches the model to reach for a tool.
 	// The run will be offered none, so mentioning them only invites refusals.
 	forbidTools bool
+	// noToolSearch says the turn offers no tool search (nothing is deferred),
+	// so neither the search rule nor the search-mode catalogue note applies.
+	noToolSearch bool
 	// projectInstructions is the run's snapshot of its instruction files.
 	// When not resolved (a prompt built outside a run) they are read fresh.
 	projectInstructions         string
@@ -141,6 +144,9 @@ func (s *Service) ensureSystemPromptSectionRegistry() {
 		if !ok {
 			return prompt.Section{}, fmt.Errorf("unexpected section data type %T", raw)
 		}
+		if data.options.noToolSearch {
+			return prompt.Section{Name: "tool_catalog", Dynamic: true}, nil
+		}
 		return prompt.Section{Name: "tool_catalog", Content: data.service.buildToolCatalogSummary(ctx), Dynamic: true}, nil
 	})
 	s.promptManager.RegisterSection("web_search", func(ctx context.Context, raw interface{}) (prompt.Section, error) {
@@ -174,9 +180,14 @@ func (s *Service) buildSystemPromptSections(ctx context.Context, agent *Agent, o
 			"- No tools are available for this task. Answer directly from your own knowledge.",
 		)
 	} else {
+		toolRule := "- Call only tools in your schema; never invent names. If none fits, search once (`search_available_tools`) — one search per task — then answer or block."
+		if opts.noToolSearch {
+			// Every tool there is is already in the schema.
+			toolRule = "- Call only tools in your schema; never invent names. Every tool you have is in it."
+		}
 		rules = append(rules,
 			"- Call task_complete when you have the final answer, task_blocked only for a concrete blocker.",
-			"- Call only tools in your schema; never invent names. If none fits, search once (`search_available_tools`) — one search per task — then answer or block.",
+			toolRule,
 			"- If 'Relevant Skills For This Task' lists a matching skill, call its `skill_*` tool first and follow it.",
 			"- Never repeat a tool call that cannot return anything new.",
 		)

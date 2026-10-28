@@ -17,8 +17,17 @@ func (s *Service) buildSystemPrompt(ctx context.Context, agent *Agent) string {
 // otherwise the model is taught to reach for a door the runtime has locked, and
 // every refusal costs a wasted round.
 func (s *Service) buildSystemPromptForRun(ctx context.Context, agent *Agent, cfg *RunConfig) string {
+	return s.buildSystemPromptForTurn(ctx, agent, cfg, false)
+}
+
+// buildSystemPromptForTurn is buildSystemPromptForRun once the turn's tool
+// list is known. noToolSearch says that list carries no tool search, so the
+// prompt must not describe one: telling the model "schemas are minimized;
+// search for an exact callable name" beside a schema holding every tool sends
+// it searching for capabilities it can already see are missing.
+func (s *Service) buildSystemPromptForTurn(ctx context.Context, agent *Agent, cfg *RunConfig, noToolSearch bool) string {
 	forbid := cfg != nil && cfg.resolvedConstraints != nil && cfg.resolvedConstraints.ForbidTools
-	opts := systemPromptOptions{forbidTools: forbid}
+	opts := systemPromptOptions{forbidTools: forbid, noToolSearch: noToolSearch}
 	if cfg != nil && cfg.projectInstructionsResolved {
 		opts.projectInstructions = cfg.projectInstructions
 		opts.projectInstructionsResolved = true
