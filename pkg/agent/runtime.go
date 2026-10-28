@@ -34,6 +34,16 @@ type Runtime struct {
 	// second block is allowed through.
 	deliverableFallbackUsed bool
 
+	// persistFrom is the first message of the run's transcript not yet in
+	// the session, and turnStart how long the session was when the turn
+	// began. The transcript starts with the history, this turn's context and
+	// the goal, which are stored already; only what follows is the turn's.
+	// Telling them apart by content could not: the same words said in two
+	// turns — the round prompt after every tool call, a repeated "好的" —
+	// read as already stored, and the next turn's request lost them.
+	persistFrom int
+	turnStart   int
+
 	svc          *Service
 	eventChan    chan *Event
 	currentAgent *Agent
@@ -539,7 +549,15 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 	// On a fresh run, record the user's goal in the session. On resume
 	// the messages already include it (or a follow-up was appended by
 	// the caller), so don't double-add.
+	r.turnStart = len(r.session.GetMessages())
+	r.persistFrom = len(messages)
 	if !resuming {
+		// The turn's own context first, where it was sent: the next turn's
+		// request then begins with this one's, byte for byte, and reads it
+		// from the provider's cache instead of paying for it again.
+		for _, m := range prepared.turnContext {
+			r.session.AddMessage(withTaskID(m, taskID))
+		}
 		r.session.AddMessage(withTaskID(domain.Message{Role: "user", Content: goal}, taskID))
 	}
 	// Multimodal input: attach caller-supplied parts (e.g. images) to the
@@ -567,8 +585,13 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		// iteration so every "continue" path (handoff, lint retry,
 		// auto-continue, tool round) gets a chance to compact.
 		if r.shouldAutoCompact(state, messages) {
+			// What the turn has said so far goes into the history before
+			// compaction rewrites the transcript; the summary is for the
+			// model's next request, not for the record.
+			r.persistMessages(messages)
 			if newMsgs, ok := r.runCompactionRound(ctx, state, messages, goal); ok {
 				messages = newMsgs
+				r.persistFrom = len(newMsgs)
 				state.setMessages(newMsgs)
 				state.noteRecovery(recoveryMeta{Compacted: true})
 				clear(state.PrevToolCalls)
@@ -761,6 +784,7 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 					Content:          result.Content,
 					ToolCalls:        len(result.ToolCalls),
 					DurationMs:       llmDur.Milliseconds(),
+					TTFTMs:           result.FirstOutputMs,
 					TokensUsed:       turnTokens,
 					CachedTokens:     cachedTokens,
 					PromptTokens:     promptTokens,
@@ -1216,21 +1240,31 @@ func (r *Runtime) clearCollectedSources() {
 
 // persistMessages appends a turn's messages to the session and saves it.
 //
-// messages is what was sent to the model, which already contains the user's
-// goal — the run added it at the top (see the AddMessage on the fresh-run
-// path). Appending blindly stored the question twice. Skip anything the
-// session already holds; the key matches mergeMessagesForSave so both paths
-// agree on what "the same turn" means.
+// messages is what was sent to the model. Everything before persistFrom is
+// stored already — the history, this turn's context and the goal at the
+// start, earlier rounds by an earlier call — so only what follows is new.
+// Within that, a message this turn already put in the session itself (a
+// steer, an answer kept before one) or a tool turn the session holds by id
+// is skipped, so no path writes a turn twice.
 func (r *Runtime) persistMessages(messages []domain.Message) {
-	if len(messages) == 0 {
+	if r.persistFrom > len(messages) {
+		r.persistFrom = len(messages)
+	}
+	fresh := messages[r.persistFrom:]
+	r.persistFrom = len(messages)
+	if len(fresh) == 0 {
 		return
 	}
-	seen := make(map[string]bool)
-	for _, m := range r.session.GetMessages() {
-		seen[sessionMessageKey(m)] = true
-	}
+	seen := r.storedThisTurn()
+	taskID := currentTaskID(r.session)
 	added := 0
-	for _, msg := range conversationMessages(messages) {
+	for _, msg := range conversationMessages(fresh) {
+		// A message the runtime wrote for the model — the prompt after a
+		// tool round — carries no task id, and the next turn reads only its
+		// own task's history: stored as it was, it was never sent again.
+		if msg.TaskID == "" && taskID != "" {
+			msg = withTaskID(msg, taskID)
+		}
 		k := sessionMessageKey(msg)
 		if seen[k] {
 			continue
@@ -1247,6 +1281,19 @@ func (r *Runtime) persistMessages(messages []domain.Message) {
 	}
 }
 
+// storedThisTurn is the keys of what the session holds that a write from this
+// turn would repeat: the messages added since the turn began, and any turn
+// that carries an id.
+func (r *Runtime) storedThisTurn() map[string]bool {
+	seen := make(map[string]bool)
+	for i, m := range r.session.GetMessages() {
+		if i >= r.turnStart || hasTurnID(m) {
+			seen[sessionMessageKey(m)] = true
+		}
+	}
+	return seen
+}
+
 // persistFinalAnswer stores the answer the run ended with.
 //
 // The final content is generated after messages was assembled, so it is in
@@ -1258,11 +1305,8 @@ func (r *Runtime) persistFinalAnswer(content string) {
 		return
 	}
 	msg := withTaskID(domain.Message{Role: "assistant", Content: content}, currentTaskID(r.session))
-	key := sessionMessageKey(msg)
-	for _, m := range r.session.GetMessages() {
-		if sessionMessageKey(m) == key {
-			return // already there (e.g. a path that appended it itself)
-		}
+	if r.storedThisTurn()[sessionMessageKey(msg)] {
+		return // already there (e.g. a path that appended it itself)
 	}
 	r.session.AddMessage(msg)
 	if err := r.svc.store.SaveSession(r.session); err != nil {

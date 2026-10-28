@@ -128,8 +128,8 @@ func (r *Runtime) applySteers(messages *[]domain.Message, state *queryLoopState)
 		*messages = append(*messages, msg)
 		// Into the history now, not at the end of the run: most completion
 		// paths persist only the answer, and a message a later turn cannot
-		// see was never really in the conversation. persistMessages dedupes
-		// by content, so this cannot double-write.
+		// see was never really in the conversation. persistMessages skips
+		// what this turn already stored, so this cannot double-write.
 		r.session.AddMessage(msg)
 		r.emit(EventTypeSteer, msg.Content)
 	}

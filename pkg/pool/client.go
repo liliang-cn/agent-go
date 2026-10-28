@@ -63,11 +63,12 @@ func NewClient(providerName, baseURL, key, modelName string) (*Client, error) {
 		return nil, fmt.Errorf("model_name is required")
 	}
 
-	var transport http.RoundTripper = sharedTransport
+	var transport http.RoundTripper = wireTransport{base: sharedTransport}
 	if isAnthropicNative(baseURL) {
 		// Anthropic's chat-completions endpoint does not cache; its own
-		// API does (anthropic.go).
-		transport = anthropicTransport{base: sharedTransport}
+		// API does (anthropic.go). The wire goes inside the translation, so
+		// it reports the request that was sent and not the one it came from.
+		transport = anthropicTransport{base: transport}
 	}
 	return &Client{
 		providerName: providerName,
@@ -76,7 +77,7 @@ func NewClient(providerName, baseURL, key, modelName string) (*Client, error) {
 		modelName:    modelName,
 		http: &http.Client{
 			Timeout:   600 * time.Second,
-			Transport: wireTransport{base: transport},
+			Transport: transport,
 		},
 		promptManager: prompt.NewManager(),
 		nativeSearch:  newNativeSearchState(providerName, domain.NativeWebSearchUndeclared, nil),
@@ -867,7 +868,10 @@ func isResponseFormatRejection(err error) bool {
 		return false
 	}
 	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "status 400") && strings.Contains(msg, "response_format")
+	// Over the Messages API (anthropic.go) the schema travels as
+	// output_config.format, and a refusal names that field instead.
+	return strings.Contains(msg, "status 400") &&
+		(strings.Contains(msg, "response_format") || strings.Contains(msg, "output_config.format"))
 }
 
 // extractPoolJSON strips markdown code fences and finds the first JSON object/array.
@@ -1153,6 +1157,7 @@ func (c *Client) postOnce(ctx context.Context, path string, body interface{}) ([
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(respBody))
 	}
+	trace.WireOf(ctx).Usage(parsePoolUsage(respBody))
 
 	return respBody, nil
 }

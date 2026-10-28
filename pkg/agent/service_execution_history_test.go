@@ -13,7 +13,7 @@ func TestBuildConversationMessagesIncludesSessionHistory(t *testing.T) {
 	session.AddMessage(domainMessage("assistant", "我已经给你做了一版摘要。"))
 
 	svc := &Service{}
-	messages := svc.buildConversationMessages(session, "筛一版", "", "", nil, "", false)
+	messages, _ := svc.buildConversationMessages(session, "筛一版", "", "", nil, "", false)
 
 	if len(messages) != 4 {
 		t.Fatalf("expected 4 messages, got %d", len(messages))
@@ -35,7 +35,7 @@ func TestBuildConversationMessagesIncludesSessionHistory(t *testing.T) {
 
 func TestBuildConversationMessagesUsesSummaryWhenHistoryEmpty(t *testing.T) {
 	svc := &Service{}
-	messages := svc.buildConversationMessages(NewSession("agent-1"), "继续", "", "", nil, "之前讨论了今天新闻摘要。", false)
+	messages, _ := svc.buildConversationMessages(NewSession("agent-1"), "继续", "", "", nil, "之前讨论了今天新闻摘要。", false)
 
 	if len(messages) != 3 {
 		t.Fatalf("expected 3 messages, got %d", len(messages))
@@ -62,7 +62,7 @@ func TestBuildConversationMessagesUsesRecentWindowAndOlderChronologicalContext(t
 	}
 
 	svc := &Service{}
-	messages := svc.buildConversationMessages(session, "继续", "", "", nil, "重点摘要", false)
+	messages, _ := svc.buildConversationMessages(session, "继续", "", "", nil, "重点摘要", false)
 
 	// summary context + 4 older chronological + 6 recent window + user meta context + current user turn
 	if len(messages) != 13 {
@@ -84,7 +84,7 @@ func TestBuildConversationMessagesUsesRecentWindowAndOlderChronologicalContext(t
 
 func TestBuildConversationMessagesCreatesSeparateContextMessage(t *testing.T) {
 	svc := &Service{}
-	messages := svc.buildConversationMessages(NewSession("agent-1"), "继续", "RAG 片段", "Memory 片段", nil, "摘要", false)
+	messages, _ := svc.buildConversationMessages(NewSession("agent-1"), "继续", "RAG 片段", "Memory 片段", nil, "摘要", false)
 
 	// summary, user context, memory+RAG context, goal
 	if len(messages) != 4 {
@@ -113,7 +113,7 @@ func TestBuildConversationMessagesFiltersHistoryByTaskID(t *testing.T) {
 	session.AddMessage(domainMessageWithTask("assistant", "task-2-assistant", "task-2"))
 
 	svc := &Service{}
-	messages := svc.buildConversationMessages(session, "继续", "", "", nil, "", false)
+	messages, _ := svc.buildConversationMessages(session, "继续", "", "", nil, "", false)
 
 	joined := ""
 	for _, msg := range messages {

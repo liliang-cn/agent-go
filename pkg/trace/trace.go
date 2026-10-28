@@ -418,6 +418,20 @@ func (c *Call) Output() {
 	c.first.CompareAndSwap(0, int64(time.Since(c.start)))
 }
 
+// FirstOutput is how long the call waited for the first of its answer: the
+// first output its caller marked, else the first byte the wire saw; 0 when
+// neither has happened.
+func (c *Call) FirstOutput() time.Duration {
+	if c == nil {
+		return 0
+	}
+	if first := time.Duration(c.first.Load()); first > 0 {
+		return first
+	}
+	_, first := c.wire.reported()
+	return first
+}
+
 // Request keeps what was sent, when bodies are being recorded or the
 // call's sink asked for them.
 func (c *Call) Request(v any) {
@@ -450,6 +464,16 @@ func (c *Call) End(usage *domain.TokenUsage, err error) {
 	c.stopWire()
 	dur := time.Since(c.start)
 	ttft := time.Duration(c.first.Load())
+	// A caller that could not say — Generate returns a string, not its cost —
+	// gets what the provider told the wire.
+	if wireUsage, wireFirst := c.wire.reported(); usage == nil || ttft == 0 {
+		if usage == nil {
+			usage = wireUsage
+		}
+		if ttft == 0 {
+			ttft = wireFirst
+		}
+	}
 	r := Record{Time: c.start, Kind: "model", Name: c.purpose, Detail: c.detail,
 		DurMs: dur.Milliseconds(), TTFTMs: ttft.Milliseconds()}
 	if usage != nil {

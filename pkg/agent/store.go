@@ -121,7 +121,7 @@ func (s *Store) SaveSession(session *Session) error {
 	// skipping the merge when nothing was appended would fall through to
 	// writing this copy's list, which is exactly the overwrite to avoid.
 	if latest, err := s.GetSession(session.ID); err == nil && latest != nil {
-		src = mergeMessagesForSave(latest.GetMessages(), session.appendedSince())
+		src = mergeMessagesForSave(latest.GetMessages(), session.baseline(), session.appendedSince())
 	}
 	// The baseline is a position in THIS copy's message list, so it must be that
 	// list's length — not len(src), which counts other runs' turns too and would

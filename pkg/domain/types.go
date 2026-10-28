@@ -350,7 +350,10 @@ type TokenUsage struct {
 }
 
 type GenerationResult struct {
-	ID               string     `json:"id,omitempty"` // Response ID for stateful APIs
+	ID string `json:"id,omitempty"` // Response ID for stateful APIs
+	// FirstOutputMs is how long the call waited for the first of its answer,
+	// when the caller measured it; 0 when unknown.
+	FirstOutputMs    int64      `json:"first_output_ms,omitempty"`
 	Content          string     `json:"content"`
 	ReasoningContent string     `json:"reasoning_content,omitempty"`
 	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`

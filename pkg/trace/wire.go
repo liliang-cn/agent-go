@@ -6,6 +6,8 @@ import (
 	"io"
 	"sync"
 	"time"
+
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 )
 
 // A Wire follows one model call on its way to the provider and back: waiting
@@ -34,6 +36,13 @@ type Wire struct {
 	detail   string
 	said     time.Time // the last "waiting" line, so one is said per quiet stretch
 	on       func(WireEvent)
+	// firstAt is when the first byte of an answer arrived, after start; zero
+	// until one has. usage adds up what the provider said each answer cost.
+	// A call that hands its record no usage or first-output time of its own
+	// is given these (Call.End): the provider reported them either way.
+	firstAt  time.Duration
+	usage    domain.TokenUsage
+	hasUsage bool
 }
 
 // WireEvent is one thing that happened to a model call on the wire.
@@ -250,6 +259,9 @@ func (w *Wire) Read(n int) {
 	var e WireEvent
 	if first {
 		took := now.Sub(w.phaseAt)
+		if w.firstAt == 0 {
+			w.firstAt = now.Sub(w.start)
+		}
 		w.setPhase(WireStreaming, now)
 		e = w.event("first_byte", now)
 		e.WaitMs = took.Milliseconds()
@@ -259,6 +271,39 @@ func (w *Wire) Read(n int) {
 	if first {
 		w.send(e)
 	}
+}
+
+// Usage adds what one answer cost, as the provider reported it. A call can
+// take more than one answer — a structured call asked again with a larger
+// budget — and pays for each.
+func (w *Wire) Usage(u *domain.TokenUsage) {
+	if w == nil || u == nil {
+		return
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.usage.PromptTokens += u.PromptTokens
+	w.usage.CompletionTokens += u.CompletionTokens
+	w.usage.CachedPromptTokens += u.CachedPromptTokens
+	w.usage.CacheWriteTokens += u.CacheWriteTokens
+	w.usage.ReasoningTokens += u.ReasoningTokens
+	w.hasUsage = true
+}
+
+// reported is what the wire saw of the call's cost and its first byte: the
+// usage, nil when no answer reported any, and the time to the first byte,
+// zero when none arrived.
+func (w *Wire) reported() (*domain.TokenUsage, time.Duration) {
+	if w == nil {
+		return nil, 0
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !w.hasUsage {
+		return nil, w.firstAt
+	}
+	u := w.usage
+	return &u, w.firstAt
 }
 
 // Body wraps an answer's body so each read is noted.

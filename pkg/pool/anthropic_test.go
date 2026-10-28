@@ -3,6 +3,7 @@ package pool
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -26,7 +27,7 @@ func anthropicClient(t *testing.T, h http.HandlerFunc) *Client {
 		t.Fatal(err)
 	}
 	local, _ := url.Parse(srv.URL)
-	c.http.Transport = wireTransport{base: anthropicTransport{base: redirect{to: local}}}
+	c.http.Transport = anthropicTransport{base: wireTransport{base: redirect{to: local}}}
 	return c
 }
 
@@ -252,5 +253,59 @@ func TestAToolUseInputIsAlwaysAnObject(t *testing.T) {
 		if json.Unmarshal(input, &obj) != nil || obj == nil {
 			t.Errorf("arguments %q became input %s; want an object", args, input)
 		}
+	}
+}
+
+// The Messages API takes a JSON schema only when every object in it says
+// additionalProperties false, and the schemas this package is handed rarely
+// do: the constraint extraction's was refused on every turn, each time costing
+// a request before the prompt-form fallback answered.
+func TestAResponseSchemaIsClosedForTheMessagesAPI(t *testing.T) {
+	in := `{"model":"claude-opus-5-5","messages":[{"role":"user","content":"x"}],
+	  "response_format":{"type":"json_schema","json_schema":{"name":"r","schema":{
+	    "type":"object","properties":{
+	      "items":{"type":"array","items":{"type":"object","properties":{"a":{"type":"string"}}}},
+	      "open":{"type":"object","additionalProperties":{"type":"string"}},
+	      "nested":{"properties":{"b":{"type":"integer"}}}}}}}}`
+	out, _, err := chatToMessages([]byte(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		OutputConfig struct {
+			Format struct {
+				Schema map[string]any `json:"schema"`
+			} `json:"format"`
+		} `json:"output_config"`
+	}
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatal(err)
+	}
+	s := got.OutputConfig.Format.Schema
+	props := s["properties"].(map[string]any)
+	item := props["items"].(map[string]any)["items"].(map[string]any)
+	for name, obj := range map[string]map[string]any{"root": s, "array item": item, "untyped nested": props["nested"].(map[string]any)} {
+		if obj["additionalProperties"] != false {
+			t.Errorf("%s: additionalProperties = %v, want false", name, obj["additionalProperties"])
+		}
+	}
+	if _, ok := props["open"].(map[string]any)["additionalProperties"].(map[string]any); !ok {
+		t.Errorf("an explicit additionalProperties was overwritten: %v", props["open"])
+	}
+}
+
+// A refused schema is remembered so later calls go straight to the prompt
+// form; the Messages API names the field output_config, not response_format.
+func TestASchemaRefusalIsRecognisedOnTheMessagesAPI(t *testing.T) {
+	for _, msg := range []string{
+		`API error (status 400): {"error":{"message":"response_format is not supported"}}`,
+		`API error (status 400): {"type":"error","error":{"type":"invalid_request_error","message":"output_config.format.schema: For 'object' type, 'additionalProperties' must be explicitly set to false"}}`,
+	} {
+		if !isResponseFormatRejection(errors.New(msg)) {
+			t.Errorf("not recognised: %s", msg)
+		}
+	}
+	if isResponseFormatRejection(errors.New(`API error (status 400): {"error":{"message":"messages.3: bad role"}}`)) {
+		t.Error("an unrelated 400 was taken for a schema refusal")
 	}
 }

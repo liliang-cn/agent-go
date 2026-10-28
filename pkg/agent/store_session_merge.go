@@ -45,6 +45,16 @@ func (s *Session) setBaseline(n int) {
 	s.mu.Unlock()
 }
 
+// baseline is how many messages this copy was loaded with.
+func (s *Session) baseline() int {
+	if s == nil {
+		return 0
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.loadedCount
+}
+
 // appendedSince returns the messages added after the baseline.
 func (s *Session) appendedSince() []domain.Message {
 	if s == nil {
@@ -86,21 +96,30 @@ func sessionMessageKey(m domain.Message) string {
 // mergeMessagesForSave computes what should be persisted: the stored history,
 // plus this run's new turns, minus any that are already there.
 //
-// Dedup is by (role, content, tool_call_id) because a retried save must not
-// double-write, while two different runs legitimately produce distinct turns.
-func mergeMessagesForSave(stored, appended []domain.Message) []domain.Message {
+// baseline is how many of the stored messages this copy was loaded with. A
+// turn that carries an id — a tool result, an assistant turn that calls
+// tools — is one turn wherever it is, so it is checked against everything.
+// Plain text is checked only against what was stored after the baseline: a
+// retried save of this copy, or another run's turns. Checked against the
+// whole history, a person saying "好的" twice in one conversation lost the
+// second, and so did the clock line two turns in one minute both send.
+func mergeMessagesForSave(stored []domain.Message, baseline int, appended []domain.Message) []domain.Message {
 	if len(appended) == 0 {
 		return stored
 	}
+	if baseline < 0 || baseline > len(stored) {
+		baseline = len(stored)
+	}
 	seen := make(map[string]bool, len(stored))
-	key := sessionMessageKey
-	for _, m := range stored {
-		seen[key(m)] = true
+	for i, m := range stored {
+		if i >= baseline || hasTurnID(m) {
+			seen[sessionMessageKey(m)] = true
+		}
 	}
 	out := make([]domain.Message, 0, len(stored)+len(appended))
 	out = append(out, stored...)
 	for _, m := range appended {
-		k := key(m)
+		k := sessionMessageKey(m)
 		if seen[k] {
 			continue
 		}
@@ -108,4 +127,10 @@ func mergeMessagesForSave(stored, appended []domain.Message) []domain.Message {
 		out = append(out, m)
 	}
 	return out
+}
+
+// hasTurnID reports whether m names itself: a tool result by its call, an
+// assistant turn by the calls it makes.
+func hasTurnID(m domain.Message) bool {
+	return (m.Role == "tool" && m.ToolCallID != "") || len(m.ToolCalls) > 0
 }

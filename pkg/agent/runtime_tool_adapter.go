@@ -208,6 +208,10 @@ func (r *Runtime) buildStreamingToolExecutionCallbacks() ToolExecutionCallbacks 
 	return ToolExecutionCallbacks{
 		OnToolCall: func(name string, args map[string]interface{}, interruptBehavior string) {
 			r.emitToolCall(name, args, interruptBehavior)
+			// The calls that run here are the ones the stream did not
+			// dispatch — a call with no arguments among them, since its
+			// arguments never fill in. The contract lints read this record.
+			r.trackToolName(name)
 		},
 		OnToolResult: func(name string, res interface{}, err error, interruptBehavior string) {
 			r.noteToolOutcome(name, err)

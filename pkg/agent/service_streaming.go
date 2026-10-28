@@ -127,5 +127,8 @@ func (s *Service) streamToolTurnWithRecovery(ctx context.Context, messages []dom
 		Parts:        outputParts,
 		Usage:        lastUsage,
 		FinishReason: lastFinishReason,
+		// The runtime builds the turn's ModelResult from this, not from the
+		// trace record, so the wait for the first output travels with it.
+		FirstOutputMs: call.FirstOutput().Milliseconds(),
 	}, lastResponseID, recoveryMeta{}, err
 }

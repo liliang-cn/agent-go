@@ -281,7 +281,7 @@ func chatToMessages(raw []byte) ([]byte, bool, error) {
 			} `json:"json_schema"`
 		}
 		if json.Unmarshal(v, &rf) == nil && rf.Type == "json_schema" && len(rf.JSONSchema.Schema) > 0 {
-			outputConfig["format"] = map[string]interface{}{"type": "json_schema", "schema": rf.JSONSchema.Schema}
+			outputConfig["format"] = map[string]interface{}{"type": "json_schema", "schema": closedSchema(rf.JSONSchema.Schema)}
 		}
 	}
 	if len(outputConfig) > 0 {
@@ -660,4 +660,61 @@ func messagesStreamToChat(src io.Reader, dst io.Writer) error {
 		}
 	}
 	return sc.Err()
+}
+
+// closedSchema returns schema with additionalProperties false on every object
+// that does not say otherwise. The Messages API refuses a schema with an
+// object left open; an explicit additionalProperties is kept as written. A
+// schema that does not parse is returned as is, for the API to judge.
+func closedSchema(schema json.RawMessage) json.RawMessage {
+	var node interface{}
+	if json.Unmarshal(schema, &node) != nil {
+		return schema
+	}
+	closeSchemaNode(node)
+	out, err := json.Marshal(node)
+	if err != nil {
+		return schema
+	}
+	return out
+}
+
+// closeSchemaNode walks one schema. It follows the keywords that hold
+// schemas, and only those: "properties" maps names to schemas, so a property
+// called "type" or "properties" is never taken for a keyword.
+func closeSchemaNode(node interface{}) {
+	s, ok := node.(map[string]interface{})
+	if !ok {
+		return
+	}
+	_, hasProps := s["properties"]
+	if s["type"] == "object" || hasProps {
+		if _, set := s["additionalProperties"]; !set {
+			s["additionalProperties"] = false
+		}
+	}
+	for _, key := range []string{"properties", "patternProperties", "$defs", "definitions"} {
+		if m, ok := s[key].(map[string]interface{}); ok {
+			for _, sub := range m {
+				closeSchemaNode(sub)
+			}
+		}
+	}
+	for _, key := range []string{"items", "additionalProperties", "not", "if", "then", "else", "contains"} {
+		switch v := s[key].(type) {
+		case map[string]interface{}:
+			closeSchemaNode(v)
+		case []interface{}:
+			for _, sub := range v {
+				closeSchemaNode(sub)
+			}
+		}
+	}
+	for _, key := range []string{"anyOf", "oneOf", "allOf", "prefixItems"} {
+		if list, ok := s[key].([]interface{}); ok {
+			for _, sub := range list {
+				closeSchemaNode(sub)
+			}
+		}
+	}
 }

@@ -43,6 +43,11 @@ type preparedConversationContext struct {
 	queryContext   domain.MemoryQueryContext
 	summary        string
 	messages       []domain.Message
+	// turnContext is the part of messages sent for this turn only — the
+	// clock, the relevant skills, recalled memory — between the history and
+	// the goal. It is kept in the session with the goal, so the next turn
+	// sends it again where it was and the provider's cached prefix holds.
+	turnContext []domain.Message
 }
 
 func (s *Service) prepareConversationContext(ctx context.Context, goal string, session *Session, opts prepareConversationOptions) preparedConversationContext {
@@ -109,7 +114,7 @@ func (s *Service) prepareConversationContext(ctx context.Context, goal string, s
 		s.logger.Warn("conversation context collection partial failure", slog.Any("error", err))
 	}
 
-	prepared.messages = s.buildConversationMessages(session, goal, prepared.ragContext, prepared.memoryContext, prepared.skillReminder, prepared.summary, opts.dryRun)
+	prepared.messages, prepared.turnContext = s.buildConversationMessages(session, goal, prepared.ragContext, prepared.memoryContext, prepared.skillReminder, prepared.summary, opts.dryRun)
 	return prepared
 }
 
@@ -190,14 +195,14 @@ func buildSkillReminderMessage(session *Session, reminder *skillReminder, dryRun
 	}
 }
 
-func (s *Service) buildConversationMessages(session *Session, goal, ragContext, memoryContext string, skillReminder *skillReminder, summary string, dryRun bool) []domain.Message {
+func (s *Service) buildConversationMessages(session *Session, goal, ragContext, memoryContext string, skillReminder *skillReminder, summary string, dryRun bool) (messages, turnContext []domain.Message) {
 	history := make([]domain.Message, 0)
 	if session != nil {
 		history = historyForTask(session.GetMessages(), currentTaskID(session))
 	}
 
-	olderMessages, recentMessages := splitConversationHistory(history, recentConversationWindow, olderConversationLimit)
-	messages := make([]domain.Message, 0, len(olderMessages)+len(recentMessages)+5)
+	window := stableHistoryWindow(history)
+	messages = make([]domain.Message, 0, len(window)+5)
 	// What changes every turn goes after the history, not before it. A
 	// provider caches a prefix: the clock, the recalled memory and the
 	// relevant skills at the top changed it on every turn, so the whole
@@ -207,19 +212,19 @@ func (s *Service) buildConversationMessages(session *Session, goal, ragContext, 
 	if summaryMsg := buildConversationContextMessage(summary, "", ""); summaryMsg != nil {
 		messages = append(messages, *summaryMsg)
 	}
-	messages = append(messages, olderMessages...)
-	messages = append(messages, recentMessages...)
+	messages = append(messages, window...)
 	if userCtxMsg := buildUserContextMetaMessage(s.buildUserContext()); userCtxMsg != nil {
-		messages = append(messages, *userCtxMsg)
+		turnContext = append(turnContext, *userCtxMsg)
 	}
 	if skillMsg := buildSkillReminderMessage(session, skillReminder, dryRun); skillMsg != nil {
-		messages = append(messages, *skillMsg)
+		turnContext = append(turnContext, *skillMsg)
 	}
 	if contextMsg := buildConversationContextMessage("", memoryContext, ragContext); contextMsg != nil {
-		messages = append(messages, *contextMsg)
+		turnContext = append(turnContext, *contextMsg)
 	}
+	messages = append(messages, turnContext...)
 	messages = append(messages, withTaskID(domain.Message{Role: "user", Content: goal}, currentTaskID(session)))
-	return messages
+	return messages, turnContext
 }
 
 func historyForTask(history []domain.Message, taskID string) []domain.Message {
@@ -236,6 +241,26 @@ func historyForTask(history []domain.Message, taskID string) []domain.Message {
 		return nil
 	}
 	return filtered
+}
+
+// stableHistoryWindow is the part of the history a turn sends. It keeps at
+// least the last recentConversationWindow+olderConversationLimit messages, as
+// the window always did, but its start moves only in steps of
+// historyWindowStep. A window that dropped the oldest message on every turn
+// changed the request's prefix on every turn, so a long conversation was never
+// read from the provider's cache; now every turn between two steps extends
+// the request before it. A start that would land on a tool result moves on
+// past it, so no result is sent without the call it answers.
+func stableHistoryWindow(history []domain.Message) []domain.Message {
+	keep := recentConversationWindow + olderConversationLimit
+	if len(history) <= keep {
+		return append([]domain.Message(nil), history...)
+	}
+	start := (len(history) - keep) / historyWindowStep * historyWindowStep
+	for start < len(history) && history[start].Role == "tool" {
+		start++
+	}
+	return append([]domain.Message(nil), history[start:]...)
 }
 
 func splitConversationHistory(history []domain.Message, recentWindow, olderLimit int) ([]domain.Message, []domain.Message) {
@@ -563,6 +588,7 @@ func countDocuments(ragContext string) int {
 
 const (
 	recentConversationWindow  = 6
+	historyWindowStep         = 40
 	olderConversationLimit    = 12
 	toolResultsAnalysisPrompt = "Analyze the tool results above. If you have fulfilled the user's request, provide your final answer and call task_complete. If a concrete blocker prevents completion, call task_blocked. Otherwise continue executing directly with the available tools."
 )

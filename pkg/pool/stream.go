@@ -150,7 +150,11 @@ scan:
 		groundingProof = []byte(`{"choices":[{"message":{"annotations":[{"type":"url_citation"}]}}]}`)
 	}
 	c.recordNativeWebSearch(opts, curOpts, groundingProof)
-	return callback(st.finish())
+	res := st.finish()
+	// Once, at the end: a stream reports its usage in a late chunk that may
+	// be repeated, and only the last one holds.
+	trace.WireOf(ctx).Usage(res.Usage)
+	return callback(res)
 }
 
 // Defaults for SetReasoningBudget: about ten thousand tokens of reasoning, or
