@@ -990,6 +990,11 @@ type Manager struct {
 	// starting holds one channel per server being connected, closed when the
 	// attempt ends, so concurrent starts of the same server share one connect.
 	starting map[string]chan struct{}
+
+	// closed is set by Close. A connect still in flight then — one started in
+	// the background — closes its own client instead of leaving a child
+	// process nobody owns.
+	closed bool
 }
 
 // NewManager creates a new MCP manager
@@ -1063,6 +1068,11 @@ func (m *Manager) StartServer(ctx context.Context, serverName string) (*Client, 
 	}
 
 	m.mutex.Lock()
+	if m.closed {
+		m.mutex.Unlock()
+		_ = client.Close()
+		return nil, fmt.Errorf("manager closed while %s was connecting", serverName)
+	}
 	m.clients[serverName] = client
 	m.mutex.Unlock()
 	return client, nil
@@ -1117,6 +1127,7 @@ func (m *Manager) StopServer(serverName string) error {
 // Close closes all MCP clients
 func (m *Manager) Close() error {
 	m.mutex.Lock()
+	m.closed = true
 	clients := m.clients
 	m.clients = make(map[string]*Client)
 	m.mutex.Unlock()

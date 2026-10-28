@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 
@@ -18,6 +19,10 @@ type Service struct {
 	mcpConfig     *Config
 	conversations map[string]*Conversation
 	convMu        sync.RWMutex
+
+	// stopBackground cancels StartServersInBackground's connects; Close calls it.
+	bgMu           sync.Mutex
+	stopBackground context.CancelFunc
 }
 
 // Conversation represents a chat conversation with history
@@ -86,6 +91,41 @@ func (s *Service) StartServers(ctx context.Context, serverNames []string) error 
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// StartServersInBackground starts every auto-start server without waiting
+// for any of them, each on its own goroutine, and returns at once. A host
+// whose window waits on Build cannot afford StartServers: it connects one
+// server after another, so one slow server — an npx that resolves a package
+// on every launch, a remote that is down — holds up everything behind it.
+// The tools of each server appear as it connects (tool lists are read per
+// call), and onReady, if set, is told each server that came up. Close cancels
+// whatever is still connecting.
+func (s *Service) StartServersInBackground(onReady func(serverName string)) {
+	ctx, cancel := context.WithCancel(context.Background())
+	s.bgMu.Lock()
+	if s.stopBackground != nil {
+		s.stopBackground()
+	}
+	s.stopBackground = cancel
+	s.bgMu.Unlock()
+	for _, server := range s.mcpConfig.GetLoadedServers() {
+		if !server.AutoStart {
+			continue
+		}
+		name := server.Name
+		go func() {
+			if _, err := s.manager.StartServer(ctx, name); err != nil {
+				if ctx.Err() == nil {
+					log.Printf("[WARN] Failed to start MCP server %s: %v", name, err)
+				}
+				return
+			}
+			if onReady != nil {
+				onReady(name)
+			}
+		}()
+	}
 }
 
 // StopServer stops a specific MCP server
@@ -534,6 +574,11 @@ func (s *Service) TestTool(ctx context.Context, toolName string, arguments map[s
 
 // Close closes the MCP service and all connections
 func (s *Service) Close() error {
+	s.bgMu.Lock()
+	if s.stopBackground != nil {
+		s.stopBackground()
+	}
+	s.bgMu.Unlock()
 	if s.manager != nil {
 		return s.manager.Close()
 	}

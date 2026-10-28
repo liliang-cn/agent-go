@@ -56,6 +56,9 @@ type RAGConfig struct {
 type MCPConfig struct {
 	Enabled     bool     `json:"enabled"`
 	ConfigPaths []string `json:"config_paths,omitempty"`
+	// Background starts the servers after Build returns instead of inside it
+	// (WithMCPBackgroundStart).
+	Background bool `json:"background,omitempty"`
 }
 
 // MemoryConfig holds Memory configuration
@@ -123,6 +126,7 @@ type Builder struct {
 	ragCfg               RAGConfig
 	enableMCP            bool
 	mcpCfgPaths          []string
+	mcpBackground        bool
 	enableMemory         bool
 	memoryCfg            MemoryConfig
 	memoryService        domain.MemoryService
@@ -220,6 +224,7 @@ func (b *Builder) WithMCP(opts ...MCPOption) *Builder {
 		opt(&cfg)
 	}
 	b.mcpCfgPaths = cfg.ConfigPaths
+	b.mcpBackground = cfg.Background
 	return b
 }
 
@@ -668,8 +673,10 @@ func (b *Builder) build() (*Service, error) {
 		if err != nil {
 			log.Printf("[WARN] Failed to create MCP service: %v", err)
 		} else {
-			if startErr := mcpSvc.StartServers(context.Background(), nil); startErr != nil {
-				log.Printf("[WARN] Failed to start MCP servers: %v", startErr)
+			if !b.mcpBackground {
+				if startErr := mcpSvc.StartServers(context.Background(), nil); startErr != nil {
+					log.Printf("[WARN] Failed to start MCP servers: %v", startErr)
+				}
 			}
 			mcpAdapter = &mcpToolAdapter{service: mcpSvc}
 		}
@@ -928,6 +935,15 @@ func (b *Builder) build() (*Service, error) {
 	}
 	if mcpSvc != nil {
 		svc.SetMCPService(mcpSvc)
+		if b.mcpBackground {
+			// SetMCPService indexed the tools of servers that were up, which
+			// is none yet; each one is indexed again as it connects.
+			mcpSvc.StartServersInBackground(func(string) {
+				if svc.toolRegistry != nil {
+					svc.registerMCPToolsInRegistry(mcpSvc)
+				}
+			})
+		}
 	}
 	svc.SetMemoryScope(b.name, "", "")
 
@@ -1267,6 +1283,13 @@ type MCPOption func(*MCPConfig)
 // WithMCPConfigPaths sets MCP config file paths
 func WithMCPConfigPaths(paths ...string) MCPOption {
 	return func(c *MCPConfig) { c.ConfigPaths = paths }
+}
+
+// WithMCPBackgroundStart has Build return without waiting for any MCP server:
+// they connect in parallel afterwards, and each server's tools become
+// callable as it comes up. For hosts that must not wait on the slowest server.
+func WithMCPBackgroundStart() MCPOption {
+	return func(c *MCPConfig) { c.Background = true }
 }
 
 // MemoryOption modifies MemoryConfig
