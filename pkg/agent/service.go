@@ -506,13 +506,18 @@ func (s *Service) registerBuiltInTools() {
 		Type: "function",
 		Function: domain.ToolFunction{
 			Name:        "task_blocked",
-			Description: "Mark the current task as blocked. Call this only when you cannot complete the task now because of a concrete external blocker, missing permission, missing input, unavailable resource, or unsafe action.",
+			Description: "Stop because the task cannot be done now: a capability or permission you do not have, an unavailable resource, or an unsafe action. The 'blocker' you pass is shown to the user verbatim as your reply. If all you need is a detail from the user, do not call this — ask them for it in your answer.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"blocker": map[string]interface{}{
-						"type":        "string",
-						"description": "The concrete blocker and what was attempted before blocking.",
+						"type": "string",
+						// This text is the user's answer. Described as "the
+						// blocker and what was attempted", it came back written
+						// for the runtime: "searched the tool catalog, found
+						// nothing", "用户只说…，尚未调用任何工具" — about the
+						// user in the third person, with no way forward.
+						"description": "Your reply to the user, written to them in their language: what you could not do and why, in their terms (never about tools, schemas, catalogs or searches), then the closest thing you can do instead or how they can do it themselves.",
 					},
 				},
 				"required": []string{"blocker"},

@@ -172,6 +172,7 @@ func (s *Service) buildSystemPromptSections(ctx context.Context, agent *Agent, o
 	systemCtx := s.buildSystemContext()
 	rules := []string{
 		"- " + strings.ReplaceAll(FinishOrBlockContract, "\n", "\n- "),
+		ReplyRules,
 	}
 	if opts.forbidTools {
 		// No tools will be attached to this run, so every tool rule below is
@@ -190,6 +191,10 @@ func (s *Service) buildSystemPromptSections(ctx context.Context, agent *Agent, o
 			toolRule,
 			"- If 'Relevant Skills For This Task' lists a matching skill, call its `skill_*` tool first and follow it.",
 			"- Never repeat a tool call that cannot return anything new.",
+			// Each round is a model call; independent lookups made one per
+			// round cost a call each for nothing.
+			"- Make lookups that do not depend on each other in the same turn, as parallel calls.",
+			ActOnBehalfRules,
 		)
 	}
 	operationalRules := strings.Join(rules, "\n")
