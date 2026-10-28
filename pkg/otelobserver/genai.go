@@ -34,6 +34,7 @@ const (
 	genAIUsageInput      = "gen_ai.usage.input_tokens"
 	genAIUsageOutput     = "gen_ai.usage.output_tokens"
 	genAIUsageCacheRead  = "gen_ai.usage.cache_read.input_tokens"
+	genAIUsageCacheWrite = "gen_ai.usage.cache_creation.input_tokens"
 	genAIConversationID  = "gen_ai.conversation.id"
 	genAIAgentName       = "gen_ai.agent.name"
 	genAIToolName        = "gen_ai.tool.name"
@@ -88,6 +89,9 @@ func genAIModelEndAttrs(info agent.ModelInfo, res *agent.ModelResult, err error)
 		)
 		if res.CachedTokens > 0 {
 			attrs = append(attrs, attribute.Int(genAIUsageCacheRead, res.CachedTokens))
+		}
+		if res.CacheWriteTokens > 0 {
+			attrs = append(attrs, attribute.Int(genAIUsageCacheWrite, res.CacheWriteTokens))
 		}
 		if res.Provider != "" {
 			attrs = append(attrs, attribute.String(genAIProviderName, strings.ToLower(res.Provider)))

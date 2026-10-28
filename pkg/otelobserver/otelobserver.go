@@ -149,6 +149,8 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/agent"
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	agtrace "github.com/liliang-cn/agent-go/v3/pkg/trace"
 )
 
 // OpenInference semantic-convention attribute keys.
@@ -166,6 +168,7 @@ const (
 	attrLLMTokenPrompt     = "llm.token_count.prompt"
 	attrLLMTokenCompletion = "llm.token_count.completion"
 	attrLLMTokenCached     = "llm.token_count.prompt_details.cache_read"
+	attrLLMTokenCacheWrite = "llm.token_count.prompt_details.cache_write"
 
 	// Extra (non-OpenInference) attributes that help debugging in Phoenix.
 	attrTaskID    = "agentgo.task_id"
@@ -296,12 +299,15 @@ func (o *Observer) rootForLocked(ctx context.Context, taskID, sessionID string) 
 	if taskID != "" {
 		name = "task " + taskID
 	}
-	rctx, span := o.tracer.Start(base, name)
+	rctx, span := o.tracer.Start(rootContext(base, ctx), name)
 	span.SetAttributes(
 		attribute.String(attrSpanKind, o.rootKind),
 		attribute.String(attrSessionID, sessionID),
 		attribute.String(attrTaskID, taskID),
 	)
+	if sc, ok := agtrace.SpanFromContext(ctx); ok {
+		span.SetAttributes(attribute.String(attrFlowTraceID, sc.TraceID), attribute.String(attrFlowSpanID, sc.SpanID))
+	}
 	r := &rootSpan{span: span, ctx: rctx, childCtx: rctx}
 	o.roots[taskID] = r
 	return r
@@ -353,8 +359,10 @@ func (o *Observer) OnModelStart(ctx context.Context, info agent.ModelInfo) {
 		// spans that used to be missing from a slow run's trace.
 		name = "llm." + info.Purpose
 	}
-	_, span := o.tracer.Start(rctx, name)
+	_, span := o.tracer.Start(wantSpan(rctx, flowTraceID(ctx), info.SpanID), name)
 	span.SetAttributes(
+		attribute.String(attrFlowTraceID, flowTraceID(ctx)),
+		attribute.String(attrFlowSpanID, info.SpanID),
 		attribute.String(attrSpanKind, spanKindLLM),
 		attribute.String("agentgo.llm.purpose", nonEmpty(info.Purpose, "turn")),
 		attribute.String(attrLLMModelName, nonEmpty(info.Model, info.AgentName)),
@@ -401,11 +409,14 @@ func (o *Observer) OnModelEnd(ctx context.Context, info agent.ModelInfo, res *ag
 			attribute.Int(attrLLMTokenPrompt, res.PromptTokens),
 			attribute.Int(attrLLMTokenCompletion, res.CompletionTokens),
 			attribute.Int(attrLLMTokenCached, res.CachedTokens),
+			attribute.Int(attrLLMTokenCacheWrite, res.CacheWriteTokens),
 			attribute.Int("llm.tool_calls", res.ToolCalls),
+			attribute.Bool("agentgo.llm.streamed", res.Streamed),
 		)
-		if res.TTFTMs > 0 {
+		if res.Streamed && res.TTFTMs > 0 {
 			span.SetAttributes(attribute.Int64("llm.ttft_ms", res.TTFTMs))
 		}
+		setServerToolAttributes(span, res.ServerTools)
 	}
 	span.SetAttributes(genAIModelEndAttrs(info, res, err)...)
 	finish(span, err)
@@ -447,8 +458,10 @@ func (o *Observer) OnToolStart(ctx context.Context, info agent.ToolInfo) {
 	o.mu.Unlock()
 
 	argsJSON := toJSON(info.Args)
-	_, span := o.tracer.Start(rctx, "tool."+info.Tool)
+	_, span := o.tracer.Start(wantSpan(rctx, flowTraceID(ctx), info.SpanID), "tool."+info.Tool)
 	span.SetAttributes(
+		attribute.String(attrFlowTraceID, flowTraceID(ctx)),
+		attribute.String(attrFlowSpanID, info.SpanID),
 		attribute.String(attrSpanKind, spanKindTool),
 		attribute.String(attrToolName, info.Tool),
 		attribute.String(attrToolParams, argsJSON),
@@ -698,4 +711,53 @@ func toJSON(v any) string {
 		return ""
 	}
 	return string(b)
+}
+
+// setServerToolAttributes puts a model call's server-side work on its span:
+// counts and lists as attributes, one "server_tool.use" event per use.
+func setServerToolAttributes(span trace.Span, r *domain.ServerToolReport) {
+	if r == nil {
+		return
+	}
+	var names, queries, errs []string
+	for _, u := range r.Uses {
+		names = append(names, u.Name)
+		q, _ := u.Input["query"].(string)
+		queries = append(queries, q)
+		if u.ErrorCode != "" {
+			errs = append(errs, u.ErrorCode)
+		}
+		span.AddEvent("server_tool.use", trace.WithAttributes(
+			attribute.String("server_tool.name", u.Name),
+			attribute.String("server_tool.input", toJSON(u.Input)),
+			attribute.Int("server_tool.results", u.Results),
+			attribute.String("server_tool.error_code", u.ErrorCode),
+		))
+	}
+	span.SetAttributes(
+		attribute.Int("agentgo.server_tools.uses", len(r.Uses)),
+		attribute.StringSlice("agentgo.server_tools.names", names),
+		attribute.StringSlice("agentgo.server_tools.queries", queries),
+		attribute.StringSlice("agentgo.server_tools.errors", errs),
+		attribute.Int("agentgo.server_tools.resumes", r.Resumes),
+		attribute.Int64Slice("agentgo.server_tools.request_ms", r.RequestMs),
+		attribute.Int("agentgo.server_tools.citations", r.Citations),
+	)
+}
+
+// OnRuntimeDecision records a runtime decision as an "agentgo.decision"
+// event on the task's root span (agent.RuntimeDecisionObserver).
+func (o *Observer) OnRuntimeDecision(ctx context.Context, info agent.RuntimeDecisionInfo) {
+	if o == nil || o.tracer == nil {
+		return
+	}
+	o.mu.Lock()
+	root := o.rootForLocked(ctx, info.TaskID, info.SessionID)
+	o.mu.Unlock()
+	root.span.AddEvent("agentgo.decision", trace.WithAttributes(
+		attribute.String("decision.what", info.What),
+		attribute.String("decision.reason", info.Reason),
+		attribute.String("decision.detail", toJSON(info.Detail)),
+		attribute.Int(attrRound, info.Round),
+	))
 }

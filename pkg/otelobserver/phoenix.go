@@ -103,6 +103,8 @@ func Phoenix(ctx context.Context, opts ...PhoenixOption) (*Observer, func(contex
 	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithSpanProcessor(sp),
 		sdktrace.WithResource(res),
+		// Spans take agent-go's flow ids, so Phoenix and the trace file agree.
+		sdktrace.WithIDGenerator(IDGenerator()),
 	)
 
 	obs := New(tp, cfg.obsOpts...)
