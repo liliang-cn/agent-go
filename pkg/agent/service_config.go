@@ -18,6 +18,24 @@ func (s *Service) SetMCPService(mcpSvc *mcp.Service) {
 	}
 }
 
+// AddMCPServer starts a stdio MCP server while the service runs and puts its
+// tools in the search index at once. Starting one through MCP alone ran the
+// process and left its tools unfindable: the model reaches MCP tools by
+// searching for them, and the index held only the servers present at build
+// or started in the background.
+func (s *Service) AddMCPServer(ctx context.Context, name, command string, args []string, env map[string]string) error {
+	if s.MCP == nil {
+		return fmt.Errorf("this service has no MCP; build it WithMCP")
+	}
+	if err := s.MCP.AddDynamicServerWithEnv(ctx, name, command, args, env); err != nil {
+		return err
+	}
+	if s.toolRegistry != nil {
+		s.registerMCPToolsInRegistry(s.MCP)
+	}
+	return nil
+}
+
 // registerMCPToolsInRegistry registers MCP tools in the registry for tool search
 func (s *Service) registerMCPToolsInRegistry(mcpSvc *mcp.Service) {
 	tools := mcpSvc.GetAvailableTools(context.Background())
