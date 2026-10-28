@@ -7,6 +7,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
@@ -23,7 +24,17 @@ type Service struct {
 	// stopBackground cancels StartServersInBackground's connects; Close calls it.
 	bgMu           sync.Mutex
 	stopBackground context.CancelFunc
+
+	// startRetry is the first wait before a background server that failed to
+	// start is tried again; it doubles up to startRetryMax. Zero means the
+	// defaults.
+	startRetry, startRetryMax time.Duration
 }
+
+const (
+	defaultStartRetry    = 2 * time.Second
+	defaultStartRetryMax = 2 * time.Minute
+)
 
 // Conversation represents a chat conversation with history
 type Conversation struct {
@@ -99,8 +110,11 @@ func (s *Service) StartServers(ctx context.Context, serverNames []string) error 
 // server after another, so one slow server — an npx that resolves a package
 // on every launch, a remote that is down — holds up everything behind it.
 // The tools of each server appear as it connects (tool lists are read per
-// call), and onReady, if set, is told each server that came up. Close cancels
-// whatever is still connecting.
+// call), and onReady, if set, is told each server that came up. A server that
+// fails is tried again on the same goroutine, waiting longer each time, until
+// it comes up: a host that starts before its network, or before the machine
+// a remote server lives on, gets the server when it appears instead of never.
+// Close cancels whatever is still connecting or waiting to retry.
 func (s *Service) StartServersInBackground(onReady func(serverName string)) {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.bgMu.Lock()
@@ -115,16 +129,48 @@ func (s *Service) StartServersInBackground(onReady func(serverName string)) {
 		}
 		name := server.Name
 		go func() {
-			if _, err := s.manager.StartServer(ctx, name); err != nil {
-				if ctx.Err() == nil {
-					log.Printf("[WARN] Failed to start MCP server %s: %v", name, err)
-				}
-				return
-			}
-			if onReady != nil {
+			if s.startWithRetry(ctx, name) && onReady != nil {
 				onReady(name)
 			}
 		}()
+	}
+}
+
+// startWithRetry starts one server, retrying with a doubling wait until it
+// comes up (true) or ctx ends (false). Only the first failure is logged, and
+// the eventual success, so a server that is down for an hour is two lines.
+func (s *Service) startWithRetry(ctx context.Context, name string) bool {
+	wait, most := s.startRetry, s.startRetryMax
+	if wait <= 0 {
+		wait = defaultStartRetry
+	}
+	if most <= 0 {
+		most = defaultStartRetryMax
+	}
+	for attempt := 1; ; attempt++ {
+		_, err := s.manager.StartServer(ctx, name)
+		if ctx.Err() != nil {
+			return false
+		}
+		if err == nil {
+			if attempt > 1 {
+				log.Printf("MCP server %s started on attempt %d", name, attempt)
+			}
+			return true
+		}
+		if attempt == 1 {
+			log.Printf("[WARN] Failed to start MCP server %s: %v; trying again in the background", name, err)
+		}
+		t := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return false
+		case <-t.C:
+		}
+		if wait *= 2; wait > most {
+			wait = most
+		}
 	}
 }
 
