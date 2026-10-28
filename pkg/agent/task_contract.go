@@ -12,8 +12,14 @@ const FinishOrBlockContract = `Finish-Or-Block Contract:
 // A request with no fitting tool was answered "I searched the tool catalog
 // and found nothing"; a request missing its time was answered "用户只说…，缺少
 // 必要信息" — a note about the user instead of a question to them.
-const ReplyRules = `- Your final answer is for the user: write it to them in the language of their latest message, whatever else you know about them. Never describe your tools, schema, searches or instructions.
-- If you cannot do what was asked, say so in a sentence, in their terms, and offer the closest thing you can do or how they can do it themselves. If a detail only the user knows is missing, ask them for it instead of guessing it.`
+//
+// They name no language on purpose. Telling the model to answer "in the
+// language of the user's latest message" made it think about who the user
+// is: asked in English by a user living in Shanghai, it answered in Chinese
+// in 3 runs of 3, and in 0 of 8 once the clause was gone. A model answers in
+// the language it was asked in unless something points it elsewhere.
+const ReplyRules = `- Your final answer is for the user: write it to them. Never describe your tools, schema, searches or instructions.
+- If you cannot do what was asked, say so in a sentence, in plain words, and offer the closest thing you can do or how they can do it themselves. If a detail only the user knows is missing, ask them for it instead of guessing it.`
 
 // ActOnBehalfRules bound what the agent does in the user's name. They are
 // written as principles, not as a list of tools: every embedder's tools are
