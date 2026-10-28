@@ -388,8 +388,10 @@ func convertMessages(msgs []chatMessage) ([]block, []anthropicMessage) {
 		case "assistant":
 			blocks := partBlocks(chatParts(m.Content))
 			for _, tc := range m.ToolCalls {
+				// The API takes an object and nothing else. A call made with
+				// no arguments comes back from history as "null".
 				input := json.RawMessage(strings.TrimSpace(tc.Function.Arguments))
-				if len(input) == 0 || !json.Valid(input) {
+				if !json.Valid(input) || !strings.HasPrefix(string(input), "{") {
 					input = json.RawMessage(`{}`)
 				}
 				blocks = append(blocks, block{"type": "tool_use", "id": tc.ID, "name": tc.Function.Name, "input": input})

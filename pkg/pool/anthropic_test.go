@@ -214,3 +214,43 @@ func TestStreamWithToolsOverMessagesAPI(t *testing.T) {
 		t.Fatalf("usage = %+v", last.Usage)
 	}
 }
+
+// A tool called with no arguments comes back from history as "null" (a nil
+// map marshalled), and the Messages API refuses any tool_use input that is
+// not an object: one such call fails every later turn of the conversation.
+func TestAToolUseInputIsAlwaysAnObject(t *testing.T) {
+	for _, args := range []string{``, `null`, `""`, `[]`, `"x"`, `3`, `not json`, `{}`, `{"a":1}`} {
+		raw, _ := json.Marshal(args)
+		in := `{"model":"claude-opus-5-5","messages":[
+		  {"role":"user","content":"go"},
+		  {"role":"assistant","content":"","tool_calls":[{"id":"t1","type":"function","function":{"name":"status","arguments":` + string(raw) + `}}]},
+		  {"role":"tool","tool_call_id":"t1","content":"ok"}]}`
+		out, _, err := chatToMessages([]byte(in))
+		if err != nil {
+			t.Fatalf("%q: %v", args, err)
+		}
+		var got struct {
+			Messages []struct {
+				Content []struct {
+					Type  string          `json:"type"`
+					Input json.RawMessage `json:"input"`
+				} `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.Unmarshal(out, &got); err != nil {
+			t.Fatal(err)
+		}
+		var input json.RawMessage
+		for _, m := range got.Messages {
+			for _, c := range m.Content {
+				if c.Type == "tool_use" {
+					input = c.Input
+				}
+			}
+		}
+		var obj map[string]any
+		if json.Unmarshal(input, &obj) != nil || obj == nil {
+			t.Errorf("arguments %q became input %s; want an object", args, input)
+		}
+	}
+}
