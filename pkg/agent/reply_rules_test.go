@@ -40,7 +40,7 @@ func TestPromptAndBlockedToolSpeakToTheUser(t *testing.T) {
 	}
 	blocker, _ := def.Function.Parameters["properties"].(map[string]interface{})["blocker"].(map[string]interface{})
 	desc, _ := blocker["description"].(string)
-	for _, want := range []string{"reply to the user", "their language"} {
+	for _, want := range []string{"reply to the user", "language of their latest message"} {
 		if !strings.Contains(desc, want) {
 			t.Errorf("task_blocked.blocker does not say it is the user's reply (%q missing): %q", want, desc)
 		}

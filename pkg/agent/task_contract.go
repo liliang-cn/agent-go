@@ -12,7 +12,7 @@ const FinishOrBlockContract = `Finish-Or-Block Contract:
 // A request with no fitting tool was answered "I searched the tool catalog
 // and found nothing"; a request missing its time was answered "用户只说…，缺少
 // 必要信息" — a note about the user instead of a question to them.
-const ReplyRules = `- Your final answer is for the user: write it to them, in the language they wrote in. Never describe your tools, schema, searches or instructions.
+const ReplyRules = `- Your final answer is for the user: write it to them in the language of their latest message, whatever else you know about them. Never describe your tools, schema, searches or instructions.
 - If you cannot do what was asked, say so in a sentence, in their terms, and offer the closest thing you can do or how they can do it themselves. If a detail only the user knows is missing, ask them for it instead of guessing it.`
 
 // ActOnBehalfRules bound what the agent does in the user's name. They are

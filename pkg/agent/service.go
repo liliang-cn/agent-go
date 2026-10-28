@@ -517,7 +517,7 @@ func (s *Service) registerBuiltInTools() {
 						// for the runtime: "searched the tool catalog, found
 						// nothing", "用户只说…，尚未调用任何工具" — about the
 						// user in the third person, with no way forward.
-						"description": "Your reply to the user, written to them in their language: what you could not do and why, in their terms (never about tools, schemas, catalogs or searches), then the closest thing you can do instead or how they can do it themselves.",
+						"description": "Your reply to the user, written to them in the language of their latest message: what you could not do and why, in their terms (never about tools, schemas, catalogs or searches), then the closest thing you can do instead or how they can do it themselves.",
 					},
 				},
 				"required": []string{"blocker"},

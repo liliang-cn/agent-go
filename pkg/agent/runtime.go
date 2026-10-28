@@ -260,7 +260,7 @@ func (r *Runtime) unconfirmedReply(ctx context.Context, state *queryLoopState, m
 	}
 	instruction := "[system] Your answer could not be confirmed, for this reason: " + v.Reason + "\n\n" +
 		"Your answer was:\n" + strings.TrimSpace(draft) + "\n\n" +
-		"Stop calling tools. Write your final reply to the user now, in the language they wrote in. " +
+		"Stop calling tools. Write your final reply to the user now, in the language of the user's latest message. " +
 		"Keep what is true in your answer. Where it says something was done that the work above does not show, " +
 		"say plainly that you could not confirm it — in the user's terms, without mentioning checks, tools or instructions."
 	return r.synthesizeReply(ctx, state, messages, instruction, "unconfirmed-reply")
