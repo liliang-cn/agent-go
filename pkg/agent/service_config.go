@@ -36,6 +36,17 @@ func (s *Service) AddMCPServer(ctx context.Context, name, command string, args [
 	return nil
 }
 
+// SetEagerTools names tools, as exact names or "prefix*", that every request
+// offers instead of leaving them to be found by search. MCP tools are always
+// behind the search otherwise, and a model that guesses a server's tool names
+// wrong searches once, finds nothing and does without: the handful a host
+// knows the model needs go up front. It replaces the previous list.
+func (s *Service) SetEagerTools(patterns ...string) {
+	if s.toolRegistry != nil {
+		s.toolRegistry.SetEagerPatterns(patterns)
+	}
+}
+
 // registerMCPToolsInRegistry registers MCP tools in the registry for tool search
 func (s *Service) registerMCPToolsInRegistry(mcpSvc *mcp.Service) {
 	tools := mcpSvc.GetAvailableTools(context.Background())
@@ -56,7 +67,7 @@ func (s *Service) registerMCPToolsInRegistry(mcpSvc *mcp.Service) {
 		toolName := t.Name
 		s.toolRegistry.RegisterWithMetadata(domain.ToolDefinition{
 			Type:         "function",
-			DeferLoading: true, // MCP tools are always deferred for search
+			DeferLoading: true, // behind the search, unless SetEagerTools named it
 			Function: domain.ToolFunction{
 				Name:        toolName,
 				Description: t.Description,

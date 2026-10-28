@@ -51,3 +51,42 @@ func TestAServerAddedWhileRunningIsSearchable(t *testing.T) {
 		t.Fatal("a search for ping finds nothing")
 	}
 }
+
+// A tool the host names as eager is offered on every request instead of
+// waiting behind the search index — whether it was registered before the
+// rule or after. Measured: a model asked to use the browser guessed the
+// tools' names, searched once, found nothing and gave up on it.
+func TestEagerToolsAreOfferedWithoutASearch(t *testing.T) {
+	cfg := filepath.Join(t.TempDir(), "mcpServers.json")
+	if err := os.WriteFile(cfg, []byte(`{"mcpServers":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	svc, err := New("mcp-eager").WithConfig(testAgentConfig(t.TempDir())).WithLLM(&prefixLLM{}).
+		WithMCP(WithMCPConfigPaths(cfg)).Build()
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	t.Cleanup(func() { svc.Close() })
+	deferred := func(name string) bool {
+		svc.toolRegistry.mu.RLock()
+		defer svc.toolRegistry.mu.RUnlock()
+		return svc.toolRegistry.tools[name].def.DeferLoading
+	}
+
+	svc.SetEagerTools("mcp_probe_*")
+	if err := svc.AddMCPServer(context.Background(), "probe", os.Args[0], nil, map[string]string{"AGENTGO_TEST_STDIO_MCP": "1"}); err != nil {
+		t.Fatalf("AddMCPServer: %v", err)
+	}
+	if deferred("mcp_probe_ping") {
+		t.Fatal("an eager MCP tool registered after the rule is still deferred")
+	}
+
+	svc.SetEagerTools()
+	svc.toolRegistry.mu.Lock()
+	svc.toolRegistry.tools["mcp_probe_ping"].def.DeferLoading = true
+	svc.toolRegistry.mu.Unlock()
+	svc.SetEagerTools("mcp_probe_ping")
+	if deferred("mcp_probe_ping") {
+		t.Fatal("a tool registered before the rule stayed deferred")
+	}
+}

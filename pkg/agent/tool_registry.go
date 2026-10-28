@@ -72,6 +72,9 @@ type ToolRegistry struct {
 	policy           ToolExecutionPolicy
 	// deferPatterns names the tools this install keeps behind the index.
 	deferPatterns []string
+	// eagerPatterns names tools offered on every request even where they
+	// would be deferred — an MCP server's, which always are otherwise.
+	eagerPatterns []string
 }
 
 // NewToolRegistry creates an empty ToolRegistry.
@@ -163,6 +166,9 @@ func (r *ToolRegistry) RegisterWithMetadata(def domain.ToolDefinition, handler T
 	if matchesAnyToolPattern(r.deferPatterns, def.Function.Name) {
 		def.DeferLoading = true
 	}
+	if matchesAnyToolPattern(r.eagerPatterns, def.Function.Name) {
+		def.DeferLoading = false
+	}
 	r.tools[def.Function.Name] = &registeredTool{
 		def:      def,
 		handler:  handler,
@@ -188,6 +194,21 @@ func (r *ToolRegistry) SetDeferredPatterns(patterns []string) {
 	for _, t := range r.tools {
 		if matchesAnyToolPattern(patterns, t.def.Function.Name) {
 			t.def.DeferLoading = true
+		}
+	}
+}
+
+// SetEagerPatterns names tools, as exact names or "prefix*", that are offered
+// on every request instead of only after a search finds them. It wins over a
+// deferral, and like SetDeferredPatterns it applies to tools already
+// registered as well as to those that come later.
+func (r *ToolRegistry) SetEagerPatterns(patterns []string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.eagerPatterns = patterns
+	for _, t := range r.tools {
+		if matchesAnyToolPattern(patterns, t.def.Function.Name) {
+			t.def.DeferLoading = false
 		}
 	}
 }
