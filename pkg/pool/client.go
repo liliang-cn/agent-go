@@ -92,7 +92,8 @@ func NewClient(providerName, baseURL, key, modelName string) (*Client, error) {
 //
 // options, when given, are sent inside the declared field: DashScope's
 // search_options (e.g. {"forced_search": true}), extra keys of OpenAI's
-// web_search_options, or the google_search tool's own config.
+// web_search_options, the google_search tool's own config, or the fields of
+// Anthropic's web_search tool (max_uses, allowed_domains, user_location).
 func (c *Client) SetNativeWebSearch(format domain.NativeWebSearchFormat, options ...map[string]interface{}) error {
 	f, err := domain.ParseNativeWebSearchFormat(string(format))
 	if err != nil {
@@ -428,6 +429,13 @@ func applyNativeWebSearch(reqBody map[string]interface{}, format domain.NativeWe
 		}
 		existing, _ := reqBody["tools"].([]map[string]interface{})
 		reqBody["tools"] = append(existing, map[string]interface{}{"google_search": cfg})
+	case domain.NativeWebSearchAnthropic:
+		// A server tool, also listed beside the function tools: the
+		// Messages API takes both in one request. The transport passes it
+		// through (anthropic.go); a chat-completions endpoint refuses its
+		// type, and the retry below drops it, as it does google_search.
+		existing, _ := reqBody["tools"].([]map[string]interface{})
+		reqBody["tools"] = append(existing, domain.AnthropicWebSearchTool(extra))
 	default:
 		// Undeclared. DashScope ignores web_search_options and triggers
 		// retrieval via the non-standard enable_search flag instead, so send
@@ -447,6 +455,9 @@ func shouldRetryPoolWithoutNativeWebSearch(opts *domain.GenerationOptions, err e
 		strings.Contains(msg, "enable_search") ||
 		strings.Contains(msg, "search_options") ||
 		strings.Contains(msg, "google_search") ||
+		// Anthropic's web search tool, by its versioned type: refused by a
+		// chat-completions endpoint, or a version the model does not take.
+		strings.Contains(msg, "web_search_20") ||
 		// Gemini refuses a built-in tool beside function tools unless a
 		// tool_config flag is set, which OpenAI-compatible gateways do not
 		// all pass through.

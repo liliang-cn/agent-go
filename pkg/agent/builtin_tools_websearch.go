@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/pool"
 )
 
 // Built-in `web_search` tool: real-time, grounded answers (news/finance/facts)
@@ -31,11 +32,15 @@ type WebSearchConfig struct {
 	// web_search_options. A Gemini gateway needs google_search: it accepts the
 	// other two and ignores them, so the call answers from the model's own
 	// knowledge — slowly, and "beyond my cutoff" — and the agent searches
-	// again some other way.
+	// again some other way. Anthropic's search is a server tool on its
+	// Messages API, so "anthropic" goes through the pool client, which speaks
+	// that API for api.anthropic.com.
 	Native domain.NativeWebSearchFormat
 	// ReasoningEffort is passed through when set; a search answer needs little.
 	ReasoningEffort string
 }
+
+const webSearchPrompt = "Search the web, then answer the question below concisely and list 1-3 source links at the end:\n"
 
 // buildWebSearchBody builds the chat-completions request body that triggers
 // grounded retrieval. Pure function (no I/O) so it is unit-testable.
@@ -44,7 +49,7 @@ func buildWebSearchBody(cfg WebSearchConfig, query string) map[string]any {
 		"model": cfg.Model,
 		"messages": []map[string]string{{
 			"role":    "user",
-			"content": "Search the web, then answer the question below concisely and list 1-3 source links at the end:\n" + query,
+			"content": webSearchPrompt + query,
 		}},
 		"max_tokens": 700,
 	}
@@ -70,6 +75,9 @@ func buildWebSearchBody(cfg WebSearchConfig, query string) map[string]any {
 func WebSearch(ctx context.Context, cfg WebSearchConfig, query string) (string, error) {
 	if strings.TrimSpace(cfg.BaseURL) == "" || strings.TrimSpace(cfg.APIKey) == "" || strings.TrimSpace(cfg.Model) == "" {
 		return "", fmt.Errorf("web search not configured")
+	}
+	if cfg.Native == domain.NativeWebSearchAnthropic {
+		return anthropicWebSearch(ctx, cfg, query)
 	}
 	body, _ := json.Marshal(buildWebSearchBody(cfg, query))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
@@ -106,6 +114,33 @@ func WebSearch(ctx context.Context, cfg WebSearchConfig, query string) (string, 
 		return "", fmt.Errorf("no search result")
 	}
 	return strings.TrimSpace(out.Choices[0].Message.Content), nil
+}
+
+// anthropicWebSearch asks a Claude model with Anthropic's web search tool
+// for the answer. A turn the search pauses is resumed by the transport, so
+// the text that comes back is the whole answer.
+func anthropicWebSearch(ctx context.Context, cfg WebSearchConfig, query string) (string, error) {
+	c, err := pool.NewClient("web_search", cfg.BaseURL, cfg.APIKey, cfg.Model)
+	if err != nil {
+		return "", err
+	}
+	if err := c.SetNativeWebSearch(domain.NativeWebSearchAnthropic); err != nil {
+		return "", err
+	}
+	if e := strings.TrimSpace(cfg.ReasoningEffort); e != "" {
+		c.SetReasoningEffort(e)
+	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer cancel()
+	res, err := c.GenerateWithTools(ctx, []domain.Message{{Role: "user", Content: webSearchPrompt + query}}, nil,
+		&domain.GenerationOptions{MaxTokens: 8000, WebSearchMode: domain.WebSearchModeNative})
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(res.Content) == "" {
+		return "", fmt.Errorf("no search result")
+	}
+	return strings.TrimSpace(res.Content), nil
 }
 
 // RegisterWebSearchTool registers the built-in `web_search` tool on a service.

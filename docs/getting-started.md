@@ -55,9 +55,12 @@ llm.SetNativeWebSearch(domain.NativeWebSearchDashScope,
 ```
 
 or `native_web_search = "dashscope"` on a configured provider. Values: `none`,
-`openai`, `dashscope`, `google_search`. The options go inside the provider's
+`openai`, `dashscope`, `google_search`, `anthropic`. The options go inside the provider's
 own field; for DashScope `forced_search` is the difference between a model
-that searches and one that is allowed to and does not.
+that searches and one that is allowed to and does not. `anthropic` sends the
+`web_search` server tool beside the function tools on Anthropic's Messages API
+(`max_uses`, `allowed_domains`, `user_location`; `type` picks
+`web_search_20250305` for models without dynamic filtering).
 
 A declaration keeps any MCP search tools as a fallback — declared says the
 field works, not that the model uses it. Only a response that shows the model

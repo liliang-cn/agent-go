@@ -43,8 +43,9 @@ type Provider struct {
 	MaxConcurrency int      `mapstructure:"max_concurrency" json:"max_concurrency"`
 	Capability     int      `mapstructure:"capability" json:"capability"` // capability level, 1-5
 	// NativeWebSearch declares the provider's built-in web search: "none",
-	// "openai" (web_search_options), "dashscope" (enable_search) or
-	// "google_search" (Gemini grounding). Empty leaves it undeclared, and the
+	// "openai" (web_search_options), "dashscope" (enable_search),
+	// "google_search" (Gemini grounding) or "anthropic" (the web_search
+	// server tool on Anthropic's Messages API). Empty leaves it undeclared, and the
 	// client learns from responses instead. See domain.NativeWebSearchFormat.
 	NativeWebSearch string `mapstructure:"native_web_search" json:"native_web_search,omitempty"`
 	// NativeWebSearchOptions are sent inside the declared field, e.g.

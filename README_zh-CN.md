@@ -123,7 +123,7 @@ llm, err := pool.NewPool(pool.PoolConfig{
 		BaseURL:         "https://api.deepseek.com/v1",
 		Key:             os.Getenv("DEEPSEEK_API_KEY"),
 		ModelName:       "deepseek-v4-flash",
-		NativeWebSearch: "none", // none | openai | dashscope | google_search
+		NativeWebSearch: "none", // none | openai | dashscope | google_search | anthropic
 	}},
 })
 ```

@@ -27,6 +27,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -85,12 +86,44 @@ func (t anthropicTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	if err != nil || resp.StatusCode != http.StatusOK {
 		return resp, err
 	}
+	// A turn that used a server tool can stop at pause_turn: the server's
+	// own loop ran out of iterations and the answer is not finished. It is
+	// resumed here, by sending the turn so far back as the assistant's, and
+	// the caller sees one answer.
+	resume := func(content []json.RawMessage) (*http.Response, error) {
+		next, err := withAssistantContent(body, content)
+		if err != nil {
+			return nil, err
+		}
+		r := out.Clone(out.Context())
+		r.Body = io.NopCloser(bytes.NewReader(next))
+		r.ContentLength = int64(len(next))
+		r.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(next)), nil }
+		resp, err := t.base.RoundTrip(r)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode != http.StatusOK {
+			_ = resp.Body.Close()
+			return nil, fmt.Errorf("anthropic: resume after pause_turn: status %d", resp.StatusCode)
+		}
+		return resp, nil
+	}
 	if stream && strings.Contains(resp.Header.Get("Content-Type"), "event-stream") {
 		pr, pw := io.Pipe()
 		src := resp.Body
 		go func() {
-			err := messagesStreamToChat(src, pw)
-			_ = src.Close()
+			err := streamMessagesToChat(src, pw, func(content []json.RawMessage) (io.ReadCloser, error) {
+				r, err := resume(content)
+				if err != nil {
+					return nil, err
+				}
+				if !strings.Contains(r.Header.Get("Content-Type"), "event-stream") {
+					_ = r.Body.Close()
+					return nil, fmt.Errorf("anthropic: resume after pause_turn: not a stream")
+				}
+				return r.Body, nil
+			})
 			_ = pw.CloseWithError(err)
 		}()
 		resp.Body = pr
@@ -103,7 +136,29 @@ func (t anthropicTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	if err != nil {
 		return nil, err
 	}
-	conv, err := messagesToChat(data)
+	msg, err := decodeMessagesResponse(data)
+	if err != nil {
+		return nil, fmt.Errorf("anthropic: translate response: %w", err)
+	}
+	for i := 0; msg.StopReason == "pause_turn" && i < anthropicMaxResumes; i++ {
+		r, err := resume(msg.Content)
+		if err != nil {
+			break // what came so far is the answer
+		}
+		more, err := io.ReadAll(r.Body)
+		_ = r.Body.Close()
+		if err != nil {
+			break
+		}
+		next, err := decodeMessagesResponse(more)
+		if err != nil {
+			break
+		}
+		msg.Content = append(msg.Content, next.Content...)
+		msg.StopReason = next.StopReason
+		msg.Usage = msg.Usage.plus(next.Usage)
+	}
+	conv, err := json.Marshal(chatFromMessages(msg))
 	if err != nil {
 		return nil, fmt.Errorf("anthropic: translate response: %w", err)
 	}
@@ -112,6 +167,43 @@ func (t anthropicTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	resp.Header.Set("Content-Length", strconv.Itoa(len(conv)))
 	resp.Header.Set("Content-Type", "application/json")
 	return resp, nil
+}
+
+// anthropicMaxResumes bounds how many times one turn is resumed after
+// pause_turn, so a server loop that never finishes cannot hold a request
+// forever.
+const anthropicMaxResumes = 5
+
+// withAssistantContent returns a Messages body with content as the
+// assistant's last turn: appended to a trailing assistant message, or as a
+// new one after the user's. The API resumes a paused turn from exactly
+// this, its own blocks sent back unchanged.
+func withAssistantContent(body []byte, content []json.RawMessage) ([]byte, error) {
+	var req map[string]json.RawMessage
+	if err := json.Unmarshal(body, &req); err != nil {
+		return nil, err
+	}
+	var msgs []struct {
+		Role    string            `json:"role"`
+		Content []json.RawMessage `json:"content"`
+	}
+	if err := json.Unmarshal(req["messages"], &msgs); err != nil {
+		return nil, err
+	}
+	if n := len(msgs); n > 0 && msgs[n-1].Role == "assistant" {
+		msgs[n-1].Content = append(msgs[n-1].Content, content...)
+	} else {
+		msgs = append(msgs, struct {
+			Role    string            `json:"role"`
+			Content []json.RawMessage `json:"content"`
+		}{"assistant", content})
+	}
+	raw, err := json.Marshal(msgs)
+	if err != nil {
+		return nil, err
+	}
+	req["messages"] = raw
+	return json.Marshal(req)
 }
 
 // ---- request ----
@@ -288,20 +380,33 @@ func chatToMessages(raw []byte) ([]byte, bool, error) {
 		out["output_config"] = outputConfig
 	}
 
-	// Tools: the last one carries the prefix breakpoint.
-	var tools []struct {
-		Type     string `json:"type"`
-		Function struct {
-			Name        string          `json:"name"`
-			Description string          `json:"description"`
-			Parameters  json.RawMessage `json:"parameters"`
-		} `json:"function"`
-		CacheControl json.RawMessage `json:"cache_control,omitempty"`
-	}
-	_ = json.Unmarshal(in["tools"], &tools)
-	var outTools []block
-	for _, t := range tools {
+	// Tools: the last function tool carries the prefix breakpoint. A server
+	// tool (native_web_search "anthropic") arrives already in the Messages
+	// shape, a type and a name, and is sent as it came, after them.
+	var rawTools []json.RawMessage
+	_ = json.Unmarshal(in["tools"], &rawTools)
+	var outTools, serverTools []block
+	names := map[string]bool{}
+	for _, raw := range rawTools {
+		var t struct {
+			Type     string `json:"type"`
+			Name     string `json:"name"`
+			Function struct {
+				Name        string          `json:"name"`
+				Description string          `json:"description"`
+				Parameters  json.RawMessage `json:"parameters"`
+			} `json:"function"`
+		}
+		if json.Unmarshal(raw, &t) != nil {
+			continue
+		}
 		if t.Function.Name == "" {
+			if t.Type != "" && t.Type != "function" && t.Name != "" {
+				var st block
+				if json.Unmarshal(raw, &st) == nil {
+					serverTools = append(serverTools, st)
+				}
+			}
 			continue
 		}
 		schema := t.Function.Parameters
@@ -313,9 +418,24 @@ func chatToMessages(raw []byte) ([]byte, bool, error) {
 			b["description"] = t.Function.Description
 		}
 		outTools = append(outTools, b)
+		names[t.Function.Name] = true
 	}
 	if len(outTools) > 0 {
 		outTools[len(outTools)-1]["cache_control"] = block{"type": "ephemeral"}
+	}
+	for _, st := range serverTools {
+		// Tool names must be unique. A function tool already called
+		// web_search (agent.RegisterWebSearchTool) is one somebody
+		// registered on purpose; the server tool steps aside for it.
+		if name, _ := st["name"].(string); names[name] {
+			slog.Warn("a function tool has the server tool's name; sending the function tool only",
+				"module", "pool", "tool", name, "type", st["type"])
+			continue
+		}
+		names[st["name"].(string)] = true
+		outTools = append(outTools, st)
+	}
+	if len(outTools) > 0 {
 		out["tools"] = outTools
 		choice := block{"type": "auto"}
 		var tc string
@@ -473,30 +593,110 @@ func finishReason(stop string) string {
 	}
 }
 
-func messagesToChat(raw []byte) ([]byte, error) {
-	var in struct {
-		ID         string `json:"id"`
-		Model      string `json:"model"`
-		StopReason string `json:"stop_reason"`
-		Content    []struct {
-			Type     string          `json:"type"`
-			Text     string          `json:"text"`
-			Thinking string          `json:"thinking"`
-			ID       string          `json:"id"`
-			Name     string          `json:"name"`
-			Input    json.RawMessage `json:"input"`
-		} `json:"content"`
-		Usage messagesUsage `json:"usage"`
+// messagesResponse is a Messages answer with its content blocks kept as
+// sent, so a paused turn can be sent back unchanged.
+type messagesResponse struct {
+	ID         string            `json:"id"`
+	Model      string            `json:"model"`
+	StopReason string            `json:"stop_reason"`
+	Content    []json.RawMessage `json:"content"`
+	Usage      messagesUsage     `json:"usage"`
+}
+
+func decodeMessagesResponse(raw []byte) (messagesResponse, error) {
+	var m messagesResponse
+	err := json.Unmarshal(raw, &m)
+	return m, err
+}
+
+func (u messagesUsage) plus(o messagesUsage) messagesUsage {
+	return messagesUsage{
+		InputTokens:              u.InputTokens + o.InputTokens,
+		OutputTokens:             u.OutputTokens + o.OutputTokens,
+		CacheReadInputTokens:     u.CacheReadInputTokens + o.CacheReadInputTokens,
+		CacheCreationInputTokens: u.CacheCreationInputTokens + o.CacheCreationInputTokens,
 	}
-	if err := json.Unmarshal(raw, &in); err != nil {
+}
+
+// contentBlock is the part of a content block the translation reads.
+//
+// Server tools add three kinds: server_tool_use (the search the model ran),
+// web_search_tool_result (what it found, or an error object), and citations
+// on the text that uses it. None has a chat-completions form. The text is
+// the answer and is kept; the search and its results are not carried into
+// history, so a later turn sends neither — the API takes an assistant turn
+// without them, where one without the other would be refused. The pages
+// cited, or found, become url_citation annotations: that is what proves to
+// nativeSearchState that the model searched.
+type contentBlock struct {
+	Type      string          `json:"type"`
+	Text      string          `json:"text"`
+	Thinking  string          `json:"thinking"`
+	ID        string          `json:"id"`
+	Name      string          `json:"name"`
+	Input     json.RawMessage `json:"input"`
+	Citations []citation      `json:"citations"`
+	Content   json.RawMessage `json:"content"`
+}
+
+type citation struct {
+	Type  string `json:"type"`
+	URL   string `json:"url"`
+	Title string `json:"title"`
+}
+
+// urlAnnotations gathers url_citation annotations, each URL once.
+type urlAnnotations struct {
+	seen map[string]bool
+	list []map[string]interface{}
+}
+
+func (a *urlAnnotations) add(url, title string) {
+	if url == "" || a.seen[url] {
+		return
+	}
+	if a.seen == nil {
+		a.seen = map[string]bool{}
+	}
+	a.seen[url] = true
+	a.list = append(a.list, map[string]interface{}{
+		"type": "url_citation", "url_citation": map[string]string{"url": url, "title": title},
+	})
+}
+
+// searchResults reads a web_search_tool_result's content: a list of results
+// when the search ran, an error object when it did not.
+func searchResults(raw json.RawMessage) []citation {
+	var results []citation
+	if json.Unmarshal(raw, &results) != nil {
+		return nil
+	}
+	return results
+}
+
+func messagesToChat(raw []byte) ([]byte, error) {
+	m, err := decodeMessagesResponse(raw)
+	if err != nil {
 		return nil, err
 	}
+	return json.Marshal(chatFromMessages(m))
+}
+
+func chatFromMessages(in messagesResponse) map[string]interface{} {
 	var text, thinking strings.Builder
 	var calls []map[string]interface{}
-	for _, b := range in.Content {
+	var cited, found urlAnnotations
+	for _, raw := range in.Content {
+		var b contentBlock
+		if json.Unmarshal(raw, &b) != nil {
+			continue
+		}
 		switch b.Type {
 		case "text":
 			text.WriteString(b.Text)
+			for _, c := range b.Citations {
+				cited.add(c.URL, c.Title)
+			}
 		case "thinking":
 			thinking.WriteString(b.Thinking)
 		case "tool_use":
@@ -508,6 +708,10 @@ func messagesToChat(raw []byte) ([]byte, error) {
 				"id": b.ID, "type": "function",
 				"function": map[string]string{"name": b.Name, "arguments": args},
 			})
+		case "web_search_tool_result":
+			for _, r := range searchResults(b.Content) {
+				found.add(r.URL, r.Title)
+			}
 		}
 	}
 	msg := map[string]interface{}{"role": "assistant", "content": text.String()}
@@ -517,24 +721,35 @@ func messagesToChat(raw []byte) ([]byte, error) {
 	if len(calls) > 0 {
 		msg["tool_calls"] = calls
 	}
-	return json.Marshal(map[string]interface{}{
+	if len(cited.list) > 0 {
+		msg["annotations"] = cited.list
+	} else if len(found.list) > 0 {
+		msg["annotations"] = found.list
+	}
+	return map[string]interface{}{
 		"id": in.ID, "object": "chat.completion", "model": in.Model,
 		"choices": []map[string]interface{}{{"index": 0, "message": msg, "finish_reason": finishReason(in.StopReason)}},
 		"usage":   chatUsage(in.Usage),
-	})
+	}
 }
 
 // messagesStreamToChat reads a Messages event stream and writes it out as
 // chat-completions chunks, ending with a usage chunk and [DONE].
 func messagesStreamToChat(src io.Reader, dst io.Writer) error {
-	sc := bufio.NewScanner(src)
-	sc.Buffer(make([]byte, 0, 64<<10), 8<<20)
+	return streamMessagesToChat(io.NopCloser(src), dst, nil)
+}
+
+// streamMessagesToChat is messagesStreamToChat that resumes a turn paused
+// by a server tool: the blocks streamed so far are rebuilt and handed to
+// resume, and its stream carries on into the same chat stream. src is
+// closed, and so is every stream resume opens.
+func streamMessagesToChat(src io.ReadCloser, dst io.Writer, resume func(content []json.RawMessage) (io.ReadCloser, error)) error {
 	var (
 		id, model string
-		usage     messagesUsage
-		finish    string
-		toolIndex = map[int]int{} // content block index -> tool call index
+		total     messagesUsage
+		started   bool
 		nextTool  int
+		content   []json.RawMessage
 	)
 	emit := func(v interface{}) error {
 		b, err := json.Marshal(v)
@@ -550,6 +765,93 @@ func messagesStreamToChat(src io.Reader, dst io.Writer) error {
 			"choices": []map[string]interface{}{{"index": 0, "delta": delta, "finish_reason": finish}},
 		}
 	}
+	for resumes := 0; ; resumes++ {
+		turn := &streamTurn{toolIndex: map[int]int{}, blocks: map[int]block{}, partial: map[int]*strings.Builder{}}
+		// A resumed stream is the same answer going on: its message_start
+		// opens nothing new.
+		err := turn.read(src, &nextTool, func(t *streamTurn) error {
+			if started {
+				return nil
+			}
+			started = true
+			id, model = t.id, t.model
+			return emit(chunk(map[string]interface{}{"role": "assistant", "content": ""}, nil))
+		}, emit, chunk)
+		_ = src.Close()
+		if err != nil {
+			return err
+		}
+		if turn.streamErr != "" {
+			return emit(map[string]interface{}{"error": map[string]string{"message": turn.streamErr}})
+		}
+		if !turn.stopped {
+			return nil // the stream ended without message_stop
+		}
+		total = total.plus(turn.usage)
+		content = append(content, turn.content()...)
+		if turn.stop == "pause_turn" && resume != nil && resumes < anthropicMaxResumes {
+			next, rerr := resume(content)
+			if rerr == nil {
+				src = next
+				continue
+			}
+		}
+		if err := emit(chunk(map[string]interface{}{}, finishReason(turn.stop))); err != nil {
+			return err
+		}
+		if err := emit(map[string]interface{}{
+			"id": id, "object": "chat.completion.chunk", "model": model,
+			"choices": []interface{}{}, "usage": chatUsage(total),
+		}); err != nil {
+			return err
+		}
+		_, err = io.WriteString(dst, "data: [DONE]\n\n")
+		return err
+	}
+}
+
+// streamTurn is one Messages stream as it is read: the chunks it becomes
+// are written as they arrive, and its content blocks are rebuilt beside
+// them, verbatim, for a resume to send back.
+type streamTurn struct {
+	id, model string
+	usage     messagesUsage
+	stop      string
+	stopped   bool
+	streamErr string
+	toolIndex map[int]int // content block index -> tool call index
+	blocks    map[int]block
+	partial   map[int]*strings.Builder // input_json_delta, by block index
+	order     []int
+}
+
+// content is the turn's blocks in order, with streamed inputs filled in.
+func (t *streamTurn) content() []json.RawMessage {
+	var out []json.RawMessage
+	for _, i := range t.order {
+		b := t.blocks[i]
+		if p, ok := t.partial[i]; ok && p.Len() > 0 {
+			input := json.RawMessage(strings.TrimSpace(p.String()))
+			if !json.Valid(input) || !strings.HasPrefix(string(input), "{") {
+				input = json.RawMessage(`{}`)
+			}
+			b["input"] = input
+		}
+		if c, ok := b["citations"]; ok && c == nil {
+			delete(b, "citations") // a start block's null, not a value to send
+		}
+		raw, err := json.Marshal(b)
+		if err == nil {
+			out = append(out, raw)
+		}
+	}
+	return out
+}
+
+func (t *streamTurn) read(src io.Reader, nextTool *int, onStart func(*streamTurn) error,
+	emit func(interface{}) error, chunk func(map[string]interface{}, interface{}) map[string]interface{}) error {
+	sc := bufio.NewScanner(src)
+	sc.Buffer(make([]byte, 0, 64<<10), 8<<20)
 	for sc.Scan() {
 		data, ok := strings.CutPrefix(strings.TrimSpace(sc.Text()), "data:")
 		if !ok {
@@ -563,17 +865,15 @@ func messagesStreamToChat(src io.Reader, dst io.Writer) error {
 				Model string        `json:"model"`
 				Usage messagesUsage `json:"usage"`
 			} `json:"message"`
-			ContentBlock struct {
-				Type string `json:"type"`
-				ID   string `json:"id"`
-				Name string `json:"name"`
-			} `json:"content_block"`
-			Delta struct {
-				Type        string `json:"type"`
-				Text        string `json:"text"`
-				Thinking    string `json:"thinking"`
-				PartialJSON string `json:"partial_json"`
-				StopReason  string `json:"stop_reason"`
+			ContentBlock json.RawMessage `json:"content_block"`
+			Delta        struct {
+				Type        string   `json:"type"`
+				Text        string   `json:"text"`
+				Thinking    string   `json:"thinking"`
+				Signature   string   `json:"signature"`
+				PartialJSON string   `json:"partial_json"`
+				StopReason  string   `json:"stop_reason"`
+				Citation    citation `json:"citation"`
 			} `json:"delta"`
 			Usage *messagesUsage `json:"usage"`
 			Error *struct {
@@ -581,33 +881,89 @@ func messagesStreamToChat(src io.Reader, dst io.Writer) error {
 				Message string `json:"message"`
 			} `json:"error"`
 		}
-		if json.Unmarshal([]byte(strings.TrimSpace(data)), &ev) != nil {
+		trimmed := strings.TrimSpace(data)
+		if json.Unmarshal([]byte(trimmed), &ev) != nil {
 			continue
+		}
+		// The raw delta, for citations: kept whole in the rebuilt block.
+		var rawDelta struct {
+			Delta struct {
+				Citation json.RawMessage `json:"citation"`
+			} `json:"delta"`
 		}
 		var err error
 		switch ev.Type {
 		case "message_start":
-			id, model, usage = ev.Message.ID, ev.Message.Model, ev.Message.Usage
-			err = emit(chunk(map[string]interface{}{"role": "assistant", "content": ""}, nil))
+			t.id, t.model, t.usage = ev.Message.ID, ev.Message.Model, ev.Message.Usage
+			err = onStart(t)
 		case "content_block_start":
-			if ev.ContentBlock.Type == "tool_use" {
-				toolIndex[ev.Index] = nextTool
+			var b block
+			if json.Unmarshal(ev.ContentBlock, &b) != nil {
+				continue
+			}
+			if _, dup := t.blocks[ev.Index]; !dup {
+				t.order = append(t.order, ev.Index)
+			}
+			t.blocks[ev.Index] = b
+			var cb contentBlock
+			_ = json.Unmarshal(ev.ContentBlock, &cb)
+			switch cb.Type {
+			case "tool_use":
+				t.partial[ev.Index] = &strings.Builder{}
+				t.toolIndex[ev.Index] = *nextTool
 				err = emit(chunk(map[string]interface{}{"tool_calls": []map[string]interface{}{{
-					"index": nextTool, "id": ev.ContentBlock.ID, "type": "function",
-					"function": map[string]string{"name": ev.ContentBlock.Name, "arguments": ""},
+					"index": *nextTool, "id": cb.ID, "type": "function",
+					"function": map[string]string{"name": cb.Name, "arguments": ""},
 				}}}, nil))
-				nextTool++
+				*nextTool++
+			case "server_tool_use":
+				t.partial[ev.Index] = &strings.Builder{}
+			case "web_search_tool_result":
+				var found urlAnnotations
+				for _, r := range searchResults(cb.Content) {
+					found.add(r.URL, r.Title)
+				}
+				if len(found.list) > 0 {
+					err = emit(chunk(map[string]interface{}{"annotations": found.list}, nil))
+				}
 			}
 		case "content_block_delta":
+			b := t.blocks[ev.Index]
 			switch ev.Delta.Type {
 			case "text_delta":
+				if b != nil {
+					prev, _ := b["text"].(string)
+					b["text"] = prev + ev.Delta.Text
+				}
 				err = emit(chunk(map[string]interface{}{"content": ev.Delta.Text}, nil))
 			case "thinking_delta":
+				if b != nil {
+					prev, _ := b["thinking"].(string)
+					b["thinking"] = prev + ev.Delta.Thinking
+				}
 				if ev.Delta.Thinking != "" {
 					err = emit(chunk(map[string]interface{}{"reasoning_content": ev.Delta.Thinking}, nil))
 				}
+			case "signature_delta":
+				if b != nil {
+					prev, _ := b["signature"].(string)
+					b["signature"] = prev + ev.Delta.Signature
+				}
+			case "citations_delta":
+				if b != nil && json.Unmarshal([]byte(trimmed), &rawDelta) == nil && len(rawDelta.Delta.Citation) > 0 {
+					list, _ := b["citations"].([]interface{})
+					b["citations"] = append(list, rawDelta.Delta.Citation)
+				}
+				var cited urlAnnotations
+				cited.add(ev.Delta.Citation.URL, ev.Delta.Citation.Title)
+				if len(cited.list) > 0 {
+					err = emit(chunk(map[string]interface{}{"annotations": cited.list}, nil))
+				}
 			case "input_json_delta":
-				if i, ok := toolIndex[ev.Index]; ok && ev.Delta.PartialJSON != "" {
+				if p, ok := t.partial[ev.Index]; ok {
+					p.WriteString(ev.Delta.PartialJSON)
+				}
+				if i, ok := t.toolIndex[ev.Index]; ok && ev.Delta.PartialJSON != "" {
 					err = emit(chunk(map[string]interface{}{"tool_calls": []map[string]interface{}{{
 						"index": i, "function": map[string]string{"arguments": ev.Delta.PartialJSON},
 					}}}, nil))
@@ -615,45 +971,31 @@ func messagesStreamToChat(src io.Reader, dst io.Writer) error {
 			}
 		case "message_delta":
 			if ev.Delta.StopReason != "" {
-				finish = finishReason(ev.Delta.StopReason)
+				t.stop = ev.Delta.StopReason
 			}
 			if ev.Usage != nil {
 				// The final counts; input figures arrive here too on
 				// some versions, so a non-zero one replaces the start's.
-				usage.OutputTokens = ev.Usage.OutputTokens
+				t.usage.OutputTokens = ev.Usage.OutputTokens
 				if ev.Usage.InputTokens > 0 {
-					usage.InputTokens = ev.Usage.InputTokens
+					t.usage.InputTokens = ev.Usage.InputTokens
 				}
 				if ev.Usage.CacheReadInputTokens > 0 {
-					usage.CacheReadInputTokens = ev.Usage.CacheReadInputTokens
+					t.usage.CacheReadInputTokens = ev.Usage.CacheReadInputTokens
 				}
 				if ev.Usage.CacheCreationInputTokens > 0 {
-					usage.CacheCreationInputTokens = ev.Usage.CacheCreationInputTokens
+					t.usage.CacheCreationInputTokens = ev.Usage.CacheCreationInputTokens
 				}
 			}
 		case "message_stop":
-			if finish == "" {
-				finish = "stop"
-			}
-			if err = emit(chunk(map[string]interface{}{}, finish)); err == nil {
-				err = emit(map[string]interface{}{
-					"id": id, "object": "chat.completion.chunk", "model": model,
-					"choices": []interface{}{}, "usage": chatUsage(usage),
-				})
-			}
-			if err == nil {
-				_, err = io.WriteString(dst, "data: [DONE]\n\n")
-			}
-			if err != nil {
-				return err
-			}
+			t.stopped = true
 			return nil
 		case "error":
-			msg := "stream error"
+			t.streamErr = "stream error"
 			if ev.Error != nil {
-				msg = ev.Error.Type + ": " + ev.Error.Message
+				t.streamErr = ev.Error.Type + ": " + ev.Error.Message
 			}
-			return emit(map[string]interface{}{"error": map[string]string{"message": msg}})
+			return nil
 		}
 		if err != nil {
 			return err

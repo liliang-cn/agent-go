@@ -13,7 +13,7 @@
 //		Name:            "cpa",
 //		BaseURL:         "https://cpa.superleo.app/v1",
 //		ModelName:       "gemini-3.8-flash-high",
-//		NativeWebSearch: "google_search", // none | openai | dashscope | google_search
+//		NativeWebSearch: "google_search", // none | openai | dashscope | google_search | anthropic
 //		// sent inside the declared field, e.g. DashScope's search_options
 //		NativeWebSearchOptions: map[string]interface{}{"forced_search": true},
 //		Enabled:                true,

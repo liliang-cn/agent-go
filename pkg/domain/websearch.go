@@ -87,6 +87,12 @@ const (
 	// tools (Gemini's Google Search grounding, as OpenAI-compatible Gemini
 	// gateways accept it).
 	NativeWebSearchGoogle NativeWebSearchFormat = "google_search"
+	// NativeWebSearchAnthropic adds Anthropic's server-side web search tool
+	// (`{"type": "web_search_…", "name": "web_search"}`) to the request's
+	// tools, beside the function tools. It only means something on
+	// Anthropic's Messages API, which agent-go speaks for api.anthropic.com;
+	// see AnthropicWebSearchTool.
+	NativeWebSearchAnthropic NativeWebSearchFormat = "anthropic"
 )
 
 // ParseNativeWebSearchFormat validates a declared format. An unknown value is
@@ -96,10 +102,10 @@ const (
 func ParseNativeWebSearchFormat(s string) (NativeWebSearchFormat, error) {
 	switch f := NativeWebSearchFormat(strings.ToLower(strings.TrimSpace(s))); f {
 	case NativeWebSearchUndeclared, NativeWebSearchNone, NativeWebSearchOpenAI,
-		NativeWebSearchDashScope, NativeWebSearchGoogle:
+		NativeWebSearchDashScope, NativeWebSearchGoogle, NativeWebSearchAnthropic:
 		return f, nil
 	default:
-		return "", fmt.Errorf("unknown native_web_search %q (want none, openai, dashscope or google_search)", s)
+		return "", fmt.Errorf("unknown native_web_search %q (want none, openai, dashscope, google_search or anthropic)", s)
 	}
 }
 
@@ -121,11 +127,37 @@ func ValidateNativeWebSearchOptions(format NativeWebSearchFormat, options map[st
 		return nil
 	}
 	switch format {
-	case NativeWebSearchOpenAI, NativeWebSearchDashScope, NativeWebSearchGoogle:
+	case NativeWebSearchOpenAI, NativeWebSearchDashScope, NativeWebSearchGoogle, NativeWebSearchAnthropic:
 		return nil
 	default:
-		return fmt.Errorf("native_web_search_options need native_web_search set to openai, dashscope or google_search (got %q)", string(format))
+		return fmt.Errorf("native_web_search_options need native_web_search set to openai, dashscope, google_search or anthropic (got %q)", string(format))
 	}
+}
+
+// Anthropic's web search tool versions. The 20260209 one filters results
+// with code before they reach the context; it runs on Claude Opus and Sonnet
+// 4.6 and later. Older models, Haiku, and Vertex AI take the basic 20250305
+// one, named with the option {"type": "web_search_20250305"}.
+const (
+	AnthropicWebSearchBasic     = "web_search_20250305"
+	AnthropicWebSearchFiltering = "web_search_20260209"
+)
+
+// AnthropicWebSearchTool is the server tool definition native_web_search
+// "anthropic" sends: name web_search, the filtering version, and the
+// declared options (max_uses, allowed_domains or blocked_domains,
+// user_location) beside them. The version is the operator's to change, by
+// the option "type", and not guessed from the model's name: a model that
+// refuses it says so, and the refusal is logged as a declaration to fix.
+func AnthropicWebSearchTool(options map[string]interface{}) map[string]interface{} {
+	tool := map[string]interface{}{"type": AnthropicWebSearchFiltering, "name": "web_search"}
+	for k, v := range options {
+		if k == "name" {
+			continue // the API knows the tool by this name only
+		}
+		tool[k] = v
+	}
+	return tool
 }
 
 func NormalizeWebSearchContextSize(size string) string {
