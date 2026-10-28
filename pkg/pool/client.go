@@ -63,6 +63,12 @@ func NewClient(providerName, baseURL, key, modelName string) (*Client, error) {
 		return nil, fmt.Errorf("model_name is required")
 	}
 
+	var transport http.RoundTripper = sharedTransport
+	if isAnthropicNative(baseURL) {
+		// Anthropic's chat-completions endpoint does not cache; its own
+		// API does (anthropic.go).
+		transport = anthropicTransport{base: sharedTransport}
+	}
 	return &Client{
 		providerName: providerName,
 		baseURL:      baseURL,
@@ -70,7 +76,7 @@ func NewClient(providerName, baseURL, key, modelName string) (*Client, error) {
 		modelName:    modelName,
 		http: &http.Client{
 			Timeout:   600 * time.Second,
-			Transport: wireTransport{base: sharedTransport},
+			Transport: wireTransport{base: transport},
 		},
 		promptManager: prompt.NewManager(),
 		nativeSearch:  newNativeSearchState(providerName, domain.NativeWebSearchUndeclared, nil),

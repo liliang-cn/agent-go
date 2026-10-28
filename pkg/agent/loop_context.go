@@ -197,18 +197,27 @@ func (s *Service) buildConversationMessages(session *Session, goal, ragContext, 
 	}
 
 	olderMessages, recentMessages := splitConversationHistory(history, recentConversationWindow, olderConversationLimit)
-	messages := make([]domain.Message, 0, len(olderMessages)+len(recentMessages)+4)
+	messages := make([]domain.Message, 0, len(olderMessages)+len(recentMessages)+5)
+	// What changes every turn goes after the history, not before it. A
+	// provider caches a prefix: the clock, the recalled memory and the
+	// relevant skills at the top changed it on every turn, so the whole
+	// history after them was written to the cache again each time and read
+	// from it never. The summary of older turns changes only on compaction,
+	// and it is about what came before, so it stays in front.
+	if summaryMsg := buildConversationContextMessage(summary, "", ""); summaryMsg != nil {
+		messages = append(messages, *summaryMsg)
+	}
+	messages = append(messages, olderMessages...)
+	messages = append(messages, recentMessages...)
 	if userCtxMsg := buildUserContextMetaMessage(s.buildUserContext()); userCtxMsg != nil {
 		messages = append(messages, *userCtxMsg)
 	}
 	if skillMsg := buildSkillReminderMessage(session, skillReminder, dryRun); skillMsg != nil {
 		messages = append(messages, *skillMsg)
 	}
-	if contextMsg := buildConversationContextMessage(summary, memoryContext, ragContext); contextMsg != nil {
+	if contextMsg := buildConversationContextMessage("", memoryContext, ragContext); contextMsg != nil {
 		messages = append(messages, *contextMsg)
 	}
-	messages = append(messages, olderMessages...)
-	messages = append(messages, recentMessages...)
 	messages = append(messages, withTaskID(domain.Message{Role: "user", Content: goal}, currentTaskID(session)))
 	return messages
 }

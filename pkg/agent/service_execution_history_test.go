@@ -18,14 +18,15 @@ func TestBuildConversationMessagesIncludesSessionHistory(t *testing.T) {
 	if len(messages) != 4 {
 		t.Fatalf("expected 4 messages, got %d", len(messages))
 	}
-	if messages[0].Role != "user" || !containsText(messages[0].Content, "<system-reminder>") {
+	// The history first, so it is a prefix that stays the same turn to turn.
+	if messages[0].Role != "user" || messages[0].Content != "今天有什么新闻？" {
 		t.Fatalf("unexpected first message: %+v", messages[0])
 	}
-	if messages[1].Role != "user" || messages[1].Content != "今天有什么新闻？" {
+	if messages[1].Role != "assistant" || messages[1].Content != "我已经给你做了一版摘要。" {
 		t.Fatalf("unexpected second message: %+v", messages[1])
 	}
-	if messages[2].Role != "assistant" || messages[2].Content != "我已经给你做了一版摘要。" {
-		t.Fatalf("unexpected third message: %+v", messages[2])
+	if messages[2].Role != "user" || !containsText(messages[2].Content, "<system-reminder>") {
+		t.Fatalf("expected the user context after the history: %+v", messages[2])
 	}
 	if messages[3].Role != "user" || messages[3].Content != "筛一版" {
 		t.Fatalf("unexpected new turn message: %+v", messages[3])
@@ -39,11 +40,11 @@ func TestBuildConversationMessagesUsesSummaryWhenHistoryEmpty(t *testing.T) {
 	if len(messages) != 3 {
 		t.Fatalf("expected 3 messages, got %d", len(messages))
 	}
-	if messages[0].Role != "user" || !containsText(messages[0].Content, "<system-reminder>") {
-		t.Fatalf("unexpected role: %+v", messages[0])
+	if !containsText(messages[0].Content, "Latest Summary") {
+		t.Fatalf("expected the summary first, got %q", messages[0].Content)
 	}
-	if messages[1].Content == "继续" {
-		t.Fatalf("expected summary context message to be prepended, got %q", messages[1].Content)
+	if messages[1].Role != "user" || !containsText(messages[1].Content, "<system-reminder>") {
+		t.Fatalf("unexpected role: %+v", messages[1])
 	}
 	if messages[2].Role != "user" || messages[2].Content != "继续" {
 		t.Fatalf("unexpected final user turn: %+v", messages[2])
@@ -63,15 +64,18 @@ func TestBuildConversationMessagesUsesRecentWindowAndOlderChronologicalContext(t
 	svc := &Service{}
 	messages := svc.buildConversationMessages(session, "继续", "", "", nil, "重点摘要", false)
 
-	// user meta context + summary context + 4 older chronological + 6 recent window + current user turn
+	// summary context + 4 older chronological + 6 recent window + user meta context + current user turn
 	if len(messages) != 13 {
 		t.Fatalf("expected 13 messages, got %d", len(messages))
 	}
-	if messages[0].Role != "user" || !containsText(messages[0].Content, "<system-reminder>") || messages[2].Content != "msg-A" || messages[5].Content != "msg-D" {
-		t.Fatalf("unexpected older chronological layout: %+v", messages[:6])
+	if !containsText(messages[0].Content, "重点摘要") || messages[1].Content != "msg-A" || messages[4].Content != "msg-D" {
+		t.Fatalf("unexpected older chronological layout: %+v", messages[:5])
 	}
-	if messages[6].Content != "msg-E" || messages[11].Content != "msg-J" {
-		t.Fatalf("unexpected recent window layout: first recent=%+v last recent=%+v", messages[6], messages[11])
+	if messages[5].Content != "msg-E" || messages[10].Content != "msg-J" {
+		t.Fatalf("unexpected recent window layout: first recent=%+v last recent=%+v", messages[5], messages[10])
+	}
+	if !containsText(messages[11].Content, "<system-reminder>") {
+		t.Fatalf("expected the user context after the history, got %+v", messages[11])
 	}
 	if messages[12].Content != "继续" {
 		t.Fatalf("expected final user turn at the end, got %+v", messages[12])
@@ -82,17 +86,21 @@ func TestBuildConversationMessagesCreatesSeparateContextMessage(t *testing.T) {
 	svc := &Service{}
 	messages := svc.buildConversationMessages(NewSession("agent-1"), "继续", "RAG 片段", "Memory 片段", nil, "摘要", false)
 
-	if len(messages) != 3 {
-		t.Fatalf("expected 3 messages, got %d", len(messages))
+	// summary, user context, memory+RAG context, goal
+	if len(messages) != 4 {
+		t.Fatalf("expected 4 messages, got %d", len(messages))
 	}
-	if !containsText(messages[0].Content, "<system-reminder>") {
-		t.Fatalf("expected first message to be user context meta message, got %+v", messages[0])
+	if !containsText(messages[0].Content, "摘要") || containsText(messages[0].Content, "Memory 片段") {
+		t.Fatalf("expected the summary alone first, got %+v", messages[0])
 	}
-	if messages[1].Content == "继续" {
-		t.Fatalf("expected context message before user goal, got %+v", messages[1])
+	if !containsText(messages[1].Content, "<system-reminder>") {
+		t.Fatalf("expected user context meta message, got %+v", messages[1])
 	}
-	if messages[2].Content != "继续" {
-		t.Fatalf("expected final user message to remain plain goal, got %+v", messages[2])
+	if !containsText(messages[2].Content, "Memory 片段") || !containsText(messages[2].Content, "RAG 片段") {
+		t.Fatalf("expected memory and RAG right before the goal, got %+v", messages[2])
+	}
+	if messages[3].Content != "继续" {
+		t.Fatalf("expected final user message to remain plain goal, got %+v", messages[3])
 	}
 }
 
