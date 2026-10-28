@@ -51,6 +51,11 @@ var planningEndingPatterns = []*regexp.Regexp{
 // confirmation like "我会记住这件事。" would be wrongly rejected as a stall.
 var benignClosing = regexp.MustCompile(`(?i)(?:\blet me know\b|\bi(?:'ll| will) (?:remember|note|keep in mind)\b|\bnoted\b|我(?:会|将)?(?:记住|记得|记下|记录|留意|注意))[\s\S]*$`)
 
+// quotedSpan matches text the answer quotes rather than says: paired
+// typographic, CJK corner and straight double quotes, and fenced or inline
+// code. These are the answer's own punctuation, not words of the request.
+var quotedSpan = regexp.MustCompile("“[^”]*”|「[^」]*」|『[^』]*』|\"[^\"\n]*\"|```[\\s\\S]*?```|`[^`\n]*`")
+
 // NoPlanningOnlyFinish rejects free-form final answers that read like a
 // plan ("I'll do X next", "接下来我会..."). Register globally; it applies to
 // any agent that produces free-form text instead of a terminal tool call.
@@ -72,7 +77,13 @@ func NoPlanningOnlyFinish() OutputLint {
 			}
 			// Strip benign trailing acknowledgments ("let me know ...",
 			// "我会记住...") before scanning so they aren't flagged as stalls.
-			scan := strings.TrimSpace(benignClosing.ReplaceAllString(trimmed, ""))
+			// Quoted text is not the agent speaking: a message it sent on the
+			// user's behalf is written in the user's first person ("so I'll
+			// arrive two hours late"), and quoting it back read as a stall.
+			// Measured: an SMS sent and delivered was rejected three times and
+			// the run ended blocked.
+			scan := strings.TrimSpace(quotedSpan.ReplaceAllString(trimmed, ""))
+			scan = strings.TrimSpace(benignClosing.ReplaceAllString(scan, ""))
 			for _, pat := range planningEndingPatterns {
 				if pat.MatchString(scan) {
 					return false, "response reads like a plan (\"next steps: ... / I will ...\") " +
@@ -143,7 +154,12 @@ func FileTaskMustWrite() OutputLint {
 			var paths []string
 			wantsFile := false
 			for _, want := range ctx.Deliverables {
-				if !strings.EqualFold(strings.TrimSpace(want.Kind), "file") {
+				if !strings.EqualFold(strings.TrimSpace(want.Kind), "file") || !want.Enforced() {
+					continue
+				}
+				if !writesLocally(want) {
+					// Written through a tool that is not this host's
+					// filesystem; task_delivery_contract checks the call.
 					continue
 				}
 				wantsFile = true

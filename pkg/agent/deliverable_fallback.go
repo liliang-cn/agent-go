@@ -62,7 +62,8 @@ func deliverableFallbackPrompt(missing []DeliverableRequirement) string {
 	b.WriteString(strings.Join(parts, "; "))
 	b.WriteString(" — that part is genuinely impossible here, and stopping is not the answer.\n")
 	b.WriteString("Do the part you can: work out and state the result the user asked for, ")
-	b.WriteString("then say plainly which part you could not carry out and why (no such tool is available). ")
+	b.WriteString("then say plainly which part you could not carry out, in the user's terms rather than " +
+		"in terms of tools, and offer the closest thing you can do or how they can do it themselves. ")
 	b.WriteString("Finish with task_complete, not task_blocked.")
 	return b.String()
 }

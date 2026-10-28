@@ -109,9 +109,16 @@ func TaskDeliveryContract() OutputLint {
 		NameValue: "task_delivery_contract",
 		Fn: func(_ string, ctx LintContext) (bool, string) {
 			for _, want := range ctx.Deliverables {
+				if !want.Enforced() {
+					// Conditional, or it needs a detail only the user can
+					// give: see RequestedActionContract. Demanding the call
+					// here is what made a model message Mia although the
+					// forecast said no, and reply to Mom in the user's name.
+					continue
+				}
 				// A named target file is checkable directly: prefer the
 				// artifact over the attempt.
-				if strings.EqualFold(strings.TrimSpace(want.Kind), "file") && want.Path != "" {
+				if checksDisk(want) {
 					if fileArtifactExistsIn(want.Path, ctx.Workspace) {
 						continue
 					}
@@ -148,13 +155,17 @@ func RequestedActionContract() OutputLint {
 		NameValue: "requested_action_contract",
 		Fn: func(_ string, ctx LintContext) (bool, string) {
 			for _, want := range ctx.RequestedActions {
-				if !want.Unconditional {
+				if !want.Enforced() {
 					// The user attached a condition ("if the average is below
 					// 85, remind me…"). Whether it holds is the task's own work,
 					// and the runtime cannot evaluate it — so enforcing the
 					// action would demand a tool call the correct answer must
 					// not make. Restraint is the right behaviour here, and a
 					// contract cannot tell restraint from neglect.
+					//
+					// The same holds when the action needs a detail only the
+					// user can give (NeedsDetails): the right answer is a
+					// question, and the contract would demand a guess.
 					continue
 				}
 				if reason := unmetToolContract(ctx, want.Tools(), want.Description,
@@ -211,10 +222,47 @@ func unmetToolContract(ctx LintContext, tools []string, description, verb string
 	if len(available) > 1 {
 		named = "the tools " + strings.Join(available, " / ")
 	}
-	return "the user explicitly asked you to " + verb + detail +
+	// It must not read as an order to act. Told "call X now", a model that had
+	// rightly held back — nothing needed a reply, the user never said what to
+	// write — sent the message anyway, in the user's name.
+	return "the user asked you to " + verb + detail +
 		", and " + named + " that does it was available to you, but you never called it. " +
-		"Do not tell the user it is done when it is not. Call " + strings.Join(available, " or ") +
-		" now and report what it returned, or call task_blocked stating plainly that you did not do it and why."
+		"Do not tell the user it is done when it is not. If the user gave you everything it needs, call " +
+		strings.Join(available, " or ") + " now and report what it returned. If it would mean guessing " +
+		"something only the user can say, ask them instead; if you decided it should not be done, " +
+		"tell them plainly that you did not do it and why."
+}
+
+// checksDisk reports whether a file deliverable can be verified by looking at
+// this host's disk: it names a path and the tools that write it are this
+// process's own filesystem tools (or none were named).
+//
+// A file written through anything else — an MCP server, an embedder's tool
+// over a remote drive — never lands here, so looking for it on the local disk
+// rejects the finished work every time: measured, a run that wrote, read back
+// and verified /Documents/购物.txt through the app's write_file was rejected
+// three times for "no such file exists on disk" and ended blocked. Those
+// deliveries are checked like any other: the tool that does it was called.
+func checksDisk(want DeliverableRequirement) bool {
+	if !strings.EqualFold(strings.TrimSpace(want.Kind), "file") || strings.TrimSpace(want.Path) == "" {
+		return false
+	}
+	return writesLocally(want)
+}
+
+// writesLocally reports whether a deliverable is produced through this
+// process's own filesystem tools, or names no tool at all.
+func writesLocally(want DeliverableRequirement) bool {
+	tools := want.Tools()
+	if len(tools) == 0 {
+		return true
+	}
+	for _, tool := range tools {
+		if filesystemWriteTools[tool] {
+			return true
+		}
+	}
+	return false
 }
 
 // fileArtifactExistsIn reports whether the artifact exists, looking inside the

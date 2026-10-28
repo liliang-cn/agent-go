@@ -201,3 +201,27 @@ func TestPruneUnknownToolsDropsInventedPicks(t *testing.T) {
 		t.Errorf("invented tool survived pruning: %q", got.RequestedActions[1].SatisfiedBy)
 	}
 }
+
+// The extraction answers "unconditional" and "needs_details" for deliverables
+// as for actions; a deliverable keeps the opposite of the first so that one an
+// embedder declares, with zero values, is still enforced.
+func TestParseRunConstraintsReadsConditionsAndMissingDetails(t *testing.T) {
+	t.Parallel()
+
+	got, err := parseRunConstraints(`{"forbid_tools":false,
+		"deliverables":[
+			{"kind":"message","description":"message Mia if warm","satisfied_by":"send_chat_message","unconditional":false,"needs_details":false},
+			{"kind":"message","description":"reply where needed","satisfied_by":"send_chat_message","unconditional":true,"needs_details":true},
+			{"kind":"email","description":"mail bob","satisfied_by":"send_email"}],
+		"requested_actions":[{"kind":"reminder","description":"set an alarm","satisfied_by":"create_alarm","unconditional":true,"needs_details":true}]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := got.Deliverables
+	if len(d) != 3 || !d[0].Conditional || d[0].Enforced() || !d[1].NeedsDetails || d[1].Enforced() || !d[2].Enforced() {
+		t.Fatalf("deliverables parsed wrong: %+v", d)
+	}
+	if a := got.RequestedActions; len(a) != 1 || !a[0].NeedsDetails || a[0].Enforced() {
+		t.Fatalf("requested action parsed wrong: %+v", a)
+	}
+}

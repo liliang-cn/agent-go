@@ -80,6 +80,13 @@ type RequestedAction struct {
 	// A conditional action is still reported, because the tool it names must
 	// stay reachable for the branch where the condition does hold.
 	Unconditional bool `json:"unconditional"`
+	// NeedsDetails is true when carrying the action out would mean guessing
+	// something only the user can say — what time, who to, what to say. The
+	// right move then is to ask, and a contract demanding the call would push
+	// the model to make the detail up: asked to "set an alarm" it would pick a
+	// time, asked to "reply where needed" it would write the user's reply for
+	// them. Like a condition, it takes the action out of the contract.
+	NeedsDetails bool `json:"needs_details,omitempty"`
 }
 
 // DeliverableRequirement is one side effect the run owes the user.
@@ -102,7 +109,23 @@ type DeliverableRequirement struct {
 	// AlsoSatisfiedBy names other available tools that perform the same
 	// delivery; see RequestedAction.AlsoSatisfiedBy.
 	AlsoSatisfiedBy []string `json:"also_satisfied_by,omitempty"`
+	// Conditional is true when the user made the delivery depend on something
+	// the task has to find out first ("if it's over 25°, message Mia"), or
+	// left to judgement whether it is needed at all ("reply where needed").
+	// The runtime cannot evaluate that, so a conditional delivery is reported
+	// and never enforced; see RequestedAction.Unconditional. The zero value
+	// is enforced, so a deliverable an embedder declares keeps its contract.
+	Conditional bool `json:"conditional,omitempty"`
+	// NeedsDetails: see RequestedAction.NeedsDetails.
+	NeedsDetails bool `json:"needs_details,omitempty"`
 }
+
+// Enforced reports whether the delivery contract may demand this delivery.
+func (d DeliverableRequirement) Enforced() bool { return !d.Conditional && !d.NeedsDetails }
+
+// Enforced reports whether the requested-action contract may demand this
+// action.
+func (a RequestedAction) Enforced() bool { return a.Unconditional && !a.NeedsDetails }
 
 // contractTools is every tool that carries out one deliverable or action:
 // the chosen one first, then the alternatives, empty names dropped.
@@ -168,8 +191,10 @@ func newConstraintExtractionSchema() map[string]interface{} {
 						"path":              map[string]interface{}{"type": "string"},
 						"satisfied_by":      satisfiedBySchema(),
 						"also_satisfied_by": alsoSatisfiedBySchema(),
+						"unconditional":     unconditionalSchema(),
+						"needs_details":     needsDetailsSchema(),
 					},
-					"required": []string{"kind", "description", "satisfied_by"},
+					"required": []string{"kind", "description", "satisfied_by", "unconditional", "needs_details"},
 				},
 			},
 			"requested_actions": map[string]interface{}{
@@ -187,13 +212,10 @@ func newConstraintExtractionSchema() map[string]interface{} {
 						"description":       map[string]interface{}{"type": "string"},
 						"satisfied_by":      satisfiedBySchema(),
 						"also_satisfied_by": alsoSatisfiedBySchema(),
-						"unconditional": map[string]interface{}{
-							"type": "boolean",
-							"description": "true if the user asked for this outright; " +
-								"false if they attached a condition to it.",
-						},
+						"unconditional":     unconditionalSchema(),
+						"needs_details":     needsDetailsSchema(),
 					},
-					"required": []string{"kind", "description", "satisfied_by", "unconditional"},
+					"required": []string{"kind", "description", "satisfied_by", "unconditional", "needs_details"},
 				},
 			},
 		},
@@ -210,6 +232,26 @@ func satisfiedBySchema() map[string]interface{} {
 		"type": "string",
 		"description": "The exact name of the one available tool that performs this, " +
 			"copied from the AVAILABLE TOOLS list. Empty string when no listed tool can do it.",
+	}
+}
+
+// unconditionalSchema describes the condition flag shared by deliverables and
+// requested actions.
+func unconditionalSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "boolean",
+		"description": "true if the user asked for this outright; false if they attached a condition " +
+			"to it or left it to your judgement whether it is needed.",
+	}
+}
+
+// needsDetailsSchema describes the missing-detail flag shared by deliverables
+// and requested actions.
+func needsDetailsSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "boolean",
+		"description": "true if doing it would mean guessing something only the user can say " +
+			"(when, who to, what to say); false if the request gives what it needs.",
 	}
 }
 
@@ -315,7 +357,8 @@ Rules:
   - kind: "reminder" for a reminder/alarm/timer, "calendar" for a calendar entry/schedule/event, "note" for something recorded for later, "other" for anything else the user asked you to perform.
   - Report the action only if the user asked for it in their own words. A calculation, a translation, a lookup, or an explanation is NOT a requested action.
   - Never invent an action because it would be helpful. When unsure, report nothing.
-  - unconditional: true when the user asked for the action outright. false when they attached ANY condition to it — "if …, remind me", "should it rain, add …", "otherwise book …". Read carefully: a request can ask for a calculation or a lookup outright and then make the action depend on how it turns out. That action is conditional.
+- unconditional (on every deliverable and every requested action): true when the user asked for it outright. false when they attached ANY condition to it — "if …, remind me", "should it rain, add …", "otherwise book …" — or left it to your judgement whether it is needed at all ("reply to whatever needs a reply"). Read carefully: a request can ask for a calculation or a lookup outright and then make the action depend on how it turns out. That action is conditional.
+- needs_details (on every deliverable and every requested action): true when carrying it out would mean guessing something only the user can say — the time of an alarm nobody gave, the recipient of a message, what a reply in the user's name should say. false when the request gives what it needs, or the rest can be looked up.
 - satisfied_by (on every deliverable and every requested action): pick the ONE tool from the AVAILABLE TOOLS list below that would carry it out, and copy its name exactly. Use "" when no listed tool can carry it out. Never invent a name that is not on the list.
 - also_satisfied_by: when other listed tools would carry it out just as well — appending to or updating an existing record instead of creating a new one — list their exact names here. Leave it empty when only one tool fits.
 - Work in whatever language the request is written in.
@@ -453,10 +496,17 @@ func parseRunConstraints(raw string) (RunConstraints, error) {
 		return RunConstraints{}, err
 	}
 
+	// The model answers "unconditional" for both kinds; a deliverable stores
+	// the opposite (Conditional) so that its zero value stays enforced for an
+	// embedder that declares one. Absent means asked outright.
+	type extractedDeliverable struct {
+		DeliverableRequirement
+		Unconditional *bool `json:"unconditional"`
+	}
 	var payload struct {
-		ForbidTools      bool                     `json:"forbid_tools"`
-		Deliverables     []DeliverableRequirement `json:"deliverables"`
-		RequestedActions []RequestedAction        `json:"requested_actions"`
+		ForbidTools      bool                   `json:"forbid_tools"`
+		Deliverables     []extractedDeliverable `json:"deliverables"`
+		RequestedActions []RequestedAction      `json:"requested_actions"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return RunConstraints{}, err
@@ -478,6 +528,8 @@ func parseRunConstraints(raw string) (RunConstraints, error) {
 			Path:            strings.TrimSpace(d.Path),
 			SatisfiedBy:     strings.TrimSpace(d.SatisfiedBy),
 			AlsoSatisfiedBy: trimNames(d.AlsoSatisfiedBy),
+			Conditional:     d.Unconditional != nil && !*d.Unconditional,
+			NeedsDetails:    d.NeedsDetails,
 		})
 	}
 	for _, a := range payload.RequestedActions {
@@ -495,6 +547,7 @@ func parseRunConstraints(raw string) (RunConstraints, error) {
 			SatisfiedBy:     strings.TrimSpace(a.SatisfiedBy),
 			AlsoSatisfiedBy: trimNames(a.AlsoSatisfiedBy),
 			Unconditional:   a.Unconditional,
+			NeedsDetails:    a.NeedsDetails,
 		})
 	}
 	return out, nil

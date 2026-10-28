@@ -155,3 +155,25 @@ func containsString(haystack []string, needle string) bool {
 	}
 	return false
 }
+
+// A message sent for the user is written in the user's first person, and an
+// answer that quotes it back is reporting work, not planning it. Measured: an
+// SMS that had been delivered ("…so I'll arrive about two hours later than
+// planned.") was rejected three times as a stall and the run ended blocked.
+func TestNoPlanningOnlyFinishIgnoresQuotedText(t *testing.T) {
+	t.Parallel()
+
+	lint := NoPlanningOnlyFinish()
+	for _, answer := range []string{
+		"短信已发送给 Sam Patel（+1 415 555 0142），状态为“已送达”。内容：“Hi Sam, my flight is delayed, so I'll arrive about two hours later than planned.”",
+		"Sent to Sam: \"My flight is delayed, so I'll arrive two hours late.\"",
+		"已经发给妈妈：「我马上回家」",
+	} {
+		if ok, reason := lint.Check(answer, LintContext{}); !ok {
+			t.Errorf("quoted message read as a stall: %q (%s)", answer, reason)
+		}
+	}
+	if ok, _ := lint.Check("I checked the forecast. I'll send the message to Sam next.", LintContext{}); ok {
+		t.Error("an unquoted stall must still be caught")
+	}
+}
