@@ -1408,7 +1408,10 @@ func (r *Runtime) completeRunWithStop(goal, content string, messages []domain.Me
 	// Background, but owned: Close waits for it, so it cannot write into a
 	// directory the caller has already torn down.
 	if r.cfg == nil || !r.cfg.DisableMemoryAutoStore {
-		r.svc.goBackground(func() { r.saveToMemory(context.Background(), goal, content) })
+		// The write is the run's even after the run is over: it keeps the
+		// run's span, so an in-process store (CortexDB) files it under it.
+		memCtx := r.spanCtx(context.Background())
+		r.svc.goBackground(func() { r.saveToMemory(memCtx, goal, content) })
 	}
 
 	// Run-memory capture belongs here, at the one place a run completes, for
@@ -1416,7 +1419,7 @@ func (r *Runtime) completeRunWithStop(goal, content string, messages []domain.Me
 	// runWithConfig, so a host driving its runs with RunStream captured
 	// nothing and the long-term memory only ever learned about the runs that
 	// happened to go through Run.
-	r.svc.captureRunMemory(goal, content)
+	r.svc.captureRunMemory(r.spanCtx(context.Background()), goal, content)
 	r.noteEnd("completed", reason, "")
 	r.emitRunEnd(goal, reason, content, false, false)
 }

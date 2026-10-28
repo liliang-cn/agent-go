@@ -59,17 +59,22 @@ func (s *Service) recallRunMemory(ctx context.Context, goal string) string {
 
 // captureRunMemory persists a completed run into run memory, asynchronously —
 // the caller gets their result back immediately, and a capture failure only
-// logs.
-func (s *Service) captureRunMemory(goal, finalText string) {
+// logs. ctx carries only the run's flow, so the store's own trace (CortexDB
+// takes the traceparent) lands under the run.
+func (s *Service) captureRunMemory(ctx context.Context, goal, finalText string) {
 	if s == nil || s.runMemory == nil || finalText == "" {
 		return
 	}
 	rm := s.runMemory
 	go func() {
-		cctx, cancel := context.WithTimeout(context.Background(), runMemoryCaptureTimeout)
+		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), runMemoryCaptureTimeout)
 		defer cancel()
 		if err := rm.CaptureRun(cctx, goal, finalText); err != nil {
-			slog.Warn("run-memory capture failed",
+			logger := s.logger
+			if logger == nil {
+				logger = slog.Default()
+			}
+			logger.WarnContext(cctx, "run-memory capture failed",
 				"module", "agent.runmemory", "error", err)
 		}
 	}()
