@@ -36,6 +36,10 @@ func (s *endSink) Wire(_ context.Context, _, _ string, e trace.WireEvent) {
 // which return no token accounting, so their traces said 0 tokens and 0 to
 // first byte: the cost and the wait of every one of them was invisible. The
 // provider reports both; the wire now carries them to the call's record.
+//
+// The wait is the call's duration, not a time to first token: the answer came
+// as one JSON document, so its first byte was its last, and a ttft equal to
+// the duration said nothing the duration did not.
 func TestAnAuxiliaryCallRecordsItsTokensAndFirstByte(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(30 * time.Millisecond)
@@ -65,8 +69,11 @@ func TestAnAuxiliaryCallRecordsItsTokensAndFirstByte(t *testing.T) {
 	if r.In != 1200 || r.Out != 34 || r.Cached != 800 {
 		t.Errorf("tokens in=%d out=%d cached=%d, want 1200/34/800", r.In, r.Out, r.Cached)
 	}
-	if r.TTFTMs < 25 {
-		t.Errorf("ttft = %dms, want the first byte's time", r.TTFTMs)
+	if r.Streamed || r.TTFTMs != 0 {
+		t.Errorf("a whole answer reported streamed=%v ttft=%dms", r.Streamed, r.TTFTMs)
+	}
+	if r.DurMs < 25 {
+		t.Errorf("duration = %dms, want the wait", r.DurMs)
 	}
 }
 

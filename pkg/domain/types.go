@@ -383,6 +383,46 @@ type GenerationResult struct {
 	// did not surface one. Used by the runtime to distinguish refusals
 	// from generic completions.
 	FinishReason string `json:"finish_reason,omitempty"`
+	// Streamed is true when the answer arrived as a stream, so FirstOutputMs
+	// is a time to first output and not the length of the whole wait.
+	Streamed bool `json:"streamed,omitempty"`
+	// ServerTools is the work the provider did on its own side of the call —
+	// searches run by a server tool, resumes of a paused turn — when it
+	// reported any. nil for the ordinary turn.
+	ServerTools *ServerToolReport `json:"server_tools,omitempty"`
+}
+
+// ServerToolReport is what a provider did inside one model call that no
+// client tool call shows: server tool uses (Anthropic's web_search), how
+// many times a paused turn was resumed, how long each HTTP request of the
+// call took, and how many citations the answer carried.
+//
+// A 34-second turn that ran four web searches and one resume looked, from
+// the outside, exactly like a 34-second turn that thought hard. This is the
+// difference.
+type ServerToolReport struct {
+	Uses []ServerToolUse `json:"uses,omitempty"`
+	// Resumes is how many times the turn was sent back after pause_turn.
+	Resumes int `json:"resumes,omitempty"`
+	// RequestMs is each HTTP request's duration, the first and every
+	// resume, in order.
+	RequestMs []int64 `json:"request_ms,omitempty"`
+	// Citations is how many citations the answer's text carried.
+	Citations int `json:"citations,omitempty"`
+}
+
+// ServerToolUse is one server tool call and its outcome.
+type ServerToolUse struct {
+	ID   string `json:"id,omitempty"`
+	Name string `json:"name"`
+	// Input is what the model asked the tool, e.g. {"query": "..."}.
+	Input map[string]any `json:"input,omitempty"`
+	// Results is how many results came back; ErrorCode is set instead when
+	// the tool failed ("max_uses_exceeded", "unavailable", ...).
+	Results   int    `json:"results"`
+	ErrorCode string `json:"error_code,omitempty"`
+	// URLs are the results' addresses, in order.
+	URLs []string `json:"urls,omitempty"`
 }
 
 // StructuredResult represents the result of structured generation

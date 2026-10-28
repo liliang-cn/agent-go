@@ -226,6 +226,7 @@ func (c *Client) Stream(ctx context.Context, prompt string, opts *domain.Generat
 	if c.key != "" {
 		req.Header.Set("Authorization", "Bearer "+c.key)
 	}
+	trace.InjectHTTP(ctx, req.Header)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -539,6 +540,37 @@ func applyPoolRetryFallbacks(opts *domain.GenerationOptions, err error) *domain.
 	return &cur
 }
 
+// retryFallbacks is applyPoolRetryFallbacks that records what it stripped as
+// a decision: a round sent again without native search is a round the model
+// answered without the search it was offered, and that was invisible.
+func retryFallbacks(ctx context.Context, opts *domain.GenerationOptions, err error) *domain.GenerationOptions {
+	next := applyPoolRetryFallbacks(opts, err)
+	if next == nil {
+		return nil
+	}
+	reason := "the provider rejected it: " + clipText(err.Error(), 200)
+	if opts.WebSearchMode != next.WebSearchMode {
+		trace.Decide(ctx, "retry_without_native_search", reason, map[string]any{"from": string(opts.WebSearchMode), "to": string(next.WebSearchMode)})
+	}
+	if opts.ToolChoice != next.ToolChoice {
+		trace.Decide(ctx, "retry_without_tool_choice", reason, map[string]any{"tool_choice": opts.ToolChoice})
+	}
+	if opts.ResponseFormat != nil && next.ResponseFormat == nil {
+		trace.Decide(ctx, "retry_without_response_format", reason, nil)
+	}
+	if opts.PromptCache != next.PromptCache {
+		trace.Decide(ctx, "retry_without_prompt_cache", reason, nil)
+	}
+	return next
+}
+
+func clipText(s string, n int) string {
+	if len(s) > n {
+		return s[:n] + "…"
+	}
+	return s
+}
+
 // buildResponseFormatBody renders a domain.ResponseFormat into the
 // shape expected by OpenAI-compat /chat/completions. Returns nil when
 // the spec is empty so the field is omitted from the request body.
@@ -587,7 +619,7 @@ func (c *Client) GenerateWithTools(ctx context.Context, messages []domain.Messag
 	// succeeds or nothing more can be dropped.
 	curOpts := opts
 	for attempts := 0; err != nil && attempts < 3; attempts++ {
-		retryOpts := applyPoolRetryFallbacks(curOpts, err)
+		retryOpts := retryFallbacks(ctx, curOpts, err)
 		if retryOpts == nil {
 			break
 		}
@@ -634,6 +666,7 @@ func (c *Client) GenerateWithTools(ctx context.Context, messages []domain.Messag
 		Parts:            outputPartsFromMessage(choice.Message.Images),
 		FinishReason:     choice.FinishReason,
 		Usage:            parsePoolUsage(resp),
+		ServerTools:      parseServerTools(resp),
 	}
 
 	// Parse the tool calls.
@@ -1153,6 +1186,7 @@ func (c *Client) postOnce(ctx context.Context, path string, body interface{}) ([
 	if c.key != "" {
 		req.Header.Set("Authorization", "Bearer "+c.key)
 	}
+	trace.InjectHTTP(ctx, req.Header)
 
 	resp, err := c.http.Do(req)
 	if err != nil {

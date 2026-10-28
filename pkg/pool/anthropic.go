@@ -32,6 +32,11 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	agentgolog "github.com/liliang-cn/agent-go/v3/pkg/log"
+	"github.com/liliang-cn/agent-go/v3/pkg/trace"
 )
 
 // anthropicVersion is the API version header every request carries.
@@ -72,9 +77,15 @@ func (t anthropicTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	if err != nil {
 		return nil, err
 	}
-	body, stream, err := chatToMessages(raw)
+	ctx := req.Context()
+	body, stream, dropped, err := translateChatRequest(raw)
 	if err != nil {
 		return nil, fmt.Errorf("anthropic: translate request: %w", err)
+	}
+	for _, d := range dropped {
+		trace.Decide(ctx, "drop_server_tool",
+			"a function tool already has the server tool's name; the function tool is sent and the server tool is not",
+			map[string]any{"tool": d.name, "type": d.typ})
 	}
 	out.URL.Path = strings.TrimSuffix(req.URL.Path, "/chat/completions") + "/messages"
 	out.Body = io.NopCloser(bytes.NewReader(body))
@@ -82,6 +93,7 @@ func (t anthropicTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	out.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(body)), nil }
 	out.Header.Set("Content-Type", "application/json")
 
+	firstStart := time.Now()
 	resp, err := t.base.RoundTrip(out)
 	if err != nil || resp.StatusCode != http.StatusOK {
 		return resp, err
@@ -99,6 +111,8 @@ func (t anthropicTransport) RoundTrip(req *http.Request) (*http.Response, error)
 		r.Body = io.NopCloser(bytes.NewReader(next))
 		r.ContentLength = int64(len(next))
 		r.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(next)), nil }
+		agentgolog.GetLogger().DebugContext(ctx, "anthropic: resuming a paused turn",
+			"module", "pool", "blocks", len(content))
 		resp, err := t.base.RoundTrip(r)
 		if err != nil {
 			return nil, err
@@ -113,7 +127,7 @@ func (t anthropicTransport) RoundTrip(req *http.Request) (*http.Response, error)
 		pr, pw := io.Pipe()
 		src := resp.Body
 		go func() {
-			err := streamMessagesToChat(src, pw, func(content []json.RawMessage) (io.ReadCloser, error) {
+			err := streamMessagesToChatFrom(firstStart, src, pw, func(content []json.RawMessage) (io.ReadCloser, error) {
 				r, err := resume(content)
 				if err != nil {
 					return nil, err
@@ -136,11 +150,14 @@ func (t anthropicTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	if err != nil {
 		return nil, err
 	}
+	requestMs := []int64{time.Since(firstStart).Milliseconds()}
 	msg, err := decodeMessagesResponse(data)
 	if err != nil {
 		return nil, fmt.Errorf("anthropic: translate response: %w", err)
 	}
+	resumes := 0
 	for i := 0; msg.StopReason == "pause_turn" && i < anthropicMaxResumes; i++ {
+		began := time.Now()
 		r, err := resume(msg.Content)
 		if err != nil {
 			break // what came so far is the answer
@@ -154,11 +171,17 @@ func (t anthropicTransport) RoundTrip(req *http.Request) (*http.Response, error)
 		if err != nil {
 			break
 		}
+		resumes++
+		requestMs = append(requestMs, time.Since(began).Milliseconds())
 		msg.Content = append(msg.Content, next.Content...)
 		msg.StopReason = next.StopReason
 		msg.Usage = msg.Usage.plus(next.Usage)
 	}
-	conv, err := json.Marshal(chatFromMessages(msg))
+	chat := chatFromMessages(msg)
+	if rep := serverToolReport(msg.Content, resumes, requestMs); rep != nil {
+		chat[serverToolsKey] = rep
+	}
+	conv, err := json.Marshal(chat)
 	if err != nil {
 		return nil, fmt.Errorf("anthropic: translate response: %w", err)
 	}
@@ -303,9 +326,21 @@ func imageBlock(u string) block {
 // chatToMessages rewrites a chat-completions body as a Messages one, and
 // reports whether it asked for a stream.
 func chatToMessages(raw []byte) ([]byte, bool, error) {
+	body, stream, _, err := translateChatRequest(raw)
+	return body, stream, err
+}
+
+// droppedServerTool is a server tool left out of a request because a function
+// tool already had its name.
+type droppedServerTool struct{ name, typ string }
+
+// translateChatRequest is chatToMessages that also says which server tools it
+// left out, so the caller can record the decision.
+func translateChatRequest(raw []byte) ([]byte, bool, []droppedServerTool, error) {
+	var dropped []droppedServerTool
 	var in map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &in); err != nil {
-		return nil, false, err
+		return nil, false, nil, err
 	}
 	out := map[string]interface{}{}
 	var model string
@@ -428,8 +463,10 @@ func chatToMessages(raw []byte) ([]byte, bool, error) {
 		// web_search (agent.RegisterWebSearchTool) is one somebody
 		// registered on purpose; the server tool steps aside for it.
 		if name, _ := st["name"].(string); names[name] {
+			typ, _ := st["type"].(string)
 			slog.Warn("a function tool has the server tool's name; sending the function tool only",
-				"module", "pool", "tool", name, "type", st["type"])
+				"module", "pool", "tool", name, "type", typ)
+			dropped = append(dropped, droppedServerTool{name: name, typ: typ})
 			continue
 		}
 		names[st["name"].(string)] = true
@@ -459,7 +496,7 @@ func chatToMessages(raw []byte) ([]byte, bool, error) {
 
 	var msgs []chatMessage
 	if err := json.Unmarshal(in["messages"], &msgs); err != nil {
-		return nil, false, fmt.Errorf("messages: %w", err)
+		return nil, false, nil, fmt.Errorf("messages: %w", err)
 	}
 	system, conv := convertMessages(msgs)
 	if len(system) > 0 {
@@ -474,7 +511,7 @@ func chatToMessages(raw []byte) ([]byte, bool, error) {
 	}
 
 	body, err := json.Marshal(out)
-	return body, stream, err
+	return body, stream, dropped, err
 }
 
 type anthropicMessage struct {
@@ -630,6 +667,7 @@ func (u messagesUsage) plus(o messagesUsage) messagesUsage {
 // nativeSearchState that the model searched.
 type contentBlock struct {
 	Type      string          `json:"type"`
+	ToolUseID string          `json:"tool_use_id"`
 	Text      string          `json:"text"`
 	Thinking  string          `json:"thinking"`
 	ID        string          `json:"id"`
@@ -662,6 +700,59 @@ func (a *urlAnnotations) add(url, title string) {
 	a.list = append(a.list, map[string]interface{}{
 		"type": "url_citation", "url_citation": map[string]string{"url": url, "title": title},
 	})
+}
+
+// serverToolsKey is where the translated answer carries the server tool
+// report: an extension field, unknown to the chat-completions shape, read
+// back by parseServerTools into GenerationResult.ServerTools.
+const serverToolsKey = "x_server_tools"
+
+// serverToolReport reads what the server did from a turn's content blocks:
+// each server_tool_use with its input, what its result block said, and the
+// citations in the text. nil when there was nothing server-side to report.
+func serverToolReport(content []json.RawMessage, resumes int, requestMs []int64) *domain.ServerToolReport {
+	rep := &domain.ServerToolReport{Resumes: resumes}
+	byID := map[string]int{}
+	for _, raw := range content {
+		var b contentBlock
+		if json.Unmarshal(raw, &b) != nil {
+			continue
+		}
+		switch {
+		case b.Type == "server_tool_use":
+			use := domain.ServerToolUse{ID: b.ID, Name: b.Name}
+			_ = json.Unmarshal(b.Input, &use.Input)
+			byID[b.ID] = len(rep.Uses)
+			rep.Uses = append(rep.Uses, use)
+		case strings.HasSuffix(b.Type, "_tool_result") && b.Type != "tool_result":
+			i, ok := byID[b.ToolUseID]
+			if !ok {
+				rep.Uses = append(rep.Uses, domain.ServerToolUse{ID: b.ToolUseID, Name: strings.TrimSuffix(b.Type, "_tool_result")})
+				i = len(rep.Uses) - 1
+			}
+			var failed struct {
+				ErrorCode string `json:"error_code"`
+			}
+			if json.Unmarshal(b.Content, &failed) == nil && failed.ErrorCode != "" {
+				rep.Uses[i].ErrorCode = failed.ErrorCode
+				continue
+			}
+			results := searchResults(b.Content)
+			rep.Uses[i].Results = len(results)
+			for _, r := range results {
+				if r.URL != "" {
+					rep.Uses[i].URLs = append(rep.Uses[i].URLs, r.URL)
+				}
+			}
+		case b.Type == "text":
+			rep.Citations += len(b.Citations)
+		}
+	}
+	if len(rep.Uses) == 0 && resumes == 0 && rep.Citations == 0 {
+		return nil
+	}
+	rep.RequestMs = requestMs
+	return rep
 }
 
 // searchResults reads a web_search_tool_result's content: a list of results
@@ -739,17 +830,24 @@ func messagesStreamToChat(src io.Reader, dst io.Writer) error {
 	return streamMessagesToChat(io.NopCloser(src), dst, nil)
 }
 
-// streamMessagesToChat is messagesStreamToChat that resumes a turn paused
+// streamMessagesToChat is streamMessagesToChatFrom timed from now.
+func streamMessagesToChat(src io.ReadCloser, dst io.Writer, resume func(content []json.RawMessage) (io.ReadCloser, error)) error {
+	return streamMessagesToChatFrom(time.Now(), src, dst, resume)
+}
+
+// streamMessagesToChatFrom is messagesStreamToChat that resumes a turn paused
 // by a server tool: the blocks streamed so far are rebuilt and handed to
 // resume, and its stream carries on into the same chat stream. src is
-// closed, and so is every stream resume opens.
-func streamMessagesToChat(src io.ReadCloser, dst io.Writer, resume func(content []json.RawMessage) (io.ReadCloser, error)) error {
+// closed, and so is every stream resume opens. sentAt is when the first
+// request was sent, for the per-request durations in the server tool report.
+func streamMessagesToChatFrom(sentAt time.Time, src io.ReadCloser, dst io.Writer, resume func(content []json.RawMessage) (io.ReadCloser, error)) error {
 	var (
 		id, model string
 		total     messagesUsage
 		started   bool
 		nextTool  int
 		content   []json.RawMessage
+		requestMs []int64
 	)
 	emit := func(v interface{}) error {
 		b, err := json.Marshal(v)
@@ -789,7 +887,9 @@ func streamMessagesToChat(src io.ReadCloser, dst io.Writer, resume func(content 
 		}
 		total = total.plus(turn.usage)
 		content = append(content, turn.content()...)
+		requestMs = append(requestMs, time.Since(sentAt).Milliseconds())
 		if turn.stop == "pause_turn" && resume != nil && resumes < anthropicMaxResumes {
+			sentAt = time.Now()
 			next, rerr := resume(content)
 			if rerr == nil {
 				src = next
@@ -798,6 +898,14 @@ func streamMessagesToChat(src io.ReadCloser, dst io.Writer, resume func(content 
 		}
 		if err := emit(chunk(map[string]interface{}{}, finishReason(turn.stop))); err != nil {
 			return err
+		}
+		if rep := serverToolReport(content, len(requestMs)-1, requestMs); rep != nil {
+			if err := emit(map[string]interface{}{
+				"id": id, "object": "chat.completion.chunk", "model": model,
+				"choices": []interface{}{}, serverToolsKey: rep,
+			}); err != nil {
+				return err
+			}
 		}
 		if err := emit(map[string]interface{}{
 			"id": id, "object": "chat.completion.chunk", "model": model,

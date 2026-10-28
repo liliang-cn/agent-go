@@ -86,3 +86,15 @@ func parsePoolUsage(raw []byte) *domain.TokenUsage {
 	}
 	return usage
 }
+
+// parseServerTools reads the server tool report the Anthropic translation
+// puts beside a chat completion (x_server_tools), or nil.
+func parseServerTools(raw []byte) *domain.ServerToolReport {
+	var envelope struct {
+		ServerTools *domain.ServerToolReport `json:"x_server_tools"`
+	}
+	if json.Unmarshal(raw, &envelope) != nil {
+		return nil
+	}
+	return envelope.ServerTools
+}

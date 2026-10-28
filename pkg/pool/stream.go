@@ -43,7 +43,7 @@ func (c *Client) StreamWithTools(ctx context.Context, messages []domain.Message,
 	}
 	resp, err := c.openStream(ctx, "/chat/completions", body(curOpts))
 	for attempts := 0; err != nil && attempts < 3; attempts++ {
-		retryOpts := applyPoolRetryFallbacks(curOpts, err)
+		retryOpts := retryFallbacks(ctx, curOpts, err)
 		if retryOpts == nil {
 			break
 		}
@@ -73,6 +73,7 @@ func (c *Client) StreamWithTools(ctx context.Context, messages []domain.Message,
 		resp.Body = io.NopCloser(bytes.NewReader(raw))
 	}
 
+	trace.WireOf(ctx).Streamed()
 	st := &poolStreamState{}
 	grounded := false
 	// thought counts reasoning bytes before the answer starts. A model that
@@ -229,6 +230,7 @@ func (c *Client) openOnce(ctx context.Context, path string, body interface{}) (*
 	if c.key != "" {
 		req.Header.Set("Authorization", "Bearer "+c.key)
 	}
+	trace.InjectHTTP(ctx, req.Header)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, err
@@ -266,8 +268,9 @@ type poolStreamChunk struct {
 		} `json:"delta"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
-	Usage json.RawMessage `json:"usage"`
-	Error *struct {
+	Usage       json.RawMessage          `json:"usage"`
+	ServerTools *domain.ServerToolReport `json:"x_server_tools"`
+	Error       *struct {
 		Message string `json:"message"`
 	} `json:"error"`
 }
@@ -293,6 +296,7 @@ type poolStreamState struct {
 	id      string
 	reason  string
 	usage   *domain.TokenUsage
+	server  *domain.ServerToolReport
 	calls   map[int]*poolStreamCall
 	content strings.Builder // everything said as text, for the Bedrock check
 	think   thinkSplitter
@@ -309,6 +313,9 @@ func (s *poolStreamState) absorb(ch poolStreamChunk) (*domain.GenerationResult, 
 		if u := parsePoolUsage([]byte(`{"usage":` + string(ch.Usage) + `}`)); u != nil {
 			s.usage = u
 		}
+	}
+	if ch.ServerTools != nil {
+		s.server = ch.ServerTools
 	}
 	if len(ch.Choices) == 0 {
 		return nil, false
@@ -360,6 +367,8 @@ func (s *poolStreamState) finish() *domain.GenerationResult {
 		ReasoningContent: reasoning,
 		FinishReason:     s.reason,
 		Usage:            s.usage,
+		ServerTools:      s.server,
+		Streamed:         true,
 	}
 	idx := make([]int, 0, len(s.calls))
 	for i := range s.calls {
@@ -477,6 +486,7 @@ func parsePoolToolResponse(raw []byte, model string) (*domain.GenerationResult, 
 		Parts:            outputPartsFromMessage(choice.Message.Images),
 		FinishReason:     choice.FinishReason,
 		Usage:            parsePoolUsage(raw),
+		ServerTools:      parseServerTools(raw),
 	}
 	for _, tc := range choice.Message.ToolCalls {
 		var call struct {
