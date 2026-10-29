@@ -2,7 +2,10 @@
 
 package sandbox
 
-import "os/exec"
+import (
+	"os/exec"
+	"time"
+)
 
 // configureProcAttr is a no-op on non-unix platforms.
 func configureProcAttr(cmd *exec.Cmd) {}
@@ -14,3 +17,9 @@ func killProcessGroup(cmd *exec.Cmd) {
 	}
 	_ = cmd.Process.Kill()
 }
+
+// terminateProcessGroup falls back to killing just the process.
+func terminateProcessGroup(cmd *exec.Cmd) { killProcessGroup(cmd) }
+
+// reapProcessGroup has nothing to wait for without process groups.
+func reapProcessGroup(cmd *exec.Cmd, grace time.Duration) {}

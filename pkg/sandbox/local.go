@@ -142,6 +142,10 @@ func (s *LocalSandbox) toRel(abs string) string {
 	return filepath.ToSlash(rel)
 }
 
+// execKillGrace is how long a command's process group gets, after SIGTERM, to
+// exit before it is SIGKILLed.
+var execKillGrace = 2 * time.Second
+
 // Exec runs a one-shot command with an optional timeout.
 func (s *LocalSandbox) Exec(ctx context.Context, req ExecRequest) (ExecResult, error) {
 	if strings.TrimSpace(req.Command) == "" {
@@ -174,24 +178,25 @@ func (s *LocalSandbox) Exec(ctx context.Context, req ExecRequest) (ExecResult, e
 	cmd.Stderr = &stderr
 	configureProcAttr(cmd) // unix: own process group so timeouts kill children
 
-	// exec.CommandContext's default cancel only SIGKILLs the leader pid, so a
+	// exec.CommandContext's default cancel only signals the leader pid, so a
 	// child that survives in the process group (e.g. `sh -c "sleep 10"` on Linux
 	// where sh forks) keeps the stdout pipe open and blocks cmd.Run() for the
-	// full command duration — the timeout never appears to fire. Kill the whole
-	// group on cancel, and bound Wait's post-kill I/O drain so a lingering child
-	// can't hold us hostage.
+	// full command duration — the timeout never appears to fire. Ask the whole
+	// group to stop (SIGTERM) on cancel; WaitDelay bounds Wait's post-signal I/O
+	// drain so a lingering child can't hold us hostage, and reapProcessGroup
+	// below SIGKILLs whatever ignored the request.
 	cmd.Cancel = func() error {
-		killProcessGroup(cmd)
+		terminateProcessGroup(cmd)
 		return nil
 	}
-	cmd.WaitDelay = 2 * time.Second
+	cmd.WaitDelay = execKillGrace
 
 	runErr := cmd.Run()
 
-	// Belt and suspenders: if the context expired, make sure the whole process
-	// group is gone even if Cancel raced with process startup.
+	// The context ending (timeout, cancelled turn) must leave nothing running:
+	// give the group a short grace to exit on SIGTERM, then SIGKILL the rest.
 	if ctx.Err() != nil {
-		killProcessGroup(cmd)
+		reapProcessGroup(cmd, execKillGrace)
 	}
 
 	res := ExecResult{
