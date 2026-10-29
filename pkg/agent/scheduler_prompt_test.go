@@ -257,8 +257,8 @@ func TestScheduledPromptRejectsNonsense(t *testing.T) {
 	}
 }
 
-// TestScheduledPromptTimeoutIsConfigurable pins the option, since the default is
-// deliberately long and a host may want it shorter.
+// TestScheduledPromptTimeoutIsConfigurable pins the option: no cap unless a
+// host sets one.
 func TestScheduledPromptTimeoutIsConfigurable(t *testing.T) {
 	svc, _ := newScheduledTestService(t)
 	exec := NewPromptExecutor(svc, WithPromptTimeout(2*time.Second), WithPromptSessionID("elsewhere"))
@@ -270,8 +270,8 @@ func TestScheduledPromptTimeoutIsConfigurable(t *testing.T) {
 	}
 	// A zero or negative timeout is ignored rather than making every run fail.
 	exec = NewPromptExecutor(svc, WithPromptTimeout(0))
-	if exec.timeout != 15*time.Minute {
-		t.Errorf("a zero timeout should leave the default, got %v", exec.timeout)
+	if exec.timeout != 0 {
+		t.Errorf("a zero timeout should leave runs uncapped, got %v", exec.timeout)
 	}
 
 	var _ scheduler.Executor = exec // the adapter must satisfy the interface
@@ -343,5 +343,82 @@ func TestScheduledPromptDoesNotAnswerFromMemory(t *testing.T) {
 	}
 	if cfg.MaxTurns != 3 {
 		t.Errorf("WithPromptRunOptions must reach the run config; MaxTurns = %d", cfg.MaxTurns)
+	}
+}
+
+// handOutLLM calls the hand_out tool once, then answers: a scheduled run
+// that hands a long job to someone and waits for it.
+type handOutLLM struct{ scheduledTestLLM }
+
+func (l *handOutLLM) GenerateWithTools(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions) (*domain.GenerationResult, error) {
+	for _, m := range messages {
+		if m.Role == "tool" {
+			return &domain.GenerationResult{Content: "posted"}, nil
+		}
+	}
+	return &domain.GenerationResult{ToolCalls: []domain.ToolCall{{ID: "c1", Type: "function",
+		Function: domain.FunctionCall{Name: "hand_out", Arguments: map[string]interface{}{}}}}}, nil
+}
+
+func (l *handOutLLM) StreamWithTools(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions, cb domain.ToolCallCallback) error {
+	res, err := l.GenerateWithTools(ctx, messages, tools, opts)
+	if err != nil {
+		return err
+	}
+	if cb != nil {
+		return cb(res)
+	}
+	return nil
+}
+
+// TestAScheduledRunHasNoTimeLimitByDefault is the regression for a daily run
+// whose order — recording a screen and posting — was stopped half way with
+// "context deadline exceeded": the run's own cap reached everything it had
+// handed out. With no cap set, what a run hands out works under no deadline,
+// so it is never cut off by time however long it takes; with a cap set, it is
+// cut off there.
+func TestAScheduledRunHasNoTimeLimitByDefault(t *testing.T) {
+	run := func(t *testing.T, hold time.Duration, opts ...PromptExecutorOption) (bool, error, *scheduler.TaskResult) {
+		t.Helper()
+		svc, err := New("scheduled-agent").WithConfig(testAgentConfig(t.TempDir())).WithLLM(&handOutLLM{}).Build()
+		if err != nil {
+			t.Fatalf("build: %v", err)
+		}
+		t.Cleanup(func() { _ = svc.Close() })
+		var (
+			has    bool
+			jobErr error
+			called bool
+		)
+		svc.AddTool("hand_out", "Hand the job out and wait for it.", map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
+			func(ctx context.Context, _ map[string]interface{}) (interface{}, error) {
+				called = true
+				_, has = ctx.Deadline()
+				select { // the job, taking its time
+				case <-time.After(hold):
+					return "done", nil
+				case <-ctx.Done():
+					jobErr = ctx.Err()
+					return nil, jobErr
+				}
+			})
+		res, _ := NewPromptExecutor(svc, opts...).Execute(context.Background(), map[string]string{ParamPrompt: "record the screen and post it"})
+		if !called {
+			t.Fatal("the job was never handed out")
+		}
+		return has, jobErr, res
+	}
+
+	has, jobErr, res := run(t, 1500*time.Millisecond)
+	if has || jobErr != nil {
+		t.Fatalf("a job handed out by an uncapped run has a deadline (%v) or was stopped (%v)", has, jobErr)
+	}
+	if res == nil || !res.Success || res.Cancelled {
+		t.Fatalf("a long run was not let finish: %+v", res)
+	}
+
+	has, jobErr, _ = run(t, 5*time.Second, WithPromptTimeout(300*time.Millisecond))
+	if !has || jobErr == nil {
+		t.Fatalf("a cap set was not applied: deadline %v, stopped %v", has, jobErr)
 	}
 }

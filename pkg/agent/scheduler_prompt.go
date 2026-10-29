@@ -56,9 +56,11 @@ type PromptRun struct {
 // PromptExecutorOption configures a PromptExecutor.
 type PromptExecutorOption func(*PromptExecutor)
 
-// WithPromptTimeout caps a single run. Default is 15 minutes: a scheduled run
-// has nobody waiting on it, so it should be allowed to take longer than a chat
-// turn, but not to hang for ever and block the next occurrence.
+// WithPromptTimeout caps a single run. By default a run has no cap: a
+// scheduled run hands out work that ends when it is done (a coding run, a
+// worker's order, an agent recording and posting a video), and the run's
+// context is theirs too, so a cap on the run cut every one of them off half
+// way with "context deadline exceeded". Cancelling a run still stops it.
 func WithPromptTimeout(d time.Duration) PromptExecutorOption {
 	return func(e *PromptExecutor) {
 		if d > 0 {
@@ -112,7 +114,6 @@ type PromptExecutor struct {
 func NewPromptExecutor(svc *Service, opts ...PromptExecutorOption) *PromptExecutor {
 	e := &PromptExecutor{
 		svc:            svc,
-		timeout:        15 * time.Minute,
 		defaultSession: "scheduled",
 	}
 	for _, opt := range opts {
@@ -149,7 +150,10 @@ func (e *PromptExecutor) Execute(ctx context.Context, parameters map[string]stri
 	}
 
 	started := time.Now()
-	runCtx, cancel := context.WithTimeout(ctx, e.timeout)
+	runCtx, cancel := context.WithCancel(ctx)
+	if e.timeout > 0 {
+		runCtx, cancel = context.WithTimeout(ctx, e.timeout)
+	}
 	defer cancel()
 
 	// Host-supplied options win, so WithPromptRunOptions can override the
