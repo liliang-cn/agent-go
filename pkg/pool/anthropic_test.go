@@ -309,3 +309,49 @@ func TestASchemaRefusalIsRecognisedOnTheMessagesAPI(t *testing.T) {
 		t.Error("an unrelated 400 was taken for a schema refusal")
 	}
 }
+
+// A streamed request asks for each tool's input as it is written. Without
+// eager_input_streaming the API holds a call's input back and sends it in one
+// burst at the end, so an answer written into task_complete reached the
+// person all at once. A model that refuses the field gets the request again
+// without it.
+func TestAStreamedRequestAsksForToolInputAsItIsWritten(t *testing.T) {
+	var asked []bool
+	c := anthropicClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Tools []map[string]any `json:"tools"`
+		}
+		json.NewDecoder(r.Body).Decode(&body)
+		eager, _ := body.Tools[0]["eager_input_streaming"].(bool)
+		asked = append(asked, eager)
+		if eager {
+			w.WriteHeader(http.StatusBadRequest)
+			io.WriteString(w, `{"type":"error","error":{"type":"invalid_request_error","message":"tools.0.eager_input_streaming: Extra inputs are not permitted"}}`)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, ev := range []string{
+			`{"type":"message_start","message":{"id":"msg_3","model":"claude-opus-5-5","usage":{"input_tokens":3,"output_tokens":1}}}`,
+			`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+			`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}`,
+			`{"type":"content_block_stop","index":0}`,
+			`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}`,
+			`{"type":"message_stop"}`,
+		} {
+			io.WriteString(w, "data: "+ev+"\n\n")
+		}
+	})
+	var text string
+	err := c.StreamWithTools(context.Background(), []domain.Message{{Role: "user", Content: "hi"}},
+		[]domain.ToolDefinition{{Type: "function", Function: domain.ToolFunction{Name: "task_complete"}}},
+		&domain.GenerationOptions{}, func(r *domain.GenerationResult) error {
+			text += r.Content
+			return nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(asked) != 2 || !asked[0] || asked[1] || text != "ok" {
+		t.Fatalf("asked %v, text %q", asked, text)
+	}
+}

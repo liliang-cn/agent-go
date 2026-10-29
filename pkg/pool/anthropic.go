@@ -95,6 +95,11 @@ func (t anthropicTransport) RoundTrip(req *http.Request) (*http.Response, error)
 
 	firstStart := time.Now()
 	resp, err := t.base.RoundTrip(out)
+	if err == nil && resp.StatusCode == http.StatusBadRequest && stream {
+		// A model that does not take eager_input_streaming says so before
+		// anything streams: the request goes again without it.
+		resp, err = retryWithoutEagerInput(out, resp, t.base)
+	}
 	if err != nil || resp.StatusCode != http.StatusOK {
 		return resp, err
 	}
@@ -451,6 +456,12 @@ func translateChatRequest(raw []byte) ([]byte, bool, []droppedServerTool, error)
 		b := block{"name": t.Function.Name, "input_schema": schema}
 		if t.Function.Description != "" {
 			b["description"] = t.Function.Description
+		}
+		if stream {
+			// Without it the API holds a call's input back and sends it in
+			// one burst when the call is done, so an answer written into a
+			// call (task_complete's result) reached the person all at once.
+			b["eager_input_streaming"] = true
 		}
 		outTools = append(outTools, b)
 		names[t.Function.Name] = true
@@ -1110,6 +1121,54 @@ func (t *streamTurn) read(src io.Reader, nextTool *int, onStart func(*streamTurn
 		}
 	}
 	return sc.Err()
+}
+
+// retryWithoutEagerInput sends req again with eager_input_streaming taken off
+// every tool, when the 400 in resp is about that field. Any other 400 is
+// handed back as it came, its body still readable.
+func retryWithoutEagerInput(req *http.Request, resp *http.Response, base http.RoundTripper) (*http.Response, error) {
+	msg, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	_ = resp.Body.Close()
+	if err != nil {
+		return nil, err
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(msg))
+	if !bytes.Contains(msg, []byte("eager_input_streaming")) {
+		return resp, nil
+	}
+	sent, err := io.ReadAll(mustBody(req))
+	if err != nil {
+		return resp, nil
+	}
+	var b map[string]json.RawMessage
+	var tools []map[string]json.RawMessage
+	if json.Unmarshal(sent, &b) != nil || json.Unmarshal(b["tools"], &tools) != nil {
+		return resp, nil
+	}
+	for _, t := range tools {
+		delete(t, "eager_input_streaming")
+	}
+	b["tools"], _ = json.Marshal(tools)
+	next, err := json.Marshal(b)
+	if err != nil {
+		return resp, nil
+	}
+	r := req.Clone(req.Context())
+	r.Body = io.NopCloser(bytes.NewReader(next))
+	r.ContentLength = int64(len(next))
+	r.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(next)), nil }
+	return base.RoundTrip(r)
+}
+
+func mustBody(r *http.Request) io.Reader {
+	if r.GetBody == nil {
+		return bytes.NewReader(nil)
+	}
+	b, err := r.GetBody()
+	if err != nil {
+		return bytes.NewReader(nil)
+	}
+	return b
 }
 
 // closedSchema returns schema with additionalProperties false on every object

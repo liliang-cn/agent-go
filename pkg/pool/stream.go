@@ -324,6 +324,7 @@ func (s *poolStreamState) absorb(ch poolStreamChunk) (*domain.GenerationResult, 
 	if c.FinishReason != "" {
 		s.reason = c.FinishReason
 	}
+	grew := false
 	for _, tc := range c.Delta.ToolCalls {
 		if s.calls == nil {
 			s.calls = map[int]*poolStreamCall{}
@@ -343,6 +344,7 @@ func (s *poolStreamState) absorb(ch poolStreamChunk) (*domain.GenerationResult, 
 			call.name += tc.Function.Name
 		}
 		call.args.WriteString(tc.Function.Arguments)
+		grew = grew || tc.Function.Arguments != ""
 	}
 
 	s.content.WriteString(c.Delta.Content)
@@ -350,10 +352,42 @@ func (s *poolStreamState) absorb(ch poolStreamChunk) (*domain.GenerationResult, 
 	text = s.dsml.feed(text)
 	reasoning = c.Delta.ReasoningContent + c.Delta.Reasoning + reasoning
 	parts := outputPartsFromMessage(c.Delta.Images)
-	if text == "" && reasoning == "" && len(parts) == 0 {
+	var calls []domain.ToolCall
+	if grew {
+		calls = s.partialCalls()
+	}
+	if text == "" && reasoning == "" && len(parts) == 0 && len(calls) == 0 {
 		return nil, false
 	}
-	return &domain.GenerationResult{ID: s.id, Content: text, ReasoningContent: reasoning, Parts: parts}, false
+	return &domain.GenerationResult{ID: s.id, Content: text, ReasoningContent: reasoning, Parts: parts, ToolCalls: calls}, false
+}
+
+// partialCalls is the tool calls so far, while their arguments are still
+// arriving: the text received in RawArguments and Arguments left empty, so
+// nothing runs a call on half its arguments. What reads them is an answer
+// written into a call (task_complete's result), shown as it is written
+// instead of all at once when the model is done. finish still sends the
+// calls whole.
+func (s *poolStreamState) partialCalls() []domain.ToolCall {
+	idx := make([]int, 0, len(s.calls))
+	for i := range s.calls {
+		idx = append(idx, i)
+	}
+	sort.Ints(idx)
+	var out []domain.ToolCall
+	for _, i := range idx {
+		call := s.calls[i]
+		if call.name == "" {
+			continue
+		}
+		typ := call.typ
+		if typ == "" {
+			typ = "function"
+		}
+		out = append(out, domain.ToolCall{ID: call.id, Type: typ,
+			Function: domain.FunctionCall{Name: call.name, RawArguments: call.args.String()}})
+	}
+	return out
 }
 
 // finish is the last word: the tool calls, now whole, the finish reason and

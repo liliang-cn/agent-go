@@ -253,3 +253,54 @@ func TestAModelThatThinksBrieflyIsLeftAlone(t *testing.T) {
 		t.Fatalf("text %q calls %d", text, calls)
 	}
 }
+
+// An answer written into a tool call (task_complete's result) reaches the
+// reader while it is being written: each fragment of the arguments goes out
+// as the call so far, its text in RawArguments and nothing parsed, so no
+// call runs on half its arguments. The whole call still comes at the end.
+func TestAToolCallsArgumentsArriveAsTheyAreWritten(t *testing.T) {
+	seen := make(chan struct{})
+	c := streamClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		sse(w,
+			`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"task_complete","arguments":""}}]}}]}`,
+			`{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"result\":\"成都"}}]}}]}`)
+		select {
+		case <-seen:
+		case <-time.After(3 * time.Second):
+			t.Error("the first fragment was not delivered before the call was finished")
+		}
+		sse(w,
+			`{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"很好\"}"}}]}}]}`,
+			`{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`,
+			`[DONE]`)
+	})
+	var once sync.Once
+	var partials []domain.ToolCall
+	var last *domain.GenerationResult
+	err := c.StreamWithTools(context.Background(), []domain.Message{{Role: "user", Content: "hi"}}, nil, nil, func(r *domain.GenerationResult) error {
+		last = r
+		if r.FinishReason != "" {
+			return nil
+		}
+		for _, tc := range r.ToolCalls {
+			partials = append(partials, tc)
+			if tc.Function.Arguments != nil {
+				t.Errorf("a call still being written came with parsed arguments: %+v", tc)
+			}
+			if strings.Contains(tc.Function.RawArguments, "成都") {
+				once.Do(func() { close(seen) })
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(partials) != 2 || partials[1].Function.RawArguments != `{"result":"成都很好"}` || partials[0].Function.Name != "task_complete" {
+		t.Fatalf("partials %+v", partials)
+	}
+	if len(last.ToolCalls) != 1 || last.ToolCalls[0].Function.Arguments["result"] != "成都很好" {
+		t.Fatalf("last %+v", last.ToolCalls)
+	}
+}
