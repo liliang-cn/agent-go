@@ -46,6 +46,16 @@ type TaskScheduler struct {
 	// scheduler is busy.
 	runsMu     sync.Mutex
 	activeRuns map[string]*taskRun
+
+	// The cron loop's own memory of what it has fired, so that neither a
+	// long run nor a lost database write fires the same slot twice. See
+	// claimSlot.
+	slotsMu sync.Mutex
+	// firing holds the tasks a cron firing is in flight for, from the tick
+	// that claimed it until the run returns.
+	firing map[string]bool
+	// firedSlot is, per task, the next_run value the loop last fired.
+	firedSlot map[string]time.Time
 }
 
 // NewScheduler creates a new task scheduler
@@ -70,6 +80,8 @@ func NewScheduler(cfg *config.Config) *TaskScheduler {
 		ctx:        ctx,
 		cancel:     cancel,
 		activeRuns: make(map[string]*taskRun),
+		firing:     make(map[string]bool),
+		firedSlot:  make(map[string]time.Time),
 	}
 
 	return scheduler
@@ -408,24 +420,87 @@ func (s *TaskScheduler) checkAndExecuteDueTasks() {
 		return
 	}
 
+	now := time.Now()
 	for _, task := range tasks {
 		// Skip if we're at capacity
 		select {
 		case s.semaphore <- struct{}{}:
 			// Got semaphore, proceed
-			s.wg.Add(1)
-			go s.executeTaskAsync(task)
 		default:
 			// At capacity, skip this execution
 			log.Printf("Skipping task %s - at capacity", shortID(task.ID))
+			continue
+		}
+		if !s.claimSlot(task, now) {
+			<-s.semaphore
+			continue
+		}
+		s.wg.Add(1)
+		go s.executeTaskAsync(task)
+	}
+}
+
+// claimSlot decides whether a due task fires on this tick, and if it does,
+// moves its next_run past the slot before the run starts.
+//
+// next_run used to move only once the run had finished. A run that takes
+// minutes — a prompt handed to another machine — stayed due all that time,
+// and every one-minute tick fired it again until the semaphore filled: one
+// daily post dispatched five times. A run whose bookkeeping failed to save
+// (SQLITE_BUSY) was the same story told by the database. So the slot is
+// claimed up front, and remembered in memory as well, because the write that
+// claims it can fail the same way the execution record did.
+func (s *TaskScheduler) claimSlot(task *Task, now time.Time) bool {
+	s.slotsMu.Lock()
+	if s.firing[task.ID] || s.taskRunning(task.ID) {
+		s.slotsMu.Unlock()
+		log.Printf("Skipping task %s - already running", shortID(task.ID))
+		return false
+	}
+	if task.NextRun != nil {
+		if fired, ok := s.firedSlot[task.ID]; ok && fired.Equal(*task.NextRun) {
+			s.slotsMu.Unlock()
+			log.Printf("Skipping task %s - slot %s already fired", shortID(task.ID), task.NextRun.Format(time.RFC3339))
+			return false
+		}
+		s.firedSlot[task.ID] = *task.NextRun
+	}
+	s.firing[task.ID] = true
+	s.slotsMu.Unlock()
+
+	if task.Schedule != "" {
+		nextRun, err := s.cronParser.ParseAndNext(task.Schedule, now)
+		if err != nil {
+			log.Printf("Error calculating next run for task %s: %v", shortID(task.ID), err)
+		} else if err := s.storage.UpdateTaskNextRun(task.ID, nextRun); err != nil {
+			log.Printf("Error claiming slot for task %s (kept in memory): %v", shortID(task.ID), err)
 		}
 	}
+	return true
+}
+
+// taskRunning reports whether any execution of the task is in flight, manual
+// runs included.
+func (s *TaskScheduler) taskRunning(taskID string) bool {
+	s.runsMu.Lock()
+	defer s.runsMu.Unlock()
+	for _, run := range s.activeRuns {
+		if run.TaskID == taskID {
+			return true
+		}
+	}
+	return false
 }
 
 // executeTaskAsync executes a task asynchronously
 func (s *TaskScheduler) executeTaskAsync(task *Task) {
 	defer s.wg.Done()
 	defer func() { <-s.semaphore }() // Release semaphore
+	defer func() {
+		s.slotsMu.Lock()
+		delete(s.firing, task.ID)
+		s.slotsMu.Unlock()
+	}()
 
 	result, err := s.executeTask(task, false)
 	switch {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -61,23 +62,20 @@ func NewStorage(dbPath string) (*Storage, error) {
 		return nil, fmt.Errorf("failed to create database directory: %w", err)
 	}
 
-	db, err := sql.Open("sqlite", dbPath) // modernc.org/sqlite uses "sqlite" not "sqlite3"
+	// busy_timeout and synchronous are per-connection settings, and this is a
+	// pool of up to four. Set with db.Exec they reached only whichever
+	// connection ran the statement; every other one returned SQLITE_BUSY the
+	// instant another writer held the file — which is how a scheduled run lost
+	// its execution record. In the DSN they apply to every connection opened.
+	db, err := sql.Open("sqlite", sqliteDSN(dbPath)) // modernc.org/sqlite uses "sqlite" not "sqlite3"
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 	db.SetMaxOpenConns(4)
 	db.SetMaxIdleConns(1)
-	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("failed to set busy timeout: %w", err)
-	}
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("failed to enable WAL mode: %w", err)
-	}
-	if _, err := db.Exec("PRAGMA synchronous=NORMAL"); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("failed to set synchronous mode: %w", err)
 	}
 
 	storage := &Storage{db: db}
@@ -97,6 +95,46 @@ func NewStorage(dbPath string) (*Storage, error) {
 	}
 
 	return storage, nil
+}
+
+// sqliteDSN adds the per-connection pragmas to a database path.
+func sqliteDSN(dbPath string) string {
+	sep := "?"
+	if strings.Contains(dbPath, "?") {
+		sep = "&"
+	}
+	return dbPath + sep + "_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)"
+}
+
+// isBusy reports a write that lost the race for the database file, as opposed
+// to one that is wrong. The first is worth another try; the second is not.
+func isBusy(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "SQLITE_BUSY") ||
+		strings.Contains(msg, "SQLITE_LOCKED") ||
+		strings.Contains(msg, "database is locked")
+}
+
+// busyRetryDelays is how long retryBusy waits before each further attempt, on
+// top of the busy_timeout the driver already waited. A var so tests can shrink it.
+var busyRetryDelays = []time.Duration{250 * time.Millisecond, 500 * time.Millisecond, time.Second}
+
+// retryBusy runs a write, trying again while the database reports itself busy.
+// The writes it wraps are the scheduler's record of what ran and when it runs
+// next; dropping one on a momentary lock is how a slot gets fired twice.
+func retryBusy(op func() error) error {
+	err := op()
+	for _, d := range busyRetryDelays {
+		if !isBusy(err) {
+			return err
+		}
+		time.Sleep(d)
+		err = op()
+	}
+	return err
 }
 
 // NewStorageWithCanonical opens the scheduler store and mirrors its tasks into
@@ -486,7 +524,7 @@ func (s *Storage) EnableTask(id string, enabled bool) error {
 
 // CreateExecution records a task execution
 func (s *Storage) CreateExecution(execution *TaskExecution) error {
-	sql := `
+	query := `
 	INSERT INTO task_executions (task_id, task_description, start_time, end_time, duration, status, output, error)
 	VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 
@@ -505,16 +543,21 @@ func (s *Storage) CreateExecution(execution *TaskExecution) error {
 		}
 	}
 
-	result, err := s.db.Exec(sql,
-		execution.TaskID,
-		description,
-		execution.StartTime,
-		execution.EndTime,
-		durationMs,
-		execution.Status,
-		execution.Output,
-		execution.Error,
-	)
+	var result sql.Result
+	err := retryBusy(func() error {
+		var err error
+		result, err = s.db.Exec(query,
+			execution.TaskID,
+			description,
+			execution.StartTime,
+			execution.EndTime,
+			durationMs,
+			execution.Status,
+			execution.Output,
+			execution.Error,
+		)
+		return err
+	})
 
 	if err != nil {
 		return fmt.Errorf("failed to insert execution: %w", err)
@@ -545,14 +588,17 @@ func (s *Storage) UpdateExecution(execution *TaskExecution) error {
 		durationMs = execution.Duration.Nanoseconds() / 1000000
 	}
 
-	_, err := s.db.Exec(sql,
-		execution.EndTime,
-		durationMs,
-		execution.Status,
-		execution.Output,
-		execution.Error,
-		execution.ID,
-	)
+	err := retryBusy(func() error {
+		_, err := s.db.Exec(sql,
+			execution.EndTime,
+			durationMs,
+			execution.Status,
+			execution.Output,
+			execution.Error,
+			execution.ID,
+		)
+		return err
+	})
 
 	if err != nil {
 		return fmt.Errorf("failed to update execution: %w", err)
@@ -713,7 +759,10 @@ func cloneSchedulerTimePtr(value *time.Time) *time.Time {
 func (s *Storage) UpdateTaskNextRun(id string, nextRun *time.Time) error {
 	sql := "UPDATE tasks SET next_run = ?, updated_at = ? WHERE id = ?"
 
-	_, err := s.db.Exec(sql, nextRun, time.Now(), id)
+	err := retryBusy(func() error {
+		_, err := s.db.Exec(sql, nextRun, time.Now(), id)
+		return err
+	})
 	if err != nil {
 		return fmt.Errorf("failed to update task next run: %w", err)
 	}
@@ -725,7 +774,10 @@ func (s *Storage) UpdateTaskNextRun(id string, nextRun *time.Time) error {
 func (s *Storage) UpdateTaskLastRun(id string, lastRun time.Time) error {
 	sql := "UPDATE tasks SET last_run = ?, updated_at = ? WHERE id = ?"
 
-	_, err := s.db.Exec(sql, lastRun, time.Now(), id)
+	err := retryBusy(func() error {
+		_, err := s.db.Exec(sql, lastRun, time.Now(), id)
+		return err
+	})
 	if err != nil {
 		return fmt.Errorf("failed to update task last run: %w", err)
 	}
