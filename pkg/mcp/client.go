@@ -261,6 +261,10 @@ func (c *Client) handshake(ctx context.Context, transport mcp.Transport) (*mcp.C
 	}
 	c.mu.Unlock()
 
+	if c.config.Type == ServerTypeSSE {
+		return c.handshakeDetached(ctx, client, transport)
+	}
+
 	connectCtx, cancel := context.WithTimeout(ctx, c.setupTimeout())
 	defer cancel()
 
@@ -269,6 +273,44 @@ func (c *Client) handshake(ctx context.Context, transport mcp.Transport) (*mcp.C
 		return nil, fmt.Errorf("failed to connect to MCP server %s (initialize handshake failed): %w", c.config.Name, err)
 	}
 	return session, nil
+}
+
+// handshakeDetached is the handshake over a transport whose stream lives as
+// long as the context it connects with: SSE's event stream is a GET made with
+// that context, so connecting under the handshake's deadline closed the stream
+// the moment the handshake returned, and the first tools/list read EOF. The
+// stream gets a context of its own; the deadline is kept here.
+func (c *Client) handshakeDetached(ctx context.Context, client *mcp.Client, transport mcp.Transport) (*mcp.ClientSession, error) {
+	type connected struct {
+		session *mcp.ClientSession
+		err     error
+	}
+	done := make(chan connected, 1)
+	go func() {
+		s, err := client.Connect(context.WithoutCancel(ctx), transport, nil)
+		done <- connected{s, err}
+	}()
+	timer := time.NewTimer(c.setupTimeout())
+	defer timer.Stop()
+	var why error
+	select {
+	case r := <-done:
+		if r.err != nil {
+			return nil, fmt.Errorf("failed to connect to MCP server %s (initialize handshake failed): %w", c.config.Name, r.err)
+		}
+		return r.session, nil
+	case <-timer.C:
+		why = context.DeadlineExceeded
+	case <-ctx.Done():
+		why = ctx.Err()
+	}
+	// Given up on: a session that still comes is closed, not leaked.
+	go func() {
+		if r := <-done; r.session != nil {
+			_ = r.session.Close()
+		}
+	}()
+	return nil, fmt.Errorf("failed to connect to MCP server %s (initialize handshake failed): %w", c.config.Name, why)
 }
 
 // setupTimeout bounds each step of bringing a server up: the initialize

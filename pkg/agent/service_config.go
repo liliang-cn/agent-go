@@ -36,6 +36,22 @@ func (s *Service) AddMCPServer(ctx context.Context, name, command string, args [
 	return nil
 }
 
+// AddMCPServerConfig is AddMCPServer for a server of any type: one reached
+// by URL (streamable HTTP or SSE, with its headers) as well as a command. One
+// already there under the name is replaced.
+func (s *Service) AddMCPServerConfig(ctx context.Context, cfg mcp.ServerConfig) error {
+	if s.MCP == nil {
+		return fmt.Errorf("this service has no MCP; build it WithMCP")
+	}
+	if err := s.MCP.AddDynamicServerConfig(ctx, cfg); err != nil {
+		return err
+	}
+	if s.toolRegistry != nil {
+		s.registerMCPToolsInRegistry(s.MCP)
+	}
+	return nil
+}
+
 // SetEagerTools names tools, as exact names or "prefix*", that every request
 // offers instead of leaving them to be found by search. MCP tools are always
 // behind the search otherwise, and a model that guesses a server's tool names

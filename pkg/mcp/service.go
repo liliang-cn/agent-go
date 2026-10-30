@@ -209,6 +209,33 @@ func (s *Service) AddDynamicServerWithEnv(ctx context.Context, name string, comm
 	return err
 }
 
+// AddDynamicServerConfig registers a server of any type — a URL reached over
+// streamable HTTP or SSE with its headers, or a command — and connects to it.
+// A server already loaded under the name is replaced, and its old connection
+// closed, so changing a URL or a token takes effect at once.
+func (s *Service) AddDynamicServerConfig(ctx context.Context, cfg ServerConfig) error {
+	if cfg.Name == "" {
+		return errors.New("an MCP server needs a name")
+	}
+	switch cfg.Type {
+	case ServerTypeHTTP, ServerTypeSSE:
+		if cfg.URL == "" {
+			return fmt.Errorf("MCP server %s: a URL is required", cfg.Name)
+		}
+	case ServerTypeStdio, "":
+		if len(cfg.Command) == 0 {
+			return fmt.Errorf("MCP server %s: a command is required", cfg.Name)
+		}
+	default:
+		return fmt.Errorf("MCP server %s: unsupported type %q", cfg.Name, cfg.Type)
+	}
+	cfg.AutoStart = true
+	_ = s.manager.StopServer(cfg.Name)
+	s.mcpConfig.PutServer(&cfg)
+	_, err := s.manager.StartServer(ctx, cfg.Name)
+	return err
+}
+
 // ListServers returns a list of configured servers and their status
 func (s *Service) ListServers() []ServerStatus {
 	var servers []ServerStatus
