@@ -463,6 +463,17 @@ func (s *TaskScheduler) claimSlot(task *Task, now time.Time) bool {
 			log.Printf("Skipping task %s - slot %s already fired", shortID(task.ID), task.NextRun.Format(time.RFC3339))
 			return false
 		}
+		if late, grace, stale := s.missedTooLong(task, now); stale {
+			s.slotsMu.Unlock()
+			log.Printf("skipping missed slot %s of task %s: %s late (grace %s)",
+				task.NextRun.Format(time.RFC3339), task.ID, late.Round(time.Second), grace)
+			if next, err := s.cronParser.ParseAndNext(task.Schedule, now); err != nil {
+				log.Printf("Error calculating next run for task %s: %v", shortID(task.ID), err)
+			} else if err := s.storage.UpdateTaskNextRun(task.ID, next); err != nil {
+				log.Printf("Error moving next run of task %s: %v", shortID(task.ID), err)
+			}
+			return false
+		}
 		s.firedSlot[task.ID] = *task.NextRun
 	}
 	s.firing[task.ID] = true
@@ -477,6 +488,39 @@ func (s *TaskScheduler) claimSlot(task *Task, now time.Time) bool {
 		}
 	}
 	return true
+}
+
+// minMissedGrace is the least lateness a slot is always forgiven: the loop
+// ticks once a minute, so a slot is routinely up to a minute late.
+const minMissedGrace = 2 * time.Minute
+
+// maxMissedGrace caps the forgiveness for slow schedules.
+const maxMissedGrace = time.Hour
+
+// missedTooLong reports whether a due cron slot is too stale to run. A slot
+// is forgiven while it is at most min(1 hour, half the schedule's period)
+// late (never less than minMissedGrace): a restart a few minutes after the
+// slot still runs it, but a weekly reminder for last Thursday, found on
+// Sunday because the app was not running, does not fire. Tasks without a
+// schedule, or whose period cannot be worked out, always run.
+func (s *TaskScheduler) missedTooLong(task *Task, now time.Time) (late, grace time.Duration, stale bool) {
+	if task.Schedule == "" || task.NextRun == nil {
+		return 0, 0, false
+	}
+	slot := *task.NextRun
+	late = now.Sub(slot)
+	next, err := s.cronParser.ParseAndNext(task.Schedule, slot)
+	if err != nil || next == nil {
+		return late, 0, false
+	}
+	grace = next.Sub(slot) / 2
+	if grace > maxMissedGrace {
+		grace = maxMissedGrace
+	}
+	if grace < minMissedGrace {
+		grace = minMissedGrace
+	}
+	return late, grace, late > grace
 }
 
 // taskRunning reports whether any execution of the task is in flight, manual
