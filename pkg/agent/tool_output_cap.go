@@ -107,6 +107,12 @@ type ToolOutputTruncation struct {
 	// StructureKept is true when a JSON result was cut inside its string
 	// fields and is still valid JSON; false when it was cut as plain text.
 	StructureKept bool
+	// Spilled is true when the full result was kept in the spill store
+	// (SpillID) and the model got a preview; TotalLines is its line count.
+	// The model reads the rest with tool_output_read.
+	Spilled    bool
+	SpillID    string
+	TotalLines int
 }
 
 // ToolOutputObserver hears about every tool result the cap cut down.

@@ -79,6 +79,7 @@ func (s *Service) Close() error {
 		if closer, ok := s.memory().(interface{ Close() error }); ok && closer != nil {
 			_ = closer.Close()
 		}
+		s.closeSpill()
 		if closeErr := s.store.Close(); closeErr != nil {
 			err = errors.Join(err, closeErr)
 		}

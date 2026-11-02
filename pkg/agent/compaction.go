@@ -307,7 +307,7 @@ func (s *Service) summarizeForCompaction(ctx context.Context, middle []domain.Me
 		"record that preserves: (1) the user's goal and any open subgoals, " +
 		"(2) decisions made and their rationale, (3) concrete results from " +
 		"tool calls (file paths, identifiers, values), (4) outstanding " +
-		"questions or blockers. Omit pleasantries, restatement, and meta " +
+		"questions or blockers. Keep every spill id (spill_xxxxxxxx) verbatim, with what it holds. Omit pleasantries, restatement, and meta " +
 		"commentary. Use short bullet points. Do not invent details that " +
 		"are not in the transcript.\n\n" +
 		"<transcript>\n" + transcript + "\n</transcript>"
@@ -370,7 +370,15 @@ func renderMessagesForSummary(msgs []domain.Message) string {
 		}
 		content := strings.TrimSpace(m.Content)
 		if r := []rune(content); len(r) > perMessageMaxRunes {
+			full := content
 			content = string(r[:perMessageMaxRunes]) + "... (truncated)"
+			// A spill id is the only handle on a spilled result: keep it
+			// even when the cut lands past it.
+			for _, id := range spillIDsIn(full) {
+				if !strings.Contains(content, id) {
+					content += " [spill id: " + id + "]"
+				}
+			}
 		}
 		if content == "" && len(m.ToolCalls) > 0 {
 			// Surface tool calls explicitly when the assistant message

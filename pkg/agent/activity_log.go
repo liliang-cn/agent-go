@@ -340,6 +340,11 @@ func (l *ActivityLog) OnCompaction(_ context.Context, info CompactionInfo) {
 // OnToolOutputTruncated records a tool result cut down before the model saw
 // it — the model was handed the head and the tail, not the whole thing.
 func (l *ActivityLog) OnToolOutputTruncated(_ context.Context, info ToolOutputTruncation) {
+	if info.Spilled {
+		l.line("r%-3d spill    %s %dB (%d lines) -> %dB inline, full result %s",
+			info.Round, info.ToolName, info.OriginalBytes, info.TotalLines, info.KeptBytes, info.SpillID)
+		return
+	}
 	l.line("r%-3d truncate %s %dB -> %dB (limit %d)",
 		info.Round, info.ToolName, info.OriginalBytes, info.KeptBytes, info.Limit)
 }

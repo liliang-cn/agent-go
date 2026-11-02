@@ -177,6 +177,11 @@ type Builder struct {
 	notesFile     string
 	// toolOutputLimit is WithToolOutputLimit: 0 = default, <0 = off.
 	toolOutputLimit int
+	// spill* are WithToolOutputSpill / WithToolOutputSpillStore.
+	spillDisabled bool
+	spillDir      string
+	spillMaxBytes int64
+	spillTTL      time.Duration
 
 	// cached result
 	svc *Service
@@ -1026,6 +1031,10 @@ func (b *Builder) build() (*Service, error) {
 	}
 	svc.promptCache = b.promptCache
 	svc.toolOutputLimit = b.toolOutputLimit
+	svc.spillDisabled, svc.spillDir, svc.spillMaxBytes, svc.spillTTL = b.spillDisabled, b.spillDir, b.spillMaxBytes, b.spillTTL
+	if svc.spillEnabled() {
+		svc.registerSpillTool()
+	}
 	svc.notesFile = b.notesFile
 	if isRoundBudgetSet(b.autonomy.MaxRounds) || b.autonomy.LintRetryBudget > 0 || b.autonomy.Scratchpad ||
 		b.autonomy.CheckpointEveryRounds > 0 {

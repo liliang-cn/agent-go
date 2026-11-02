@@ -226,6 +226,15 @@ type Service struct {
 	// DefaultToolOutputLimit, negative means no cap. See tool_output_cap.go.
 	toolOutputLimit int
 
+	// Inline & spill (tool_output_spill.go): over-cap results are kept whole
+	// in spillStore and read back with tool_output_read.
+	spillDisabled bool
+	spillDir      string
+	spillMaxBytes int64
+	spillTTL      time.Duration
+	spillMu       sync.Mutex
+	spillStore    *spillStore
+
 	// notesFile is the workspace file whose contents ride in every later run's
 	// hand-off. Empty means DefaultNotesFile. See notes_handoff.go.
 	notesFile string
