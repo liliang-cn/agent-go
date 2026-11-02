@@ -48,8 +48,8 @@ type Wire struct {
 
 // WireEvent is one thing that happened to a model call on the wire.
 type WireEvent struct {
-	// Kind is queued, slot, request, response, error, retry, restart,
-	// first_byte or waiting.
+	// Kind is queued, slot, request, response, error, stalled, retry,
+	// restart, first_byte or waiting.
 	Kind string `json:"kind"`
 	// Attempt is the HTTP attempt this is about, from 1.
 	Attempt int `json:"attempt,omitempty"`
@@ -207,6 +207,21 @@ func (w *Wire) Failed(err error) {
 	w.mu.Unlock()
 	e.Detail = clipWire(err.Error())
 	e.Text = fmt.Sprintf("attempt %d failed after %s: %s", e.Attempt, dur(now.Sub(w.start)), e.Detail)
+	w.send(e)
+}
+
+// Stalled says the attempt was aborted because the provider stopped sending
+// bytes: reason names which timeout fired and after how long.
+func (w *Wire) Stalled(reason string) {
+	if w == nil {
+		return
+	}
+	now := time.Now()
+	w.mu.Lock()
+	e := w.event("stalled", now)
+	w.mu.Unlock()
+	e.Detail = clipWire(reason)
+	e.Text = fmt.Sprintf("attempt %d stalled: %s", e.Attempt, e.Detail)
 	w.send(e)
 }
 

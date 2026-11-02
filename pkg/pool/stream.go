@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -29,6 +30,23 @@ import (
 // a thinking mode) says so before it streams anything, so the request is
 // retried without it and the stream starts from the retry.
 func (c *Client) StreamWithTools(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions, callback domain.ToolCallCallback) error {
+	// A stalled attempt is retried once, and only while nothing of it has
+	// reached the callback: half an answer cannot be taken back. A second
+	// stall, or one after output, is returned as ErrModelStalled.
+	for attempt := 0; ; attempt++ {
+		delivered := false
+		err := c.streamWithTools(ctx, messages, tools, opts, func(r *domain.GenerationResult) error {
+			delivered = true
+			return callback(r)
+		})
+		if err == nil || !errors.Is(err, domain.ErrModelStalled) || delivered || attempt >= 1 || ctx.Err() != nil {
+			return err
+		}
+		trace.WireOf(ctx).Retry("model stalled, asking again: "+err.Error(), 0)
+	}
+}
+
+func (c *Client) streamWithTools(ctx context.Context, messages []domain.Message, tools []domain.ToolDefinition, opts *domain.GenerationOptions, callback domain.ToolCallCallback) error {
 	if opts == nil {
 		opts = &domain.GenerationOptions{}
 	}
@@ -143,6 +161,9 @@ scan:
 		}
 	}
 	if err := sc.Err(); err != nil && ctx.Err() == nil {
+		if errors.Is(err, domain.ErrModelStalled) {
+			return fmt.Errorf("request failed (model=%s): %w", c.modelName, err)
+		}
 		return fmt.Errorf("stream read (model=%s): %w", c.modelName, err)
 	}
 

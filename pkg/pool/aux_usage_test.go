@@ -120,9 +120,13 @@ func TestTheWireSitsInsideTheMessagesTranslation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	at, ok := c.http.Transport.(anthropicTransport)
+	st, ok := c.http.Transport.(stallTransport)
 	if !ok {
-		t.Fatalf("outer transport = %T, want anthropicTransport", c.http.Transport)
+		t.Fatalf("outermost transport = %T, want stallTransport", c.http.Transport)
+	}
+	at, ok := st.base.(anthropicTransport)
+	if !ok {
+		t.Fatalf("transport under the stall watch = %T, want anthropicTransport", st.base)
 	}
 	if _, ok := at.base.(wireTransport); !ok {
 		t.Fatalf("inside the translation = %T, want wireTransport", at.base)

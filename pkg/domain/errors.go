@@ -15,6 +15,13 @@ var (
 	ErrNoHealthyProviders  = errors.New("no healthy providers available")
 	ErrProviderNotFound    = errors.New("provider not found")
 
+	// ErrModelStalled means a model call was aborted because the provider
+	// stopped sending bytes: no first byte within the first-byte timeout, or
+	// none for the stream-idle timeout once streaming. The call was already
+	// retried once. A caller with a fallback model switches to it on
+	// errors.Is(err, ErrModelStalled).
+	ErrModelStalled = errors.New("model stalled")
+
 	// Withholdable errors - these can be recovered from with compaction/retry
 	ErrContextTooLong  = errors.New("context too long")
 	ErrMaxOutputTokens = errors.New("max output tokens exceeded")

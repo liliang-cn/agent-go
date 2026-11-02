@@ -18,11 +18,13 @@ import (
 
 // Client is an OpenAI-compatible LLM/embedding client.
 type Client struct {
-	providerName  string
-	baseURL       string
-	key           string
-	modelName     string
-	http          *http.Client
+	providerName string
+	baseURL      string
+	key          string
+	modelName    string
+	http         *http.Client
+	// stall holds this client's stream timeouts; see stall.go.
+	stall         *stallConfig
 	promptManager *prompt.Manager
 	// nativeSearch accumulates evidence about the upstream's native
 	// web-search support (see native_search.go). Shared by pointer across
@@ -70,14 +72,19 @@ func NewClient(providerName, baseURL, key, modelName string) (*Client, error) {
 		// it reports the request that was sent and not the one it came from.
 		transport = anthropicTransport{base: transport}
 	}
+	stall := &stallConfig{}
 	return &Client{
 		providerName: providerName,
 		baseURL:      baseURL,
 		key:          key,
 		modelName:    modelName,
+		stall:        stall,
+		// No http.Client.Timeout: it cuts a stream that is still
+		// progressing. stallTransport bounds a plain request by
+		// totalRequestTimeout and a stream by its first-byte and idle
+		// timeouts instead (stall.go).
 		http: &http.Client{
-			Timeout:   600 * time.Second,
-			Transport: transport,
+			Transport: stallTransport{base: transport, cfg: stall},
 		},
 		promptManager: prompt.NewManager(),
 		nativeSearch:  newNativeSearchState(providerName, domain.NativeWebSearchUndeclared, nil),
@@ -223,6 +230,7 @@ func (c *Client) Stream(ctx context.Context, prompt string, opts *domain.Generat
 	}
 
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
 	if c.key != "" {
 		req.Header.Set("Authorization", "Bearer "+c.key)
 	}
