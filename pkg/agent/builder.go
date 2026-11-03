@@ -148,6 +148,7 @@ type Builder struct {
 	toolPolicy           ToolExecutionPolicy
 
 	tools        []*Tool // pre-registered via WithTool/WithTools
+	codeModes    []codeModeConfig
 	extraModules []Module
 	extensions   []Extension
 
@@ -869,6 +870,9 @@ func (b *Builder) build() (*Service, error) {
 	// modules so all tools are reachable.
 	for _, t := range b.tools {
 		svc.Register(t)
+	}
+	if len(b.codeModes) > 0 {
+		svc.installCodeModes(b.codeModes)
 	}
 
 	if modelName, baseURL, isFastModel := resolveServiceModelInfo(llmSvc, agentgoCfg); modelName != "" || baseURL != "" {

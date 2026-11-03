@@ -142,6 +142,10 @@ type Service struct {
 	// dispatch go through a single source of truth.
 	toolRegistry *ToolRegistry
 
+	// codeModes owns the WithCodeMode tools and their attempts; nil without
+	// a code mode. See codemode.go.
+	codeModes *codeModeHost
+
 	// outputLints is the registry of post-output lint rules consulted by the
 	// runtime before emitting a final completion event. Lazily initialized via
 	// OutputLints(); see pkg/agent/output_lint.go.

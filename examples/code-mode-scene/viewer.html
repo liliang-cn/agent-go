@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scene Viewer</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --panel: rgba(255,255,255,0.92); --text: #1d2330; --muted: #5d6676;
+    --border: #d9dde4; --grid: #c9ced8; --grid2: #e3e6ec; --ground: #eceef2;
+  }
+  :root[data-theme="dark"] {
+    --bg: #1b1e24; --panel: rgba(36,40,48,0.92); --text: #e7e9ee; --muted: #9aa3b2;
+    --border: #3a404c; --grid: #4a5160; --grid2: #2c313a; --ground: #23272e;
+  }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  #view { position: fixed; inset: 0; }
+  .panel { position: fixed; left: 16px; top: 16px; max-width: min(360px, calc(100vw - 32px));
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+  .panel h1 { font-size: 15px; margin: 0 0 6px; }
+  .panel p { margin: 2px 0; color: var(--muted); }
+  #hover { position: fixed; left: 16px; bottom: 16px; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; padding: 6px 10px; color: var(--muted); max-width: calc(100vw - 32px); }
+  #theme { position: fixed; right: 16px; top: 16px; background: var(--panel); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; cursor: pointer; font: inherit; }
+</style>
+</head>
+<body>
+<div id="view"></div>
+<div class="panel">
+  <h1 id="title">Scene</h1>
+  <p id="stats"></p>
+  <p>Drag to orbit, scroll to zoom.</p>
+</div>
+<div id="hover">Hover a part to see its name</div>
+<button id="theme" type="button">Dark</button>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const SCENE = /*SCENE_JSON*/null;
+const TITLE = /*SCENE_TITLE*/"Scene";
+
+(function () {
+  const root = document.documentElement;
+  const css = (name) => getComputedStyle(root).getPropertyValue(name).trim();
+  document.getElementById('title').textContent = TITLE;
+
+  const host = document.getElementById('view');
+  const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  host.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 2000);
+
+  scene.add(new THREE.HemisphereLight(0xffffff, 0xd8dde6, 0.85));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.75);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  scene.add(sun);
+
+  // Build three.js objects from the JSON node tree.
+  const named = {};
+  const deg = Math.PI / 180;
+  function material(spec) {
+    if (typeof spec === 'string') {
+      if (!named[spec]) named[spec] = material((SCENE.materials || {})[spec] || {});
+      return named[spec];
+    }
+    spec = spec || {};
+    const m = new THREE.MeshStandardMaterial({
+      color: spec.color || '#b0b4bb',
+      metalness: spec.metalness ?? 0.1,
+      roughness: spec.roughness ?? 0.7,
+    });
+    if (spec.opacity !== undefined && spec.opacity < 1) { m.transparent = true; m.opacity = spec.opacity; }
+    if (spec.emissive) m.emissive = new THREE.Color(spec.emissive);
+    return m;
+  }
+  const fallback = material({});
+  let meshes = 0;
+  function build(node, path) {
+    const name = node.name || node.type;
+    const full = path ? path + ' / ' + name : name;
+    let obj;
+    const g = node.geometry || {};
+    switch (node.type) {
+      case 'group': obj = new THREE.Group(); break;
+      case 'box': obj = new THREE.Mesh(new THREE.BoxGeometry(g.w, g.h, g.d), node.material ? material(node.material) : fallback); break;
+      case 'cylinder': obj = new THREE.Mesh(new THREE.CylinderGeometry(g.rTop, g.rBottom, g.h, g.segments || 32), node.material ? material(node.material) : fallback); break;
+      case 'sphere': obj = new THREE.Mesh(new THREE.SphereGeometry(g.r, 32, 16), node.material ? material(node.material) : fallback); break;
+      default: return null;
+    }
+    if (obj.isMesh) { obj.castShadow = true; obj.receiveShadow = true; meshes++; }
+    obj.name = full;
+    const p = node.position || [0, 0, 0];
+    obj.position.set(p[0], p[1], p[2]);
+    if (node.rotation) obj.rotation.set(node.rotation[0] * deg, node.rotation[1] * deg, node.rotation[2] * deg, 'XYZ');
+    if (node.scale) obj.scale.set(node.scale[0], node.scale[1], node.scale[2]);
+    for (const c of node.children || []) { const co = build(c, full); if (co) obj.add(co); }
+    return obj;
+  }
+  const model = new THREE.Group();
+  for (const n of (SCENE && SCENE.nodes) || []) { const o = build(n, ''); if (o) model.add(o); }
+  scene.add(model);
+
+  // Frame the model.
+  const box = new THREE.Box3().setFromObject(model);
+  const size = box.isEmpty() ? new THREE.Vector3(1, 1, 1) : box.getSize(new THREE.Vector3());
+  const center = box.isEmpty() ? new THREE.Vector3() : box.getCenter(new THREE.Vector3());
+  const radius = Math.max(size.length() / 2, 0.5);
+  document.getElementById('stats').textContent =
+    meshes + ' meshes · ' + size.x.toFixed(2) + ' × ' + size.y.toFixed(2) + ' × ' + size.z.toFixed(2) + ' m';
+
+  let grid, ground;
+  function paintTheme() {
+    const bg = new THREE.Color(css('--bg'));
+    scene.background = bg;
+    renderer.setClearColor(bg);
+    if (grid) scene.remove(grid);
+    const span = Math.ceil(radius * 4);
+    grid = new THREE.GridHelper(span, span, new THREE.Color(css('--grid')), new THREE.Color(css('--grid2')));
+    grid.position.set(center.x, 0.001, center.z);
+    scene.add(grid);
+    if (!ground) {
+      ground = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshStandardMaterial({ roughness: 1 }));
+      ground.rotation.x = -Math.PI / 2;
+      ground.receiveShadow = true;
+      scene.add(ground);
+    }
+    ground.material.color = new THREE.Color(css('--ground'));
+    ground.scale.set(span, span, 1);
+    ground.position.set(center.x, 0, center.z);
+  }
+  paintTheme();
+
+  sun.position.set(center.x + radius * 1.5, radius * 3, center.z + radius * 2);
+  sun.target.position.copy(center);
+  scene.add(sun.target);
+  const sc = sun.shadow.camera;
+  sc.left = sc.bottom = -radius * 2; sc.right = sc.top = radius * 2; sc.near = 0.1; sc.far = radius * 8;
+  sc.updateProjectionMatrix();
+
+  // A small orbit: drag rotates around the centre, wheel zooms.
+  let azimuth = -0.75, elevation = 0.5, distance = radius * 2.6;
+  function placeCamera() {
+    camera.position.set(
+      center.x + distance * Math.cos(elevation) * Math.sin(azimuth),
+      center.y + distance * Math.sin(elevation),
+      center.z + distance * Math.cos(elevation) * Math.cos(azimuth));
+    camera.lookAt(center);
+  }
+  let drag = null;
+  renderer.domElement.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, y: e.clientY }; renderer.domElement.setPointerCapture(e.pointerId); });
+  renderer.domElement.addEventListener('pointerup', () => { drag = null; });
+  renderer.domElement.addEventListener('pointermove', (e) => {
+    if (drag) {
+      azimuth -= (e.clientX - drag.x) * 0.006;
+      elevation = Math.max(-0.1, Math.min(1.5, elevation + (e.clientY - drag.y) * 0.006));
+      drag = { x: e.clientX, y: e.clientY };
+    }
+    hover(e);
+  });
+  renderer.domElement.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    distance = Math.max(radius * 0.3, Math.min(radius * 12, distance * (1 + Math.sign(e.deltaY) * 0.1)));
+  }, { passive: false });
+
+  const ray = new THREE.Raycaster();
+  const mouse = new THREE.Vector2();
+  const hoverEl = document.getElementById('hover');
+  function hover(e) {
+    const r = renderer.domElement.getBoundingClientRect();
+    mouse.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+    ray.setFromCamera(mouse, camera);
+    const hit = ray.intersectObject(model, true)[0];
+    hoverEl.textContent = hit ? hit.object.name : 'Hover a part to see its name';
+  }
+
+  function resize() {
+    const w = host.clientWidth, h = host.clientHeight;
+    renderer.setSize(w, h);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  const themeBtn = document.getElementById('theme');
+  themeBtn.addEventListener('click', () => {
+    const dark = root.getAttribute('data-theme') !== 'dark';
+    if (dark) root.setAttribute('data-theme', 'dark'); else root.removeAttribute('data-theme');
+    themeBtn.textContent = dark ? 'Light' : 'Dark';
+    paintTheme();
+  });
+
+  (function loop() { placeCamera(); renderer.render(scene, camera); requestAnimationFrame(loop); })();
+  window.__sceneReady = true;
+})();
+</script>
+</body>
+</html>
