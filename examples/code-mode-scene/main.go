@@ -171,7 +171,7 @@ func attemptNo(o *agent.CodeOutcome) int {
 
 func firstLine(s string) string {
 	s = strings.TrimSpace(s)
-	if i := strings.IndexAny(s, ".\n"); i > 0 {
+	if i := strings.IndexAny(s, ":\n"); i > 0 {
 		s = s[:i]
 	}
 	if len(s) > 80 {

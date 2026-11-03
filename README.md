@@ -85,6 +85,7 @@ Wiring memory, a knowledge graph, web search and plans into a host: [docs/gettin
 | `WithMCP(opts...)` / `WithSkills()` | tools from MCP servers; SKILL.md workflows |
 | `WithTool(s)(...)` / `AddToolWithMetadata` | your own tools; `ToolMetadata{ReadOnly, Destructive, OutputLimit, ...}` |
 | `WithSubagents(specs...)` | a `task(agent_name, prompt)` tool |
+| `WithCodeMode(mode, opts...)` | code mode: the model writes a program that builds something (a 3D scene, a layout), it runs in a sandbox, gets checked, and the model revises it; `svc.RunCode` returns the built JSON. See [docs/code-mode.md](docs/code-mode.md) |
 | `WithSandbox(sb)` / `WithAutonomy(profile)` | where tools run; round budget |
 | `WithPlanStore(ps)` / `WithTaskStore(ts)` / `WithRunMemory(rm)` | persistence for plans, tasks, run memory |
 | `WithExtensions(...)` / `WithObserver(...)` / `WithObserverPayloads()` | seams: logging, pii, usage, bashguard, exec; ActivityLog, TraceWriter, OTel (OpenInference + GenAI semconv); the request each model call was sent and what it answered, opt-in |
@@ -161,6 +162,7 @@ pkg/extensiontest test an extension through the real loop
 pkg/otelobserver  Observer → OpenTelemetry
 pkg/timeaware     relative time in stored text
 pkg/decision      cheap closed-question engine
+pkg/codemode      sandboxed build programs, validation reports, the revise loop; codemode/scene is a 3D scene builder
 eval/             behavioural eval harness
 examples/         runnable examples
 ```
