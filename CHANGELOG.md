@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [3.80.0] - 2026-11-03
+
 ### Added
 
 - Code mode. An agent can now build things by writing a program instead of writing
