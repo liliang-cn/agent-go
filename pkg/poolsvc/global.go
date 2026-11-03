@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
+	"log/slog"
 	"strings"
 	"sync"
 
@@ -139,15 +139,12 @@ func (s *Service) Initialize(ctx context.Context, cfg *config.Config) error {
 
 var noEmbeddingHintOnce sync.Once
 
-// hintNoEmbeddingProvider prints a one-time, non-fatal nudge when no dedicated
-// embedding provider is configured. Vector memory / RAG are disabled until one
-// is added; everything else works. Kept to stderr so it never pollutes command
-// output that gets parsed.
+// hintNoEmbeddingProvider notes, once, that no embedding provider is configured: vector memory
+// and RAG stay off until one is added; everything else works. It is a debug log, not a line on
+// stderr, because a library must not write into the output of the program that embeds it.
 func hintNoEmbeddingProvider() {
 	noEmbeddingHintOnce.Do(func() {
-		fmt.Fprintln(os.Stderr, "ℹ️  No embedding provider configured — vector memory/RAG are disabled "+
-			"(text chat, tools, and skills all work). To enable them, pass Builder.WithEmbedder(...); "+
-			"see docs/getting-started.md")
+		slog.Debug("no embedding provider configured: vector memory and RAG are off (chat, tools and skills work); pass Builder.WithEmbedder to enable them")
 	})
 }
 
