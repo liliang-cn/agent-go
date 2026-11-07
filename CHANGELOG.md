@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [3.80.3] - 2026-11-07
+
+### Fixed
+
+- A model told it could not read a calendar whose tools it was holding. When some
+  tools of a family were in the schema and the rest deferred, the tool index listed
+  the family as "mcp_noted_* (65 tools)" under tools that cannot be called yet, so
+  the model searched for tools it already had; with a second search in the same
+  batch refused, it gave up. The family line now says how many of its tools are
+  already in the schema and to call those directly, and the refused-search message
+  points at the schema before offering `task_blocked`.
+
 ## [3.80.2] - 2026-11-07
 
 ### Fixed
