@@ -307,6 +307,20 @@ func TestResolveClosestToolName(t *testing.T) {
 	}
 }
 
+// The catalogue search is not a registered tool, so it must reach dispatch
+// under its own name rather than be repaired into one that is.
+func TestToolSearchNamesAreNotRepairedIntoOtherTools(t *testing.T) {
+	svc := &Service{toolRegistry: NewToolRegistry()}
+	svc.toolRegistry.Register(domain.ToolDefinition{Type: "function", Function: domain.ToolFunction{
+		Name: spillToolName, Parameters: map[string]interface{}{"type": "object"},
+	}}, func(context.Context, map[string]interface{}) (interface{}, error) { return nil, nil }, "builtin")
+	for _, name := range []string{"tool_search_tool_regex", "tool_search_tool_bm25", "search_available_tools"} {
+		if got := svc.resolveExecutableToolNameForAgent(name, NewAgent("a")); got != name {
+			t.Errorf("%s resolved to %q", name, got)
+		}
+	}
+}
+
 func TestToolBuilder_PanicOnMissingHandler(t *testing.T) {
 	defer func() {
 		if r := recover(); r == nil {

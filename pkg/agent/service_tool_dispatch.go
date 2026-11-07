@@ -16,7 +16,11 @@ type DirectToolExecutionOptions struct {
 }
 
 func (s *Service) resolveExecutableToolNameForAgent(name string, currentAgent *Agent) string {
-	if name == "" || isTaskTerminalToolName(name) || strings.HasPrefix(name, "transfer_to_") {
+	// The catalogue search is dispatched by name further down and is in none of
+	// the lists below, so the closest-name repair would turn it into whatever
+	// shares its words: tool_search_tool_regex became tool_output_read, and the
+	// search failed on that tool's arguments.
+	if name == "" || isTaskTerminalToolName(name) || isSearchToolName(name) || strings.HasPrefix(name, "transfer_to_") {
 		return name
 	}
 
