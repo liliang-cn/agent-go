@@ -601,6 +601,9 @@ func buildResponseFormatBody(rf *domain.ResponseFormat) map[string]interface{} {
 			// Send the schema as a structured object, not a JSON string.
 			var schemaObj interface{}
 			if err := json.Unmarshal(rf.Schema, &schemaObj); err == nil {
+				if rf.Strict {
+					schemaObj = domain.StrictJSONSchema(schemaObj)
+				}
 				js["schema"] = schemaObj
 			}
 		}
@@ -754,8 +757,11 @@ func (c *Client) GenerateStructured(ctx context.Context, prompt string, schema i
 		"response_format": map[string]interface{}{
 			"type": "json_schema",
 			"json_schema": map[string]interface{}{
-				"name":   "response",
-				"schema": schema,
+				"name": "response",
+				// OpenAI's strict structured outputs reject a schema whose
+				// objects are open or leave properties optional; the gateway
+				// in front of an OpenAI model passes that 400 through.
+				"schema": domain.StrictJSONSchema(schema),
 				// strict:true intentionally omitted — many OpenAI-compatible providers
 				// do not support it and return an error or empty content.
 			},

@@ -504,6 +504,9 @@ func buildResponseFormatJSONBody(rf *domain.ResponseFormat) map[string]any {
 		if len(rf.Schema) > 0 {
 			var schemaObj any
 			if err := json.Unmarshal(rf.Schema, &schemaObj); err == nil {
+				if rf.Strict {
+					schemaObj = domain.StrictJSONSchema(schemaObj)
+				}
 				js["schema"] = schemaObj
 			}
 		}
@@ -929,7 +932,7 @@ func (p *OpenAILLMProvider) GenerateStructured(ctx context.Context, prompt strin
 	schemaParam := openai.ResponseFormatJSONSchemaJSONSchemaParam{
 		Name:        "structured_response",
 		Description: openai.String("Structured response based on the provided schema"),
-		Schema:      schema,
+		Schema:      domain.StrictJSONSchema(schema),
 	}
 
 	params := openai.ChatCompletionNewParams{
