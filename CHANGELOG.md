@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [3.80.2] - 2026-11-07
+
+### Fixed
+
+- A model without server-side tool search (OpenAI models, for example through a
+  gateway serving a Codex account) could never load a deferred tool. Its calls to
+  `tool_search_tool_regex` and `tool_search_tool_bm25` were "repaired" to the
+  closest registered name, `tool_output_read`, and failed on that tool's
+  arguments. The search names now reach dispatch unchanged.
+
 ## [3.80.1] - 2026-11-07
 
 ### Fixed
