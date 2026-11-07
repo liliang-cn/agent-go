@@ -156,15 +156,37 @@ func renderToolIndex(s *Service, all, sent []domain.ToolDefinition) string {
 		}
 		f.names = append(f.names, strings.TrimPrefix(name, prefix))
 	}
+	// How many of each family are in the schema already. A family line that
+	// says nothing about them reads as the whole family being out of reach:
+	// "mcp_noted_* (65 tools)" sent a model to search for the noted tools it
+	// was holding, and when the search was refused it told the person their
+	// calendar could not be read.
+	inSchema := map[string]int{}
+	for _, t := range sent {
+		name := strings.TrimSpace(t.Function.Name)
+		if name == "search_available_tools" || domain.IsToolSearchTool(name) {
+			continue
+		}
+		if p := toolFamily(name); p != "" && byPrefix[p] != nil {
+			inSchema[p]++
+		}
+	}
+	count := func(f *family) string {
+		if n := inSchema[f.prefix]; n > 0 {
+			return fmt.Sprintf("%d more; the other %d %s* tools are in your schema — call those directly", len(f.names), n, f.prefix)
+		}
+		return fmt.Sprintf("%d tools", len(f.names))
+	}
+
 	var full strings.Builder
 	for _, f := range fams {
-		if f.prefix == "" || len(f.names) == 1 {
+		if f.prefix == "" || len(f.names) == 1 && inSchema[f.prefix] == 0 {
 			for _, n := range f.names {
 				full.WriteString("- " + f.prefix + n + "\n")
 			}
 			continue
 		}
-		full.WriteString(fmt.Sprintf("- %s* (%d): %s\n", f.prefix, len(f.names), strings.Join(f.names, ", ")))
+		full.WriteString(fmt.Sprintf("- %s* (%s): %s\n", f.prefix, count(f), strings.Join(f.names, ", ")))
 	}
 	if full.Len() <= indexBudget {
 		b.WriteString(full.String())
@@ -176,7 +198,7 @@ func renderToolIndex(s *Service, all, sent []domain.ToolDefinition) string {
 			b.WriteString(fmt.Sprintf("- %d more tools with single-word names\n", len(f.names)))
 			continue
 		}
-		b.WriteString(fmt.Sprintf("- %s* (%d tools)\n", f.prefix, len(f.names)))
+		b.WriteString(fmt.Sprintf("- %s* (%s)\n", f.prefix, count(f)))
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

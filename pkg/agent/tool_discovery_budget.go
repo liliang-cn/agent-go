@@ -32,10 +32,15 @@ const discoverySignaturePrefix = "tool-discovery:"
 
 // toolDiscoveryBudgetGuidance replaces the refused search. Refusing silently
 // is not enough — the model needs an explicit way out, or it retries.
+//
+// It names the tools already in the schema first. Without that the only ways
+// out it offered were answering from memory or blocking, and a model whose
+// second search in a batch was refused told the person their calendar could
+// not be read while the calendar tools sat in its schema.
 var toolDiscoveryBudgetGuidance = fmt.Sprintf(
-	"Tool discovery budget exhausted: %d different tool searches in this task returned nothing usable. "+
-		"Do not search for tools again. Either answer the user directly from your own knowledge, "+
-		"or call task_blocked naming the specific capability that is missing.",
+	"Tool search refused: this task allows %d tool search and it has been used. "+
+		"Do not search for tools again. Call the tools already in your schema for what is asked, "+
+		"answer directly, or call task_blocked naming the specific capability that is missing.",
 	maxToolDiscoveryCallsPerRun,
 )
 

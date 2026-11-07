@@ -205,3 +205,32 @@ func TestAnIndexPastItsBudgetKeepsFamiliesAndCounts(t *testing.T) {
 		t.Fatalf("an over-budget index should list the family and its count only:\n%s", got)
 	}
 }
+
+// A family whose everyday tools are in the schema must not read as out of
+// reach. "mcp_noted_* (65 tools)" under "cannot call yet" sent a model to
+// search for the calendar tools it already held, and it gave up when the
+// search was refused.
+func TestAFamilyPartlyInTheSchemaSaysSo(t *testing.T) {
+	s := &Service{cfg: &config.Config{}}
+	var all, sent []domain.ToolDefinition
+	for i := 0; i < 65; i++ {
+		all = append(all, def(fmt.Sprintf("mcp_noted_rare_operation_with_a_long_name_%02d", i), "x"))
+	}
+	for i := 0; i < 900; i++ {
+		all = append(all, def(fmt.Sprintf("mcp_big_a_rather_long_operation_name_%04d", i), "x"))
+	}
+	for _, n := range []string{"mcp_noted_list_events", "mcp_noted_list_tasks"} {
+		d := def(n, "x")
+		all, sent = append(all, d), append(sent, d)
+	}
+	got := renderToolIndex(s, all, sent)
+	if !strings.Contains(got, "mcp_noted_* (65 more; the other 2 mcp_noted_* tools are in your schema — call those directly)") {
+		t.Fatalf("the noted family line does not say part of it is callable:\n%s", got)
+	}
+	if !strings.Contains(got, "mcp_big_* (900 tools)") {
+		t.Fatalf("a family with nothing in the schema changed:\n%s", got)
+	}
+	if strings.Contains(got, "mcp_noted_list_events") {
+		t.Fatalf("a tool in the schema is listed as hidden:\n%s", got)
+	}
+}
