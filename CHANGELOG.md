@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [3.80.1] - 2026-11-07
+
+### Fixed
+
+- Structured output against OpenAI models (for example through a gateway serving a
+  Codex account) failed with `invalid_json_schema`: strict mode needs every object
+  closed with `additionalProperties: false` and every property listed in `required`.
+  The schema is now normalized just before it is sent, on a copy: optional
+  properties become nullable, and a null answer decodes to the Go zero value.
+  Gemini models accept the same schema.
+
 ## [3.80.0] - 2026-11-03
 
 ### Added
