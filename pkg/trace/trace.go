@@ -10,7 +10,8 @@
 //     agentgo-trace run=3f2a91c0 model purpose=memory-pick dur=1.12s ttft=- in=2210 out=40
 //     agentgo-trace run=3f2a91c0 memory recall dur=1.31s
 //     agentgo-trace run=3f2a91c0 model purpose=turn tools=38 msgs=6 dur=6.48s ttft=4.90s in=21544 out=402
-//     agentgo-trace run=3f2a91c0 run end total=8.02s first_model_call=1.40s first_answer_token=6.30s …
+//     agentgo-trace run=3f2a91c0 tool bash dur=0.21s fail="exit=1 KeyError: 'total'"
+//     agentgo-trace run=3f2a91c0 run end total=8.02s outcome=completed first_model_call=1.40s first_answer_token=6.30s …
 //
 //   - AGENTGO_TRACE_FILE=/path/trace.jsonl appends the same records as JSON,
 //     one per line, for jq or a notebook. AGENTGO_TRACE_BODIES=1 adds what was
@@ -140,8 +141,11 @@ type Record struct {
 	Streamed bool   `json:"streamed,omitempty"`
 	Detail   string `json:"detail,omitempty"`
 	Err      string `json:"err,omitempty"`
-	Request  any    `json:"request,omitempty"`
-	Reply    any    `json:"reply,omitempty"`
+	// Fail is why a step that returned normally still failed — a command's
+	// exit status and the end of its output — or why a run did not complete.
+	Fail    string `json:"fail,omitempty"`
+	Request any    `json:"request,omitempty"`
+	Reply   any    `json:"reply,omitempty"`
 }
 
 type ctxKey int
@@ -308,6 +312,9 @@ func (r Record) line() string {
 		b.WriteString(" " + r.Detail)
 	}
 	if r.Kind == "run" || r.Kind == "decision" {
+		if r.Fail != "" {
+			fmt.Fprintf(&b, " reason=%q", r.Fail)
+		}
 		return b.String()
 	}
 	fmt.Fprintf(&b, " dur=%s", ms(r.DurMs))
@@ -332,6 +339,9 @@ func (r Record) line() string {
 	}
 	if r.Err != "" {
 		fmt.Fprintf(&b, " err=%q", r.Err)
+	}
+	if r.Fail != "" {
+		fmt.Fprintf(&b, " fail=%q", r.Fail)
 	}
 	return b.String()
 }
@@ -532,7 +542,7 @@ func (c *Call) End(usage *domain.TokenUsage, err error) {
 		r.CacheWrite = usage.CacheWriteTokens
 	}
 	if err != nil {
-		r.Err = trim(err.Error())
+		r.Err = Note(err.Error())
 	}
 	// The sink gets the bodies whenever it asked for them; the trace file
 	// and the stderr lines only when AGENTGO_TRACE_BODIES did. A service
@@ -564,32 +574,11 @@ func (c *Call) Streamed() {
 }
 
 // Step times something that is not a model call: kind is "memory" or "tool",
-// name says which. Call the returned func when it is done.
+// name says which. Call the returned func when it is done. See StepOutcome
+// for a step that can fail without returning an error.
 func Step(ctx context.Context, kind, name string) func(err error) {
-	sink := sinkOf(ctx)
-	if !Enabled() && sink == nil {
-		return func(error) {}
-	}
-	start := time.Now()
-	return func(err error) {
-		dur := time.Since(start)
-		r := Record{Time: start, Kind: kind, Name: name, DurMs: dur.Milliseconds()}
-		if err != nil {
-			r.Err = trim(err.Error())
-		}
-		if sink != nil {
-			sink.Step(ctx, r)
-		}
-		emit(ctx, r)
-		if s := statsOf(ctx); s != nil {
-			switch kind {
-			case "memory":
-				s.tally.Memory(dur)
-			case "tool":
-				s.tally.Tool(name, dur, err != nil)
-			}
-		}
-	}
+	done := StepOutcome(ctx, kind, name)
+	return func(err error) { done(err, false, "") }
 }
 
 // Summary is a run's totals, as a Tally adds them up.
@@ -629,28 +618,11 @@ func Timeline(ctx context.Context) (records []Record, sum Summary, ok bool) {
 
 // End records the run's summary. Model and tool time can overlap, so the
 // parts may add up to more than the whole.
-func End(ctx context.Context, outcome string) {
-	_, sum, ok := Timeline(ctx)
-	if !ok {
-		return
-	}
-	emit(ctx, Record{Time: time.Now(), Kind: "run", Name: outcome, DurMs: sum.TotalMs,
-		Detail: fmt.Sprintf("first_model_call=%s first_answer_token=%s model=%s/%d memory=%s tool=%s/%d",
-			ms(sum.FirstModelCallMs), firstToken(sum.FirstAnswerTokenMs), ms(sum.ModelMs), sum.ModelCalls,
-			ms(sum.MemoryMs), ms(sum.ToolMs), sum.ToolCalls)})
-}
+func End(ctx context.Context, outcome string) { EndWith(ctx, outcome, "") }
 
 func firstToken(v int64) string {
 	if v <= 0 {
 		return "-" // the answer never streamed
 	}
 	return ms(v)
-}
-
-func trim(s string) string {
-	s = strings.ReplaceAll(s, "\n", " ")
-	if len(s) > 160 {
-		return s[:160] + "…"
-	}
-	return s
 }

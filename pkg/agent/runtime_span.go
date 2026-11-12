@@ -59,6 +59,33 @@ func (r *Runtime) noteEnd(outcome string, reason StopReason, errText string) {
 	r.span.outcome, r.span.reason, r.span.errText = outcome, reason, errText
 }
 
+// endForTrace is how the run ended and, when it did not complete, why: the
+// blocker, the error, or the stop reason. "end" when the run never said — a
+// loop that returned without reaching one of the terminal paths.
+func (r *Runtime) endForTrace() (outcome, why string) {
+	if r == nil || r.span == nil {
+		return "end", ""
+	}
+	r.span.mu.Lock()
+	defer r.span.mu.Unlock()
+	if !r.span.finished || r.span.outcome == "" {
+		return "end", ""
+	}
+	outcome = r.span.outcome
+	if outcome == "completed" {
+		return outcome, ""
+	}
+	why = r.span.errText
+	if reason := string(r.span.reason); reason != "" && reason != string(StopReasonErrorDuringExecution) {
+		if why != "" {
+			why = reason + ": " + why
+		} else {
+			why = reason
+		}
+	}
+	return outcome, why
+}
+
 func (r *Runtime) runStartInfo() RunStartInfo {
 	info := RunStartInfo{
 		TaskID:    currentTaskID(r.session),

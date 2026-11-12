@@ -228,6 +228,11 @@ func (r *Runtime) lintGate(ctx context.Context, goal, content string, messages *
 		return true
 	}
 	r.emitLintObserved(violation, r.lintRetryBudget > 0)
+	// On the trace too: a run that took three extra turns, or ended blocked,
+	// because a check kept rejecting its answer should say which check and
+	// why without anyone opening the transcript.
+	trace.Decide(ctx, "lint_rejected", trace.Note(violation.Reason),
+		map[string]any{"lint": violation.LintName, "retrying": r.lintRetryBudget > 0})
 	if r.lintRetryBudget > 0 {
 		r.lintRetryBudget--
 		// The draft may already be on screen — an answer streams as the model
@@ -455,7 +460,10 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 		r.emitRunFinish(ctx)
 		// The timeline goes out last, but before the channel closes: after
 		// that there is no one to hand it to.
-		trace.End(ctx, "end")
+		// Under the outcome it really had: a run that gave up used to end
+		// with the same line as one that answered.
+		outcome, why := r.endForTrace()
+		trace.EndWith(ctx, outcome, why)
 		if steps, sum, ok := trace.Timeline(ctx); ok {
 			if b, err := json.Marshal(map[string]any{"summary": sum, "steps": steps}); err == nil {
 				r.emit(EventTypeTrace, string(b))
@@ -2069,9 +2077,13 @@ func (r *Runtime) executeAsyncTool(ctx context.Context, tc domain.ToolCall, wg *
 
 	// 2. Execute, under the call's own span.
 	toolCtx, remote := toolSpanContext(ctx, toolInfo)
-	toolDone := trace.Step(toolCtx, "tool", tc.Function.Name)
+	toolDone := trace.StepOutcome(toolCtx, "tool", tc.Function.Name)
 	res, err, _ := r.executeToolOrHandoff(toolCtx, tc)
-	toolDone(err)
+	// A tool that returned normally can still have failed — a command that
+	// exited 1, a result with "ok": false. The trace line carries that, and
+	// why; see tool_outcome.go.
+	failed, note := toolOutcome(res)
+	toolDone(err, failed, note)
 
 	// 3. Emit result
 	r.noteToolOutcome(tc.Function.Name, err)
