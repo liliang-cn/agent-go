@@ -34,6 +34,16 @@ type Runtime struct {
 	// second block is allowed through.
 	deliverableFallbackUsed bool
 
+	// untriedBlockPushbacks counts the blocks sent back because the run had
+	// not tried anything (untried_block.go); deliverableCheckUsed keeps the
+	// "check the file you made" request to one per run
+	// (deliverable_check.go).
+	// untriedBlockSearchedAtPush is whether the run had already searched the
+	// catalogue when the first of those was sent.
+	untriedBlockPushbacks      int
+	untriedBlockSearchedAtPush bool
+	deliverableCheckUsed       bool
+
 	// persistFrom is the first message of the run's transcript not yet in
 	// the session, and turnStart how long the session was when the turn
 	// began. The transcript starts with the history, this turn's context and
@@ -207,6 +217,13 @@ func (r *Runtime) runFinalLints(content string, turn int) *LintViolation {
 func (r *Runtime) lintGate(ctx context.Context, goal, content string, messages *[]domain.Message, state *queryLoopState, round int) (done bool) {
 	violation := r.runFinalLints(content, round)
 	if violation == nil {
+		// Everything checkable from outside holds. A file the run made
+		// still has to be checked once by the model that made it; see
+		// deliverable_check.go. After the lints, so a file that is missing
+		// is asked for before anyone is asked to look at it.
+		if r.redirectToDeliverableCheck(ctx, messages, state) {
+			return false
+		}
 		r.completeRun(goal, content, *messages, true)
 		return true
 	}
@@ -911,6 +928,11 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 				if r.redirectBlockedToPartialAnswer(&messages, state) {
 					continue
 				}
+				// A block from a run that has not tried anything is not a
+				// finding yet; see untried_block.go.
+				if r.redirectUntriedBlock(ctx, &messages, state) {
+					continue
+				}
 				r.blockRun(goal, final, messages, true)
 				return
 			}
@@ -978,7 +1000,8 @@ func (r *Runtime) loop(ctx context.Context, goal string) {
 				if isTaskTerminalToolName(tc.Function.Name) {
 					final := taskTerminalToolResult(tc.Function.Name, tc.Function.Arguments, result.Content)
 					if tc.Function.Name == "task_blocked" {
-						if r.redirectBlockedToPartialAnswer(&messages, state) {
+						if r.redirectBlockedToPartialAnswer(&messages, state) ||
+							r.redirectUntriedBlock(ctx, &messages, state) {
 							redirected = true
 							break
 						}
