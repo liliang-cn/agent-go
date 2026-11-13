@@ -108,6 +108,8 @@ type Service struct {
 	memorySavedInRun      bool
 	ragSourcesMu          sync.RWMutex
 	ragSources            []domain.Chunk // Collect RAG sources during execution
+	installableMu         sync.RWMutex
+	installableSearch     InstallableSearch
 	permissionMu          sync.RWMutex
 	permissionHandler     PermissionHandler
 	permissionPolicy      PermissionPolicy

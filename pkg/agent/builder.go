@@ -116,6 +116,7 @@ type Builder struct {
 	noConstraints      bool
 	observerPayloads   bool
 	logger             *slog.Logger
+	installableSearch  InstallableSearch
 	timeLocation       *time.Location
 	clock              func() time.Time
 	backgroundTasks    bool
@@ -897,6 +898,9 @@ func (b *Builder) build() (*Service, error) {
 	svc.observerPayloads = svc.observerPayloads || b.observerPayloads
 	if b.logger != nil {
 		svc.SetLogger(b.logger)
+	}
+	if b.installableSearch != nil {
+		svc.SetInstallableSearch(b.installableSearch)
 	}
 	svc.maxBackgroundTasks = b.maxBackgroundTasks
 	if b.backgroundTasks {

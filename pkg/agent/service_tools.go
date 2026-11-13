@@ -106,8 +106,19 @@ func (s *Service) SearchAndExecute(ctx context.Context, query string, instructio
 		s.toolRegistry.ActivateForSession(sessionID, m.Function.Name)
 	}
 
+	// What could be installed for the query, when the host can say. Not for
+	// an instruction, which runs a tool that is here now, nor for a scoped
+	// search, which asked about one server or skill by name.
+	var installables []Installable
+	if instruction == "" && scope == "" {
+		installables = s.searchInstallables(ctx, currentAgent, query)
+	}
+
 	// Nothing matched: there is nothing to execute an instruction with either.
 	if len(matches) == 0 {
+		if len(installables) > 0 {
+			return toolSearchResultWithInstallables(nil, installables), nil
+		}
 		if s.modelHasBuiltInWebSearch() {
 			return toolSearchNoMatches + " " + toolSearchBuiltInSearch, nil
 		}
@@ -163,6 +174,9 @@ func (s *Service) SearchAndExecute(ctx context.Context, query string, instructio
 			"description": m.Function.Description,
 			"parameters":  m.Function.Parameters,
 		})
+	}
+	if len(installables) > 0 {
+		return toolSearchResultWithInstallables(result, installables), nil
 	}
 	return result, nil
 }
