@@ -121,6 +121,13 @@ func (r *ToolRegistry) IsActivatedForSession(sessionID, toolName string) bool {
 // Register adds (or replaces) a tool. Tools registered here are:
 //   - Visible to the LLM
 
+// Len is how many tools are registered.
+func (r *ToolRegistry) Len() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.tools)
+}
+
 // SearchAllTools searches ALL registered tools (not just deferred ones)
 func (r *ToolRegistry) SearchAllTools(query string) []domain.ToolDefinition {
 	r.mu.RLock()

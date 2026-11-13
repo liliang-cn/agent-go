@@ -42,10 +42,13 @@ func (s *Service) SearchAndExecute(ctx context.Context, query string, instructio
 
 	// Search all registered tools (not just deferred)
 	matches := s.withoutWithheldDelegationTools(s.filterToolDefinitionsForAgent(currentAgent, s.toolRegistry.SearchAllTools(query)))
+	corpus := s.toolRegistry.Len()
 
 	// Search MCP tools if available
 	if s.mcpService != nil {
-		for _, t := range s.mcpService.ListTools() {
+		mcpTools := s.mcpService.ListTools()
+		corpus += len(mcpTools)
+		for _, t := range mcpTools {
 			if s.shouldHideMCPWebSearchTools() && isMCPWebSearchToolName(t.Function.Name) {
 				continue
 			}
@@ -72,6 +75,7 @@ func (s *Service) SearchAndExecute(ctx context.Context, query string, instructio
 	// Search Skills if available
 	if s.skillsService != nil {
 		if skillsList, err := s.skillsService.ListSkills(ctx, skills.SkillFilter{}); err == nil {
+			corpus += len(skillsList)
 			for _, sk := range skillsList {
 				skillID := strings.ToLower(sk.ID)
 				// Apply scope filter: only include if scope matches this skill's ID
@@ -98,6 +102,12 @@ func (s *Service) SearchAndExecute(ctx context.Context, query string, instructio
 				}
 			}
 		}
+	}
+
+	// A search scoped to one server or skill asked for that one by name;
+	// any other is ranked, and only the best few join the session.
+	if scope == "" {
+		matches = rankToolMatches(matches, keywords, corpus, maxToolSearchMatches)
 	}
 
 	// Activate matching tools for current session
