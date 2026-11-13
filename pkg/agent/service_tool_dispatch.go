@@ -201,6 +201,13 @@ func (s *Service) dispatchResolvedTool(ctx context.Context, currentAgent *Agent,
 				s.toolRegistry.ActivateForSession(session.GetID(), t.Function.Name)
 			}
 		}
+		// A search by meaning is also asked what could be installed; a
+		// regex is a pattern over tool names, not something to look up.
+		if searchType == "bm25" {
+			if installables := s.searchInstallables(ctx, currentAgent, query); len(installables) > 0 {
+				return toolReferencesWithInstallables(refs, installables), nil
+			}
+		}
 		return domain.ToolSearchResult{ToolReferences: refs}, nil
 	}
 	return nil, fmt.Errorf("unknown tool: %s", toolName)

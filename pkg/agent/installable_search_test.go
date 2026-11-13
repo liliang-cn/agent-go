@@ -2,11 +2,13 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"reflect"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 	"github.com/liliang-cn/agent-go/v3/pkg/trace"
 )
 
@@ -236,5 +238,57 @@ func TestInstallableSearchIsGivenADeadline(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("search waited on a host that ignores its context")
+	}
+}
+
+// The second live run searched with tool_search_tool_bm25, not
+// search_available_tools: both are the model asking for a tool by meaning.
+func TestBM25ToolSearchOffersInstallables(t *testing.T) {
+	t.Parallel()
+
+	svc := newFourToolService(t, &wireRecorder{}, nil)
+	registerInstallerTool(t, svc, "add_thing")
+	call := func(name, query string) interface{} {
+		t.Helper()
+		res, err := svc.executeToolCalls(context.Background(), svc.agent, nil, []domain.ToolCall{{
+			ID: "c1", Type: "function",
+			Function: domain.FunctionCall{Name: name, Arguments: map[string]interface{}{"query": query}},
+		}})
+		if err != nil || len(res) != 1 {
+			t.Fatalf("%s: %v %v", name, res, err)
+		}
+		return res[0].Result
+	}
+
+	before := call("tool_search_tool_bm25", "qqqnothingqqq")
+	if _, ok := before.(domain.ToolSearchResult); !ok {
+		t.Fatalf("without a search set the result is %T", before)
+	}
+
+	svc.SetInstallableSearch(func(context.Context, string) []Installable {
+		return []Installable{{Kind: "mcp", Name: "mermaid-render", InstallTool: "add_thing", InstallArgs: map[string]any{"name": "m"}}}
+	})
+	if _, ok := call("tool_search_tool_regex", "qqqnothingqqq").(domain.ToolSearchResult); !ok {
+		t.Error("a regex search does not look for installables")
+	}
+	got, ok := call("tool_search_tool_bm25", "mermaid diagram").(toolSearchWithInstallables)
+	if !ok {
+		t.Fatalf("bm25 result has no installables")
+	}
+	if len(got.Installable) != 1 || got.Note != toolSearchInstallableNote {
+		t.Errorf("got %+v", got)
+	}
+	// It still reads as a tool search result, with the install tool in it.
+	raw, _ := json.Marshal(got)
+	var plain domain.ToolSearchResult
+	if err := json.Unmarshal(raw, &plain); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, ref := range plain.ToolReferences {
+		found = found || ref.ToolName == "add_thing"
+	}
+	if !found {
+		t.Errorf("the install tool is not among the references: %s", raw)
 	}
 }

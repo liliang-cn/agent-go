@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 	"github.com/liliang-cn/agent-go/v3/pkg/trace"
 )
 
@@ -88,7 +89,12 @@ func (s *Service) searchInstallables(ctx context.Context, currentAgent *Agent, q
 		return nil
 	}
 
-	sessionID := s.CurrentSessionID()
+	// Both entry points: search_available_tools activates for the service's
+	// current session, the tool-search tools for the session in the context.
+	sessionIDs := []string{s.CurrentSessionID()}
+	if session := getCurrentSession(ctx); session != nil && session.GetID() != sessionIDs[0] {
+		sessionIDs = append(sessionIDs, session.GetID())
+	}
 	out := make([]Installable, 0, len(raw))
 	tools := map[string]bool{}
 	for _, in := range raw {
@@ -100,7 +106,9 @@ func (s *Service) searchInstallables(ctx context.Context, currentAgent *Agent, q
 		}
 		if !tools[in.InstallTool] {
 			tools[in.InstallTool] = true
-			s.toolRegistry.ActivateForSession(sessionID, in.InstallTool)
+			for _, id := range sessionIDs {
+				s.toolRegistry.ActivateForSession(id, in.InstallTool)
+			}
 		}
 		out = append(out, in)
 	}
@@ -137,4 +145,32 @@ func toolSearchResultWithInstallables(tools []map[string]interface{}, installabl
 		"installable": installables,
 		"note":        toolSearchInstallableNote,
 	}
+}
+
+// toolSearchWithInstallables is what tool_search_tool_bm25 returns when there
+// is something to install. It still reads as a domain.ToolSearchResult, and
+// the install tools are among its references: they were made callable too.
+type toolSearchWithInstallables struct {
+	ToolReferences []domain.ToolReference `json:"tool_references"`
+	Installable    []Installable          `json:"installable"`
+	Note           string                 `json:"note"`
+}
+
+func toolReferencesWithInstallables(refs []domain.ToolReference, installables []Installable) toolSearchWithInstallables {
+	out := toolSearchWithInstallables{
+		ToolReferences: append([]domain.ToolReference{}, refs...),
+		Installable:    installables,
+		Note:           toolSearchInstallableNote,
+	}
+	seen := map[string]bool{}
+	for _, r := range refs {
+		seen[r.ToolName] = true
+	}
+	for _, in := range installables {
+		if !seen[in.InstallTool] {
+			seen[in.InstallTool] = true
+			out.ToolReferences = append(out.ToolReferences, domain.ToolReference{ToolName: in.InstallTool})
+		}
+	}
+	return out
 }
