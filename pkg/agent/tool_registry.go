@@ -118,6 +118,22 @@ func (r *ToolRegistry) IsActivatedForSession(sessionID, toolName string) bool {
 	return activeMap != nil && activeMap[toolName]
 }
 
+// activatedForSession is a copy of the tools activated for a session, safe
+// to read while another turn of the same session activates more.
+func (r *ToolRegistry) activatedForSession(sessionID string) map[string]bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	src := r.sessionActivated[sessionID]
+	if src == nil {
+		return nil
+	}
+	out := make(map[string]bool, len(src))
+	for k, v := range src {
+		out[k] = v
+	}
+	return out
+}
+
 // Register adds (or replaces) a tool. Tools registered here are:
 //   - Visible to the LLM
 

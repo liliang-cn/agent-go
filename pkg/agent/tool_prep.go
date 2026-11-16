@@ -462,7 +462,7 @@ func (s *Service) collectTools(ctx context.Context, currentAgent *Agent, policy 
 	// MCP tools — dynamic (servers may change at runtime).
 	if s.mcpService != nil {
 		allMCP := s.mcpService.ListTools()
-		activeMap := s.toolRegistry.sessionActivated[sessionID]
+		activeMap := s.toolRegistry.activatedForSession(sessionID)
 		deferAllMCP := searchMode
 		hideNativeWebSearchTools := policy.HideNativeWebSearch
 		eager := s.eagerToolPatterns()
@@ -506,7 +506,7 @@ func (s *Service) collectTools(ctx context.Context, currentAgent *Agent, policy 
 	// Skills tools — dynamic.
 	if s.skillsService != nil {
 		skillsList, _ := s.skillsService.ListSkills(ctx, skills.SkillFilter{})
-		activeMap := s.toolRegistry.sessionActivated[sessionID]
+		activeMap := s.toolRegistry.activatedForSession(sessionID)
 		deferAllSkills := searchMode
 
 		allowedAll := currentAgent == nil || isAllAllowed(currentAgent.skills)
