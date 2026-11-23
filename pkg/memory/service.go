@@ -525,7 +525,9 @@ func (s *Service) storeIfWorthwhileSync(ctx context.Context, req *domain.MemoryS
 	}
 
 	call := trace.Model(ctx, "memory-extract")
-	result, err := s.llm.GenerateStructured(call.Context(ctx), prompt, schema, &domain.GenerationOptions{Temperature: 0.1})
+	// Reasoning on: extraction runs after the reply, where nobody waits, and
+	// without it the assistant's own offer was filed as the person's wish.
+	result, err := s.llm.GenerateStructured(call.Context(ctx), prompt, schema, &domain.GenerationOptions{Temperature: 0.1, Reasoning: true})
 	call.End(nil, err)
 	var summary *domain.MemorySummaryResult
 	if err == nil && result.Raw != "" && result.Valid {

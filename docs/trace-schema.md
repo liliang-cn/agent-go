@@ -174,7 +174,7 @@ for it, written once per run while it holds and again when it changes.
 
 | Field | Meaning |
 | --- | --- |
-| `what` | `hide_mcp_search`, `hide_registry_web_search`, `defer_tools`, `eager_tools`, `drop_server_tool`, `retry_without_native_search`, `retry_without_tool_choice`, `retry_without_response_format`, `retry_without_prompt_cache`, `untried_block`, `offer_installables`, `lint_rejected`, `deliverable_check`, `run_constraints`, `inject_memories` |
+| `what` | `hide_mcp_search`, `hide_registry_web_search`, `defer_tools`, `eager_tools`, `drop_server_tool`, `retry_without_native_search`, `retry_without_tool_choice`, `retry_without_response_format`, `retry_without_prompt_cache`, `retry_without_reasoning_off`, `untried_block`, `offer_installables`, `lint_rejected`, `deliverable_check`, `run_constraints`, `inject_memories` |
 | `reason` | why, for a person |
 | `detail` | what it was about: the tools, counts, modes |
 
