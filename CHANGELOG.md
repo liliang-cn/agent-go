@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [3.84.1] - 2026-11-23
+
+### Fixed
+
+- `make test` failed in `examples/extensions-thirdparty`, whose `go.mod` still
+  pinned dependencies older than the root module's, so CI and the release
+  workflow had been red since before 3.84.0 and 3.84.0 has no release. The
+  module is tidied.
+
 ## [3.84.0] - 2026-11-23
 
 ### Added
