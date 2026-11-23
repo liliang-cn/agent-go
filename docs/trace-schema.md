@@ -174,9 +174,48 @@ for it, written once per run while it holds and again when it changes.
 
 | Field | Meaning |
 | --- | --- |
-| `what` | `hide_mcp_search`, `hide_registry_web_search`, `defer_tools`, `eager_tools`, `drop_server_tool`, `retry_without_native_search`, `retry_without_tool_choice`, `retry_without_response_format`, `retry_without_prompt_cache` |
+| `what` | `hide_mcp_search`, `hide_registry_web_search`, `defer_tools`, `eager_tools`, `drop_server_tool`, `retry_without_native_search`, `retry_without_tool_choice`, `retry_without_response_format`, `retry_without_prompt_cache`, `retry_without_reasoning_off`, `untried_block`, `offer_installables`, `lint_rejected`, `deliverable_check`, `run_constraints`, `inject_memories` |
 | `reason` | why, for a person |
 | `detail` | what it was about: the tools, counts, modes |
+
+`run_constraints` is written exactly once per run, on every path, including
+when nothing was found. Its `detail` holds `source` (`model_extracted`,
+`caller_declared` via `WithToolsDisabled` / `WithRequiredDeliverables` /
+`WithRequestedActions`, `extraction_disabled`, `decision_gate_skipped`,
+`extraction_failed` with the cause in `reason`, or `no_goal_or_model`),
+`forbid_tools`, `deliverables` (`kind`, `description`, `path`, `satisfied_by`,
+`enforced`) and `requested_actions` (`kind`, `description`, `satisfied_by`,
+`enforced`). The goal itself is not recorded; descriptions are clipped and
+masked like other free text.
+
+`inject_memories` is written once per memory retrieval, including when nothing
+was injected (retrieval off, no memory service, timeout, nothing matched). Its
+`detail` is `injected` (a list of `{id, score, scope_type, scope_id, type}`),
+`counts` (`candidates`, `dropped_by_scope`, `dropped_by_cap`, `dropped_other`,
+`injected`, `header_candidates`, `headers_dropped_by_scope`), `query_scopes`
+(the scope chain the query may read), `entrypoint_index`, `session_memory` and
+`selected_headers` (file backend). Ids, scores and scopes only, never memory
+content. `dropped_by_scope` counts only candidates filtered in the memory
+service; a backend that filters by scope on its own side drops them unseen.
+
+### `decision_engine`
+
+One consultation of a decision engine (`WithDecisionEngine`), written whether
+or not the answer was used. A gate that is always unsure costs latency and
+saves nothing, and only a line for the unused answers shows it. Not to be
+confused with `decision`, which is the runtime's own choice.
+
+| Field | Meaning |
+| --- | --- |
+| `gate` | what was being decided, e.g. `run_constraints` |
+| `engine` | the engine's name |
+| `label` | its answer (for the constraint gate, the least sure category) |
+| `confidence` | how sure it was, 0 to 1 |
+| `floor` | the confidence the answer had to reach |
+| `acted` | the runtime used the answer |
+| `skipped` | using it avoided a model call |
+| `duration_ms` | how long the consultation took |
+| `error` | why the engine could not be used, when it could not |
 
 ### Other events
 

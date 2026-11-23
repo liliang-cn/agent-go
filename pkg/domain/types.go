@@ -188,11 +188,20 @@ type GenerationOptions struct {
 	// on prompts where the model just needs to emit JSON). Nil = leave it to
 	// the provider default. Sent verbatim as-is to the upstream API.
 	Thinking *ThinkingOptions
-	// NoReasoning asks for the answer without reasoning first, for a call
-	// something is waiting on and whose shape a schema already fixes — the
-	// memory pick in front of a turn. Unlike Thinking it is a wish, not a
-	// field: the pool sends the off switch only to an upstream that has shown
-	// it reasons, and stops once that upstream refuses it.
+	// Reasoning lets a structured call reason before it answers. Structured
+	// calls are sent with reasoning off unless this or Thinking says
+	// otherwise: their shape is fixed by a schema, and on a model that thinks
+	// first the budget goes to thinking — qwen3.5 on Ollama spent 1.5k
+	// reasoning tokens on a three-field constraint extraction, returned
+	// finish_reason "length" with no content, and the re-ask ran past the
+	// 20s cap; with reasoning off it answered correctly in 2s. Set it for a
+	// call whose answer measurably needs the thought and that nobody waits
+	// on — memory extraction, which without reasoning filed the assistant's
+	// offer as the person's wish and got a date wrong.
+	Reasoning bool
+	// NoReasoning is the structured-call default now and changes nothing
+	// there; it is kept so callers that set it still compile. It wins over
+	// Reasoning when both are set.
 	NoReasoning bool
 
 	// PromptCache asks the provider to cache the prompt prefix explicitly,

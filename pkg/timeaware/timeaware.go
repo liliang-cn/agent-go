@@ -253,7 +253,10 @@ func (r *Resolver) Resolve(ctx context.Context, anchor time.Time, texts ...strin
 	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 
-	raw, err := r.llm.GenerateStructured(ctx, r.prompt(anchor, texts), resolveSchema, &domain.GenerationOptions{Temperature: 0})
+	// Reasoning on: resolving "next Friday" against an anchor is the thought
+	// itself, and this runs in the background where a slow answer costs
+	// nothing (see DefaultTimeout).
+	raw, err := r.llm.GenerateStructured(ctx, r.prompt(anchor, texts), resolveSchema, &domain.GenerationOptions{Temperature: 0, Reasoning: true})
 	if err != nil {
 		return nil, fmt.Errorf("timeaware: resolve: %w", err)
 	}

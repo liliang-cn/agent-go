@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"mime"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
 	"github.com/liliang-cn/agent-go/v3/pkg/prompt"
+	"github.com/liliang-cn/agent-go/v3/pkg/trace"
 	openai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/packages/param"
@@ -30,6 +32,11 @@ type OpenAILLMProvider struct {
 	// structuredSchemaRejected is set once the upstream refuses
 	// response_format json_schema; structured calls then use the prompt form.
 	structuredSchemaRejected atomic.Bool
+	// thinkingOffRejected and effortNoneRejected are set once the upstream
+	// has refused one half of a structured call's reasoning off switch:
+	// thinking {"type":"disabled"}, or reasoning_effort "none".
+	thinkingOffRejected atomic.Bool
+	effortNoneRejected  atomic.Bool
 }
 
 // OpenAIRealtimeSession handles bidirectional WebSocket communication
@@ -1044,8 +1051,50 @@ const structuredEscalations = 2
 // 356–1437 reasoning tokens on a classification capped at 400, and answered
 // finish_reason "length" with empty content).
 func (p *OpenAILLMProvider) structuredCompletion(ctx context.Context, params openai.ChatCompletionNewParams, opts *domain.GenerationOptions) (*openai.ChatCompletion, error) {
+	// Reasoning off unless the caller asked for it or said how to reason, as
+	// pool.Client.structuredCompletion does and for the same measured reasons
+	// (domain.GenerationOptions.Reasoning): both halves of the switch, from
+	// the first request, each dropped for good once the upstream refuses it.
+	reasoning := opts != nil && opts.Reasoning && !opts.NoReasoning
+	explicit := opts != nil && opts.Thinking != nil && opts.Thinking.Type != ""
+	var sentThinking, sentEffort bool
+	if !reasoning && !explicit && params.ReasoningEffort == "" {
+		sentThinking = !p.thinkingOffRejected.Load()
+		sentEffort = !p.effortNoneRejected.Load()
+	}
+	send := func() (*openai.ChatCompletion, error) {
+		ros := extraRequestOptions(opts)
+		if sentThinking {
+			ros = append(ros, option.WithJSONSet("thinking", map[string]any{"type": "disabled"}))
+		}
+		if sentEffort {
+			ros = append(ros, option.WithJSONSet("reasoning_effort", "none"))
+		}
+		return p.client.Chat.Completions.New(ctx, params, ros...)
+	}
 	for step := 0; ; step++ {
-		resp, err := p.client.Chat.Completions.New(ctx, params, extraRequestOptions(opts)...)
+		resp, err := send()
+		for tries := 0; err != nil && (sentThinking || sentEffort) && isClientRejection(err) && tries < 2; tries++ {
+			dropThinking, dropEffort, named := reasoningOffRejected(err, sentThinking, sentEffort)
+			if dropThinking {
+				sentThinking = false
+			}
+			if dropEffort {
+				sentEffort = false
+			}
+			resp, err = send()
+			if named || err == nil {
+				if dropThinking {
+					p.thinkingOffRejected.Store(true)
+				}
+				if dropEffort {
+					p.effortNoneRejected.Store(true)
+				}
+				trace.Decide(ctx, "retry_without_reasoning_off",
+					"the upstream refused the switch that turns reasoning off for a structured call, so it is sent without it from now on",
+					map[string]any{"thinking": dropThinking, "reasoning_effort": dropEffort})
+			}
+		}
 		if err != nil || len(resp.Choices) == 0 {
 			return resp, err
 		}
@@ -1056,6 +1105,32 @@ func (p *OpenAILLMProvider) structuredCompletion(ctx context.Context, params ope
 		}
 		params.MaxCompletionTokens = openai.Int(params.MaxCompletionTokens.Value * 4)
 	}
+}
+
+// isClientRejection reports a request the upstream refused as malformed,
+// other than a refusal of the schema, which the response_format fallback
+// handles.
+func isClientRejection(err error) bool {
+	var apiErr *openai.Error
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	if apiErr.StatusCode != http.StatusBadRequest && apiErr.StatusCode != http.StatusUnprocessableEntity {
+		return false
+	}
+	return !isResponseFormatRejection(err)
+}
+
+// reasoningOffRejected says which half of the off switch a refusal is about.
+// When it names neither, both are dropped for the retry and named is false.
+func reasoningOffRejected(err error, sentThinking, sentEffort bool) (dropThinking, dropEffort, named bool) {
+	msg := strings.ToLower(err.Error())
+	dropThinking = sentThinking && strings.Contains(msg, "thinking")
+	dropEffort = sentEffort && (strings.Contains(msg, "reasoning_effort") || strings.Contains(msg, "effort"))
+	if dropThinking || dropEffort {
+		return dropThinking, dropEffort, true
+	}
+	return sentThinking, sentEffort, false
 }
 
 // isResponseFormatRejection reports whether a provider refused the

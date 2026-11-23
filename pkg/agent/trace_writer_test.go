@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // syncBuffer is a bytes.Buffer that can be written to from the run's
@@ -116,10 +118,19 @@ func TestTraceWriterEmitsParsableJSONLForAScriptedRun(t *testing.T) {
 	// but their place in the order is the scheduler's, so they are counted
 	// here and left out of the sequence.
 	var agentEvents []string
-	resourceLines, sideCalls := 0, 0
+	resourceLines, sideCalls, constraintLines := 0, 0, 0
 	for i, e := range events2 {
 		if e == "resource" {
 			resourceLines++
+			continue
+		}
+		if w, _ := lines[i]["what"].(string); e == "decision" && w == "run_constraints" {
+			constraintLines++
+			continue
+		}
+		// The memory decision is written once per retrieval, or once to say
+		// there is no memory service; it is checked by its own tests.
+		if w, _ := lines[i]["what"].(string); e == "decision" && w == "inject_memories" {
 			continue
 		}
 		if p, _ := lines[i]["purpose"].(string); (e == "model_start" || e == "model_end") && p != "" && p != "turn" {
@@ -127,6 +138,9 @@ func TestTraceWriterEmitsParsableJSONLForAScriptedRun(t *testing.T) {
 			continue
 		}
 		agentEvents = append(agentEvents, e)
+	}
+	if constraintLines != 1 {
+		t.Errorf("run_constraints decision lines = %d, want exactly 1", constraintLines)
 	}
 	if sideCalls == 0 {
 		t.Error("the run's own model calls (constraint extraction) are missing from the trace")
@@ -279,6 +293,44 @@ func TestTraceWriterConcurrentLinesStayWhole(t *testing.T) {
 	lines := parseTrace(t, buf.String())
 	if len(lines) != 64 {
 		t.Fatalf("got %d lines, want 64", len(lines))
+	}
+}
+
+// TestTraceWriterWritesDecisionEngineConsultations: every consultation gets a
+// line, the ones that changed nothing and the failures included, and a zero
+// confidence or a false "acted" is written rather than dropped.
+func TestTraceWriterWritesDecisionEngineConsultations(t *testing.T) {
+	buf := &syncBuffer{}
+	tr := NewTraceWriter(buf)
+	var obs DecisionObserver = tr
+	ctx := context.Background()
+	obs.OnDecision(ctx, DecisionInfo{Gate: "run_constraints", Engine: "systemone:tev1:4b", Label: "nothing", Confidence: 0.93, Floor: 0.8, Acted: true, Skipped: true, Duration: 41 * time.Millisecond})
+	obs.OnDecision(ctx, DecisionInfo{Gate: "run_constraints", Engine: "systemone:tev1:4b", Label: "an email", Confidence: 0, Floor: 0.8, Duration: 55 * time.Millisecond})
+	obs.OnDecision(ctx, DecisionInfo{Gate: "run_constraints", Engine: "laya", Floor: 0.8, Err: errors.New("connection refused")})
+
+	lines := parseTrace(t, buf.String())
+	if len(lines) != 3 {
+		t.Fatalf("got %d lines, want 3", len(lines))
+	}
+	for _, l := range lines {
+		if l["event"] != "decision_engine" {
+			t.Fatalf("event = %v", l["event"])
+		}
+	}
+	a := lines[0]
+	if a["gate"] != "run_constraints" || a["engine"] != "systemone:tev1:4b" || a["label"] != "nothing" ||
+		a["confidence"] != 0.93 || a["floor"] != 0.8 || a["acted"] != true || a["skipped"] != true || a["duration_ms"] != float64(41) {
+		t.Fatalf("line 0 = %v", a)
+	}
+	b := lines[1]
+	if c, ok := b["confidence"]; !ok || c != float64(0) {
+		t.Fatalf("zero confidence not written: %v", b)
+	}
+	if v, ok := b["acted"]; !ok || v != false {
+		t.Fatalf("acted=false not written: %v", b)
+	}
+	if lines[2]["error"] != "connection refused" {
+		t.Fatalf("error not written: %v", lines[2])
 	}
 }
 

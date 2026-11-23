@@ -193,6 +193,17 @@ type traceLine struct {
 	What   string         `json:"what,omitempty"`
 	Detail map[string]any `json:"detail,omitempty"`
 
+	// Decision-engine consultations (event "decision_engine"). Confidence,
+	// Floor, Acted and Skipped are pointers so a 0.00 confidence or a false
+	// "acted" is written, not mistaken for absent.
+	Gate       string   `json:"gate,omitempty"`
+	Engine     string   `json:"engine,omitempty"`
+	Label      string   `json:"label,omitempty"`
+	Confidence *float64 `json:"confidence,omitempty"`
+	Floor      *float64 `json:"floor,omitempty"`
+	Acted      *bool    `json:"acted,omitempty"`
+	Skipped    *bool    `json:"skipped,omitempty"`
+
 	// Sub-agents.
 	SubAgent   string `json:"subagent,omitempty"`
 	SubAgentID string `json:"subagent_id,omitempty"`
@@ -734,6 +745,28 @@ func (t *TraceWriter) OnRuntimeDecision(ctx context.Context, info RuntimeDecisio
 		What:      info.What,
 		Reason:    t.clip(info.Reason),
 		Detail:    agentgolog.RedactMap(info.Detail),
+	}
+	t.spans(&line, ctx, "")
+	t.write(line, time.Now())
+}
+
+// OnDecision writes a decision_engine line (DecisionObserver): every
+// consultation of a decision engine, including the ones that changed nothing.
+// Not the "decision" event, which is the runtime's own choices.
+func (t *TraceWriter) OnDecision(ctx context.Context, info DecisionInfo) {
+	line := traceLine{
+		Event:      "decision_engine",
+		Gate:       info.Gate,
+		Engine:     info.Engine,
+		Label:      info.Label,
+		Confidence: &info.Confidence,
+		Floor:      &info.Floor,
+		Acted:      &info.Acted,
+		Skipped:    &info.Skipped,
+		DurationMs: info.Duration.Milliseconds(),
+	}
+	if info.Err != nil {
+		line.Error = t.clip(info.Err.Error())
 	}
 	t.spans(&line, ctx, "")
 	t.write(line, time.Now())

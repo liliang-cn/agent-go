@@ -39,6 +39,10 @@ type Client struct {
 	// wants no reasoning asks for it; see structuredCompletion.
 	reasons             atomic.Bool
 	thinkingOffRejected atomic.Bool
+	// effortNoneRejected is set once the upstream has refused
+	// reasoning_effort "none", the other half of a structured call's off
+	// switch.
+	effortNoneRejected atomic.Bool
 	// reasoningBytes and reasoningTime are the streamed-reasoning budget;
 	// see SetReasoningBudget.
 	reasoningBytes int
@@ -772,7 +776,7 @@ func (c *Client) GenerateStructured(ctx context.Context, prompt string, schema i
 	}
 	setThinking(reqBody, opts)
 
-	content, err := c.structuredCompletion(ctx, reqBody, opts.MaxTokens, opts.NoReasoning)
+	content, err := c.structuredCompletion(ctx, reqBody, opts.MaxTokens, opts.Reasoning && !opts.NoReasoning)
 	if err != nil {
 		if isResponseFormatRejection(err) {
 			c.structuredSchemaRejected.Store(true)
@@ -808,9 +812,9 @@ func (c *Client) generateStructuredFallback(ctx context.Context, prompt string, 
 			{"role": "user", "content": augmented},
 		},
 	}
-	maxTokens, noReasoning := 0, false
+	maxTokens, reasoning := 0, false
 	if opts != nil {
-		noReasoning = opts.NoReasoning
+		reasoning = opts.Reasoning && !opts.NoReasoning
 		if opts.Temperature > 0 {
 			reqBody["temperature"] = opts.Temperature
 		}
@@ -818,7 +822,7 @@ func (c *Client) generateStructuredFallback(ctx context.Context, prompt string, 
 		setThinking(reqBody, opts)
 	}
 
-	content, err := c.structuredCompletion(ctx, reqBody, maxTokens, noReasoning)
+	content, err := c.structuredCompletion(ctx, reqBody, maxTokens, reasoning)
 	if err != nil {
 		return nil, fmt.Errorf("structured fallback request failed: %w", err)
 	}
@@ -845,32 +849,61 @@ const structuredEscalations = 2
 // of the same budget first. A truncated reply that did write something is
 // returned as is — the budget reached the answer, and the caller judges it.
 //
-// noReasoning is a caller waiting on the answer (GenerationOptions
-// .NoReasoning). The memory navigator's pick of five ids from a nine-line
-// index, in front of every turn, took 5–8s on deepseek-flash, 1–2k tokens of
-// it reasoning, and 1.6s with reasoning off, choosing the same ids. Once this
-// upstream has shown it reasons, such a call asks it not to; an upstream that
-// refuses the field is asked again without it and not sent it again. No
-// model is named: what turns this on is a reply that reasoned. It is not the
-// default because it is not free: memory extraction run without reasoning
-// filed the assistant's own offer as the person's wish and got a date wrong,
-// and extraction runs after the reply, where nobody waits on it.
-func (c *Client) structuredCompletion(ctx context.Context, reqBody map[string]interface{}, maxTokens int, noReasoning bool) (string, error) {
-	_, explicit := reqBody["thinking"]
-	thinkingOff := noReasoning && !explicit && c.reasons.Load() && !c.thinkingOffRejected.Load()
-	if thinkingOff {
-		reqBody["thinking"] = map[string]interface{}{"type": "disabled"}
+// reasoning is the caller letting the model think first
+// (GenerationOptions.Reasoning). Without it a structured call is sent with
+// reasoning off, from the first request: thinking {"type":"disabled"}
+// (DeepSeek, Anthropic) and reasoning_effort "none" (OpenAI, Gemini,
+// Ollama — which ignores the first and honours only the second). The memory
+// navigator's pick of five ids took 5–8s on deepseek-flash and 1.6s with
+// reasoning off, choosing the same ids; qwen3.5 on Ollama spent a
+// constraint extraction's whole budget thinking and timed out, and answered
+// in 2s without. No model is named: an upstream that refuses either field is
+// asked again without it, once, and not sent it again. A caller that says
+// how to reason (thinking, or its own reasoning_effort) is left alone.
+func (c *Client) structuredCompletion(ctx context.Context, reqBody map[string]interface{}, maxTokens int, reasoning bool) (string, error) {
+	_, explicitThinking := reqBody["thinking"]
+	_, explicitEffort := reqBody["reasoning_effort"]
+	var sentThinking, sentEffort bool
+	if !reasoning && !explicitThinking && !explicitEffort {
+		if !c.thinkingOffRejected.Load() {
+			reqBody["thinking"] = map[string]interface{}{"type": "disabled"}
+			sentThinking = true
+		}
+		if !c.effortNoneRejected.Load() {
+			reqBody["reasoning_effort"] = "none"
+			sentEffort = true
+		}
 	}
 	for step := 0; ; step++ {
 		if maxTokens > 0 {
 			reqBody["max_tokens"] = maxTokens
 		}
 		resp, err := c.doRequest(ctx, "/chat/completions", reqBody)
-		if err != nil && thinkingOff && isThinkingRejection(err) {
-			c.thinkingOffRejected.Store(true)
-			thinkingOff = false
-			delete(reqBody, "thinking")
+		for tries := 0; err != nil && (sentThinking || sentEffort) && isClientRejection(err) && tries < 2; tries++ {
+			dropThinking, dropEffort, named := reasoningOffRejected(err, sentThinking, sentEffort)
+			if dropThinking {
+				delete(reqBody, "thinking")
+				sentThinking = false
+			}
+			if dropEffort {
+				delete(reqBody, "reasoning_effort")
+				sentEffort = false
+			}
 			resp, err = c.doRequest(ctx, "/chat/completions", reqBody)
+			// Remember a refusal the upstream named, or one that the retry
+			// proved by succeeding; a 400 about something else stays a
+			// 400 about something else.
+			if named || err == nil {
+				if dropThinking {
+					c.thinkingOffRejected.Store(true)
+				}
+				if dropEffort {
+					c.effortNoneRejected.Store(true)
+				}
+				trace.Decide(ctx, "retry_without_reasoning_off",
+					"the upstream refused the switch that turns reasoning off for a structured call, so it is sent without it from now on",
+					map[string]any{"thinking": dropThinking, "reasoning_effort": dropEffort})
+			}
 		}
 		if err != nil {
 			return "", err
@@ -910,6 +943,30 @@ func setThinking(reqBody map[string]interface{}, opts *domain.GenerationOptions)
 	if opts != nil && opts.Thinking != nil && opts.Thinking.Type != "" {
 		reqBody["thinking"] = map[string]interface{}{"type": opts.Thinking.Type}
 	}
+}
+
+// isClientRejection reports a request the upstream refused as malformed.
+func isClientRejection(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return (strings.Contains(msg, "status 400") || strings.Contains(msg, "status 422")) &&
+		// A refusal of the schema is the response_format fallback's to
+		// handle, not a reason to think the off switch was refused.
+		!isResponseFormatRejection(err)
+}
+
+// reasoningOffRejected says which half of the off switch a refusal is about.
+// When it names neither, both are dropped for the retry and named is false.
+func reasoningOffRejected(err error, sentThinking, sentEffort bool) (dropThinking, dropEffort, named bool) {
+	msg := strings.ToLower(err.Error())
+	dropThinking = sentThinking && strings.Contains(msg, "thinking")
+	dropEffort = sentEffort && (strings.Contains(msg, "reasoning_effort") || strings.Contains(msg, "effort"))
+	if dropThinking || dropEffort {
+		return dropThinking, dropEffort, true
+	}
+	return sentThinking, sentEffort, false
 }
 
 // isThinkingRejection reports an upstream refusing the thinking field.
