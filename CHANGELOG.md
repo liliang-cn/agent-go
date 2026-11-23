@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [3.84.2] - 2026-11-23
+
+### Fixed
+
+- `TestSlotIsClaimedBeforeTheRun` failed every evening between 19:00 and
+  20:00 local time: it required the claimed slot to be more than an hour past
+  the old one, and the test schedule is 20:00 daily. It now checks that the
+  next run is in the future. Test-only; no library change.
+
 ## [3.84.1] - 2026-11-23
 
 ### Fixed
