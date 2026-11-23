@@ -118,10 +118,14 @@ func TestTraceWriterEmitsParsableJSONLForAScriptedRun(t *testing.T) {
 	// but their place in the order is the scheduler's, so they are counted
 	// here and left out of the sequence.
 	var agentEvents []string
-	resourceLines, sideCalls := 0, 0
+	resourceLines, sideCalls, constraintLines := 0, 0, 0
 	for i, e := range events2 {
 		if e == "resource" {
 			resourceLines++
+			continue
+		}
+		if w, _ := lines[i]["what"].(string); e == "decision" && w == "run_constraints" {
+			constraintLines++
 			continue
 		}
 		if p, _ := lines[i]["purpose"].(string); (e == "model_start" || e == "model_end") && p != "" && p != "turn" {
@@ -129,6 +133,9 @@ func TestTraceWriterEmitsParsableJSONLForAScriptedRun(t *testing.T) {
 			continue
 		}
 		agentEvents = append(agentEvents, e)
+	}
+	if constraintLines != 1 {
+		t.Errorf("run_constraints decision lines = %d, want exactly 1", constraintLines)
 	}
 	if sideCalls == 0 {
 		t.Error("the run's own model calls (constraint extraction) are missing from the trace")

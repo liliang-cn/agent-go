@@ -174,9 +174,19 @@ for it, written once per run while it holds and again when it changes.
 
 | Field | Meaning |
 | --- | --- |
-| `what` | `hide_mcp_search`, `hide_registry_web_search`, `defer_tools`, `eager_tools`, `drop_server_tool`, `retry_without_native_search`, `retry_without_tool_choice`, `retry_without_response_format`, `retry_without_prompt_cache` |
+| `what` | `hide_mcp_search`, `hide_registry_web_search`, `defer_tools`, `eager_tools`, `drop_server_tool`, `retry_without_native_search`, `retry_without_tool_choice`, `retry_without_response_format`, `retry_without_prompt_cache`, `untried_block`, `offer_installables`, `lint_rejected`, `deliverable_check`, `run_constraints` |
 | `reason` | why, for a person |
 | `detail` | what it was about: the tools, counts, modes |
+
+`run_constraints` is written exactly once per run, on every path, including
+when nothing was found. Its `detail` holds `source` (`model_extracted`,
+`caller_declared` via `WithToolsDisabled` / `WithRequiredDeliverables` /
+`WithRequestedActions`, `extraction_disabled`, `decision_gate_skipped`,
+`extraction_failed` with the cause in `reason`, or `no_goal_or_model`),
+`forbid_tools`, `deliverables` (`kind`, `description`, `path`, `satisfied_by`,
+`enforced`) and `requested_actions` (`kind`, `description`, `satisfied_by`,
+`enforced`). The goal itself is not recorded; descriptions are clipped and
+masked like other free text.
 
 ### `decision_engine`
 

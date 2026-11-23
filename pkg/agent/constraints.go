@@ -377,6 +377,22 @@ const constraintRetryInstruction = "\n\nYour previous reply was not valid JSON. 
 // prompt scheduler, and sub-agents) gets identical treatment — this is the
 // single place the decision is made.
 func (s *Service) resolveRunConstraints(ctx context.Context, goal string, cfg *RunConfig) RunConstraints {
+	c, source, why := s.resolveRunConstraintsFrom(ctx, goal, cfg)
+	traceRunConstraints(ctx, c, source, why)
+	return c
+}
+
+// Where a run's constraints came from, as the trace names it.
+const (
+	constraintSourceCaller    = "caller_declared"
+	constraintSourceDisabled  = "extraction_disabled"
+	constraintSourceNoInput   = "no_goal_or_model"
+	constraintSourceGate      = "decision_gate_skipped"
+	constraintSourceExtracted = "model_extracted"
+	constraintSourceFailed    = "extraction_failed"
+)
+
+func (s *Service) resolveRunConstraintsFrom(ctx context.Context, goal string, cfg *RunConfig) (RunConstraints, string, string) {
 	declared := RunConstraints{}
 	if cfg != nil {
 		declared.ForbidTools = cfg.ToolsDisabled
@@ -386,13 +402,23 @@ func (s *Service) resolveRunConstraints(ctx context.Context, goal string, cfg *R
 	// An explicit declaration is authoritative and costs nothing: skip the
 	// model call entirely.
 	if !declared.Empty() {
-		return declared
+		var by []string
+		if declared.ForbidTools {
+			by = append(by, "WithToolsDisabled")
+		}
+		if len(declared.Deliverables) > 0 {
+			by = append(by, "WithRequiredDeliverables")
+		}
+		if len(declared.RequestedActions) > 0 {
+			by = append(by, "WithRequestedActions")
+		}
+		return declared, constraintSourceCaller, strings.Join(by, ", ")
 	}
 	if s.constraintExtractionOff(cfg) {
-		return declared
+		return declared, constraintSourceDisabled, ""
 	}
 	if strings.TrimSpace(goal) == "" || s == nil || s.llmService == nil {
-		return declared
+		return declared, constraintSourceNoInput, ""
 	}
 	// A decision engine, when one is attached, can often settle this without
 	// the extraction: most goals ask for nothing, and "nothing" is both the
@@ -402,9 +428,78 @@ func (s *Service) resolveRunConstraints(ctx context.Context, goal string, cfg *R
 	// tool name from this run's catalog, and an engine that does not generate
 	// text cannot supply either.
 	if s.goalNeedsNoConstraints(ctx, goal) {
-		return declared
+		return declared, constraintSourceGate, ""
 	}
-	return s.extractRunConstraints(ctx, goal)
+	c, failure := s.extractRunConstraints(ctx, goal)
+	if failure != "" {
+		return c, constraintSourceFailed, failure
+	}
+	return c, constraintSourceExtracted, ""
+}
+
+// traceRunConstraints writes the run's constraints on the trace, once per
+// run: what the runtime believes the goal asked for, and where that came
+// from. An empty set is reported too: "the model found nothing" and "nobody
+// asked" explain a lint that never fired, as the constraints explain one that
+// did. The goal is never included; descriptions are the extraction's own
+// wording of it and are clipped and masked like any free text.
+func traceRunConstraints(ctx context.Context, c RunConstraints, source, why string) {
+	var reason string
+	switch source {
+	case constraintSourceCaller:
+		reason = "the caller declared the constraints (" + why + "), so nothing was extracted"
+	case constraintSourceDisabled:
+		reason = "constraint extraction is switched off and the caller declared none"
+	case constraintSourceNoInput:
+		reason = "there was no goal or no model to extract from, and the caller declared none"
+	case constraintSourceGate:
+		reason = "the decision engine was confident the goal asks for nothing, so extraction was skipped"
+	case constraintSourceFailed:
+		reason = "extraction failed, so the run goes on with no constraints: " + trace.Note(why)
+	default:
+		if c.Empty() {
+			reason = "the model read the goal and found nothing the runtime must enforce"
+		} else {
+			reason = "the model read the goal and extracted these constraints"
+		}
+	}
+	deliverables := make([]map[string]any, 0, len(c.Deliverables))
+	for _, d := range c.Deliverables {
+		m := map[string]any{"kind": d.Kind, "description": trace.Note(d.Description), "enforced": d.Enforced()}
+		if d.Path != "" {
+			m["path"] = trace.Note(d.Path)
+		}
+		if d.SatisfiedBy != "" {
+			m["satisfied_by"] = d.SatisfiedBy
+		}
+		if d.Conditional {
+			m["conditional"] = true
+		}
+		if d.NeedsDetails {
+			m["needs_details"] = true
+		}
+		deliverables = append(deliverables, m)
+	}
+	actions := make([]map[string]any, 0, len(c.RequestedActions))
+	for _, a := range c.RequestedActions {
+		m := map[string]any{"kind": a.Kind, "description": trace.Note(a.Description), "enforced": a.Enforced()}
+		if a.SatisfiedBy != "" {
+			m["satisfied_by"] = a.SatisfiedBy
+		}
+		if !a.Unconditional {
+			m["conditional"] = true
+		}
+		if a.NeedsDetails {
+			m["needs_details"] = true
+		}
+		actions = append(actions, m)
+	}
+	trace.Decide(ctx, "run_constraints", reason, map[string]any{
+		"source":            source,
+		"forbid_tools":      c.ForbidTools,
+		"deliverables":      deliverables,
+		"requested_actions": actions,
+	})
 }
 
 // constraintExtractionOff reports whether this run skips the extraction,
@@ -417,7 +512,7 @@ func (s *Service) constraintExtractionOff(cfg *RunConfig) bool {
 // comes back, and retries once with explicit feedback before giving up. Any
 // final failure degrades to "no constraints" — a provider that cannot do
 // structured output must not be able to block an otherwise ordinary run.
-func (s *Service) extractRunConstraints(ctx context.Context, goal string) RunConstraints {
+func (s *Service) extractRunConstraints(ctx context.Context, goal string) (RunConstraints, string) {
 	// The extraction is a precondition check, not the work. Bound it so a slow
 	// or rate-limited gateway cannot spend the run's deadline before the first
 	// real turn — the caller's budget belongs to the task, not to this.
@@ -427,10 +522,11 @@ func (s *Service) extractRunConstraints(ctx context.Context, goal string) RunCon
 	catalog := s.constraintToolCatalog()
 	prompt := constraintExtractionPrompt + renderToolCatalog(catalog) + "\nUser request:\n" + goal
 
+	lastErr := "gave up"
 	for attempt := 0; attempt < 2; attempt++ {
 		if ctx.Err() != nil {
 			s.logger.Warn("constraint extraction timed out; running without constraints")
-			return RunConstraints{}
+			return RunConstraints{}, "timed out"
 		}
 		if attempt > 0 {
 			prompt += constraintRetryInstruction
@@ -440,19 +536,21 @@ func (s *Service) extractRunConstraints(ctx context.Context, goal string) RunCon
 			s.logger.Warn("constraint extraction call failed",
 				slog.Int("attempt", attempt+1),
 				slog.String("error", err.Error()))
+			lastErr = "call failed: " + err.Error()
 			continue
 		}
 		parsed, perr := parseRunConstraints(raw)
 		if perr == nil {
-			return pruneUnknownTools(parsed, catalog)
+			return pruneUnknownTools(parsed, catalog), ""
 		}
+		lastErr = "reply was not parsable JSON: " + perr.Error()
 		s.logger.Warn("constraint extraction reply was not parsable JSON",
 			slog.Int("attempt", attempt+1),
 			slog.String("error", perr.Error()))
 	}
 
 	s.logger.Warn("constraint extraction gave up; running without constraints")
-	return RunConstraints{}
+	return RunConstraints{}, lastErr
 }
 
 // callConstraintExtraction issues one extraction request and returns the raw
