@@ -98,7 +98,11 @@ func TestSlotIsClaimedBeforeTheRun(t *testing.T) {
 	task, err := s.storage.GetTask(id)
 	require.NoError(t, err)
 	require.NotNil(t, task.NextRun)
-	assert.True(t, task.NextRun.After(slot.Add(time.Hour)), "next_run still at the slot while the run goes on")
+	// Claimed means moved into the future, past the next tick. Not "an hour
+	// past the slot": the schedule is 20:00 daily, so between 19:00 and
+	// 20:00 local time the next occurrence is less than an hour away and
+	// that version of this check failed every evening.
+	assert.True(t, task.NextRun.After(time.Now()), "next_run %v is not in the future while the run goes on (slot %v)", task.NextRun, slot)
 
 	due, err := s.storage.GetTasksDueForExecution()
 	require.NoError(t, err)
