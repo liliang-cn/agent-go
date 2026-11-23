@@ -150,6 +150,13 @@ type line struct {
 	Checkpoint   string          `json:"checkpoint_reason"`
 	SegmentIndex *int            `json:"segment_index"`
 	Marker       string          `json:"marker"`
+	Gate         string          `json:"gate"`
+	Engine       string          `json:"engine"`
+	Label        string          `json:"label"`
+	Confidence   *float64        `json:"confidence"`
+	Floor        *float64        `json:"floor"`
+	Acted        *bool           `json:"acted"`
+	Skipped      *bool           `json:"skipped"`
 	Message      string          `json:"message"`
 	file         string
 }
@@ -631,6 +638,26 @@ func eventRow(at string, l *line) string {
 			d = " " + short(string(l.Detail), 80)
 		}
 		return fmt.Sprintf("%s  decide   %s: %s%s", at, l.What, short(l.Reason, 90), d)
+	case "decision_engine":
+		if l.Error != "" {
+			return fmt.Sprintf("%s  engine   %s %s: unavailable (%s)", at, l.Gate, l.Engine, short(l.Error, 80))
+		}
+		outcome := "ignored"
+		switch {
+		case l.Skipped != nil && *l.Skipped:
+			outcome = "skipped the model call"
+		case l.Acted != nil && *l.Acted:
+			outcome = "acted"
+		}
+		conf, floor := 0.0, 0.0
+		if l.Confidence != nil {
+			conf = *l.Confidence
+		}
+		if l.Floor != nil {
+			floor = *l.Floor
+		}
+		return fmt.Sprintf("%s  engine   %s %s -> %s conf=%.2f/%.2f %s, %s",
+			at, l.Gate, l.Engine, l.Label, conf, floor, ms(l.DurationMs), outcome)
 	case "lint":
 		return fmt.Sprintf("%s  lint     %s %s: %s", at, l.Lint, l.Verdict, short(l.Reason, 80))
 	case "model_retry":

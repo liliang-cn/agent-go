@@ -17,6 +17,7 @@ const fileA = `{"ts":"2026-10-28T10:00:00.000Z","event":"run_start","trace_id":"
 {"ts":"2026-10-28T10:00:02.100Z","event":"model_end","trace_id":"` + tid + `","span_id":"m1m1m1m1m1m1m1m1","parent_span_id":"aaaaaaaaaaaaaaaa","run_id":"r-parent","purpose":"turn","round":1,"duration_ms":2000,"streamed":true,"ttft_ms":1500,"tool_calls":1,"tokens":{"total":1100,"prompt":1000,"completion":100,"cached":800,"cache_write":200},"server_tools":{"uses":[{"name":"web_search","input":{"query":"lisbon weather"},"results":5}],"resumes":1,"request_ms":[1200,700],"citations":2},"elapsed_ms":2100}
 {"ts":"2026-10-28T10:00:02.200Z","event":"tool_start","trace_id":"` + tid + `","span_id":"t1t1t1t1t1t1t1t1","parent_span_id":"aaaaaaaaaaaaaaaa","run_id":"r-parent","tool":"delegate","call_id":"c1","elapsed_ms":2200}
 {"ts":"2026-10-28T10:00:05.200Z","event":"tool_end","trace_id":"` + tid + `","span_id":"t1t1t1t1t1t1t1t1","parent_span_id":"aaaaaaaaaaaaaaaa","run_id":"r-parent","tool":"delegate","call_id":"c1","duration_ms":3000,"remote":["00-` + tid + `-cccccccccccccccc-01"],"elapsed_ms":5200}
+{"ts":"2026-10-28T10:00:05.250Z","event":"decision_engine","trace_id":"` + tid + `","span_id":"aaaaaaaaaaaaaaaa","run_id":"r-parent","gate":"run_constraints","engine":"systemone:tev1:4b","label":"an email","confidence":0.41,"floor":0.8,"acted":false,"skipped":false,"duration_ms":212,"elapsed_ms":5250}
 {"ts":"2026-10-28T10:00:05.300Z","event":"lint","trace_id":"` + tid + `","span_id":"aaaaaaaaaaaaaaaa","run_id":"r-parent","lint":"non_empty_final_answer","verdict":"retry","reason":"empty","elapsed_ms":5300}
 {"ts":"2026-10-28T10:00:06.000Z","event":"run_end","trace_id":"` + tid + `","span_id":"aaaaaaaaaaaaaaaa","run_id":"r-parent","agent":"queen","outcome":"completed","stop_reason":"end_turn","duration_ms":6000,"rounds":2,"host":"core","pid":10,"summary":{"total_ms":6000,"model_ms":2000,"model_calls":1,"tool_ms":3000,"tool_calls":1,"tokens":{"prompt":1000,"completion":100,"cached":800,"cache_write":200},"by_purpose":{"turn":{"calls":1,"ms":2000,"tokens":{"prompt":1000,"completion":100,"cached":800,"cache_write":200}}},"tools":{"delegate":{"calls":1,"ms":3000}},"lint_retries":1},"elapsed_ms":6000}
 `
@@ -97,6 +98,7 @@ func TestOneRunsWaterfall(t *testing.T) {
 		"↳ pause_turn resumes=1  requests 1.20s + 700ms  citations=2",
 		"decide   hide_mcp_search: native search proved itself",
 		"tool     delegate          3.00s  ok",
+		"engine   run_constraints systemone:tev1:4b -> an email conf=0.41/0.80 212ms, ignored",
 		"lint     non_empty_final_answer retry",
 		"end  completed (end_turn)  wall=6.00s  rounds=2",
 		"lint retries=1",

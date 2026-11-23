@@ -178,6 +178,25 @@ for it, written once per run while it holds and again when it changes.
 | `reason` | why, for a person |
 | `detail` | what it was about: the tools, counts, modes |
 
+### `decision_engine`
+
+One consultation of a decision engine (`WithDecisionEngine`), written whether
+or not the answer was used. A gate that is always unsure costs latency and
+saves nothing, and only a line for the unused answers shows it. Not to be
+confused with `decision`, which is the runtime's own choice.
+
+| Field | Meaning |
+| --- | --- |
+| `gate` | what was being decided, e.g. `run_constraints` |
+| `engine` | the engine's name |
+| `label` | its answer (for the constraint gate, the least sure category) |
+| `confidence` | how sure it was, 0 to 1 |
+| `floor` | the confidence the answer had to reach |
+| `acted` | the runtime used the answer |
+| `skipped` | using it avoided a model call |
+| `duration_ms` | how long the consultation took |
+| `error` | why the engine could not be used, when it could not |
+
 ### Other events
 
 | Event | Fields |
