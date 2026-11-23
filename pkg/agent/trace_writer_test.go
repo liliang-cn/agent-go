@@ -128,6 +128,11 @@ func TestTraceWriterEmitsParsableJSONLForAScriptedRun(t *testing.T) {
 			constraintLines++
 			continue
 		}
+		// The memory decision is written once per retrieval, or once to say
+		// there is no memory service; it is checked by its own tests.
+		if w, _ := lines[i]["what"].(string); e == "decision" && w == "inject_memories" {
+			continue
+		}
 		if p, _ := lines[i]["purpose"].(string); (e == "model_start" || e == "model_end") && p != "" && p != "turn" {
 			sideCalls++
 			continue

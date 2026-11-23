@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/liliang-cn/agent-go/v3/pkg/domain"
+	"github.com/liliang-cn/agent-go/v3/pkg/memory"
 	"github.com/liliang-cn/agent-go/v3/pkg/prompt"
 	"github.com/liliang-cn/agent-go/v3/pkg/skills"
 	"golang.org/x/sync/errgroup"
@@ -81,7 +82,9 @@ func (s *Service) prepareConversationContext(ctx context.Context, goal string, s
 		})
 	}
 
-	if s.memory() != nil {
+	if s.memory() == nil {
+		memory.TraceNoInjection(ctx, "no memory service is configured")
+	} else {
 		g.Go(func() error {
 			memDone := trace.Step(ctx, "memory", "recall")
 			res, err := s.recallWithin(trace.WithPurpose(groupCtx, "memory-pick"), goal, prepared.queryContext)
@@ -89,9 +92,11 @@ func (s *Service) prepareConversationContext(ctx context.Context, goal string, s
 			if errors.Is(err, errRecallTimeout) {
 				// Answering now without memory beats answering late with it.
 				s.logger.Warn("memory recall timed out; the turn goes ahead without it", slog.Duration("after", s.memoryRecallTimeout()))
+				memory.TraceNoInjection(ctx, "memory recall timed out")
 				return nil
 			}
 			if err != nil {
+				memory.TraceNoInjection(ctx, "memory recall failed: "+err.Error())
 				return err
 			}
 			prepared.memoryContext = res.context

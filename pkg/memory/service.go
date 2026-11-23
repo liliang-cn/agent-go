@@ -256,9 +256,11 @@ func (s *Service) RetrieveAndInjectWithContextAndLogic(ctx context.Context, quer
 	// Guessing "this query does not need memory" from the user's wording is how
 	// "list all my memories" ended up skipping the memory store entirely.
 	if s.disableRetrieval {
+		TraceNoInjection(ctx, "retrieval is switched off")
 		return "", nil, "", nil
 	}
 
+	var tally recallTally
 	var allMemories []*domain.MemoryWithScore
 	var memoryLogic string
 
@@ -325,7 +327,7 @@ func (s *Service) RetrieveAndInjectWithContextAndLogic(ctx context.Context, quer
 	if haveVec {
 		vectorResults = scoped
 		if s.enableHybrid {
-			vectorResults = s.rrfFusion(vectorResults, filterMemoriesByScopes(textMems, scopes.ToSlice()))
+			vectorResults = s.rrfFusion(vectorResults, tally.scoped(textMems, scopes.ToSlice()))
 		}
 	}
 
@@ -360,7 +362,7 @@ func (s *Service) RetrieveAndInjectWithContextAndLogic(ctx context.Context, quer
 			textMems, err := s.store.SearchByText(ctx, query, s.maxMemories)
 			doneText(err)
 			if err == nil && len(textMems) > 0 {
-				textMems = filterMemoriesByScopes(textMems, scopes.ToSlice())
+				textMems = tally.scoped(textMems, scopes.ToSlice())
 				allMemories = append(allMemories, textMems...)
 				break
 			}
@@ -368,11 +370,13 @@ func (s *Service) RetrieveAndInjectWithContextAndLogic(ctx context.Context, quer
 		doneList := trace.Step(ctx, "memory", "recall-list")
 		mems, _, listErr := s.store.List(ctx, s.maxMemories, 0)
 		doneList(listErr)
-		mems = filterPlainMemoriesByScopes(mems, scopes.ToSlice())
+		mems = tally.scopedPlain(mems, scopes.ToSlice())
 		for _, m := range mems {
 			allMemories = append(allMemories, &domain.MemoryWithScore{Memory: m, Score: 0.5})
 		}
 	}
+
+	tally.seen = len(allMemories)
 
 	// 5. Validity. A memory that has been superseded is not current, and
 	// injecting it beside its replacement leaves the model to pick one.
@@ -402,6 +406,7 @@ func (s *Service) RetrieveAndInjectWithContextAndLogic(ctx context.Context, quer
 
 	// 8. Limit results
 	if len(allMemories) > s.maxMemories {
+		tally.droppedByCap = len(allMemories) - s.maxMemories
 		allMemories = allMemories[:s.maxMemories]
 	}
 
@@ -413,10 +418,13 @@ func (s *Service) RetrieveAndInjectWithContextAndLogic(ctx context.Context, quer
 	}
 
 	if len(allMemories) == 0 {
+		traceInjection(ctx, scopes.ToSlice(), nil, tally, fileContextStats{}, "")
 		return "", nil, memoryLogic, nil
 	}
 
-	return s.formatMemoriesForQuery(ctx, query, queryContext, allMemories), allMemories, memoryLogic, nil
+	text, fx := s.formatMemoriesForQueryStats(ctx, query, queryContext, allMemories)
+	traceInjection(ctx, scopes.ToSlice(), allMemories, tally, fx, "")
+	return text, allMemories, memoryLogic, nil
 }
 
 // StoreIfWorthwhile decides what to store based on task completion.
@@ -983,9 +991,14 @@ func (s *Service) rrfFusion(vector, text []*domain.MemoryWithScore) []*domain.Me
 }
 
 func (s *Service) formatMemoriesForQuery(ctx context.Context, query string, queryContext domain.MemoryQueryContext, memories []*domain.MemoryWithScore) string {
-	entrypoint, sessionMemory, selectedHeaders := s.fileMemoryPromptContext(ctx, query, queryContext)
+	text, _ := s.formatMemoriesForQueryStats(ctx, query, queryContext, memories)
+	return text
+}
+
+func (s *Service) formatMemoriesForQueryStats(ctx context.Context, query string, queryContext domain.MemoryQueryContext, memories []*domain.MemoryWithScore) (string, fileContextStats) {
+	entrypoint, sessionMemory, selectedHeaders, fx := s.fileMemoryPromptContext(ctx, query, queryContext)
 	if len(memories) == 0 && entrypoint == "" && sessionMemory == "" {
-		return ""
+		return "", fx
 	}
 	var sb strings.Builder
 	if strings.TrimSpace(sessionMemory) != "" {
@@ -1009,7 +1022,7 @@ func (s *Service) formatMemoriesForQuery(ctx context.Context, query string, quer
 		}
 	}
 	if len(memories) == 0 {
-		return sb.String()
+		return sb.String(), fx
 	}
 	sb.WriteString("## Relevant Memory\n\n")
 	// Every memory says when it was written, and — where a model resolved it
@@ -1031,13 +1044,13 @@ func (s *Service) formatMemoriesForQuery(ctx context.Context, query string, quer
 		}
 		sb.WriteString(fmt.Sprintf("[%d] [%s]%s: %s\n\n", i+1, memoryLabel(m.Memory), note, m.Content))
 	}
-	return sb.String()
+	return sb.String(), fx
 }
 
-func (s *Service) fileMemoryPromptContext(ctx context.Context, query string, queryContext domain.MemoryQueryContext) (entrypoint string, sessionMemory string, headers []store.FileMemoryHeader) {
+func (s *Service) fileMemoryPromptContext(ctx context.Context, query string, queryContext domain.MemoryQueryContext) (entrypoint string, sessionMemory string, headers []store.FileMemoryHeader, fx fileContextStats) {
 	fileStore, ok := s.store.(*store.FileMemoryStore)
 	if !ok {
-		return "", "", nil
+		return "", "", nil, fx
 	}
 	// Which memories this query is allowed to see. The ranked path has always
 	// applied this (filterMemoriesByScopes); the two below did not, and they
@@ -1072,7 +1085,9 @@ func (s *Service) fileMemoryPromptContext(ctx context.Context, query string, que
 			headers = selected
 		}
 	}
+	fx.headersCandidates = len(headers)
 	headers = filterHeadersByScopes(headers, scopes)
+	fx.headersDroppedScope = fx.headersCandidates - len(headers)
 	if len(headers) > limit {
 		headers = headers[:limit]
 	}
@@ -1080,7 +1095,12 @@ func (s *Service) fileMemoryPromptContext(ctx context.Context, query string, que
 	// id. Keeping only the lines whose id survived the filter is exact — no
 	// re-rendering, and nothing a summary line says can leak past it.
 	entrypoint = filterEntrypointByHeaders(entrypoint, headers)
-	return entrypoint, sessionMemory, headers
+	fx.entrypoint = entrypoint != ""
+	fx.sessionMemory = sessionMemory != ""
+	for _, h := range headers {
+		fx.headerIDs = append(fx.headerIDs, h.ID)
+	}
+	return entrypoint, sessionMemory, headers, fx
 }
 
 // filterHeadersByScopes keeps the headers this query is allowed to see.

@@ -174,7 +174,7 @@ for it, written once per run while it holds and again when it changes.
 
 | Field | Meaning |
 | --- | --- |
-| `what` | `hide_mcp_search`, `hide_registry_web_search`, `defer_tools`, `eager_tools`, `drop_server_tool`, `retry_without_native_search`, `retry_without_tool_choice`, `retry_without_response_format`, `retry_without_prompt_cache`, `untried_block`, `offer_installables`, `lint_rejected`, `deliverable_check`, `run_constraints` |
+| `what` | `hide_mcp_search`, `hide_registry_web_search`, `defer_tools`, `eager_tools`, `drop_server_tool`, `retry_without_native_search`, `retry_without_tool_choice`, `retry_without_response_format`, `retry_without_prompt_cache`, `untried_block`, `offer_installables`, `lint_rejected`, `deliverable_check`, `run_constraints`, `inject_memories` |
 | `reason` | why, for a person |
 | `detail` | what it was about: the tools, counts, modes |
 
@@ -187,6 +187,16 @@ when nothing was found. Its `detail` holds `source` (`model_extracted`,
 `enforced`) and `requested_actions` (`kind`, `description`, `satisfied_by`,
 `enforced`). The goal itself is not recorded; descriptions are clipped and
 masked like other free text.
+
+`inject_memories` is written once per memory retrieval, including when nothing
+was injected (retrieval off, no memory service, timeout, nothing matched). Its
+`detail` is `injected` (a list of `{id, score, scope_type, scope_id, type}`),
+`counts` (`candidates`, `dropped_by_scope`, `dropped_by_cap`, `dropped_other`,
+`injected`, `header_candidates`, `headers_dropped_by_scope`), `query_scopes`
+(the scope chain the query may read), `entrypoint_index`, `session_memory` and
+`selected_headers` (file backend). Ids, scores and scopes only, never memory
+content. `dropped_by_scope` counts only candidates filtered in the memory
+service; a backend that filters by scope on its own side drops them unseen.
 
 ### `decision_engine`
 
