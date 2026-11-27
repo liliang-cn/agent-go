@@ -356,6 +356,15 @@ func (s *Service) RetrieveAndInjectWithContextAndLogic(ctx context.Context, quer
 	case len(navResults) > 0:
 		allMemories = append(allMemories, navResults...)
 	default:
+		// A brain that embeds on its side recalls on its side too: its
+		// memories and its knowledge, by vector and then by a walk of the
+		// entity graph from what that found.
+		if query != "" {
+			if recalled, ok := s.serverRecall(ctx, query, scopes.ToSlice(), &tally); ok {
+				allMemories = append(allMemories, recalled...)
+				break
+			}
+		}
 		// Final fallback: keyword search first, then plain list
 		if query != "" {
 			doneText := trace.Step(ctx, "memory", "recall-text")
@@ -412,7 +421,7 @@ func (s *Service) RetrieveAndInjectWithContextAndLogic(ctx context.Context, quer
 
 	// Update access count
 	for _, m := range allMemories {
-		if m.ID != "" && !strings.HasPrefix(m.ID, "ent_") {
+		if m.ID != "" && !strings.HasPrefix(m.ID, "ent_") && !strings.HasPrefix(m.ID, knowledgeHitIDPrefix) {
 			_ = s.store.IncrementAccess(ctx, m.ID)
 		}
 	}
