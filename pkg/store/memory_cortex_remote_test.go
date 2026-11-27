@@ -38,6 +38,10 @@ type fakeCortexServer struct {
 	searchCalls []*rpcv1.SearchMemoryRequest
 	listCalls   []string
 	graphCalls  []string
+	// recallJSON is what knowledge_memory_recall answers; recallCalls the
+	// arguments it was called with.
+	recallJSON  string
+	recallCalls []string
 }
 
 func newFakeCortexServer() *fakeCortexServer {
@@ -134,6 +138,9 @@ func (f *fakeCortexServer) ListTools(context.Context, *rpcv1.ListToolsRequest) (
 func (f *fakeCortexServer) CallTool(ctx context.Context, req *rpcv1.CallToolRequest) (*rpcv1.CallToolResponse, error) {
 	f.noteAuth(ctx)
 	switch req.GetName() {
+	case "knowledge_memory_recall":
+		f.recallCalls = append(f.recallCalls, req.GetArgsJson())
+		return &rpcv1.CallToolResponse{ResultJson: f.recallJSON}, nil
 	case "upsert_entities", "upsert_relations", "delete_document_graph":
 		f.graphCalls = append(f.graphCalls, req.GetName()+" "+req.GetArgsJson())
 		return &rpcv1.CallToolResponse{ResultJson: "{}"}, nil
