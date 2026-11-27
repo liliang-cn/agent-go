@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [3.85.0] - 2026-11-27
+
+### Added
+
+- `CortexRemoteMemoryStore` implements `domain.KnowledgeGraphRecaller`
+  through the brain's `knowledge_memory_recall`: its memories, its knowledge
+  and, with the brain's embedder, a walk of the entity graph from what the
+  vector search found (#2). Memory injection on a store that embeds on its
+  own side uses that recall, so knowledge hits reach the prompt; memories
+  and knowledge are interleaved by the brain's ranks.
+
 ## [3.84.2] - 2026-11-23
 
 ### Fixed
